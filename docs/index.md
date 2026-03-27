@@ -16,6 +16,7 @@ maxdepth: 1
 
 usage
 reference
+examples <_examples/index>
 contributing
 Code of Conduct <codeofconduct>
 License <license>

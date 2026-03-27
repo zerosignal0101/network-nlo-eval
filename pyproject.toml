@@ -78,8 +78,11 @@ select = [
     "S",            # flake8-bandit
 ]
 ignore = [
-    "D100", "D104"  # 根据需要忽略某些过于严格的文档要求
+    "D100", "D104",  # 根据需要忽略某些过于严格的文档要求
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["S101"]  # 允许测试中使用 assert
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"  # 或 "numpy"，取决于你的文档风格

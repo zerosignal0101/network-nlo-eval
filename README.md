@@ -1,6 +1,6 @@
 # Network NLO Eval
 
-[![PyPI](https://img.shields.io/pypi/v/network-nlo-eval.svg)][pypi_]
+<!-- [![PyPI](https://img.shields.io/pypi/v/network-nlo-eval.svg)][pypi_]
 [![Status](https://img.shields.io/pypi/status/network-nlo-eval.svg)][status]
 [![Python Version](https://img.shields.io/pypi/pyversions/network-nlo-eval)][python version]
 [![License](https://img.shields.io/pypi/l/network-nlo-eval)][license]
@@ -19,7 +19,7 @@
 [tests]: https://github.com/zerosignal0101/network-nlo-eval/actions?workflow=Tests
 [codecov]: https://app.codecov.io/gh/zerosignal0101/network-nlo-eval
 [pre-commit]: https://github.com/pre-commit/pre-commit
-[black]: https://github.com/psf/black
+[black]: https://github.com/psf/black -->
 
 ## Features
 
