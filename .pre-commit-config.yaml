@@ -20,13 +20,13 @@ repos:
         entry: end-of-file-fixer
         language: system
         types: [text]
-        stages: [commit, push, manual]
+        stages: [pre-commit, pre-push, manual]
       - id: trailing-whitespace
         name: Trim Trailing Whitespace
         entry: trailing-whitespace-fixer
         language: system
         types: [text]
-        stages: [commit, push, manual]
+        stages: [pre-commit, pre-push, manual]
   # 引入 Ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.8 # 请使用最新的 Ruff 版本
