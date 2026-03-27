@@ -15,6 +15,9 @@ classifiers = [
 [tool.poetry.urls]
 Changelog = "https://github.com/zerosignal0101/network-nlo-eval/releases"
 
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"
+
 [tool.poetry.dependencies]
 python = ">=3.11,<=3.13"
 click = ">=8.0.1"
@@ -25,22 +28,15 @@ networkx = "^3.6.1"
 
 [tool.poetry.group.dev.dependencies]
 Pygments = ">=2.10.0"
-black = ">=21.10b0"
 coverage = {extras = ["toml"], version = ">=6.2"}
 darglint = ">=1.8.1"
-flake8 = ">=4.0.1"
-flake8-bandit = ">=2.1.2"
-flake8-bugbear = ">=21.9.2"
-flake8-docstrings = ">=1.6.0"
-flake8-rst-docstrings = ">=0.2.5"
+ruff = ">=0.15.0"
 furo = ">=2021.11.12"
-isort = ">=5.10.1"
 mypy = ">=0.930"
 pep8-naming = ">=0.12.1"
 pre-commit = ">=2.16.0"
 pre-commit-hooks = ">=4.1.0"
 pytest = ">=6.2.5"
-pyupgrade = ">=2.29.1"
 safety = ">=1.10.3"
 sphinx = ">=6.0.1"
 sphinx-autobuild = ">=2021.3.14"
@@ -68,10 +64,25 @@ source = ["network_nlo_eval", "tests"]
 show_missing = true
 fail_under = 100
 
-[tool.isort]
-profile = "black"
-force_single_line = true
-lines_after_imports = 2
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",  # flake8 基础
+    "B",            # flake8-bugbear
+    "I",            # isort
+    "UP",           # pyupgrade
+    "D",            # pydocstyle (替代 flake8-docstrings)
+    "S",            # flake8-bandit
+]
+ignore = [
+    "D100", "D104"  # 根据需要忽略某些过于严格的文档要求
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"  # 或 "numpy"，取决于你的文档风格
 
 [tool.mypy]
 strict = true
