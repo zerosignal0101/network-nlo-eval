@@ -1,0 +1,16 @@
+{
+  "_checkout": "2022.6.3",
+  "_output_dir": "D:\\C-Codes\\Optical-Networks\\network-nlo-eval",
+  "_repo_dir": "C:\\Users\\zsig\\.cookiecutters\\cookiecutter-hypermodern-python",
+  "_template": "gh:cjolowicz/cookiecutter-hypermodern-python",
+  "author": "Xiangrong Li",
+  "copyright_year": "2026",
+  "development_status": "Development Status :: 3 - Alpha",
+  "email": "zerosignal0101@proton.me",
+  "friendly_name": "Network NLO Eval",
+  "github_user": "zerosignal0101",
+  "license": "GPL-3.0",
+  "package_name": "network_nlo_eval",
+  "project_name": "network-nlo-eval",
+  "version": "0.1.0"
+}
