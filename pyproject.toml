@@ -85,7 +85,7 @@ ignore = [
 "tests/*.py" = ["S101"]  # 允许测试中使用 assert
 
 [tool.ruff.lint.pydocstyle]
-convention = "google"  # 或 "numpy"，取决于你的文档风格
+convention = "numpy"
 
 [tool.mypy]
 strict = true
