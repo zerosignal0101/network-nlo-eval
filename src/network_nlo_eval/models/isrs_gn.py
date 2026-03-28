@@ -109,7 +109,8 @@ class MultiBandISRSGN:
 
         # 相对频率 (Hz)，用于 NLI/SRS 计算
         self.f_rel_hz = self.f_abs_hz - self.grid.center_frequency_hz
-        self.f_m_hz, self.f_M_hz = self.f_rel_hz[0], self.f_rel_hz[-1]
+        self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
+        self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
 
     def _calc_span_noise_and_power(
         self,

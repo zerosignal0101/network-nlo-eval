@@ -177,28 +177,35 @@ def _calc_raman_profile_jit(
     -------
         NDArrayFloat: 每个信道的拉曼功率转移系数 r_f。
     """
-    B_t = f_M_hz - f_m_hz  # WDM 总带宽
+    B_t = f_M_hz - f_m_hz
     r_f = np.zeros_like(f_rel_hz)
 
-    # 防止除零
-    if B_t <= 0:
-        return r_f
+    # 提前计算系数
+    p_per_b = p_total_w / B_t if B_t > 0 else 0.0
 
-    for i in prange(len(f_rel_hz)):
+    for i in range(len(f_rel_hz)):
         fi = f_rel_hz[i]
 
-        # Case 1: 信道完全包含在总带宽内
-        if (fi - delta_f_co_hz >= f_m_hz) and (fi + delta_f_co_hz <= f_M_hz):
+        # 定义判断条件
+        case1 = (fi - delta_f_co_hz <= f_m_hz) and (fi + delta_f_co_hz >= f_M_hz)
+        case2 = (fi - delta_f_co_hz >= f_m_hz) and (fi + delta_f_co_hz <= f_M_hz)
+        case3 = (fi - delta_f_co_hz < f_m_hz) and (fi + delta_f_co_hz < f_M_hz)
+        case4 = (fi - delta_f_co_hz > f_m_hz) and (fi + delta_f_co_hz > f_M_hz)
+
+        # 优先级顺序至关重要
+        if case1:
             r_f[i] = p_total_w * fi
-        # Case 2: 信道低于总带宽，部分被包含
-        elif (fi + delta_f_co_hz < f_M_hz) and (fi - delta_f_co_hz < f_m_hz):
-            r_f[i] = (p_total_w / B_t) * (0.5 * fi**2 - fi * f_m_hz + 0.5 * (f_M_hz**2 - delta_f_co_hz**2))
-        # Case 3: 信道高于总带宽，部分被包含
-        elif (fi - delta_f_co_hz > f_m_hz) and (fi + delta_f_co_hz > f_M_hz):
-            r_f[i] = (p_total_w / B_t) * (f_M_hz * fi - 0.5 * fi**2 - 0.5 * (f_m_hz**2 - delta_f_co_hz**2))
-        # Case 4: 信道横跨整个带宽 (或带宽极小，整个信道被视为一个点)
-        else:  # (fi - delta_f_co <= f_m_hz) and (fi + delta_f_co >= f_M_hz) 或其他边缘情况
-            r_f[i] = p_total_w * fi  # 简化处理，近似为 Case 1
+        elif case2:
+            r_f[i] = 0.0
+        elif case3:
+            # Paper Case ③: (Pt/Bt) * (f^2/2 - f*fm + (fM^2 - delta_f_co^2)/2)
+            r_f[i] = p_per_b * (0.5 * fi**2 - fi * f_m_hz + 0.5 * (f_M_hz**2 - delta_f_co_hz**2))
+        elif case4:
+            # Paper Case ④: (Pt/Bt) * (fM*f - f^2/2 - (fm^2 - delta_f_co^2)/2)
+            r_f[i] = p_per_b * (f_M_hz * fi - 0.5 * fi**2 - 0.5 * (f_m_hz**2 - delta_f_co_hz**2))
+        else:
+            # 默认回退到线性
+            r_f[i] = p_total_w * fi
 
     return r_f
 
