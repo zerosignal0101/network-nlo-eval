@@ -122,9 +122,11 @@ class QoTValidator:
         # 沿路径累积噪声
         num_spans_in_path = len(path) - 1
 
-        # 初始化总噪声 PSD (W/Hz)
-        # 每个信道的总噪声 PSD
-        total_accumulated_noise_psd = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        # 初始化总噪声 (W)
+        # 每个信道的总噪声
+        total_spm_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_xpm_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_ase_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
 
         # 假设每个 EDFA 完美补偿了跨段损耗，所以信号功率保持在 service_request.launch_power_w
         # 用于计算 SNR 的信号功率
@@ -135,14 +137,14 @@ class QoTValidator:
         path_link_power_profiles: dict[LinkKey, NDArrayFloat] = {}
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
-            link_key = tuple(sorted((u, v)))
+            link_key = LinkKey(sorted((u, v)))
             link_state = temp_network_state.get_link_state(u, v)
             path_link_power_profiles[link_key] = link_state.launch_power_profile_w.copy()  # 确保是拷贝
 
         for i in range(num_spans_in_path):
             u_node_idx = path[i]
             v_node_idx = path[i + 1]
-            link_key = tuple(sorted((u_node_idx, v_node_idx)))
+            link_key = LinkKey(sorted((u_node_idx, v_node_idx)))
 
             fiber_config = self.network_topology.get_fiber_config(u_node_idx, v_node_idx)
             edfa_config = self.network_topology.get_edfa_config(u_node_idx)
@@ -151,30 +153,41 @@ class QoTValidator:
             # 获取该链路上所有信道的当前功率分布，这用于计算 XPM 贡献
             current_power_profile_on_link = path_link_power_profiles[link_key]
 
-            # 计算单跨段的 NLI 和 ASE 噪声 PSD
+            # 计算单跨段的 NLI 和 ASE 噪声方差
             # _ 代表该跨段的出纤功率，我们不直接使用它来累积 SNR
-            _, span_nli_psd_all_channels, span_ase_psd_all_channels = self.gn_evaluator._calc_span_noise_and_power(
-                current_power_profile_on_link,
-                fiber_config.length_km * 1000,
-                edfa_config,
-                roadm_config,
-                n_effective_spans=1,  # 单个跨段计算
+            _, span_spm_w_all_channels, span_xpm_w_all_channels, span_ase_w_all_channels = (
+                self.gn_evaluator._calc_span_noise_and_power(
+                    current_power_profile_on_link,
+                    fiber_config.length_km * 1000,
+                    edfa_config,
+                    roadm_config,
+                    n_effective_spans=1,  # 单个跨段计算
+                )
             )
 
-            # 累加所有信道的噪声 PSD
-            total_accumulated_noise_psd += span_nli_psd_all_channels + span_ase_psd_all_channels
+            # 累加所有信道的噪声方差
+            total_spm_power_w += span_spm_w_all_channels
+            total_xpm_power_w += span_xpm_w_all_channels
+            total_ase_power_w += span_ase_w_all_channels
+
+        # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
+        epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子
+        if num_spans_in_path > 0:
+            spm_coherent_penalty = float(num_spans_in_path) ** epsilon
+        else:
+            spm_coherent_penalty = 1.0
+
+        # 计算总噪声功率
+        total_noise_power_w = total_spm_power_w * spm_coherent_penalty + total_xpm_power_w + total_ase_power_w
 
         # 计算所有信道的最终 SNR (dB)
         final_snrs_linear = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         final_snrs_db = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
 
-        # 噪声功率 = 噪声 PSD * 符号速率
-        total_noise_power_per_channel = total_accumulated_noise_psd * self.gn_evaluator.symbol_rate_hz
-
         for ch_idx in range(self.spectrum_grid.num_channels):
             # 只有有信号的信道才有 SNR 概念
-            if current_power_profile_on_link[ch_idx] > 0 and total_noise_power_per_channel[ch_idx] > 0:
-                final_snrs_linear[ch_idx] = signal_power_for_snr / total_noise_power_per_channel[ch_idx]
+            if current_power_profile_on_link[ch_idx] > 0 and total_noise_power_w[ch_idx] > 0:
+                final_snrs_linear[ch_idx] = signal_power_for_snr / total_noise_power_w[ch_idx]
                 final_snrs_db[ch_idx] = _lin_to_db(final_snrs_linear[ch_idx])
             else:
                 final_snrs_db[ch_idx] = -np.inf  # 无信号或无噪声，视为无限 SNR，但为了比较方便设为极小值

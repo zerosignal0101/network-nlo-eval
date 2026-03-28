@@ -63,7 +63,7 @@ class MultiBandISRSGN:
         self.symbol_rate_hz = symbol_rate_hz
         self.cr_w_m_hz = _SRS_CR  # 拉曼增益系数
         self.k_bar = 0.0  # 拉曼泵浦因子，简化为 0 (无泵浦)
-        self.delta_f_co_hz = symbol_rate_hz  # 共信道带宽，简化为符号速率
+        self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
 
         self._precompute_channel_dependent_properties()
@@ -118,7 +118,7 @@ class MultiBandISRSGN:
         edfa_config: EDFAConfig,  # EDFA 配置
         roadm_config: ROADMConfig | None = None,  # ROADM 配置 (可选)
         n_effective_spans: int = 1,  # 对于单个跨段，这通常是 1
-    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
         """计算单跨段的功率演化、NLI 噪声和 ASE 噪声。
 
         Args:
@@ -132,8 +132,9 @@ class MultiBandISRSGN:
         -------
             Tuple 包含:
             - power_out_w: 经历损耗、SRS 和放大后的出纤功率。
-            - sigma2_nli_psd: 产生的 NLI 噪声功率谱密度 (W/Hz)。
-            - sigma2_ase_psd: 产生的 ASE 噪声功率谱密度 (W/Hz)。
+            - sigma2_spm_w: 产生的 SPM 噪声方差 (W)。
+            - sigma2_xpm_w: 产生的 XPM 噪声方差 (W)。
+            - sigma2_ase_w: 产生的 ASE 噪声方差 (W)。
         """
         # 1. 计算有效长度 L_eff (考虑损耗)
         l_eff_m = (1 - np.exp(-self.alpha_power_npm_channels * span_length_m)) / self.alpha_power_npm_channels
@@ -143,7 +144,7 @@ class MultiBandISRSGN:
         r_f_values = _calc_raman_profile_jit(self.f_rel_hz, self.f_m_hz, self.f_M_hz, self.delta_f_co_hz, total_p_in_w)
 
         # 3. 计算有效衰减因子 T_i (用于 NLI 模型)
-        # T_i = (2 * alpha_i - C_r * r_f_i)^2 (用户原始代码)
+        # T_i = (2 * alpha_i - C_r * r_f_i)^2
         t_factors = (2 * self.alpha_power_npm_channels - self.cr_w_m_hz * r_f_values) ** 2
 
         # 4. 计算经历光纤传播 (衰减 + SRS 倾斜) 后的功率
@@ -157,7 +158,7 @@ class MultiBandISRSGN:
         )
 
         # 5. 计算 NLI 噪声 (SPM 和 XPM)
-        sigma2_spm_psd, sigma2_xpm_psd = _compute_nli_variances(
+        sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
             self.grid.num_channels,
             n_effective_spans,
             self.symbol_rate_hz,
@@ -175,7 +176,6 @@ class MultiBandISRSGN:
             self.cr_w_m_hz,
             self.k_bar,
         )
-        sigma2_nli_psd = sigma2_spm_psd + sigma2_xpm_psd
 
         # 6. 计算 ASE 噪声
         # EDFA 增益应补偿跨段损耗 + ROADM 损耗
@@ -186,9 +186,9 @@ class MultiBandISRSGN:
         # - _lin_to_db(np.sum(p_out_after_fiber[p_out_after_fiber > 0]))
         # edfa_gain_db = edfa_config.target_gain_db if edfa_config else 0.0 # 假设 EDFA 有固定的目标增益
 
-        # 简化 ASE：每个放大器引入的 ASE = NF * h * f * B_ch
-        # 这里返回的是功率谱密度 (W/Hz)，所以不乘符号速率
-        sigma2_ase_psd = _calculate_ase_noise_variance(
+        # 简化 ASE：每个放大器引入的 ASE = NF * h * f * G * B_ch
+        # 这里返回的是功率 (W)
+        sigma2_ase_w = _calculate_ase_noise_variance(
             power_in_w,
             p_out_after_fiber,
             self.f_abs_hz,
@@ -203,13 +203,6 @@ class MultiBandISRSGN:
         # 如果 EDFA 增益补偿了光纤损耗 (并考虑 ROADM 损耗)，那么 P_out 应该回到 P_in 的水平
         # 严格来说，EDFA 应该补偿光纤损耗。
 
-        # Simplification: Assume EDFA compensates for fiber loss
-        # The output power of the span (after EDFA and ROADM)
-        # P_out = P_in_w (after compensating loss)
-        # Here we just pass the original P_in_w for simplicity
-        # This means the EDFA perfectly compensates the span loss *and* SRS tilt
-        # For a truly accurate power profile, p_out_after_fiber needs to be amplified.
-
         # 为了简化，假设 EDFA 完美补偿了该跨段的光纤损耗和 ROADM 损耗，使功率回到额定发射功率水平。
         # 这样在 QoT 验证器中，可以简单地使用传入的 `launch_power_w` 作为每段的输入功率。
         # 但这里仍应计算实际出纤功率以供参考。
@@ -223,11 +216,11 @@ class MultiBandISRSGN:
 
         # 为了 RWA 链路评估的实用性，p_out_w 应该是每个 EDFA 后的 *有效* 输出功率
         # 我们可以假设 EDFA 的增益等于光纤损耗 + ROADM 损耗，从而使得每个跨段的有效功率保持恒定。
-        # 这样，所有 NLI 和 ASE 噪声 PSD 都会被累加。
+        # 这样，所有 NLI 和 ASE 噪声都会被累加。
 
         # 为了简单，这里直接返回衰减和 SRS 后的功率，EDFA 增益在网络层面统一处理。
         # 返回的功率是经过光纤链路但 *未* 经过放大器/ROADM 的功率
-        return p_out_after_fiber, sigma2_nli_psd, sigma2_ase_psd
+        return p_out_after_fiber, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w
 
     def evaluate_path_snr(
         self,
@@ -253,19 +246,20 @@ class MultiBandISRSGN:
         -------
             Tuple[float, NDArrayFloat]:
             - accumulated_snr_db: 累积的端到端 SNR (dB)。
-            - total_noise_psd_per_span: 每个跨段的累积噪声 PSD (W/Hz)。
+            - total_noise_power: 每个跨段的累积噪声方差 (W)。
         """
         num_spans_in_path = len(path) - 1
 
-        total_nli_psd = 0.0
-        total_ase_psd = 0.0
+        total_spm_power_w = 0.0
+        total_xpm_power_w = 0.0
+        total_ase_power_w = 0.0
 
         # 理论上，ISRS-GN 模型计算的是每个 span 的 NLI 和 ASE，然后在线性域累加。
         # 1/SNR_total = SUM(1/SNR_span_i)
 
         # 为了简化，我们假设每个跨段后的 EDFA 完美补偿了该跨段的损耗 (包括 ROADM 损耗)，
         # 使得每个跨段的输入功率可以视为恒定为 launch_power_w。
-        # 这样 NLI 和 ASE 噪声 PSD 可以直接累加。
+        # 这样 NLI 和 ASE 噪声方差可以直接累加。
 
         for i in range(num_spans_in_path):
             u_node_idx = path[i]
@@ -281,9 +275,9 @@ class MultiBandISRSGN:
             # current_network_state 已经是深拷贝后的临时状态
             power_profile_on_link = current_network_state[link_key]
 
-            # 计算单跨段的 NLI 和 ASE 噪声 PSD
+            # 计算单跨段的 NLI 和 ASE 噪声方差
             # 这里的 power_in_w 应该是该链路的发射功率分布
-            _, span_nli_psd, span_ase_psd = self._calc_span_noise_and_power(
+            _, span_spm_power_w, span_xpm_power_w, span_ase_power_w = self._calc_span_noise_and_power(
                 power_profile_on_link,
                 fiber_config.length_km * 1000,
                 edfa_config,
@@ -291,26 +285,27 @@ class MultiBandISRSGN:
                 n_effective_spans=1,  # 单个跨段计算
             )
 
-            # 累加噪声 PSD (在线性域累加)
-            total_nli_psd += span_nli_psd[channel_idx]
-            total_ase_psd += span_ase_psd[channel_idx]
+            total_spm_power_w += span_spm_power_w[channel_idx]
+            total_xpm_power_w += span_xpm_power_w[channel_idx]
+            total_ase_power_w += span_ase_power_w[channel_idx]
 
-        # 计算总噪声 PSD
-        total_noise_psd = total_nli_psd + total_ase_psd
+        # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
+        epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子
+        if num_spans_in_path > 0:
+            spm_coherent_penalty = float(num_spans_in_path) ** epsilon
+        else:
+            spm_coherent_penalty = 1.0
+
+        # 计算总噪声功率
+        total_noise_power_w = total_spm_power_w * spm_coherent_penalty + total_xpm_power_w + total_ase_power_w
 
         # 信号功率：由于我们假设 EDFA 完美补偿，每个跨段的信号功率保持为 launch_power_w
         # 但噪声是累积的。所以信号功率应是 launch_power_w
-        # SNR = P_signal / (N_NLI * Rs + N_ASE * Rs)
-        # PSD = Noise Power / Bandwidth, so Noise Power = PSD * Bandwidth (symbol_rate_hz)
-
-        # SNR = P_signal / (Total_Noise_PSD * Rs_hz)
-        # 注意 NLI 和 ASE PSD 都是 W/Hz，所以总噪声功率是 PSD * symbol_rate_hz
-        total_noise_power = total_noise_psd * self.symbol_rate_hz
-
-        if total_noise_power <= 0:
+        # SNR = P_signal / (N_NLI + N_ASE)
+        if total_noise_power_w <= 0:
             accumulated_snr_db = np.inf
         else:
-            accumulated_snr_linear = launch_power_w / total_noise_power
+            accumulated_snr_linear = launch_power_w / total_noise_power_w
             accumulated_snr_db = _lin_to_db(accumulated_snr_linear)
 
-        return accumulated_snr_db, (total_nli_psd + total_ase_psd)
+        return accumulated_snr_db, total_noise_power_w

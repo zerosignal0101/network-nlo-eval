@@ -114,8 +114,7 @@ def _calc_gamma_coeff_scalar(
     Returns:
         float: 非线性系数 Gamma (1/(W*m))。
     """
-    # 这里的平均 A_eff (A_eff_i + A_eff_l) / 2 是一个常见的简化
-    return (2 * PI / ((lambda_i_m + lambda_l_m) / 2)) * (n2 / ((a_eff_i_m2 + a_eff_l_m2) / 2))
+    return (2 * PI / lambda_i_m) * (2 * n2 / (a_eff_i_m2 + a_eff_l_m2))
 
 
 @njit(cache=True)
@@ -128,7 +127,7 @@ def _calc_beta2_from_d(d_ps_nm_km: float, lambda_m: float) -> float:
     Returns:
         float: beta2 (s^2/m)。
     """
-    return -d_ps_nm_km * 1e-12 * lambda_m**2 / (2 * PI * C_LIGHT)
+    return -d_ps_nm_km * 1e-6 * lambda_m**2 / (2 * PI * C_LIGHT)
 
 
 @njit(cache=True)
@@ -143,7 +142,7 @@ def _calc_beta3_from_s_d(s_ps_nm2_km: float, d_ps_nm_km: float, lambda_m: float)
         float: beta3 (s^3/m)。
     """
     return (lambda_m**2 / (2 * PI * C_LIGHT) ** 2) * (
-        lambda_m**2 * s_ps_nm2_km * 1e-27 + 2 * lambda_m * d_ps_nm_km * 1e-12
+        lambda_m**2 * s_ps_nm2_km * 1e3 + 2 * lambda_m * d_ps_nm_km * 1e-6
     )
 
 
@@ -211,6 +210,7 @@ def _calc_span_out_power_jit(
     alpha_power_npm: NDArrayFloat,  # 各信道功率衰减系数 (Np/m)
     length_m: float,  # 跨段长度 (m)
     r_f: NDArrayFloat,  # 拉曼功率转移系数
+    k_bar: float = 0.0,  # 泵浦系数
 ) -> NDArrayFloat:
     """计算经历 SRS 倾斜和光纤损耗后的各信道出纤功率。
 
@@ -221,152 +221,27 @@ def _calc_span_out_power_jit(
         alpha_power_npm: 各信道功率衰减系数 (Np/m)。
         length_m: 跨段长度 (m)。
         r_f: 拉曼功率转移系数。
+        k_bar: 泵浦系数
     Returns:
         NDArrayFloat: 各信道出纤功率 (W)。
     """
     p_total_in = np.sum(p_in_w)
     N_ch = len(p_in_w)
-
-    # 忽略系数 k_bar 的简化版本，假设 k_bar = 0 (无泵浦)
-    # L_eff = (1 - exp(-alpha * L)) / alpha
-    # P_out_i = P_in_i * exp(-alpha_i * L) * (P_total_in / Sum_j(P_in_j * exp(Cr * L_eff_j * (r_f_i - r_f_j))))
-    # 上面公式复杂，这里使用 Ref [1] Eq (14) 的更简单形式
-
-    # 等效衰减系数 (包含 SRS 贡献)
-    # Ref [1] Eq. (14) 是一个递归/迭代解，这里尝试一个简化近似
-    # P_out = P_in * exp(-alpha*L - Cr * L_eff * (r_f_center - r_f_channel))
-    # 更直接的简化，Ref [1] Eq (14) 的核心思想是 P_out_i / P_total_out = P_in_i / P_total_in * Exp(...)
-
-    # 采用更接近 Ref. [1] Eq (11) 的形式 (但需要迭代求解，这里是简化版)
-    # P_out_i = P_in_i * exp(-alpha_i * L - C_r * L_eff_i * (r_f_i - r_f_avg))
-    # 对于单跨段计算，一个常用的简化是在损耗和 SRS 效应下直接计算功率变化
-
-    # 使用用户提供的更直接的简化，但需确保其物理依据
-    # 原始用户代码中的 calc_span_out_power_jit 实际上更像是一个 SRS 校正因子
-    # P_out[i] = P_in[i] * np.exp(- (1 - k_bar) * C_r * L_eff * r_f - alpha * L) * P_t
-    # 这不是 Ref [1] 的直接形式，但可以理解为一种 SRS 近似下的功率分配
-    # 让我们用一个更标准的分步衰减+SRS更新功率谱
-
-    # 简化：首先进行衰减，然后根据 SRS 效应进行功率再分配
-    # L_eff 是有效长度，对于 SRS 也是关键参数
     L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm
-
-    # SRS 引起的等效衰减 (或增益)
-    # SRS 能量从高频转移到低频 (即 f_rel > 0 的信道功率减小，f_rel < 0 的信道功率增加)
-    # Cr 定义为 [1/(W·m·Hz)]，r_f 定义为 W·Hz
-    # C_r * L_eff_j * r_f_j 这一项是总的拉曼相互作用
-
-    # 核心：计算每个信道因衰减和 SRS 导致的功率变化
-    # SRS 增益/损耗项，k_bar 通常是 0 (无拉曼泵浦)
-    # P_out_i = P_in_i * exp(-alpha_i * L - (1-k_bar)*C_r * L_eff_i * r_f_i) * P_total_in
-    # / SUM(P_in_j * exp(- (1-k_bar)*C_r * L_eff_j * r_f_j))
-    # 这个是原始用户代码的 SRS 功率分配，现在直接采用
-
-    P_out = np.zeros_like(p_in_w)
-
-    # 仅对有功率的信道进行计算
-    active_channels_mask = p_in_w > 0
-    if not np.any(active_channels_mask):
-        return P_out  # 没有活动信道，直接返回 0
-
-    # 仅对活动信道进行操作以避免除零和不必要的计算
-    active_p_in = p_in_w[active_channels_mask]
-    active_alpha = alpha_power_npm[active_channels_mask]
-    active_L_eff = L_eff_array[active_channels_mask]
-    active_r_f = r_f[active_channels_mask]
-
-    # k_bar 简化为 0，因为通常是无泵浦
-    k_bar = 0.0
-
-    # numerator_term_exp = np.exp(- (1 - k_bar) * _SRS_CR * active_L_eff * active_r_f - active_alpha * length_m)
-    # numerator = active_p_in * numerator_term_exp
-    # # denominator_sum = np.sum(active_p_in * np.exp(- (1 - k_bar) * _SRS_CR * active_L_eff * active_r_f))
-    # denominator_sum = np.sum(active_p_in * np.exp(- (1 - k_bar) * _SRS_CR * active_L_eff * active_r_f))
-
-    # P_out_i = numerator_i * p_total_in / denominator_sum
-
-    # 重新简化，直接使用
-    # Ref. [2] (Modeling and mitigation of fiber nonlinearity in wideband optical signal transmission)
-    # 中的 Eq (1) 形式，但忽略了分布式拉曼泵浦
-    # dP_i/dz = -alpha_i P_i - Cr * P_i * sum(P_j * (f_j - f_i))
-    # 对于一个跨段，可以近似为 P_out_i = P_in_i * exp(-alpha_i * L - Cr_eff * sum(P_j * (f_j - f_i)) * L_eff)
-    # 这仍然是复杂解，回到用户提供的简化形式
-
-    # 核心：考虑 SRS 功率转移的简化
-    # Power_t_in = np.sum(p_in_w) # 总输入功率
-
-    # P_out = p_in_w * np.exp(-alpha_power_npm * length_m) # 衰减
-    # # 然后根据 r_f 进行 SRS 调整，这里需要一个迭代或更精细的解析
-    # # 由于 r_f 本身就是总功率的函数，这里需要自洽迭代或简化
-
-    # 最终决定使用用户提供的 `calc_span_out_power_jit` 逻辑，
-    # 尽管它可能不是最严格的解析解，但作为简化模型的一部分
-    # 其形式为：P_out_i = (P_in_i * exp(- (1 - k_bar) * C_r * L_eff_i * r_f_i))
-    # / (SUM_j(P_in_j * exp(- (1 - k_bar) * C_r * L_eff_j * r_f_j)) / P_total_in) * exp(-alpha_i * L)
-    # 稍作调整，使其更物理合理，先计算衰减，再进行 SRS 功率再分配
-
-    # Step 1: 仅考虑衰减
-    p_after_attenuation = p_in_w * np.exp(-alpha_power_npm * length_m)
-
-    # Step 2: 考虑 SRS 引起的功率再分配
-    # Ref [1] Eq (14) 的一个简化版本，没有迭代
-    total_power_after_attenuation = np.sum(p_after_attenuation)
-
-    if total_power_after_attenuation <= 0:
-        return np.zeros_like(p_in_w)
-
-    # 这里的 L_eff_array 是基于单个 alpha 的，且 r_f 也是基于总功率的
-    # 这仍是原始代码中的逻辑，假设 r_f 对所有信道和 L_eff 均适用
-
-    # 原始代码的 SRS 功率转移部分：
-    numerator_terms = p_in_w * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array * r_f)
-    denominator_sum = np.sum(numerator_terms)  # 这个分母是所有信道 SRS 影响的加权和
-
-    if denominator_sum <= 0:  # 防止除零，如果所有功率都为零
-        return np.zeros_like(p_in_w)
-
-    # 每个信道的出纤功率 (考虑 SRS 倾斜)
-    # P_out[i] = P_in[i] * exp(-alpha[i]*L) * (numerator_i / denominator_sum) * TotalPower_in
-    # 这种形式在 Ref [1] (Eq. 11 & 14) 中有体现，但通常需要迭代
-    # 这里直接使用近似，即功率在总功率中占比的调整
-    # out_power_ratio_i = (p_in_w[i] * np.exp(- _SRS_CR * L_eff_array[i] * r_f[i]))
-    # / (np.sum(p_in_w * np.exp(- _SRS_CR * L_eff_array * r_f)))
-    # p_out_w = out_power_ratio * total_power_after_attenuation
-
-    # 采用更直观的衰减 + 简单 SRS 功率再平衡
-    # P_out_i = P_in_i * exp(-alpha_i * L - Cr * L_eff_i * r_f_i)
-    # 这里的 r_f_i 实际上是 P_total * f_i，所以是二次方关系
-    # p_out_w = p_in_w * np.exp(-alpha_power_npm * length_m - (1 - k_bar) * _SRS_CR * L_eff_array * r_f)
-
-    # 最终采用最简单的形式，这也是大部分 GNPy 简化模型的做法
-    # 功率衰减和SRS效应的组合处理：先衰减，然后计算有效NLI噪声。
-    # SRS功率倾斜在GN模型中通常通过调整每个信道的有效输入功率或有效长度来实现
-
-    # 最简单的 SRS 修正: P_out_i = P_in_i * exp(-alpha_i * L - g_R * L_eff * (f_i - f_ref))
-    # g_R 是拉曼增益系数斜率, f_ref 是中心频率
-    # 用户原始代码的 calc_span_out_power_jit 更像：
-    # P_out_i = P_in_i * exp(-alpha_i * L) * (P_total / SUM_j(P_in_j * exp(Cr_j * L_eff_j * r_f_j)))
-    # * exp(- (1 - k_bar) * Cr_i * L_eff_i * r_f_i)
-    # 由于原始用户代码已经在 `isrs_gn_numba.py` 模块中，我们将直接移植过来，但明确其简化性。
-
-    # 移植用户原始的 calc_span_out_power_jit 逻辑
-    sum_exp_term_in = np.sum(p_in_w * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array * r_f))
-
-    if sum_exp_term_in <= 0:
-        return np.zeros_like(p_in_w)
-
     p_out_w = np.zeros_like(p_in_w)
+
     for i in prange(N_ch):
-        if p_in_w[i] > 0:  # 仅对有功率的信道进行计算
-            # 原始公式：P_out[i] = P_in[i] * np.exp(- (1 - k_bar) * C_r * L_eff * r_f - alpha * L) * P_t / denom_i
-            # 这里分母是 sum_exp_term_in
-            # P_t 是总功率，这里是 p_total_in
-            p_out_w[i] = (
-                p_in_w[i]
-                * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)
-                * p_total_in
-                / sum_exp_term_in
-            )
+        if p_in_w[i] > 0:
+            # 使用的是 L_eff_array[i] 标量与 r_f 数组相乘
+            denom_i = np.sum(p_in_w * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f))
+            if denom_i > 0:
+                p_out_w[i] = (
+                    p_in_w[i]
+                    * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)
+                    * p_total_in
+                    / denom_i
+                )
+
     return p_out_w
 
 
@@ -647,65 +522,15 @@ def _calculate_ase_noise_variance(
         rs_hz: 符号速率 (Hz)。
         n_span: 跨段数量。
     Returns:
-        NDArrayFloat: 每个信道的 ASE 噪声方差 (W/Hz)。
+        NDArrayFloat: 每个信道的 ASE 噪声方差 (W)。
     """
-    # G_amp = P_in / P_out # 增益通常是 P_out / P_in，这里 P_in/P_out 可能是某个衰减因子
-    # 实际 EDFA 增益应由目标增益或补偿损耗决定
-    # 简化：假设每个 EDFA 补偿了跨段损耗，并具有 nf_lin 噪声系数
-    # ASE_noise = N_span * n_sp * h * f * (G-1) * B_ch
-    # 或简化为 N_span * n_sp * h * f * G * B_ch (当 G 远大于 1)
-
-    # 这里的 p_out_w 是链路衰减 + SRS 后的功率，P_in_w 是链路前的功率
-    # G_amp_lin = P_in_w / p_out_w (这是一个衰减因子，不是放大器增益)
-    # 放大器增益应该补偿跨段损耗。如果每个跨段损耗 L_span_db，则增益 G_db = L_span_db
-    # 这里的 gn_evaluator.py 中，P_in 和 P_out 是单跨段前后功率，因此可以计算单跨段损耗
-
-    # 假设放大器增益刚好补偿光纤损耗 (P_in / P_out)
-    # 增益 = P_in_w / p_out_w (这里 p_out 是经过衰减和 SRS 后的，所以这个增益是 'effective' gain)
-    # 或者用更简单的假设：每个放大器具有固定的增益和噪声系数
-
-    # 采用用户原始代码中的逻辑：
-    # G_amp = P_in / P_out (这是衰减因子，不是放大器增益)
-    # sigma_ASE_2 = H_PLANCK * f_abs * NF_lin * Rs * G_amp * N_span
-    # 这种形式意味着 ASE 噪声与衰减量成正比，且与 P_in 成正比
-    # 实际中，ASE 噪声通常是与放大器增益 G 成正比，G ~= exp(alpha*L)
-
-    # 修改为更标准的 ASE 噪声公式：
-    # ASE_i = N_span * H_PLANCK * f_abs_i * NF_lin_i * B_ch
-    # 这里 B_ch 简化为 Rs_hz
-
-    # 如果 p_out_w 是经过光纤损耗后的功率，那么放大器增益 G = P_in_launch / P_out_after_fiber
-    # 简化：假设 EDFA 增益 G = 10^(span_loss_db / 10)，且噪声因子 NF_lin 是线性
-    # 每个跨段的 ASE 噪声方差 (W/Hz) = n_sp * h * f * (G - 1)
-    # 对于 N_span 个跨段，总 ASE = N_span * n_sp * h * f * (G - 1)
-    # 其中 n_sp = NF_lin / 2 (理想EDFA n_sp=1)
-
-    # 这里的 NF_lin 已经是噪声系数 (n_sp)
-    # _calculate_ase_noise_variance 返回的是总的 ASE 噪声方差 (W/Hz)
-
-    # p_in_w 和 p_out_w 在 Numba kernel 里用于计算有效增益
-    # 如果 p_in_w[i] 或 p_out_w[i] 为 0，增益是无效的，噪声也为 0
-
-    # Modified from user's original implementation to be more physically consistent:
-    # Assuming gain compensates span loss for channels that are 'on'
-    # G_i = p_in_w[i] / p_out_w[i] (This is actually the attenuation of the span)
-    # This implies that the amplifier gain is G_i.
-    # So, ASE_i = N_span * H_PLANCK * f_abs_hz[i] * NF_lin[i] * Rs_hz * G_i
-
     total_ase_variance = np.zeros(len(p_in_w), dtype=np.float64)
     for i in prange(len(p_in_w)):
         if p_in_w[i] > 0 and p_out_w[i] > 0:  # 只有有功率的信道才产生 ASE 噪声
-            # 计算单跨段增益 (假设 EDFA 补偿损耗，G = P_in_launch / P_out_fiber)
-            # 这里的 p_in_w, p_out_w 已经是总的输入/输出功率，而非每瓦特功率
-            # 所以 G_amp_i 应该是 EDFA 提供的增益
-            # 如果每个 EDFA 补偿跨段损耗，则 EDFA 的增益是 (P_in_launch_after_EDFA) / P_out_after_fiber_span
+            # 计算单跨段增益 (假设 EDFA 补偿损耗)
+            G_i = p_in_w[i] / p_out_w[i]
 
-            # 使用更标准的简化：ASE噪声功率谱密度 (PSD) = N_span * n_sp * h * f
-            # n_sp = NF_lin
-            # 则总的 ASE 噪声方差 (W) = N_span * NF_lin * H_PLANCK * f_abs * Rs_hz
-            # 这里是返回 W/Hz，所以不需要乘 Rs_hz
+            total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * G_i * rs_hz
+            # print(f"Channel {i} ASE variance: {total_ase_variance[i]:.2e}")
 
-            total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i]
-            # print(f"Channel {i} ASE PSD: {total_ase_variance[i]:.2e}")
-
-    return total_ase_variance  # 返回 PSD (W/Hz)
+    return total_ase_variance  # 返回方差 (W)
