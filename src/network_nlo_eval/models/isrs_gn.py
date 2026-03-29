@@ -256,8 +256,6 @@ class MultiBandISRSGN:
         total_ase_power_w = 0.0
 
         # 理论上，ISRS-GN 模型计算的是每个 span 的 NLI 和 ASE，然后在线性域累加。
-        # 1/SNR_total = SUM(1/SNR_span_i)
-
         # 为了简化，我们假设每个跨段后的 EDFA 完美补偿了该跨段的损耗 (包括 ROADM 损耗)，
         # 使得每个跨段的输入功率可以视为恒定为 launch_power_w。
         # 这样 NLI 和 ASE 噪声方差可以直接累加。

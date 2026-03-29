@@ -237,7 +237,7 @@ def _calc_span_out_power_jit(
     L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm
     p_out_w = np.zeros_like(p_in_w)
 
-    for i in prange(N_ch):
+    for i in range(N_ch):
         if p_in_w[i] > 0:
             # 使用的是 L_eff_array[i] 标量与 r_f 数组相乘
             denom_i = np.sum(p_in_w * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f))
@@ -496,7 +496,7 @@ def _calc_nf_lin_jit(lambdas_m: NDArrayFloat) -> NDArrayFloat:
     """
     N_ch = len(lambdas_m)
     nf_lin = np.zeros(N_ch, dtype=np.float64)
-    for i in prange(N_ch):
+    for i in range(N_ch):
         wavel_nm = lambdas_m[i] * 1e9
         if wavel_nm < 1460:  # E-band
             nf_lin[i] = _db_to_lin(6.0)
@@ -532,7 +532,7 @@ def _calculate_ase_noise_variance(
         NDArrayFloat: 每个信道的 ASE 噪声方差 (W)。
     """
     total_ase_variance = np.zeros(len(p_in_w), dtype=np.float64)
-    for i in prange(len(p_in_w)):
+    for i in range(len(p_in_w)):
         if p_in_w[i] > 0 and p_out_w[i] > 0:  # 只有有功率的信道才产生 ASE 噪声
             # 计算单跨段增益 (假设 EDFA 补偿损耗)
             G_i = p_in_w[i] / p_out_w[i]
