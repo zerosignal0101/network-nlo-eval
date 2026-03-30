@@ -104,13 +104,13 @@ def generate_services(
 
         # 根据比特率定义 SNR 需求 (示例)
         if bit_rate_gbps > 400:
-            snr_requirement_db = 26.5  # 高比特率需要高SNR
+            snr_requirement_db = 22.0  # 高比特率需要高SNR
         elif bit_rate_gbps > 300:
-            snr_requirement_db = 23.5
+            snr_requirement_db = 18.5
         elif bit_rate_gbps > 200:
-            snr_requirement_db = 20.0
+            snr_requirement_db = 14.5
         else:
-            snr_requirement_db = 17.0  # 低比特率需要较低SNR
+            snr_requirement_db = 10.5  # 低比特率需要较低SNR
 
         # 转换为 dBm，这里为了简化，所有服务初始功率相同，实际中可根据业务类型调整
         launch_power_w = 1e-3  # 0 dBm

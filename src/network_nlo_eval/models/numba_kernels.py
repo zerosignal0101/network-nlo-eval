@@ -4,7 +4,7 @@
 """
 
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 from network_nlo_eval.core.constants import C_LIGHT, H_PLANCK, NP_TO_DB, PI
 from network_nlo_eval.core.types import NDArrayFloat
@@ -369,7 +369,7 @@ def _calc_xpm_variance_term_jit(
     return max(result, 0.0)  # 噪声方差不能为负
 
 
-@njit(parallel=True, cache=True)  # 开启 parallel=True 进一步利用多核加速外层循环
+@njit(cache=True)  # 不使用细粒度多线程
 def _compute_nli_variances(
     n_ch: int,  # 信道总数
     n_span: int,  # 跨段数量
@@ -417,8 +417,8 @@ def _compute_nli_variances(
     sigma_spm_2 = np.zeros(n_ch, dtype=np.float64)
     sigma_xpm_2 = np.zeros(n_ch, dtype=np.float64)
 
-    # prange 允许 Numba 将外层信道循环分布到 CPU 的多个核心上
-    for i in prange(n_ch):
+    # 外层信道循环
+    for i in range(n_ch):
         if p_in_w[i] <= 0:  # 如果信道无功率，则不计算 NLI
             continue
 
