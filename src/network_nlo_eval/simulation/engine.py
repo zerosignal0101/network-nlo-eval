@@ -73,11 +73,10 @@ class SimulatorEngine:
                 event = heapq.heappop(self.event_queue)
                 self.current_time = event.time
 
-                # 更新进度条，每个事件处理一次
-                pbar.update(1)
-
                 if event.event_type == "ARRIVAL":
                     self._handle_arrival(event)
+                    # 更新进度条，到达事件处理一次
+                    pbar.update(1)
                 elif event.event_type == "DEPARTURE":
                     self._handle_departure(event)
                 # 其他事件类型可在此扩展
