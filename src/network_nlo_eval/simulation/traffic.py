@@ -1,40 +1,42 @@
 """业务请求生成器与数据模型."""
 
 import random
+from dataclasses import dataclass
 
 import numpy as np
-from pydantic import BaseModel, Field
 
 from network_nlo_eval.core.types import NodeID
 from network_nlo_eval.rwa.path_computation import PathCache
 
 
-class ServiceRequest(BaseModel):
+@dataclass(slots=True)
+class ServiceRequest:
     """网络业务请求的数据模型。
 
     这是一个不可变的数据结构，代表了一个待处理或正在处理的业务。
     """
 
-    service_id: int = Field(..., description="业务的唯一ID")
-    source_id: NodeID = Field(..., description="源节点ID (内部ID)")
-    destination_id: NodeID = Field(..., description="目的节点ID (内部ID)")
-    arrival_time: float = Field(..., description="业务到达时间 (仿真时间单位)")
-    departure_time: float = Field(..., description="业务离开时间 (仿真时间单位)")
-    bit_rate_gbps: float = Field(..., description="业务所需比特率 (Gbps)")
-    snr_requirement_db: float = Field(..., description="业务所需的最小 SNR (dB)")
+    service_id: int  # Field(..., description="业务的唯一ID")
+    source_id: NodeID  # Field(..., description="源节点ID (内部ID)")
+    destination_id: NodeID  # Field(..., description="目的节点ID (内部ID)")
+    arrival_time: float  # Field(..., description="业务到达时间 (仿真时间单位)")
+    departure_time: float  # Field(..., description="业务离开时间 (仿真时间单位)")
+    bit_rate_gbps: float  # Field(..., description="业务所需比特率 (Gbps)")
+    snr_requirement_db: float  # Field(..., description="业务所需的最小 SNR (dB)")
 
     # 业务的发射功率 (W)，通常由 RWA 决定，这里作为默认值或起点
-    launch_power_w: float = Field(0.001, description="业务发射功率 (W)，约 0 dBm")  # 默认 0 dBm
+    launch_power_w: float  # Field(0.001, description="业务发射功率 (W)，约 0 dBm")  # 默认 0 dBm
 
 
+@dataclass(slots=True)
 class AllocatedService(ServiceRequest):
     """已分配业务的数据模型，继承自 ServiceRequest，
 
     并增加分配结果 (路径、波长) 信息。
     """
 
-    path: list[NodeID] = Field(..., description="业务分配的路由路径 (内部节点ID列表)")
-    wavelength: int = Field(..., description="业务分配的波长索引")
+    path: list[NodeID]  # Field(..., description="业务分配的路由路径 (内部节点ID列表)")
+    wavelength: int  # Field(..., description="业务分配的波长索引")
 
     class Config:
         frozen = True  # 分配后业务信息通常不应改变
@@ -94,7 +96,7 @@ def generate_services(
 
         # 根据业务类型加权采样比特率
         # 倾向于生成小比特率业务 (权重反比于比特率)
-        bit_rate_candidates_gbps = np.arange(100, 501, 10)  # 100 Mbps to 500 Mbps, step 10 Mbps
+        bit_rate_candidates_gbps = np.arange(100, 501, 10)  # 100 Gbps to 500 Gbps, step 10 Gbps
         weights = 1.0 / bit_rate_candidates_gbps
         weights = weights / np.sum(weights)  # 归一化权重
 

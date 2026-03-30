@@ -165,4 +165,6 @@ cython_debug/
 # Project excludes
 docs/_examples
 sg_execution_times.rst
+results/
 *.npz
+*.ipynb

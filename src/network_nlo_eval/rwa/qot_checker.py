@@ -43,6 +43,7 @@ class QoTValidator:
         path: list[NodeID],
         channel_idx: int,
         current_network_state: NetworkState,
+        fixed_span_length_km: float = 100.0,
     ) -> tuple[bool, NDArrayFloat | None]:
         """验证将 `service_request` 分配到 `path` 和 `channel_idx` 是否满足所有 SNR 要求。
 
@@ -55,6 +56,7 @@ class QoTValidator:
             path: 路由路径 (内部节点ID列表)。
             channel_idx: 待分配的波长索引。
             current_network_state: 当前的网络状态。
+            fixed_span_length_km: 链路上固定跨段长度
 
         Returns
         -------
@@ -62,23 +64,10 @@ class QoTValidator:
             - bool: 如果所有 SNR 检查通过，则为 True；否则为 False。
             - Optional[NDArrayFloat]: 如果成功，返回路径上每个信道的最终 SNR 数组，否则为 None。
         """
-        # 1. 创建网络状态的深拷贝，用于“假想”分配，避免修改实际状态
-        temp_network_state = current_network_state.deep_copy()
+        # 1. 记录原始状态以便回滚 (只备份将被修改的这几个整数/浮点数)
+        rollback_data = []
 
-        # 2. 在临时状态中执行假想分配 (这会影响功率谱)
-        # 为假想服务创建一个临时的 AllocatedService 对象，以便 NetworkState 可以处理
-        # 这里只填充必要字段，不实际存储到 _allocated_services 字典
-        temp_allocated_service = ServiceRequest(
-            service_id=service_request.service_id,
-            source_id=service_request.source_id,
-            destination_id=service_request.destination_id,
-            arrival_time=service_request.arrival_time,
-            departure_time=service_request.departure_time,
-            bit_rate_gbps=service_request.bit_rate_gbps,
-            snr_requirement_db=service_request.snr_requirement_db,
-            launch_power_w=service_request.launch_power_w,
-        )
-
+        # 2. 在状态中执行假想分配 (这会影响功率谱)
         # 记录路径上所有受影响的现有服务，以便后续检查它们的 QoT
         # 存储格式: (service_id, original_snr_req_db, wavelength_idx)
         affected_existing_services: list[tuple[int, float, int]] = []
@@ -86,13 +75,24 @@ class QoTValidator:
         # 检查每个链路的占用情况并准备 power_profile_w
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
-            link_state = temp_network_state.get_link_state(u, v)
+            link_state = current_network_state.get_link_state(u, v)
 
             if link_state.occupied_channels[channel_idx]:
                 # 目标波长已被占用，分配失败
+                self._rollback(rollback_data)
                 return False, None
 
-            # 在临时状态中标记为占用，并设置功率
+            # 记录将被覆盖的原始值
+            rollback_data.append(
+                (
+                    link_state,
+                    channel_idx,
+                    link_state.occupied_channels[channel_idx],
+                    link_state.launch_power_profile_w[channel_idx],
+                )
+            )
+
+            # 在状态中标记为占用，并设置功率
             link_state.occupied_channels[channel_idx] = True
             link_state.launch_power_profile_w[channel_idx] = service_request.launch_power_w
             # 注意：这里没有设置 allocated_service_ids，因为这不是实际分配
@@ -119,14 +119,12 @@ class QoTValidator:
         affected_existing_services = list(set(affected_existing_services))
 
         # 3. 评估新业务和受影响业务的端到端 SNR
-        # 沿路径累积噪声
-        num_spans_in_path = len(path) - 1
-
         # 初始化总噪声 (W)
         # 每个信道的总噪声
         total_spm_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         total_xpm_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         total_ase_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_physical_spans_count = 0  # 统计整条路径总物理跨段数
 
         # 假设每个 EDFA 完美补偿了跨段损耗，所以信号功率保持在 service_request.launch_power_w
         # 用于计算 SNR 的信号功率
@@ -138,10 +136,10 @@ class QoTValidator:
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
             link_key = LinkKey(sorted((u, v)))
-            link_state = temp_network_state.get_link_state(u, v)
+            link_state = current_network_state.get_link_state(u, v)
             path_link_power_profiles[link_key] = link_state.launch_power_profile_w.copy()  # 确保是拷贝
 
-        for i in range(num_spans_in_path):
+        for i in range(len(path) - 1):
             u_node_idx = path[i]
             v_node_idx = path[i + 1]
             link_key = LinkKey(sorted((u_node_idx, v_node_idx)))
@@ -153,27 +151,55 @@ class QoTValidator:
             # 获取该链路上所有信道的当前功率分布，这用于计算 XPM 贡献
             current_power_profile_on_link = path_link_power_profiles[link_key]
 
+            link_total_length_m = fiber_config.length_km * 1000
+
+            # --- 拆分 Span 逻辑 ---
+            span_length_m = fixed_span_length_km * 1000
+            # 计算全长度 Span 的数量
+            num_full_spans = int(link_total_length_m // span_length_m)
+            # 计算剩余长度
+            remainder_length_m = link_total_length_m % span_length_m
+
             # 计算单跨段的 NLI 和 ASE 噪声方差
             # _ 代表该跨段的出纤功率，我们不直接使用它来累积 SNR
-            _, span_spm_w_all_channels, span_xpm_w_all_channels, span_ase_w_all_channels = (
-                self.gn_evaluator._calc_span_noise_and_power(
+            if num_full_spans > 0:
+                _, s_spm, s_xpm, s_ase = self.gn_evaluator._calc_span_noise_and_power(
                     current_power_profile_on_link,
-                    fiber_config.length_km * 1000,
+                    span_length_m,
                     edfa_config,
-                    roadm_config,
-                    n_effective_spans=1,  # 单个跨段计算
+                    None,  # 中继跨段通常没有 ROADM
+                    n_effective_spans=1,
                 )
-            )
+                total_spm_power_w += s_spm * num_full_spans
+                total_xpm_power_w += s_xpm * num_full_spans
+                total_ase_power_w += s_ase * num_full_spans
+                total_physical_spans_count += num_full_spans
 
-            # 累加所有信道的噪声方差
-            total_spm_power_w += span_spm_w_all_channels
-            total_xpm_power_w += span_xpm_w_all_channels
-            total_ase_power_w += span_ase_w_all_channels
+                # 累加所有信道的噪声方差
+                total_spm_power_w += s_spm * num_full_spans
+                total_xpm_power_w += s_xpm * num_full_spans
+                total_ase_power_w += s_ase * num_full_spans
+                total_physical_spans_count += num_full_spans
+
+            # 3.2 计算剩余长度跨段的噪声
+            if remainder_length_m > 1.0:  # 长度大于1米才计算，避免浮点误差
+                _, r_spm, r_xpm, r_ase = self.gn_evaluator._calc_span_noise_and_power(
+                    current_power_profile_on_link,
+                    remainder_length_m,
+                    edfa_config,
+                    roadm_config,  # 将 ROADM 损耗挂载在链路最后一个 Span
+                    n_effective_spans=1,
+                )
+
+                total_spm_power_w += r_spm
+                total_xpm_power_w += r_xpm
+                total_ase_power_w += r_ase
+                total_physical_spans_count += 1
 
         # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
         epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子
-        if num_spans_in_path > 0:
-            spm_coherent_penalty = float(num_spans_in_path) ** epsilon
+        if total_physical_spans_count > 0:
+            spm_coherent_penalty = float(total_physical_spans_count) ** epsilon
         else:
             spm_coherent_penalty = 1.0
 
@@ -194,6 +220,7 @@ class QoTValidator:
 
         # 4. 检查新业务的 SNR 是否满足要求
         if final_snrs_db[channel_idx] < service_request.snr_requirement_db:
+            self._rollback(rollback_data)
             return False, None  # 新业务 SNR 不足
 
         # 5. 检查所有受影响的现有业务的 SNR 是否仍然满足要求
@@ -203,10 +230,18 @@ class QoTValidator:
             existing_ch_idx,
         ) in affected_existing_services:
             if final_snrs_db[existing_ch_idx] < snr_req_db:
+                self._rollback(rollback_data)
                 return False, None  # 现有业务 SNR 不足
+
+        self._rollback(rollback_data)
 
         # 所有检查通过
         return True, final_snrs_db
+
+    def _rollback(self, rollback_data):
+        for link_state, ch_idx, orig_occ, orig_pow in rollback_data:
+            link_state.occupied_channels[ch_idx] = orig_occ
+            link_state.launch_power_profile_w[ch_idx] = orig_pow
 
 
 # --- 基础 RWA 分配器接口 ---

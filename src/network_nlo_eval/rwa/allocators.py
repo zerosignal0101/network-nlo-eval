@@ -1,5 +1,7 @@
 """路由与波长分配 (RWA) 策略实现。"""
 
+from dataclasses import asdict
+
 import numpy as np
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
@@ -43,25 +45,13 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
 
         一个波段只有在路径上所有链路都空闲时才被认为是空闲的。
         """
-        if not path or len(path) < 2:
-            return np.ones(self.spectrum_grid.num_channels, dtype=bool)  # 空路径或单节点路径，所有波段空闲 (无效情况)
-
-        # 初始状态为全 True (全空闲)
-        combined_available_channels = np.ones(self.spectrum_grid.num_channels, dtype=bool)
-
-        for i in range(len(path) - 1):
-            u, v = path[i], path[i + 1]
-            link_state = network_state.get_link_state(u, v)
-            # combined_available_channels &= ~link_state.occupied_channels
-            # Bug fix: ~link_state.occupied_channels gives 'available' channels on *this* link.
-            # We need the intersection of available channels across *all* links in the path.
-            combined_available_channels &= ~link_state.occupied_channels
-
-            # 如果在某个链路上已经没有空闲通道，则无需继续检查
-            if not np.any(combined_available_channels):
-                break
-
-        return combined_available_channels
+        # 提取路径上所有链路的占用数组
+        occupied_arrays = [
+            network_state.get_link_state(path[i], path[i + 1]).occupied_channels for i in range(len(path) - 1)
+        ]
+        # 一次性使用 numpy 进行 bitwise OR 并取反
+        # 如果任意链路占用，则该位置为 True。整体取反即为可用
+        return ~np.logical_or.reduce(occupied_arrays)
 
     def allocate(
         self, service_request: ServiceRequest, network_state: NetworkState
@@ -111,10 +101,9 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
                 if is_qot_satisfied:
                     # 分配成功：创建 AllocatedService 对象并返回
                     allocated_service = AllocatedService(
-                        **service_request.model_dump(),
+                        **asdict(service_request),
                         path=path,
                         wavelength=channel_idx,
-                        launch_power_w=service_request.launch_power_w,
                     )
                     return True, allocated_service
                 # 如果 QoT 验证失败，尝试该路径上的下一个空闲波长
