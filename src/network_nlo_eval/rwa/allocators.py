@@ -1,5 +1,6 @@
 """路由与波长分配 (RWA) 策略实现。"""
 
+import random
 from dataclasses import asdict
 
 import numpy as np
@@ -86,8 +87,7 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
                 continue
 
             # 2.2 First-Fit: 按波长索引升序尝试分配
-            # random.shuffle(free_channel_indices) # 可选：如果希望随机 First-Fit
-            free_channel_indices.sort()  # First-Fit 策略，按索引从小到大
+            random.shuffle(free_channel_indices)
 
             for channel_idx in free_channel_indices:
                 # 2.3 进行 QoT 验证

@@ -63,7 +63,7 @@ class NetworkTopology:
         for u_orig, v_orig, data in self._network_raw.edges(data=True):
             u_idx = self._node_id_to_idx[u_orig]
             v_idx = self._node_id_to_idx[v_orig]
-            link_key = LinkKey(sorted((u_idx, v_idx)))  # 规范化链路键
+            link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))  # 规范化链路键
 
             # 复制默认配置，并用链路特有数据覆盖
             fiber_config = self._default_fiber_config.model_copy(deep=True)
@@ -93,7 +93,7 @@ class NetworkTopology:
 
     def get_fiber_config(self, u_idx: NodeID, v_idx: NodeID) -> FiberSpanConfig:
         """获取指定链路的光纤配置."""
-        link_key = LinkKey(sorted((u_idx, v_idx)))
+        link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
         return self._fiber_configs[link_key]
 
     def get_edfa_config(self, node_idx: NodeID) -> EDFAConfig:

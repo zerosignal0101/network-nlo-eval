@@ -1,6 +1,5 @@
 """管理网络的动态资源状态，如波长占用和链路功率谱。"""
 
-from copy import deepcopy
 from dataclasses import dataclass
 
 import numpy as np
@@ -96,7 +95,7 @@ class NetworkState:
 
     def get_link_state(self, u_idx: NodeID, v_idx: NodeID) -> LinkState:
         """获取指定链路的当前状态."""
-        link_key = tuple(sorted((u_idx, v_idx)))
+        link_key = tuple((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
         return self._link_states[link_key]
 
     def get_all_link_states(self) -> dict[LinkKey, LinkState]:
@@ -138,15 +137,3 @@ class NetworkState:
             link_state = self.get_link_state(u, v)
             link_state.release(service.wavelength)
         del self._allocated_services[service.service_id]
-
-    def deep_copy(self) -> "NetworkState":
-        """创建当前网络状态的深拷贝。
-
-        用于 QoT 验证器进行 'what-if' 分析，避免修改实际网络状态。
-        """
-        new_state = NetworkState(self.network_topology, self.spectrum_grid)
-        # Deepcopy _link_states
-        new_state._link_states = {k: deepcopy(v) for k, v in self._link_states.items()}
-        # Deepcopy _allocated_services
-        new_state._allocated_services = {k: deepcopy(v) for k, v in self._allocated_services.items()}
-        return new_state

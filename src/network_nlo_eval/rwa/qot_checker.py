@@ -70,7 +70,7 @@ class QoTValidator:
         # 2. 在状态中执行假想分配 (这会影响功率谱)
         # 记录路径上所有受影响的现有服务，以便后续检查它们的 QoT
         # 存储格式: (service_id, original_snr_req_db, wavelength_idx)
-        affected_existing_services: list[tuple[int, float, int]] = []
+        affected_existing_services: set[tuple[int, float, int]] = set()
 
         # 检查每个链路的占用情况并准备 power_profile_w
         for i in range(len(path) - 1):
@@ -107,16 +107,13 @@ class QoTValidator:
                         # 获取现有业务的完整数据
                         existing_allocated_service = current_network_state.get_allocated_service(existing_service_id)
                         if existing_allocated_service:  # 确保服务存在
-                            affected_existing_services.append(
+                            affected_existing_services.add(
                                 (
                                     existing_service_id,
                                     existing_allocated_service.snr_requirement_db,
                                     other_ch_idx,
                                 )
                             )
-
-        # 移除重复项，因为一个服务可能跨多个链路，会被多次添加到 affected_existing_services
-        affected_existing_services = list(set(affected_existing_services))
 
         # 3. 评估新业务和受影响业务的端到端 SNR
         # 初始化总噪声 (W)
@@ -135,14 +132,14 @@ class QoTValidator:
         path_link_power_profiles: dict[LinkKey, NDArrayFloat] = {}
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
-            link_key = LinkKey(sorted((u, v)))
+            link_key = LinkKey((u, v) if u < v else (v, u))
             link_state = current_network_state.get_link_state(u, v)
             path_link_power_profiles[link_key] = link_state.launch_power_profile_w.copy()  # 确保是拷贝
 
         for i in range(len(path) - 1):
             u_node_idx = path[i]
             v_node_idx = path[i + 1]
-            link_key = LinkKey(sorted((u_node_idx, v_node_idx)))
+            link_key = LinkKey((u_node_idx, v_node_idx) if u_node_idx < v_node_idx else (v_node_idx, u_node_idx))
 
             fiber_config = self.network_topology.get_fiber_config(u_node_idx, v_node_idx)
             edfa_config = self.network_topology.get_edfa_config(u_node_idx)
@@ -195,6 +192,18 @@ class QoTValidator:
                 total_xpm_power_w += r_xpm
                 total_ase_power_w += r_ase
                 total_physical_spans_count += 1
+
+            # 如果当前跳计算完后，新业务的噪声已经超过了阈值，立刻中断
+            spm_coherent_penalty = float(total_physical_spans_count) ** 0.05 if total_physical_spans_count > 0 else 1.0
+            new_channel_noise_power_w = (
+                total_spm_power_w[channel_idx] * spm_coherent_penalty
+                + total_xpm_power_w[channel_idx]
+                + total_ase_power_w[channel_idx]
+            )
+
+            if signal_power_for_snr / new_channel_noise_power_w > service_request.snr_requirement_db:
+                self._rollback(rollback_data)
+                return False, None
 
         # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
         epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子

@@ -9,17 +9,14 @@ import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.core.types import NDArrayFloat, NodeID
+from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
     _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
     _calc_nf_lin_jit,
-    _calc_raman_profile_jit,
-    _calc_span_out_power_jit,
-    _calculate_ase_noise_variance,
-    _compute_nli_variances,
+    _calc_span_noise_and_power_jit,
     _db_to_lin,
     _lin_to_db,
 )
@@ -114,11 +111,11 @@ class MultiBandISRSGN:
 
     def _calc_span_noise_and_power(
         self,
-        power_in_w: NDArrayFloat,  # 各信道入纤功率 (W)
-        span_length_m: float,  # 跨段长度 (m)
-        edfa_config: EDFAConfig,  # EDFA 配置
-        roadm_config: ROADMConfig | None = None,  # ROADM 配置 (可选)
-        n_effective_spans: int = 1,  # 对于单个跨段，这通常是 1
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
     ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
         """计算单跨段的功率演化、NLI 噪声和 ASE 噪声。
 
@@ -137,91 +134,42 @@ class MultiBandISRSGN:
             - sigma2_xpm_w: 产生的 XPM 噪声方差 (W)。
             - sigma2_ase_w: 产生的 ASE 噪声方差 (W)。
         """
-        # 1. 计算有效长度 L_eff (考虑损耗)
-        l_eff_m = (1 - np.exp(-self.alpha_power_npm_channels * span_length_m)) / self.alpha_power_npm_channels
+        # 1. 处理放大器噪声系数 (NF)
+        # 如果 edfa_config 提供了全频段的 NF 数组则使用之，否则使用预计算的默认值
+        if edfa_config.gain_ripple_db is not None:
+            # 这里可以根据实际需求动态计算 NF
+            current_nf_lin = self.nf_lin_channels
+        else:
+            current_nf_lin = self.nf_lin_channels
 
-        # 2. 计算拉曼功率转移系数 r_f
-        total_p_in_w = np.sum(power_in_w)
-        r_f_values = _calc_raman_profile_jit(self.f_rel_hz, self.f_m_hz, self.f_M_hz, self.delta_f_co_hz, total_p_in_w)
-
-        # 3. 计算有效衰减因子 T_i (用于 NLI 模型)
-        # T_i = (2 * alpha_i - C_r * r_f_i)^2
-        t_factors = (2 * self.alpha_power_npm_channels - self.cr_w_m_hz * r_f_values) ** 2
-
-        # 4. 计算经历光纤传播 (衰减 + SRS 倾斜) 后的功率
-        # p_out_after_fiber 包含衰减和 SRS 功率倾斜
-        p_out_after_fiber = _calc_span_out_power_jit(
-            power_in_w,
-            self.f_rel_hz,
-            self.alpha_power_npm_channels,
-            span_length_m,
-            r_f_values,
+        # 2. 调用 JIT 内核 (热路径)
+        p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit(
+            power_in_w=power_in_w,
+            span_length_m=span_length_m,
+            f_rel_hz=self.f_rel_hz,
+            f_abs_hz=self.f_abs_hz,
+            lambdas_m=self.lambdas_m,
+            alpha_power_npm=self.alpha_power_npm_channels,
+            a_eff_m2=self.a_eff_m2_channels,
+            beta2_s2_m=self.beta2_s2_m,
+            beta3_s3_m=self.beta3_s3_m,
+            n2_m2_w=self.n2_m2_w,
+            nf_lin_channels=current_nf_lin,
+            symbol_rate_hz=self.symbol_rate_hz,
+            n_effective_spans=n_effective_spans,
+            cr_w_m_hz=self.cr_w_m_hz,
+            k_bar=self.k_bar,
+            delta_f_co_hz=self.delta_f_co_hz,
         )
 
-        # 5. 计算 NLI 噪声 (SPM 和 XPM)
-        sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
-            self.grid.num_channels,
-            n_effective_spans,
-            self.symbol_rate_hz,
-            power_in_w,
-            self.f_rel_hz,
-            self.lambdas_m,
-            self.a_eff_m2_channels,
-            self.alpha_power_npm_channels,
-            t_factors,
-            r_f_values,
-            l_eff_m,
-            self.beta2_s2_m,
-            self.beta3_s3_m,
-            self.n2_m2_w,
-            self.cr_w_m_hz,
-            self.k_bar,
-        )
+        # 3. 处理 ROADM 插入损耗 (可选，在 Python 层处理非线性外围逻辑)
+        if roadm_config:
+            # 若有 ROADM，出纤功率需要扣除插入损耗
+            # 损耗通常不增加线性噪声方差，但会降低后续跨段的入纤功率
+            loss_lin = _db_to_lin(roadm_config.insertion_loss_db + roadm_config.filtering_penalty_db)
+            p_out_fiber = p_out_fiber / loss_lin
 
-        # 6. 计算 ASE 噪声
-        # EDFA 增益应补偿跨段损耗 + ROADM 损耗
-        # 假设每个 EDFA 补偿了光纤损耗，以及可选的 ROADM 损耗
-        # 严格来讲，EDFA 增益和 NF 会根据其入纤功率和目标功率进行动态调整
-        # 这里简化：EDFA 噪声与 NF 和目标增益有关
-        # span_loss_db = _lin_to_db(np.sum(power_in_w[power_in_w > 0]))
-        # - _lin_to_db(np.sum(p_out_after_fiber[p_out_after_fiber > 0]))
-        # edfa_gain_db = edfa_config.target_gain_db if edfa_config else 0.0 # 假设 EDFA 有固定的目标增益
-
-        # 简化 ASE：每个放大器引入的 ASE = NF * h * f * G * B_ch
-        # 这里返回的是功率 (W)
-        sigma2_ase_w = _calculate_ase_noise_variance(
-            power_in_w,
-            p_out_after_fiber,
-            self.f_abs_hz,
-            self.nf_lin_channels,
-            self.symbol_rate_hz,
-            n_effective_spans,
-        )
-
-        # 7. 考虑 EDFA 增益和 ROADM 损耗，计算最终出纤功率
-        edfa_gain_linear = _db_to_lin(edfa_config.target_gain_db)
-        # p_out_w = p_out_after_fiber * edfa_gain_linear
-        # 如果 EDFA 增益补偿了光纤损耗 (并考虑 ROADM 损耗)，那么 P_out 应该回到 P_in 的水平
-        # 严格来说，EDFA 应该补偿光纤损耗。
-
-        # 为了简化，假设 EDFA 完美补偿了该跨段的光纤损耗和 ROADM 损耗，使功率回到额定发射功率水平。
-        # 这样在 QoT 验证器中，可以简单地使用传入的 `launch_power_w` 作为每段的输入功率。
-        # 但这里仍应计算实际出纤功率以供参考。
-
-        # 考虑光纤损耗、SRS倾斜、EDFA增益、ROADM损耗后的实际出纤功率
-        # 注意：此处 EDFA 增益如果设定为补偿光纤损耗，则 p_out 应该接近 p_in。
-        # p_out_after_edfa = p_out_after_fiber * edfa_gain_linear
-        # roadm_loss_linear = _db_to_lin(roadm_config.insertion_loss_db
-        # + roadm_config.filtering_penalty_db) if roadm_config else 1.0
-        # p_out_w = p_out_after_edfa / roadm_loss_linear
-
-        # 为了 RWA 链路评估的实用性，p_out_w 应该是每个 EDFA 后的 *有效* 输出功率
-        # 我们可以假设 EDFA 的增益等于光纤损耗 + ROADM 损耗，从而使得每个跨段的有效功率保持恒定。
-        # 这样，所有 NLI 和 ASE 噪声都会被累加。
-
-        # 为了简单，这里直接返回衰减和 SRS 后的功率，EDFA 增益在网络层面统一处理。
-        # 返回的功率是经过光纤链路但 *未* 经过放大器/ROADM 的功率
-        return p_out_after_fiber, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w
+        return p_out_fiber, s2_spm, s2_xpm, s2_ase
 
     def evaluate_path_snr(
         self,
@@ -263,7 +211,7 @@ class MultiBandISRSGN:
         for i in range(num_spans_in_path):
             u_node_idx = path[i]
             v_node_idx = path[i + 1]
-            link_key = tuple(sorted((u_node_idx, v_node_idx)))
+            link_key = LinkKey((u_node_idx, v_node_idx) if u_node_idx < v_node_idx else (v_node_idx, u_node_idx))
 
             # 从 NetworkTopology 获取静态配置
             fiber_config = self.network_topology.get_fiber_config(u_node_idx, v_node_idx)

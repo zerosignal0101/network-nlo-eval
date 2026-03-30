@@ -71,7 +71,7 @@ class PathCache:
 
                     # 缓存路径
                     # 确保键是规范化的 (min, max)
-                    key = LinkKey(sorted((source_idx, dest_idx)))
+                    key = LinkKey((source_idx, dest_idx) if source_idx < dest_idx else (dest_idx, source_idx))
                     self._ksp_cache[key] = internal_paths
                 except nx.NetworkXNoPath:
                     # 如果没有路径，则该对之间没有可用的 KSP
@@ -91,7 +91,7 @@ class PathCache:
             List[List[NodeID]]: 包含 KSP 路径的列表，每条路径是内部节点ID的列表。
                                 如果没有路径或路径不存在于缓存中，返回空列表。
         """
-        key = LinkKey(sorted((source_idx, dest_idx)))
+        key = LinkKey((source_idx, dest_idx) if source_idx < dest_idx else (dest_idx, source_idx))
         paths = self._ksp_cache.get(key, [])
 
         # 如果源节点不是路径的起始点，则反转路径

@@ -542,3 +542,81 @@ def _calculate_ase_noise_variance(
             # print(f"Channel {i} ASE variance: {total_ase_variance[i]:.2e}")
 
     return total_ase_variance  # 返回方差 (W)
+
+
+@njit(cache=True)
+def _calc_span_noise_and_power_jit(
+    # --- 输入状态 ---
+    power_in_w: NDArrayFloat,  # 各信道入纤功率 (W)
+    span_length_m: float,  # 当前跨段长度 (m)
+    # --- 频谱属性 (预计算好的数组) ---
+    f_rel_hz: NDArrayFloat,  # 相对频率 (Hz)
+    f_abs_hz: NDArrayFloat,  # 绝对频率 (Hz)
+    lambdas_m: NDArrayFloat,  # 波长 (m)
+    # --- 光纤物理参数 (由 FiberSpanConfig 转换) ---
+    alpha_power_npm: NDArrayFloat,  # 功率衰减系数 (Np/m)
+    a_eff_m2: NDArrayFloat,  # 有效模面积 (m^2)
+    beta2_s2_m: float,  # 色散 beta2
+    beta3_s3_m: float,  # 色散 beta3
+    n2_m2_w: float,  # 非线性折射率
+    # --- 系统与放大器参数 ---
+    nf_lin_channels: NDArrayFloat,  # 放大器线性噪声系数 (数组)
+    symbol_rate_hz: float,  # 符号速率 (Hz)
+    n_effective_spans: int,  # 有效累积跨段数 (NLI计算用)
+    # --- 物理常数 ---
+    cr_w_m_hz: float,  # SRS 增益系数 Cr
+    k_bar: float,  # 泵浦因子
+    delta_f_co_hz: float,  # SRS 截断频率
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    """【高性能内核】单跨段物理层评估的 JIT 版本。
+
+    封装了损耗、SRS、SPM、XPM 和 ASE 的全套计算。
+    """
+    num_channels = len(power_in_w)
+
+    # 1. 预计算中间量
+    total_p_in_w = np.sum(power_in_w)
+    # L_eff: 有效长度
+    l_eff_m = (1.0 - np.exp(-alpha_power_npm * span_length_m)) / alpha_power_npm
+
+    # 2. 计算 SRS 功率转移分布 (r_f)
+    # f_m_hz 和 f_M_hz 在内核中根据 f_rel 动态确定
+    f_m_hz = f_rel_hz[0] - symbol_rate_hz / 2.0
+    f_M_hz = f_rel_hz[-1] + symbol_rate_hz / 2.0
+
+    r_f_values = _calc_raman_profile_jit(f_rel_hz, f_m_hz, f_M_hz, delta_f_co_hz, total_p_in_w)
+
+    # 3. 计算出纤功率 (考虑衰减与 SRS 倾斜)
+    p_out_after_fiber = _calc_span_out_power_jit(
+        power_in_w, f_rel_hz, alpha_power_npm, span_length_m, r_f_values, k_bar
+    )
+
+    # 4. 计算 NLI 噪声方差 (SPM & XPM)
+    # 准备 T 因子: (2*alpha - Cr*r_f)^2
+    t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2
+
+    sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
+        num_channels,
+        n_effective_spans,
+        symbol_rate_hz,
+        power_in_w,
+        f_rel_hz,
+        lambdas_m,
+        a_eff_m2,
+        alpha_power_npm,
+        t_factors,
+        r_f_values,
+        l_eff_m,
+        beta2_s2_m,
+        beta3_s3_m,
+        n2_m2_w,
+        cr_w_m_hz,
+        k_bar,
+    )
+
+    # 5. 计算 ASE 噪声方差
+    sigma2_ase_w = _calculate_ase_noise_variance(
+        power_in_w, p_out_after_fiber, f_abs_hz, nf_lin_channels, symbol_rate_hz, n_effective_spans
+    )
+
+    return p_out_after_fiber, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w
