@@ -123,6 +123,9 @@ class QoTValidator:
         total_ase_power_w = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         total_physical_spans_count = 0  # 统计整条路径总物理跨段数
 
+        final_snrs_linear = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        final_snrs_db = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+
         # 假设每个 EDFA 完美补偿了跨段损耗，所以信号功率保持在 service_request.launch_power_w
         # 用于计算 SNR 的信号功率
         signal_power_for_snr = service_request.launch_power_w
@@ -193,54 +196,39 @@ class QoTValidator:
                 total_ase_power_w += r_ase
                 total_physical_spans_count += 1
 
-            # 如果当前跳计算完后，新业务的噪声已经超过了阈值，立刻中断
-            spm_coherent_penalty = float(total_physical_spans_count) ** 0.05 if total_physical_spans_count > 0 else 1.0
-            new_channel_noise_power_w = (
-                total_spm_power_w[channel_idx] * spm_coherent_penalty
-                + total_xpm_power_w[channel_idx]
-                + total_ase_power_w[channel_idx]
-            )
-
-            if signal_power_for_snr / new_channel_noise_power_w > service_request.snr_requirement_db:
-                self._rollback(rollback_data)
-                return False, None
-
-        # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
-        epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子
-        if total_physical_spans_count > 0:
-            spm_coherent_penalty = float(total_physical_spans_count) ** epsilon
-        else:
-            spm_coherent_penalty = 1.0
-
-        # 计算总噪声功率
-        total_noise_power_w = total_spm_power_w * spm_coherent_penalty + total_xpm_power_w + total_ase_power_w
-
-        # 计算所有信道的最终 SNR (dB)
-        final_snrs_linear = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        final_snrs_db = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-
-        for ch_idx in range(self.spectrum_grid.num_channels):
-            # 只有有信号的信道才有 SNR 概念
-            if current_power_profile_on_link[ch_idx] > 0 and total_noise_power_w[ch_idx] > 0:
-                final_snrs_linear[ch_idx] = signal_power_for_snr / total_noise_power_w[ch_idx]
-                final_snrs_db[ch_idx] = _lin_to_db(final_snrs_linear[ch_idx])
+            # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
+            epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子
+            if total_physical_spans_count > 0:
+                spm_coherent_penalty = float(total_physical_spans_count) ** epsilon
             else:
-                final_snrs_db[ch_idx] = -np.inf  # 无信号或无噪声，视为无限 SNR，但为了比较方便设为极小值
+                spm_coherent_penalty = 1.0
 
-        # 4. 检查新业务的 SNR 是否满足要求
-        if final_snrs_db[channel_idx] < service_request.snr_requirement_db:
-            self._rollback(rollback_data)
-            return False, None  # 新业务 SNR 不足
+            # 计算总噪声功率
+            total_noise_power_w = total_spm_power_w * spm_coherent_penalty + total_xpm_power_w + total_ase_power_w
 
-        # 5. 检查所有受影响的现有业务的 SNR 是否仍然满足要求
-        for (
-            _existing_service_id,
-            snr_req_db,
-            existing_ch_idx,
-        ) in affected_existing_services:
-            if final_snrs_db[existing_ch_idx] < snr_req_db:
+            # 计算所有信道的最终 SNR (dB)
+            for ch_idx in range(self.spectrum_grid.num_channels):
+                # 只有有信号的信道才有 SNR 概念
+                if current_power_profile_on_link[ch_idx] > 0 and total_noise_power_w[ch_idx] > 0:
+                    final_snrs_linear[ch_idx] = signal_power_for_snr / total_noise_power_w[ch_idx]
+                    final_snrs_db[ch_idx] = _lin_to_db(final_snrs_linear[ch_idx])
+                else:
+                    final_snrs_db[ch_idx] = -np.inf  # 无信号或无噪声，视为无限 SNR，但为了比较方便设为极小值
+
+            # 4. 检查新业务的 SNR 是否满足要求
+            if final_snrs_db[channel_idx] < service_request.snr_requirement_db:
                 self._rollback(rollback_data)
-                return False, None  # 现有业务 SNR 不足
+                return False, None  # 新业务 SNR 不足
+
+            # 5. 检查所有受影响的现有业务的 SNR 是否仍然满足要求
+            for (
+                _existing_service_id,
+                snr_req_db,
+                existing_ch_idx,
+            ) in affected_existing_services:
+                if final_snrs_db[existing_ch_idx] < snr_req_db:
+                    self._rollback(rollback_data)
+                    return False, None  # 现有业务 SNR 不足
 
         self._rollback(rollback_data)
 
