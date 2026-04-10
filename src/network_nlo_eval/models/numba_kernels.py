@@ -4,7 +4,7 @@
 """
 
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 from network_nlo_eval.core.constants import C_LIGHT, H_PLANCK, NP_TO_DB, PI
 from network_nlo_eval.core.types import NDArrayFloat
@@ -149,105 +149,69 @@ def _calc_beta3_from_s_d(s_ps_nm2_km: float, d_ps_nm_km: float, lambda_m: float)
 # =============================================================================
 # 2. 受激拉曼散射 (SRS) 模块
 # =============================================================================
-# SRS Raman Gain Coefficient Cr [1/(W·m·THz)]
-_SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)] if we define r_f using Hz
+@njit(cache=True)
+def _calc_dp_dz(p: NDArrayFloat, G: NDArrayFloat, f_hz: NDArrayFloat, alpha_npm: NDArrayFloat) -> NDArrayFloat:
+    """计算功率随距离的导数 dP/dz (基于 Paper 2 Eq. 3)"""
+    N = len(p)
+    dp = np.zeros(N, dtype=np.float64)
+    for i in range(N):
+        gain_term = 0.0
+        loss_term = 0.0
+        for k in range(N):
+            if f_hz[k] > f_hz[i]:
+                # k 频率更高 (波长更短)，k 泵浦 i
+                gain_term += G[i, k] * p[k]
+            elif f_hz[k] < f_hz[i]:
+                # i 频率更高 (波长更短)，i 泵浦 k
+                # 能量守恒转移: 损失与增益呈频率比
+                loss_term += (f_hz[k] / f_hz[i]) * G[i, k] * p[k]
+
+        dp[i] = (gain_term - loss_term - alpha_npm[i]) * p[i]
+    return dp
 
 
 @njit(cache=True)
-def _calc_raman_profile_jit(
-    f_rel_hz: NDArrayFloat,  # 相对频率 (Hz)
-    f_m_hz: float,  # 起始频率 (Hz)
-    f_M_hz: float,  # 结束频率 (Hz)
-    delta_f_co_hz: float,  # 共信道带宽 (Hz)
-    p_total_w: float,  # 总功率 (W)
+def _calc_exact_power_profile_ode(
+    p_in_w: NDArrayFloat, f_hz: NDArrayFloat, alpha_npm: NDArrayFloat, L_m: float, cr_w_m_hz: float, n_steps: int = 20
 ) -> NDArrayFloat:
-    """计算每个信道的拉曼功率转移系数 r_f(f_i)。
+    """使用 RK4 求解器计算经历精确拉曼转移和损耗的出纤功率。"""
+    N = len(p_in_w)
 
-    此函数模拟了在宽带 WDM 系统中 SRS 引起的功率倾斜效应。
-    模型来自于 Ref. [1] "A Generalized Raman Scattering Model for Real-Time SNR Estimation of Multi-Band Systems"
+    # 1. 预计算增益矩阵 (引入实际的拉曼谱形：13.2 THz 达峰，15.6 THz 归零)
+    G = np.zeros((N, N), dtype=np.float64)
+    for i in range(N):
+        for k in range(N):
+            df_thz = abs(f_hz[i] - f_hz[k]) / 1e12
+            if df_thz <= 13.2:
+                # 线性增长区
+                g = cr_w_m_hz * (df_thz * 1e12)
+            elif df_thz < 15.6:
+                # 峰值跌落区 (匹配 Fig. 4)
+                peak_g = cr_w_m_hz * 13.2e12
+                g = peak_g * (15.6 - df_thz) / (15.6 - 13.2)
+            else:
+                # 频差过大，不再产生受激拉曼
+                g = 0.0
+            G[i, k] = g
 
-    Args:
-        f_rel_hz: 各信道的相对频率 (Hz)。
-        f_m_hz: WDM 频带的最低频率 (Hz)。
-        f_M_hz: WDM 频带的最高频率 (Hz)。
-        delta_f_co_hz: 共信道带宽，通常与符号速率或信道带宽相关 (Hz)。
-        p_total_w: WDM 系统总功率 (W)。
+    # 2. Runge-Kutta 4 (RK4) 积分
+    dz = L_m / n_steps
+    p = p_in_w.copy()
 
-    Returns
-    -------
-        NDArrayFloat: 每个信道的拉曼功率转移系数 r_f。
-    """
-    B_t = f_M_hz - f_m_hz
-    r_f = np.zeros_like(f_rel_hz)
+    for _ in range(n_steps):
+        k1 = _calc_dp_dz(p, G, f_hz, alpha_npm)
+        k2 = _calc_dp_dz(p + 0.5 * dz * k1, G, f_hz, alpha_npm)
+        k3 = _calc_dp_dz(p + 0.5 * dz * k2, G, f_hz, alpha_npm)
+        k4 = _calc_dp_dz(p + dz * k3, G, f_hz, alpha_npm)
 
-    # 提前计算系数
-    p_per_b = p_total_w / B_t if B_t > 0 else 0.0
+        p += (dz / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
-    for i in range(len(f_rel_hz)):
-        fi = f_rel_hz[i]
+        # 强制不出现负功率
+        for i in range(N):
+            if p[i] < 0:
+                p[i] = 0.0
 
-        # 定义判断条件
-        case1 = (fi - delta_f_co_hz <= f_m_hz) and (fi + delta_f_co_hz >= f_M_hz)
-        case2 = (fi - delta_f_co_hz >= f_m_hz) and (fi + delta_f_co_hz <= f_M_hz)
-        case3 = (fi - delta_f_co_hz < f_m_hz) and (fi + delta_f_co_hz < f_M_hz)
-        case4 = (fi - delta_f_co_hz > f_m_hz) and (fi + delta_f_co_hz > f_M_hz)
-
-        # 优先级顺序至关重要
-        if case1:
-            r_f[i] = p_total_w * fi
-        elif case2:
-            r_f[i] = 0.0
-        elif case3:
-            # Paper Case ③: (Pt/Bt) * (f^2/2 - f*fm + (fM^2 - delta_f_co^2)/2)
-            r_f[i] = p_per_b * (0.5 * fi**2 - fi * f_m_hz + 0.5 * (f_M_hz**2 - delta_f_co_hz**2))
-        elif case4:
-            # Paper Case ④: (Pt/Bt) * (fM*f - f^2/2 - (fm^2 - delta_f_co^2)/2)
-            r_f[i] = p_per_b * (f_M_hz * fi - 0.5 * fi**2 - 0.5 * (f_m_hz**2 - delta_f_co_hz**2))
-        else:
-            # 默认回退到线性
-            r_f[i] = p_total_w * fi
-
-    return r_f
-
-
-@njit(cache=True)
-def _calc_span_out_power_jit(
-    p_in_w: NDArrayFloat,  # 各信道入纤功率 (W)
-    f_rel_hz: NDArrayFloat,  # 各信道相对频率 (Hz)
-    alpha_power_npm: NDArrayFloat,  # 各信道功率衰减系数 (Np/m)
-    length_m: float,  # 跨段长度 (m)
-    r_f: NDArrayFloat,  # 拉曼功率转移系数
-) -> NDArrayFloat:
-    """计算经历 SRS 倾斜和光纤损耗后的各信道出纤功率。
-
-    模型来自 Ref. [1] Eq. (14)
-    Args:
-        p_in_w: 各信道入纤功率 (W)。
-        f_rel_hz: 各信道相对频率 (Hz)。
-        alpha_power_npm: 各信道功率衰减系数 (Np/m)。
-        length_m: 跨段长度 (m)。
-        r_f: 拉曼功率转移系数。
-    Returns:
-        NDArrayFloat: 各信道出纤功率 (W)。
-    """
-    p_total_in = np.sum(p_in_w)
-    N_ch = len(p_in_w)
-    L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm
-    p_out_w = np.zeros_like(p_in_w)
-
-    for i in range(N_ch):
-        if p_in_w[i] > 0:
-            # 使用的是 L_eff_array[i] 标量与 r_f 数组相乘
-            denom_i = np.sum(p_in_w * np.exp(-_SRS_CR * L_eff_array[i] * r_f))
-            if denom_i > 0:
-                p_out_w[i] = (
-                    p_in_w[i]
-                    * np.exp(-_SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)
-                    * p_total_in
-                    / denom_i
-                )
-
-    return p_out_w
+    return p
 
 
 # =============================================================================
@@ -378,38 +342,45 @@ def _calc_xpm_variance_term_jit(
     return max(pre_factor * sum_val, 0.0)
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _compute_nli_variances(
     n_ch: int,
     n_span: int,
     rs_hz: float,
     p_in_w: NDArrayFloat,
+    p_out_exact_w: NDArrayFloat,  # 传入精确的数值解
     f_rel_hz: NDArrayFloat,
     lambdas_m: NDArrayFloat,
     a_eff_m2: NDArrayFloat,
     alpha_power_npm: NDArrayFloat,
-    r_f_values: NDArrayFloat,
     L_m: float,
     beta_2_s2_m: float,
     beta_3_s3_m: float,
     n_2_m2_w: float,
-    cr_w_m_hz: float,
     phi_kurtosis: float,
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
     sigma_spm_2 = np.zeros(n_ch, dtype=np.float64)
     sigma_xpm_2 = np.zeros(n_ch, dtype=np.float64)
-    n_tilde = n_span if n_span > 1 else 0  # 单跨段 n_tilde 为 0
+    n_tilde = n_span if n_span > 1 else 0
 
-    for i in prange(n_ch):
+    # 反向计算等效拉曼倾斜 t_i_tilde
+    # 使得 GN 积分解析模型的前后功率与 ODE 高精度积分的前后功率匹配
+    t_tilde_array = np.zeros(n_ch, dtype=np.float64)
+    for i in range(n_ch):
+        p_lin_out = p_in_w[i] * np.exp(-alpha_power_npm[i] * L_m)
+        if p_lin_out > 0:
+            g_raman = p_out_exact_w[i] / p_lin_out
+            # 拟合 rho(L) = exp(-alpha*L) * [1 + t_tilde * (1 - exp(-alpha*L))]
+            t_tilde_array[i] = (g_raman - 1.0) / (1.0 - np.exp(-alpha_power_npm[i] * L_m))
+
+    for i in range(n_ch):
         if p_in_w[i] <= 0:
             continue
 
-        gamma_ii = (2 * PI / lambdas_m[i]) * (2 * n_2_m2_w / (2 * a_eff_m2[i]))
-        phi_i = -4.0 * PI**2 * (beta_2_s2_m + 2.0 * PI * beta_3_s3_m * f_rel_hz[i])
+        gamma_ii = (2 * np.pi / lambdas_m[i]) * (2 * n_2_m2_w / (2 * a_eff_m2[i]))
+        phi_i = -4.0 * np.pi**2 * (beta_2_s2_m + 2.0 * np.pi * beta_3_s3_m * f_rel_hz[i])
 
-        # 将拉曼转移系数映射为论文的 t_i_tilde = - (Cr * P_tot * f_i) / alpha_i
-        # r_f_values 内部已计算 P_tot * f_i 的等效值
-        t_i_tilde = -(cr_w_m_hz * r_f_values[i]) / alpha_power_npm[i]
+        t_i_tilde = t_tilde_array[i]
 
         sigma_spm_2[i] = _calc_spm_variance_jit(
             p_in_w[i], rs_hz, n_span, gamma_ii, phi_i, alpha_power_npm[i], t_i_tilde, L_m, epsilon_n_span=0.05
@@ -420,13 +391,13 @@ def _compute_nli_variances(
             if l_idx == i or p_in_w[l_idx] <= 0:
                 continue
 
-            gamma_il = (2 * PI / lambdas_m[i]) * (2 * n_2_m2_w / (a_eff_m2[i] + a_eff_m2[l_idx]))
+            gamma_il = (2 * np.pi / lambdas_m[i]) * (2 * n_2_m2_w / (a_eff_m2[i] + a_eff_m2[l_idx]))
 
             delta_f_hz = f_rel_hz[l_idx] - f_rel_hz[i]
-            phi_base = -4.0 * PI**2 * (beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[i] + f_rel_hz[l_idx]))
+            phi_base = -4.0 * np.pi**2 * (beta_2_s2_m + np.pi * beta_3_s3_m * (f_rel_hz[i] + f_rel_hz[l_idx]))
             phi_il = delta_f_hz * phi_base
 
-            t_l_tilde = -(cr_w_m_hz * r_f_values[l_idx]) / alpha_power_npm[l_idx]
+            t_l_tilde = t_tilde_array[l_idx]
 
             xpm_sum_term += _calc_xpm_variance_term_jit(
                 p_i_w=p_in_w[i],
@@ -545,37 +516,27 @@ def _calc_span_noise_and_power_jit(
     """
     num_channels = len(power_in_w)
 
-    # 1. 预计算中间量
-    total_p_in_w = np.sum(power_in_w)
-    # L_eff: 有效长度
-    l_eff_m = (1.0 - np.exp(-alpha_power_npm * span_length_m)) / alpha_power_npm
+    # 1. 采用高精度 RK4 求解 ODE (计算包含了损耗和真实拉曼倾斜的出纤功率)
+    # n_steps=20 在精度和速度间取得了极佳的平衡
+    p_out_after_fiber = _calc_exact_power_profile_ode(
+        power_in_w, f_abs_hz, alpha_power_npm, span_length_m, cr_w_m_hz, n_steps=20
+    )
 
-    # 2. 计算 SRS 功率转移分布 (r_f)
-    # f_m_hz 和 f_M_hz 在内核中根据 f_rel 动态确定
-    f_m_hz = f_rel_hz[0] - symbol_rate_hz / 2.0
-    f_M_hz = f_rel_hz[-1] + symbol_rate_hz / 2.0
-
-    r_f_values = _calc_raman_profile_jit(f_rel_hz, f_m_hz, f_M_hz, delta_f_co_hz, total_p_in_w)
-
-    # 3. 计算出纤功率 (考虑衰减与 SRS 倾斜)
-    p_out_after_fiber = _calc_span_out_power_jit(power_in_w, f_rel_hz, alpha_power_npm, span_length_m, r_f_values)
-
-    # 4. 计算 NLI 噪声方差 (SPM & XPM)
+    # 2. 调用 NLI 引擎，此时它将利用上述精准结果来拟合有效的 T_tilde 边界
     sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
-        num_channels,
+        len(power_in_w),
         n_effective_spans,
         symbol_rate_hz,
         power_in_w,
+        p_out_after_fiber,  # 传参增加 p_out_after_fiber
         f_rel_hz,
         lambdas_m,
         a_eff_m2,
         alpha_power_npm,
-        r_f_values,
         span_length_m,
         beta2_s2_m,
         beta3_s3_m,
         n2_m2_w,
-        cr_w_m_hz,
         phi_kurtosis,
     )
 
