@@ -537,7 +537,7 @@ def _calculate_ase_noise_variance(
             # 计算单跨段增益 (假设 EDFA 补偿损耗)
             G_i = p_in_w[i] / p_out_w[i]
 
-            total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * G_i * rs_hz
+            total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * rs_hz
             # print(f"{G_i}, {p_in_w[i]}/{p_out_w[i]}", end=", ")
             # print(f"Channel {i} ASE variance: {total_ase_variance[i]:.2e}")
 
