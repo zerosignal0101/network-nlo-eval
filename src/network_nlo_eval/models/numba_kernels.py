@@ -4,7 +4,7 @@
 """
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 from network_nlo_eval.core.constants import C_LIGHT, H_PLANCK, NP_TO_DB, PI
 from network_nlo_eval.core.types import NDArrayFloat
@@ -217,7 +217,6 @@ def _calc_span_out_power_jit(
     alpha_power_npm: NDArrayFloat,  # 各信道功率衰减系数 (Np/m)
     length_m: float,  # 跨段长度 (m)
     r_f: NDArrayFloat,  # 拉曼功率转移系数
-    k_bar: float = 0.0,  # 泵浦系数
 ) -> NDArrayFloat:
     """计算经历 SRS 倾斜和光纤损耗后的各信道出纤功率。
 
@@ -228,7 +227,6 @@ def _calc_span_out_power_jit(
         alpha_power_npm: 各信道功率衰减系数 (Np/m)。
         length_m: 跨段长度 (m)。
         r_f: 拉曼功率转移系数。
-        k_bar: 泵浦系数
     Returns:
         NDArrayFloat: 各信道出纤功率 (W)。
     """
@@ -240,11 +238,11 @@ def _calc_span_out_power_jit(
     for i in range(N_ch):
         if p_in_w[i] > 0:
             # 使用的是 L_eff_array[i] 标量与 r_f 数组相乘
-            denom_i = np.sum(p_in_w * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f))
+            denom_i = np.sum(p_in_w * np.exp(-_SRS_CR * L_eff_array[i] * r_f))
             if denom_i > 0:
                 p_out_w[i] = (
                     p_in_w[i]
-                    * np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)
+                    * np.exp(-_SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)
                     * p_total_in
                     / denom_i
                 )
@@ -260,221 +258,194 @@ _EPSILON = 1e-35
 
 
 @njit(cache=True)
-def _calc_spm_variance_jit(
-    p_i_w: float,  # COI 入纤功率 (W)
-    rs_hz: float,  # 符号速率 (Hz)
-    n_span: int,  # 跨段数量
-    gamma_ii: float,  # COI 的非线性系数 Gamma (1/(W*m))
-    phi_i: float,  # COI 的有效非线性相位 (rad/m)
-    alpha_i_npm: float,  # COI 的功率衰减系数 (Np/m)
-    t_i: float,  # COI 的有效衰减 (包含 SRS 修正)
-    r_fi: float,  # COI 的拉曼功率转移系数
-    cr_w_m_hz: float,  # 拉曼增益系数 Cr
-    k_bar: float,  # 拉曼泵浦因子 (通常为 0)
-    l_eff_i_m: float,  # COI 的有效长度 (m)
-    epsilon_n_span: float = 0.05,  # N_span 修正指数 (来自用户原始代码)
-) -> float:
-    """计算自相位调制 (SPM) 产生的噪声方差。
+def _calc_alpha_tilde_and_kappa_jit(alpha: float, L_m: float) -> tuple[float, float]:
+    """计算论文中提出的有效衰减系数 a_tilde 和 k (Eq. 15, 16)
 
-    模型来自 Ref. [2] (Modeling and mitigation of fiber nonlinearity in wideband optical signal transmission)
-    Eq (5) 及其相关项。
-    Args:
-        p_i_w: COI 入纤功率 (W)。
-        rs_hz: 符号速率 (Hz)。
-        n_span: 跨段数量。
-        gamma_ii: COI 的非线性系数 Gamma。
-        phi_i: COI 的有效非线性相位。
-        alpha_i_npm: COI 的功率衰减系数。
-        t_i: COI 的有效衰减 (包含 SRS 修正)。
-        r_fi: COI 的拉曼功率转移系数。
-        cr_w_m_hz: 拉曼增益系数 Cr。
-        k_bar: 拉曼泵浦因子 (通常为 0)。
-        l_eff_i_m: COI 的有效长度。
-        epsilon_n_span: N_span 修正指数。
-    Returns:
-        float: SPM 噪声方差。
+    用于解决极低损耗或短跨段下的精度问题。
     """
-    term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)  # 忽略 k_bar=0 时此项为 1
+    alpha_L = alpha * L_m
+    exp_term = np.exp(-alpha_L)
+    num = 1.0 - exp_term
+    den = num - alpha_L * exp_term
 
-    # 修正 phi_i 防止零或过小的值
+    # 防止泰勒展开分母极小导致除 0 (对应极短跨段)
+    if den < 1e-12:
+        alpha_tilde = 2.0 / L_m  # 取泰勒展开极限
+    else:
+        alpha_tilde = alpha * num / den
+
+    kappa = (alpha_tilde * num) / alpha
+    return alpha_tilde, kappa
+
+
+@njit(cache=True)
+def _calc_spm_variance_jit(
+    p_i_w: float,
+    rs_hz: float,
+    n_span: int,
+    gamma_ii: float,
+    phi_i: float,
+    alpha_i_npm: float,
+    t_i_tilde: float,
+    L_m: float,
+    epsilon_n_span: float = 0.05,
+) -> float:
+    """计算自相位调制 (SPM) 产生的噪声方差 (基于 Eq. 21 第一部分)"""
+    T_i = 1.0 + t_i_tilde
+
+    a_t = np.zeros(2)
+    k = np.zeros(2)
+    # l=0 -> alpha_0 = alpha; l=1 -> alpha_1 = 2*alpha
+    a_t[0], k[0] = _calc_alpha_tilde_and_kappa_jit(alpha_i_npm, L_m)
+    a_t[1], k[1] = _calc_alpha_tilde_and_kappa_jit(2 * alpha_i_npm, L_m)
+
     if abs(phi_i) < _EPSILON:
         phi_i = _EPSILON if phi_i >= 0 else -_EPSILON
 
-    pre_factor = (
-        (4 / 9)
-        * (p_i_w**3 / rs_hz**2)
-        * (n_span ** (1 + epsilon_n_span))
-        * ((gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2))
-        * term_exp
-    )
+    pre_factor = (16.0 / 27.0) * (gamma_ii**2 * p_i_w**3 / rs_hz**2) * (T_i**2)
+    sum_val = 0.0
 
-    asinh_1 = np.arcsinh((phi_i * rs_hz**2) / (PI * alpha_i_npm))
-    asinh_2 = np.arcsinh((phi_i * rs_hz**2) / (2 * PI * alpha_i_npm))
+    for l_ch in range(2):
+        for lp in range(2):
+            coeff = (-t_i_tilde / T_i) ** (l_ch + lp)
+            num = 2.0 * PI * k[l_ch] * k[lp] * (float(n_span) ** (1.0 + epsilon_n_span))
+            den = (a_t[l_ch] + a_t[lp]) * phi_i
 
-    term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1 + (
-        (4 * alpha_i_npm**2 - t_i) / (2 * alpha_i_npm)
-    ) * asinh_2
+            term_asinh = np.arcsinh((3.0 * phi_i * rs_hz**2) / (8.0 * PI * a_t[l_ch])) + np.arcsinh(
+                (3.0 * phi_i * rs_hz**2) / (8.0 * PI * a_t[lp])
+            )
 
-    result = pre_factor * term_bracket
-    return max(result, 0.0)  # 噪声方差不能为负
+            sum_val += coeff * (num / den) * term_asinh
+
+    return max(pre_factor * sum_val, 0.0)
 
 
 @njit(cache=True)
 def _calc_xpm_variance_term_jit(
-    p_l_w: float,  # 干扰信道 (INT) 入纤功率 (W)
-    rs_l_hz: float,  # INT 符号速率 (Hz)
-    rs_i_hz: float,  # COI 符号速率 (Hz)
-    gamma_il: float,  # COI-INT 间的非线性系数 Gamma (1/(W*m))
-    phi_il: float,  # COI-INT 间的有效非线性相位 (rad/m)
-    alpha_l_npm: float,  # INT 的功率衰减系数 (Np/m)
-    t_l: float,  # INT 的有效衰减 (包含 SRS 修正)
-    r_fl: float,  # INT 的拉曼功率转移系数
-    cr_w_m_hz: float,  # 拉曼增益系数 Cr
-    k_bar: float,  # 拉曼泵浦因子 (通常为 0)
-    l_eff_l_m: float,  # INT 的有效长度 (m)
+    p_i_w: float,
+    p_l_w: float,
+    rs_l_hz: float,
+    rs_i_hz: float,
+    gamma_il: float,
+    phi_il: float,
+    phi_base: float,
+    alpha_l_npm: float,
+    t_l_tilde: float,
+    L_m: float,
+    n_span: int,
+    n_tilde: int,
+    phi_kurtosis: float,
+    delta_f_hz: float,
 ) -> float:
-    """计算交叉相位调制 (XPM) 产生的噪声方差项。
+    """计算交叉相位调制 (XPM) 及峰度修正项产生的噪声方差 (基于 Eq. 21 第二部分)"""
+    T_l = 1.0 + t_l_tilde
 
-    Args:
-        p_l_w: 干扰信道 (INT) 入纤功率 (W)。
-        rs_l_hz: INT 符号速率 (Hz)。
-        rs_i_hz: COI 符号速率 (Hz)。
-        gamma_il: COI-INT 间的非线性系数 Gamma。
-        phi_il: COI-INT 间的有效非线性相位。
-        alpha_l_npm: INT 的功率衰减系数。
-        t_l: INT 的有效衰减 (包含 SRS 修正)。
-        r_fl: INT 的拉曼功率转移系数。
-        cr_w_m_hz: 拉曼增益系数 Cr。
-        k_bar: 拉曼泵浦因子 (通常为 0)。
-        l_eff_l_m: INT 的有效长度。
-    Returns:
-        float: XPM 噪声方差项。
-    """
-    term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)  # 忽略 k_bar=0 时此项为 1
+    a_t = np.zeros(2)
+    k = np.zeros(2)
+    a_t[0], k[0] = _calc_alpha_tilde_and_kappa_jit(alpha_l_npm, L_m)
+    a_t[1], k[1] = _calc_alpha_tilde_and_kappa_jit(2 * alpha_l_npm, L_m)
 
-    # 修正 phi_il 防止零或过小的值
     if abs(phi_il) < _EPSILON:
         phi_il = _EPSILON if phi_il >= 0 else -_EPSILON
+    abs_phi_base = max(abs(phi_base), _EPSILON)
 
-    pre_factor = (p_l_w**2 / rs_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp
+    pre_factor = (32.0 / 27.0) * (gamma_il**2 * p_l_w**2 * p_i_w / rs_l_hz) * (T_l**2)
+    sum_val = 0.0
 
-    atan_1 = np.arctan((phi_il * rs_i_hz) / alpha_l_npm)
-    atan_2 = np.arctan((phi_il * rs_i_hz) / (2 * alpha_l_npm))
+    for l_ch in range(2):
+        for lp in range(2):
+            coeff = (-t_l_tilde / T_l) ** (l_ch + lp)
 
-    term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1 + (
-        (4 * alpha_l_npm**2 - t_l) / (2 * alpha_l_npm)
-    ) * atan_2
+            # Term 1: 基础 XPM + 第一跨段格式修正
+            num1 = float(n_span) + (5.0 / 6.0) * phi_kurtosis
+            den1 = (a_t[l_ch] + a_t[lp]) * phi_il
+            atan_term = np.arctan((phi_il * rs_i_hz) / (2.0 * a_t[l_ch])) + np.arctan(
+                (phi_il * rs_i_hz) / (2.0 * a_t[lp])
+            )
+            term1 = (num1 / den1) * atan_term
 
-    result = pre_factor * term_bracket
-    return max(result, 0.0)  # 噪声方差不能为负
+            # Term 2: 渐进多跨段格式修正
+            den2 = abs_phi_base * (rs_l_hz**2) * a_t[l_ch] * a_t[lp]
+            num2 = (5.0 / 6.0) * phi_kurtosis * PI * float(n_tilde)
+
+            abs_df = abs(delta_f_hz)
+            log_arg = (2.0 * abs_df - rs_l_hz) / (2.0 * abs_df + rs_l_hz)
+            log_term = (2.0 * abs_df - rs_l_hz) * np.log(log_arg) if log_arg > 0 else 0.0
+            term2 = (num2 / den2) * (log_term + 2.0 * rs_l_hz)
+
+            sum_val += coeff * 2.0 * k[l_ch] * k[lp] * (term1 + term2)
+
+    return max(pre_factor * sum_val, 0.0)
 
 
-@njit(cache=True)  # 不使用细粒度多线程
+@njit(cache=True, parallel=True)
 def _compute_nli_variances(
-    n_ch: int,  # 信道总数
-    n_span: int,  # 跨段数量
-    rs_hz: float,  # 符号速率 (Hz)
-    p_in_w: NDArrayFloat,  # 各信道入纤功率 (W)
-    f_rel_hz: NDArrayFloat,  # 各信道相对频率 (Hz)
-    lambdas_m: NDArrayFloat,  # 各信道波长 (m)
-    a_eff_m2: NDArrayFloat,  # 各信道有效模面积 (m^2)
-    alpha_power_npm: NDArrayFloat,  # 各信道功率衰减系数 (Np/m)
-    t_factors: NDArrayFloat,  # 各信道有效衰减因子 (包含 SRS 修正)
-    r_f_values: NDArrayFloat,  # 各信道拉曼功率转移系数
-    l_eff_m: NDArrayFloat,  # 各信道有效长度 (m)
-    beta_2_s2_m: float,  # 色散参数 beta2 (s^2/m)
-    beta_3_s3_m: float,  # 色散参数 beta3 (s^3/m)
-    n_2_m2_w: float,  # 非线性折射率 n2 (m^2/W)
-    cr_w_m_hz: float,  # 拉曼增益系数 Cr (1/(W·m·Hz))
-    k_bar: float,  # 拉曼泵浦因子 (通常为 0)
+    n_ch: int,
+    n_span: int,
+    rs_hz: float,
+    p_in_w: NDArrayFloat,
+    f_rel_hz: NDArrayFloat,
+    lambdas_m: NDArrayFloat,
+    a_eff_m2: NDArrayFloat,
+    alpha_power_npm: NDArrayFloat,
+    r_f_values: NDArrayFloat,
+    L_m: float,
+    beta_2_s2_m: float,
+    beta_3_s3_m: float,
+    n_2_m2_w: float,
+    cr_w_m_hz: float,
+    phi_kurtosis: float,
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
-    """高度优化的 NLI 计算核心，负责计算 SPM 和 XPM 的 O(N^2) 嵌套循环。
-
-    Args:
-        n_ch: 信道总数。
-        n_span: 跨段数量。
-        rs_hz: 符号速率 (Hz)。
-        p_in_w: 各信道入纤功率 (W)。
-        f_rel_hz: 各信道相对频率 (Hz)。
-        lambdas_m: 各信道波长 (m)。
-        a_eff_m2: 各信道有效模面积 (m^2)。
-        alpha_power_npm: 各信道功率衰减系数 (Np/m)。
-        t_factors: 各信道有效衰减因子 (包含 SRS 修正)。
-        r_f_values: 各信道拉曼功率转移系数。
-        l_eff_m: 各信道有效长度 (m)。
-        beta_2_s2_m: 色散参数 beta2 (s^2/m)。
-        beta_3_s3_m: 色散参数 beta3 (s^3/m)。
-        n_2_m2_w: 非线性折射率 n2 (m^2/W)。
-        cr_w_m_hz: 拉曼增益系数 Cr。
-        k_bar: 拉曼泵浦因子。
-
-    Returns
-    -------
-        Tuple[NDArrayFloat, NDArrayFloat]:
-        - sigma_spm_2: 各信道 SPM 噪声方差。
-        - sigma_xpm_2: 各信道 XPM 噪声方差。
-    """
     sigma_spm_2 = np.zeros(n_ch, dtype=np.float64)
     sigma_xpm_2 = np.zeros(n_ch, dtype=np.float64)
+    n_tilde = n_span if n_span > 1 else 0  # 单跨段 n_tilde 为 0
 
-    # 外层信道循环
-    for i in range(n_ch):
-        if p_in_w[i] <= 0:  # 如果信道无功率，则不计算 NLI
+    for i in prange(n_ch):
+        if p_in_w[i] <= 0:
             continue
 
-        # SPM 项计算
-        gamma_ii = _calc_gamma_coeff_scalar(lambdas_m[i], lambdas_m[i], n_2_m2_w, a_eff_m2[i], a_eff_m2[i])
-        phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)
+        gamma_ii = (2 * PI / lambdas_m[i]) * (2 * n_2_m2_w / (2 * a_eff_m2[i]))
+        phi_i = -4.0 * PI**2 * (beta_2_s2_m + 2.0 * PI * beta_3_s3_m * f_rel_hz[i])
+
+        # 将拉曼转移系数映射为论文的 t_i_tilde = - (Cr * P_tot * f_i) / alpha_i
+        # r_f_values 内部已计算 P_tot * f_i 的等效值
+        t_i_tilde = -(cr_w_m_hz * r_f_values[i]) / alpha_power_npm[i]
 
         sigma_spm_2[i] = _calc_spm_variance_jit(
-            p_in_w[i],
-            rs_hz,
-            n_span,
-            gamma_ii,
-            phi_i,
-            alpha_power_npm[i],
-            t_factors[i],
-            r_f_values[i],
-            cr_w_m_hz,
-            k_bar,
-            l_eff_m[i],
+            p_in_w[i], rs_hz, n_span, gamma_ii, phi_i, alpha_power_npm[i], t_i_tilde, L_m, epsilon_n_span=0.05
         )
 
-        # XPM 项计算
         xpm_sum_term = 0.0
         for l_idx in range(n_ch):
-            if l_idx == i or p_in_w[l_idx] <= 0:  # 干扰信道 l 必须有功率且不能是 COI 本身
+            if l_idx == i or p_in_w[l_idx] <= 0:
                 continue
-            gamma_il = _calc_gamma_coeff_scalar(lambdas_m[i], lambdas_m[l_idx], n_2_m2_w, a_eff_m2[i], a_eff_m2[l_idx])
 
-            # 简化计算 phi_il
-            # phi_il = 2 * PI**2 * (f_rel_hz[l] - f_rel_hz[i])
-            # * (beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l] + f_rel_hz[i]))
-            # 原始用户代码中的 phi_il = 2 * PI**2 * (f_rel[l] - f_rel[i]) * (beta2 + PI * beta3 * (f_rel[l] + f_rel[i]))
-            # 确保符号速率统一
-            phi_il = (
-                2
-                * PI**2
-                * (f_rel_hz[l_idx] - f_rel_hz[i])
-                * (beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))
-            )
+            gamma_il = (2 * PI / lambdas_m[i]) * (2 * n_2_m2_w / (a_eff_m2[i] + a_eff_m2[l_idx]))
+
+            delta_f_hz = f_rel_hz[l_idx] - f_rel_hz[i]
+            phi_base = -4.0 * PI**2 * (beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[i] + f_rel_hz[l_idx]))
+            phi_il = delta_f_hz * phi_base
+
+            t_l_tilde = -(cr_w_m_hz * r_f_values[l_idx]) / alpha_power_npm[l_idx]
 
             xpm_sum_term += _calc_xpm_variance_term_jit(
-                p_in_w[l_idx],
-                rs_hz,
-                rs_hz,
-                gamma_il,
-                phi_il,  # XPM 的符号速率通常用 COI 和 INT 的符号速率
-                alpha_power_npm[l_idx],
-                t_factors[l_idx],
-                r_f_values[l_idx],
-                cr_w_m_hz,
-                k_bar,
-                l_eff_m[l_idx],
+                p_i_w=p_in_w[i],
+                p_l_w=p_in_w[l_idx],
+                rs_l_hz=rs_hz,
+                rs_i_hz=rs_hz,
+                gamma_il=gamma_il,
+                phi_il=phi_il,
+                phi_base=phi_base,
+                alpha_l_npm=alpha_power_npm[l_idx],
+                t_l_tilde=t_l_tilde,
+                L_m=L_m,
+                n_span=n_span,
+                n_tilde=n_tilde,
+                phi_kurtosis=phi_kurtosis,
+                delta_f_hz=delta_f_hz,
             )
 
-        # XPM 噪声是线性的，与 COI 功率成正比
-        sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term
+        sigma_xpm_2[i] = xpm_sum_term
 
     return sigma_spm_2, sigma_xpm_2
 
@@ -565,8 +536,8 @@ def _calc_span_noise_and_power_jit(
     n_effective_spans: int,  # 有效累积跨段数 (NLI计算用)
     # --- 物理常数 ---
     cr_w_m_hz: float,  # SRS 增益系数 Cr
-    k_bar: float,  # 泵浦因子
     delta_f_co_hz: float,  # SRS 截断频率
+    phi_kurtosis: float = 0.0,  # 0.0为高斯(默认), -0.6190为64QAM
 ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
     """【高性能内核】单跨段物理层评估的 JIT 版本。
 
@@ -587,14 +558,9 @@ def _calc_span_noise_and_power_jit(
     r_f_values = _calc_raman_profile_jit(f_rel_hz, f_m_hz, f_M_hz, delta_f_co_hz, total_p_in_w)
 
     # 3. 计算出纤功率 (考虑衰减与 SRS 倾斜)
-    p_out_after_fiber = _calc_span_out_power_jit(
-        power_in_w, f_rel_hz, alpha_power_npm, span_length_m, r_f_values, k_bar
-    )
+    p_out_after_fiber = _calc_span_out_power_jit(power_in_w, f_rel_hz, alpha_power_npm, span_length_m, r_f_values)
 
     # 4. 计算 NLI 噪声方差 (SPM & XPM)
-    # 准备 T 因子: (2*alpha - Cr*r_f)^2
-    t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2
-
     sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
         num_channels,
         n_effective_spans,
@@ -604,14 +570,13 @@ def _calc_span_noise_and_power_jit(
         lambdas_m,
         a_eff_m2,
         alpha_power_npm,
-        t_factors,
         r_f_values,
-        l_eff_m,
+        span_length_m,
         beta2_s2_m,
         beta3_s3_m,
         n2_m2_w,
         cr_w_m_hz,
-        k_bar,
+        phi_kurtosis,
     )
 
     # 5. 计算 ASE 噪声方差

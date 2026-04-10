@@ -47,6 +47,7 @@ class MultiBandISRSGN:
         grid: SpectrumGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
+        phi_kurtosis: float = 0.0,  # 0.0为高斯(默认), -0.6190为64QAM
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -58,8 +59,8 @@ class MultiBandISRSGN:
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
         self.symbol_rate_hz = symbol_rate_hz
+        self.phi_kurtosis = phi_kurtosis
         self.cr_w_m_hz = _SRS_CR  # 拉曼增益系数
-        self.k_bar = 0.0  # 拉曼泵浦因子，简化为 0 (无泵浦)
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
 
@@ -158,8 +159,8 @@ class MultiBandISRSGN:
             symbol_rate_hz=self.symbol_rate_hz,
             n_effective_spans=n_effective_spans,
             cr_w_m_hz=self.cr_w_m_hz,
-            k_bar=self.k_bar,
             delta_f_co_hz=self.delta_f_co_hz,
+            phi_kurtosis=self.phi_kurtosis,
         )
 
         # 3. 处理 ROADM 插入损耗 (可选，在 Python 层处理非线性外围逻辑)
