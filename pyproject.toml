@@ -68,6 +68,7 @@ fail_under = 100
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+exclude = [".trellis", ".claude"]
 
 [tool.ruff.lint]
 select = [
