@@ -175,12 +175,6 @@ class QoTValidator:
                 total_ase_power_w += s_ase * num_full_spans
                 total_physical_spans_count += num_full_spans
 
-                # 累加所有信道的噪声方差
-                total_spm_power_w += s_spm * num_full_spans
-                total_xpm_power_w += s_xpm * num_full_spans
-                total_ase_power_w += s_ase * num_full_spans
-                total_physical_spans_count += num_full_spans
-
             # 3.2 计算剩余长度跨段的噪声
             if remainder_length_m > 1.0:  # 长度大于1米才计算，避免浮点误差
                 _, r_spm, r_xpm, r_ase = self.gn_evaluator._calc_span_noise_and_power(
