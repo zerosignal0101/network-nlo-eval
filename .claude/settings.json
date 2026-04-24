@@ -4,8 +4,11 @@
       "Bash(python3 ./.trellis/scripts/get_context.py)",
       "Bash(python3 ./.trellis/scripts/get_context.py --mode packages)",
       "Bash(python3 ./.trellis/scripts/task.py finish)",
-      "Bash(C:/Users/zsig/miniconda3/envs/gnpy/python.exe *)"
-    ]
+      "Bash(C:/Users/zsig/miniconda3/envs/gnpy/python.exe *)",
+      "Read(//d/C-Codes/Optical-Networks/physics-nlo-eval/**)",
+      "Read(//d/C-Codes/Optical-Networks/PyNLO/**)"
+    ],
+    "additionalDirectories": ["D:\\C-Codes\\Optical-Networks\\physics-nlo-eval"]
   },
   "hooks": {
     "SessionStart": [
