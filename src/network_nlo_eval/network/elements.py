@@ -37,7 +37,7 @@ class EDFAConfig(BaseModel):
     """掺铒光纤放大器 (EDFA) 的配置参数."""
 
     target_gain_db: float = Field(20.0, description="放大器目标增益 (dB)")
-    noise_figure_db: float = Field(5.0, description="放大器噪声系数 (NF) (dB)")
+    noise_figure_db: float | NDArrayFloat = Field(5.0, description="放大器噪声系数 (NF) (dB)")
     # 可选：增益平坦度/纹波 (未来可扩展为NDArrayFloat)
     gain_ripple_db: NDArrayFloat | None = Field(None, description="增益纹波 (dB), 每个信道一个值")
 

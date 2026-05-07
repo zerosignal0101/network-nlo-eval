@@ -113,7 +113,7 @@ class MultiBandISRSGN:
         self,
         power_in_w: NDArrayFloat,
         span_length_m: float,
-        edfa_config: EDFAConfig,
+        edfa_config: EDFAConfig | None,
         roadm_config: ROADMConfig | None = None,
         n_effective_spans: int = 1,
     ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
@@ -136,9 +136,13 @@ class MultiBandISRSGN:
         """
         # 1. 处理放大器噪声系数 (NF)
         # 如果 edfa_config 提供了全频段的 NF 数组则使用之，否则使用预计算的默认值
-        if edfa_config.gain_ripple_db is not None:
-            # 这里可以根据实际需求动态计算 NF
-            current_nf_lin = self.nf_lin_channels
+        if edfa_config is not None:
+            if edfa_config.noise_figure_db is not None:
+                if isinstance(edfa_config.noise_figure_db, float):
+                    current_nf_lin = np.full_like(self.nf_lin_channels, 10 ** (edfa_config.noise_figure_db / 10))
+                else:
+                    # noise_figure_db 是数组，需要转换为线性值
+                    current_nf_lin = 10 ** (edfa_config.noise_figure_db / 10)
         else:
             current_nf_lin = self.nf_lin_channels
 
