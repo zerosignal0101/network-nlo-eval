@@ -1,6 +1,6 @@
 """管理网络的动态资源状态，如波长占用和链路功率谱。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -14,6 +14,16 @@ from network_nlo_eval.core.types import (
 )
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.simulation.traffic import AllocatedService  # 依赖 ServiceRequest
+
+
+@dataclass
+class LinkNoiseCache:
+    """缓存单条链路上所有信道的噪声方差 (W) 和物理跨段数。"""
+
+    spm: NDArrayFloat  # 每信道 SPM 噪声方差 (W)
+    xpm: NDArrayFloat  # 每信道 XPM 噪声方差 (W)
+    ase: NDArrayFloat  # 每信道 ASE 噪声方差 (W)
+    span_count: int  # 链路上的物理跨段数
 
 
 @dataclass
@@ -35,11 +45,30 @@ class LinkState:
     # 记录每个信道上分配的服务ID，-1 表示未分配
     allocated_service_ids: NDArrayInt
 
+    # 噪声缓存：惰性计算，功率谱改变时失效
+    _noise_cache: LinkNoiseCache | None = field(default=None, init=False, repr=False)
+
     def __post_init__(self):
         """确保数组在初始化时是副本，防止外部修改。"""
         self.occupied_channels = self.occupied_channels.copy()
         self.launch_power_profile_w = self.launch_power_profile_w.copy()
         self.allocated_service_ids = self.allocated_service_ids.copy()
+
+    @property
+    def noise_cache(self) -> LinkNoiseCache | None:
+        """获取链路噪声缓存，若不存在则由外部计算后赋值。
+
+        当 _noise_cache 为 None 时，调用方需自行计算并赋值。
+        """
+        return self._noise_cache
+
+    @noise_cache.setter
+    def noise_cache(self, value: LinkNoiseCache) -> None:
+        self._noise_cache = value
+
+    def invalidate_noise_cache(self) -> None:
+        """使噪声缓存失效，在功率谱改变后调用。"""
+        self._noise_cache = None
 
     def allocate(self, channel_idx: int, launch_power_w: float, service_id: int) -> None:
         """在指定信道上分配资源。
@@ -54,6 +83,7 @@ class LinkState:
         self.occupied_channels[channel_idx] = True
         self.launch_power_profile_w[channel_idx] = launch_power_w
         self.allocated_service_ids[channel_idx] = service_id
+        self.invalidate_noise_cache()
 
     def release(self, channel_idx: int) -> None:
         """释放指定信道上的资源。
@@ -62,11 +92,11 @@ class LinkState:
             channel_idx: 待释放的信道索引。
         """
         if not self.occupied_channels[channel_idx]:
-            # warnings.warn(f"Channel {channel_idx} on link {self.link_key} is not occupied, skipping release.")
             return  # 静默处理重复释放
         self.occupied_channels[channel_idx] = False
         self.launch_power_profile_w[channel_idx] = 0.0
         self.allocated_service_ids[channel_idx] = -1  # 标记为未分配
+        self.invalidate_noise_cache()
 
 
 class NetworkState:
