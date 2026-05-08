@@ -9,7 +9,7 @@ import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
+from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -18,7 +18,6 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_nf_lin_jit,
     _calc_span_noise_and_power_jit,
     _db_to_lin,
-    _lin_to_db,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 
@@ -174,89 +173,3 @@ class MultiBandISRSGN:
             p_out_fiber = p_out_fiber / loss_lin
 
         return p_out_fiber, s2_spm, s2_xpm, s2_ase
-
-    def evaluate_path_snr(
-        self,
-        path: list[NodeID],  # 路由路径 (内部节点ID列表)
-        channel_idx: int,  # 待评估的信道索引
-        launch_power_w: float,  # 每跨段的发射功率 (W)
-        current_network_state: dict[tuple[int, int], NDArrayFloat],  # 每个链路的 (所有信道的) 功率分布
-        snr_requirement_db: float,  # 业务 SNR 门限 (dB)
-    ) -> tuple[float, NDArrayFloat]:
-        """评估指定路径上特定信道的端到端 SNR。
-
-        此函数将沿着路径累积 NLI 和 ASE 噪声。
-
-        Args:
-            path: 路由路径 (内部节点ID列表)。
-            channel_idx: 待评估的信道索引。
-            launch_power_w: 该信道在每个跨段的发射功率 (W)。
-            current_network_state: 字典，键为规范化链路键，值为该链路上所有信道的 (当前) 发射功率分布。
-                                   用于计算 NLI 中的 XPM 贡献。
-            snr_requirement_db: 该信道所需 SNR 门限 (dB)。
-
-        Returns
-        -------
-            Tuple[float, NDArrayFloat]:
-            - accumulated_snr_db: 累积的端到端 SNR (dB)。
-            - total_noise_power: 每个跨段的累积噪声方差 (W)。
-        """
-        num_spans_in_path = len(path) - 1
-
-        total_spm_power_w = 0.0
-        total_xpm_power_w = 0.0
-        total_ase_power_w = 0.0
-
-        # 理论上，ISRS-GN 模型计算的是每个 span 的 NLI 和 ASE，然后在线性域累加。
-        # 为了简化，我们假设每个跨段后的 EDFA 完美补偿了该跨段的损耗 (包括 ROADM 损耗)，
-        # 使得每个跨段的输入功率可以视为恒定为 launch_power_w。
-        # 这样 NLI 和 ASE 噪声方差可以直接累加。
-
-        for i in range(num_spans_in_path):
-            u_node_idx = path[i]
-            v_node_idx = path[i + 1]
-            link_key = LinkKey((u_node_idx, v_node_idx) if u_node_idx < v_node_idx else (v_node_idx, u_node_idx))
-
-            # 从 NetworkTopology 获取静态配置
-            fiber_config = self.network_topology.get_fiber_config(u_node_idx, v_node_idx)
-            edfa_config = self.network_topology.get_edfa_config(u_node_idx)  # 假设 EDFA 在每个节点后
-            roadm_config = self.network_topology.get_roadm_config(u_node_idx)
-
-            # 获取该链路上所有信道的当前功率分布，这用于计算 XPM 贡献
-            # current_network_state 已经是深拷贝后的临时状态
-            power_profile_on_link = current_network_state[link_key]
-
-            # 计算单跨段的 NLI 和 ASE 噪声方差
-            # 这里的 power_in_w 应该是该链路的发射功率分布
-            _, span_spm_power_w, span_xpm_power_w, span_ase_power_w = self._calc_span_noise_and_power(
-                power_profile_on_link,
-                fiber_config.length_km * 1000,
-                edfa_config,
-                roadm_config,
-                n_effective_spans=1,  # 单个跨段计算
-            )
-
-            total_spm_power_w += span_spm_power_w[channel_idx]
-            total_xpm_power_w += span_xpm_power_w[channel_idx]
-            total_ase_power_w += span_ase_power_w[channel_idx]
-
-        # 施加 SPM 相干累积惩罚 (Coherent Accumulation Penalty)
-        epsilon = 0.05  # GN 模型针对标准 SMF 的经验相干因子
-        if num_spans_in_path > 0:
-            spm_coherent_penalty = float(num_spans_in_path) ** epsilon
-        else:
-            spm_coherent_penalty = 1.0
-
-        # 计算总噪声功率
-        total_noise_power_w = total_spm_power_w * spm_coherent_penalty + total_xpm_power_w + total_ase_power_w
-
-        # 信号功率：由于我们假设 EDFA 完美补偿，每个跨段的信号功率保持为 launch_power_w
-        # 但噪声是累积的。所以信号功率应是 launch_power_w
-        # SNR = P_signal / (N_NLI + N_ASE)
-        if total_noise_power_w <= 0:
-            accumulated_snr_db = np.inf
-        else:
-            accumulated_snr_linear = launch_power_w / total_noise_power_w
-            accumulated_snr_db = _lin_to_db(accumulated_snr_linear)
-
-        return accumulated_snr_db, total_noise_power_w
