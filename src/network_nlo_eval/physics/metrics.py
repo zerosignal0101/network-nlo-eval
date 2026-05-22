@@ -46,22 +46,24 @@ def compute_ber_from_snr(snr_db: float, modulation: str = "QPSK") -> float:
 def compute_snr_from_evm(evm_linear: float, modulation: str = "QPSK") -> float:
     """从 EVM 估计 SNR。
 
+    使用标准关系: EVM ≈ 1/sqrt(SNR) ⇒ SNR = 1/EVM²。
+
     Parameters
     ----------
     evm_linear : float
         EVM (线性值)。
     modulation : str
-        调制格式。
+        调制格式 (当前未使用, 保留接口兼容)。
 
     Returns
     -------
     float
-        估计的 SNR (dB)。
+        估计的 SNR (dB)。下限 -20 dB。
     """
-    # EVM^2 = 1/(1+SNR) for QPSK => SNR = 1/EVM^2 - 1
     if evm_linear > 0:
-        snr_linear = 1 / (evm_linear**2) - 1
-        if snr_linear > 0:
-            return _lin_to_db(snr_linear)
+        evm_sq = evm_linear * evm_linear
+        # EVM² = P_error / P_signal ≈ 1/SNR (标准 EVM-SNR 关系)
+        snr_linear = 1.0 / evm_sq if evm_sq > 0 else 1e20
+        return max(_lin_to_db(snr_linear), -20.0)
 
-    return 40.0  # Very high SNR
+    return float("inf")

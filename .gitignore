@@ -163,6 +163,7 @@ cython_debug/
 .vscode/
 
 # Project excludes
+/.claude/
 docs/_examples
 sg_execution_times.rst
 results/
