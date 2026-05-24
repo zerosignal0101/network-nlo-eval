@@ -1,73 +1,59 @@
 # Network NLO Eval
 
-<!-- [![PyPI](https://img.shields.io/pypi/v/network-nlo-eval.svg)][pypi_]
-[![Status](https://img.shields.io/pypi/status/network-nlo-eval.svg)][status]
-[![Python Version](https://img.shields.io/pypi/pyversions/network-nlo-eval)][python version]
-[![License](https://img.shields.io/pypi/l/network-nlo-eval)][license]
-
-[![Read the documentation at https://network-nlo-eval.readthedocs.io/](https://img.shields.io/readthedocs/network-nlo-eval/latest.svg?label=Read%20the%20Docs)][read the docs]
-[![Tests](https://github.com/zerosignal0101/network-nlo-eval/workflows/Tests/badge.svg)][tests]
-[![Codecov](https://codecov.io/gh/zerosignal0101/network-nlo-eval/branch/main/graph/badge.svg)][codecov]
-
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)][pre-commit]
-[![Black](https://img.shields.io/badge/code%20style-black-000000.svg)][black]
-
-[pypi_]: https://pypi.org/project/network-nlo-eval/
-[status]: https://pypi.org/project/network-nlo-eval/
-[python version]: https://pypi.org/project/network-nlo-eval
-[read the docs]: https://network-nlo-eval.readthedocs.io/
-[tests]: https://github.com/zerosignal0101/network-nlo-eval/actions?workflow=Tests
-[codecov]: https://app.codecov.io/gh/zerosignal0101/network-nlo-eval
-[pre-commit]: https://github.com/pre-commit/pre-commit
-[black]: https://github.com/psf/black -->
+Physical-layer transmission quality (QoT) evaluation for multi-band WDM optical networks, with QoT-aware routing and wavelength assignment (RWA) and discrete-event simulation.
 
 ## Features
 
-- TODO
+- **Multi-band spectrum** — configurable WDM grid (C+L+S bands) with arbitrary channel count, spacing, and center frequency.
+- **ISRS-GN model** — Inter-channel Stimulated Raman Scattering Generalized Noise (ISRS-GN) evaluator, computing per-channel SPM, XPM, and ASE noise variances, accelerated with Numba JIT kernels.
+- **Network element modeling** — Pydantic-based configuration for fiber spans (attenuation, dispersion, nonlinear coefficient), EDFAs (gain, noise figure), and ROADMs (insertion loss, filtering penalty).
+- **Topology management** — NetworkX-based topology loader supporting arbitrary fiber network topologies with per-link length and per-node element configs.
+- **QoT-aware RWA** — K-Shortest Paths (KSP) with First-Fit wavelength allocation, validated against physical-layer SNR degradation on both new and existing services.
+- **Discrete-event simulation** — Poisson arrival traffic with exponential holding times, event-driven engine with heapq scheduling, progress reporting, and configurable load.
+- **Metrics collection** — blocking rate, wavelength utilization, average hop count, throughput, and fragmentation index.
+- **PyNLO integration** — physical-layer evaluation via Manakov solver in `network_nlo_eval.physics.qot_checker`.
+- **CLI** — Click-based `simulate` command wiring topology loading, spectrum definition, RWA, simulation engine, and metrics export into a single invocation.
 
 ## Requirements
 
-- TODO
+- Python >= 3.11, <= 3.13
+- Dependencies: click, numpy, scipy, numba, networkx, pydantic (see [pyproject.toml](pyproject.toml) for versions)
 
 ## Installation
-
-You can install _Network NLO Eval_ via [pip] from [PyPI]:
 
 ```console
 $ pip install network-nlo-eval
 ```
 
+Or with Poetry:
+
+```console
+$ poetry install
+```
+
 ## Usage
 
-Please see the [Command-line Reference] for details.
+### CLI
 
-## Contributing
+```console
+$ network-nlo-eval simulate --topology-file assets/example_pan_europe_network.json \
+    --service-num 500 --avg-arrival-interval 10 --avg-holding-time 400 \
+    --num-channels 80 --channel-spacing-ghz 50 --center-freq-thz 193.1 \
+    --max-ksp-paths 5 --output-dir results
+```
 
-Contributions are very welcome.
-To learn more, see the [Contributor Guide].
+## Project structure
+
+```
+src/network_nlo_eval/
+├── core/          # Physical constants, type aliases, SpectrumGrid
+├── models/        # ISRS-GN evaluator and Numba JIT kernels
+├── network/       # Fiber/EDFA/ROADM configs, NetworkTopology, NetworkState
+├── physics/       # SNR/BER/EVM utilities, PyNLO-based QoT evaluator
+├── rwa/           # PathCache, QoTValidator, KSPFirstFitAllocator
+└── simulation/    # Event engine, traffic generation, metrics collection
+```
 
 ## License
 
-Distributed under the terms of the [GPL 3.0 license][license],
-_Network NLO Eval_ is free and open source software.
-
-## Issues
-
-If you encounter any problems,
-please [file an issue] along with a detailed description.
-
-## Credits
-
-This project was generated from [@cjolowicz]'s [Hypermodern Python Cookiecutter] template.
-
-[@cjolowicz]: https://github.com/cjolowicz
-[pypi]: https://pypi.org/
-[hypermodern python cookiecutter]: https://github.com/cjolowicz/cookiecutter-hypermodern-python
-[file an issue]: https://github.com/zerosignal0101/network-nlo-eval/issues
-[pip]: https://pip.pypa.io/
-
-<!-- github-only -->
-
-[license]: https://github.com/zerosignal0101/network-nlo-eval/blob/main/LICENSE
-[contributor guide]: https://github.com/zerosignal0101/network-nlo-eval/blob/main/CONTRIBUTING.md
-[command-line reference]: https://network-nlo-eval.readthedocs.io/en/latest/usage.html
+GPL 3.0. See [LICENSE](LICENSE).
