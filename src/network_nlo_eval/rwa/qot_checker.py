@@ -33,7 +33,7 @@ class QoTValidator:
         gn_evaluator: MultiBandISRSGN,
         network_topology: NetworkTopology,
         spectrum_grid: SpectrumGrid,
-        fixed_span_length_km: float = 100.0,
+        fixed_span_length_km: float | None = None,
     ):
         self.gn_evaluator = gn_evaluator
         self.network_topology = network_topology
@@ -50,7 +50,7 @@ class QoTValidator:
         path: list[NodeID],
         channel_idx: int,
         current_network_state: NetworkState,
-        fixed_span_length_km: float = 100.0,
+        fixed_span_length_km: float | None = None,
     ) -> tuple[bool, NDArrayFloat | None]:
         """验证将 ``service_request`` 分配到 ``path`` 和 ``channel_idx`` 是否满足所有 SNR 要求。
 
@@ -152,16 +152,16 @@ class QoTValidator:
         self,
         link_key: LinkKey,
         power_profile: NDArrayFloat,
-        fixed_span_length_km: float,
+        fixed_span_length_km: float | None,
     ) -> LinkNoiseCache:
         """计算单条链路在给定功率谱下的噪声缓存。"""
         u, v = link_key
         fiber_config = self.network_topology.get_fiber_config(u, v)
-        edfa_config = self.network_topology.get_edfa_config(u)
-        roadm_config = self.network_topology.get_roadm_config(u)
+        edfa_config = self.network_topology.get_link_edfa_config(u, v)
+        evaluator = self.gn_evaluator.for_fiber(fiber_config)
 
         link_total_length_m = fiber_config.length_km * 1000
-        span_length_m = fixed_span_length_km * 1000
+        span_length_m = (fixed_span_length_km or fiber_config.max_span_length_km) * 1000
         num_full_spans = int(link_total_length_m // span_length_m)
         remainder_length_m = link_total_length_m % span_length_m
 
@@ -171,7 +171,7 @@ class QoTValidator:
         total_spans = 0
 
         if num_full_spans > 0:
-            _, s_spm, s_xpm, s_ase = self.gn_evaluator._calc_span_noise_and_power(
+            _, s_spm, s_xpm, s_ase = evaluator._calc_span_noise_and_power(
                 power_profile,
                 span_length_m,
                 edfa_config,
@@ -184,11 +184,10 @@ class QoTValidator:
             total_spans += num_full_spans
 
         if remainder_length_m > 1.0:
-            _, r_spm, r_xpm, r_ase = self.gn_evaluator._calc_span_noise_and_power(
+            _, r_spm, r_xpm, r_ase = evaluator._calc_span_noise_and_power(
                 power_profile,
                 remainder_length_m,
                 edfa_config,
-                roadm_config,
                 n_effective_spans=1,
             )
             total_spm += r_spm
@@ -203,7 +202,7 @@ class QoTValidator:
         link_key: LinkKey,
         link_state,
         temp_noise_cache: dict[LinkKey, LinkNoiseCache],
-        fixed_span_length_km: float,
+        fixed_span_length_km: float | None,
     ) -> LinkNoiseCache:
         """获取链路噪声缓存：优先从临时缓存，否则从 LinkState（惰性计算）。"""
         if link_key in temp_noise_cache:
@@ -227,7 +226,7 @@ class QoTValidator:
         launch_power_w: float,
         temp_noise_cache: dict[LinkKey, LinkNoiseCache],
         network_state: NetworkState,
-        fixed_span_length_km: float,
+        fixed_span_length_km: float | None,
     ) -> float:
         """通用方法：沿服务自身路径累积噪声，计算单信道 SNR (dB)。
 
@@ -238,6 +237,7 @@ class QoTValidator:
         total_spm = 0.0
         total_xpm = 0.0
         total_ase = 0.0
+        signal_power = launch_power_w
         total_spans = 0
 
         for i in range(len(path) - 1):
@@ -257,13 +257,36 @@ class QoTValidator:
             total_ase += cache.ase[channel_idx]
             total_spans += cache.span_count
 
+            roadm = self.network_topology.get_roadm_config(v)
+            if channel_idx in roadm.blocked_channels:
+                return float("-inf")
+            loss = 10 ** (roadm.path_loss_db("drop" if i == len(path) - 2 else "express") / 10)
+            if roadm.equalize_output_power:
+                nf = 10 ** (roadm.booster_noise_figure_db / 10)
+                total_ase += (
+                    nf
+                    * 6.62607015e-34
+                    * self.spectrum_grid.frequencies[channel_idx]
+                    * self.gn_evaluator.symbol_rate_hz
+                    * (loss - 1)
+                )
+            else:
+                signal_power /= loss
+                total_spm /= loss
+                total_xpm /= loss
+                total_ase /= loss
+            penalty = 10 ** (roadm.filtering_penalty_db / 10)
+            total_spm *= penalty
+            total_xpm *= penalty
+            total_ase *= penalty
+
         # SPM 相干累积惩罚
         penalty = total_spans**0.05 if total_spans > 0 else 1.0
         noise = total_spm * penalty + total_xpm + total_ase
 
         if noise <= 0:
             return float("inf")
-        return 10.0 * math.log10(launch_power_w / noise)
+        return 10.0 * math.log10(signal_power / noise)
 
     def _collect_affected_services(
         self,
@@ -300,13 +323,19 @@ class QoTValidator:
         temp_power_profiles: dict[LinkKey, NDArrayFloat],
         temp_noise_cache: dict[LinkKey, LinkNoiseCache],
         network_state: NetworkState,
-        fixed_span_length_km: float,
+        fixed_span_length_km: float | None,
     ) -> NDArrayFloat:
         """构建新业务路径上各信道的 SNR (dB) 数组，用于返回值。"""
         total_spm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         total_xpm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         total_ase = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
         total_spans = 0
+        u0, v0 = path[0], path[1]
+        link_key0 = _normalize(u0, v0)
+        if link_key0 in temp_power_profiles:
+            signal_power = temp_power_profiles[link_key0].copy()
+        else:
+            signal_power = network_state.get_link_state(u0, v0).launch_power_profile_w.copy()
 
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
@@ -325,6 +354,28 @@ class QoTValidator:
             total_ase += cache.ase
             total_spans += cache.span_count
 
+            roadm = self.network_topology.get_roadm_config(v)
+            loss = 10 ** (roadm.path_loss_db("drop" if i == len(path) - 2 else "express") / 10)
+            if roadm.equalize_output_power:
+                nf = 10 ** (roadm.booster_noise_figure_db / 10)
+                booster_ase = (
+                    nf * 6.62607015e-34 * self.spectrum_grid.frequencies * self.gn_evaluator.symbol_rate_hz * (loss - 1)
+                )
+                booster_ase[signal_power <= 0] = 0
+                total_ase += booster_ase
+            else:
+                signal_power /= loss
+                total_spm /= loss
+                total_xpm /= loss
+                total_ase /= loss
+            penalty = 10 ** (roadm.filtering_penalty_db / 10)
+            total_spm *= penalty
+            total_xpm *= penalty
+            total_ase *= penalty
+            blocked = [index for index in roadm.blocked_channels if index < self.spectrum_grid.num_channels]
+            if blocked:
+                signal_power[blocked] = 0
+
         penalty = total_spans**0.05 if total_spans > 0 else 1.0
         total_noise = total_spm * penalty + total_xpm + total_ase
 
@@ -332,15 +383,8 @@ class QoTValidator:
         for ch_idx in range(self.spectrum_grid.num_channels):
             if total_noise[ch_idx] <= 0:
                 continue
-            # 取该信道在路径上第一条链路的功率作为信号功率
-            u0, v0 = path[0], path[1]
-            link_key0 = _normalize(u0, v0)
-            if link_key0 in temp_power_profiles:
-                signal_power = temp_power_profiles[link_key0][ch_idx]
-            else:
-                signal_power = network_state.get_link_state(u0, v0).launch_power_profile_w[ch_idx]
-            if signal_power > 0:
-                snrs_db[ch_idx] = 10.0 * math.log10(signal_power / total_noise[ch_idx])
+            if signal_power[ch_idx] > 0:
+                snrs_db[ch_idx] = 10.0 * math.log10(signal_power[ch_idx] / total_noise[ch_idx])
 
         return snrs_db
 

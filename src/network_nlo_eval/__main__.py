@@ -5,12 +5,15 @@ from pathlib import Path
 
 import click
 import networkx as nx
+import numpy as np
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.models.numba_kernels import _dbm_to_w
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.state import NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
+from network_nlo_eval.physics.comparison import TopologyQoTComparator
 from network_nlo_eval.rwa.allocators import KSPFirstFitAllocator
 from network_nlo_eval.rwa.path_computation import PathCache
 from network_nlo_eval.rwa.qot_checker import QoTValidator
@@ -26,6 +29,19 @@ from network_nlo_eval.simulation.traffic import generate_services
 def main() -> None:
     """Network NLO Eval."""
     pass
+
+
+def _load_topology(topology_file: Path) -> NetworkTopology:
+    """加载 JSON 图并应用可由节点/链路属性覆盖的物理默认值."""
+    with open(topology_file, encoding="utf-8") as file:
+        network_obj = json.load(file)
+    network_raw = nx.node_link_graph(network_obj, edges="edges")
+    return NetworkTopology(
+        network_raw=network_raw,
+        default_fiber_config=FiberSpanConfig(length_km=100.0),
+        default_edfa_config=EDFAConfig(),
+        default_roadm_config=ROADMConfig(),
+    )
 
 
 @main.command()
@@ -91,11 +107,9 @@ def simulate(
 
     # 1. 加载拓扑
     try:
-        with open(topology_file, encoding="utf-8") as f:
-            network_obj = json.load(f)
-        network_raw = nx.node_link_graph(network_obj, edges="edges")
-    except Exception as e:
-        click.secho(f"Error loading topology file: {e}", fg="red")
+        network_topology = _load_topology(topology_file)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        click.secho(f"Error loading topology file: {exc}", fg="red")
         return
 
     # 2. 初始化核心组件
@@ -104,30 +118,6 @@ def simulate(
         num_channels=num_channels,
         channel_spacing_hz=channel_spacing_ghz * 1e9,
         center_frequency_hz=center_freq_thz * 1e12,
-    )
-
-    # 网络拓扑管理 (包含光纤/EDFA/ROADM 配置)
-    # 假设所有光纤链路使用相同的默认配置，这里可以根据网络拓扑中的link data进行更细致的配置
-    # 也可以在 NetworkTopology 类中直接从 graph attributes 读取
-    default_fiber_config = FiberSpanConfig(
-        length_km=100.0,  # This will be overwritten by actual link lengths
-        attenuation_db_km_ref=0.2,  # dB/km at reference wavelength
-        dispersion_parameter_d=17.0,  # ps/(nm*km) at reference wavelength
-        dispersion_slope_s=0.06,  # ps/(nm^2*km) at reference wavelength
-        nonlinear_index_n2=2.6e-20,  # m^2/W
-        effective_area_um2_ref=80.0,  # um^2 at reference wavelength
-        aeff_slope_um2_nm=0.05,  # um^2 per nm
-        reference_wavelength_nm=1550.0,  # nm
-    )
-    # 假设所有节点都配备默认的 EDFA 和 ROADM
-    default_edfa_config = EDFAConfig(target_gain_db=20.0, noise_figure_db=5.0)
-    default_roadm_config = ROADMConfig(insertion_loss_db=12.0, filtering_penalty_db=0.5)
-
-    network_topology = NetworkTopology(
-        network_raw=network_raw,
-        default_fiber_config=default_fiber_config,
-        default_edfa_config=default_edfa_config,
-        default_roadm_config=default_roadm_config,
     )
 
     # 物理层快速评估模型
@@ -205,6 +195,56 @@ def simulate(
         f"{report_data['simulation_metrics']['average_wavelength_fragmentation_index']:.4f}"
     )
     click.echo("--------------------------")
+
+
+@main.command()
+@click.option("-t", "--topology-file", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+@click.option("--path", "path_text", required=True, help="Comma-separated original topology node IDs.")
+@click.option("--channel", "channels", type=int, multiple=True, help="Active zero-based channel; repeat as needed.")
+@click.option("--launch-power-dbm", type=float, default=0.0, show_default=True)
+@click.option("--num-channels", type=int, default=80, show_default=True)
+@click.option("--channel-spacing-ghz", type=float, default=50.0, show_default=True)
+@click.option("--center-freq-thz", type=float, default=193.1, show_default=True)
+@click.option("--waveform/--statistical-only", default=False, help="Also run the numerical waveform engine.")
+@click.option("--num-symbols", type=int, default=1024, show_default=True)
+@click.option("-o", "--output-file", type=click.Path(dir_okay=False, path_type=Path))
+def compare(
+    topology_file: Path,
+    path_text: str,
+    channels: tuple[int, ...],
+    launch_power_dbm: float,
+    num_channels: int,
+    channel_spacing_ghz: float,
+    center_freq_thz: float,
+    waveform: bool,
+    num_symbols: int,
+    output_file: Path | None,
+) -> None:
+    """Compare statistical and optional waveform QoT on one topology path."""
+    try:
+        topology = _load_topology(topology_file)
+        original_path = [int(value.strip()) for value in path_text.split(",") if value.strip()]
+        path = [topology.get_internal_node_id(node_id) for node_id in original_path]
+        grid = SpectrumGrid(num_channels, channel_spacing_ghz * 1e9, center_freq_thz * 1e12)
+        active_channels = channels or (num_channels // 2,)
+        if any(index < 0 or index >= num_channels for index in active_channels):
+            raise ValueError("Channel index is outside the configured spectrum grid.")
+        launch_profile = np.zeros(num_channels, dtype=np.float64)
+        launch_profile[list(active_channels)] = _dbm_to_w(launch_power_dbm)
+        result = TopologyQoTComparator(topology, grid).evaluate(
+            path, launch_profile, run_waveform=waveform, num_symbols=num_symbols
+        )
+        payload = result.to_dict()
+        payload["original_path"] = original_path
+        output = json.dumps(payload, ensure_ascii=False, indent=2)
+        if output_file is not None:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(output + "\n", encoding="utf-8")
+            click.echo(f"Comparison saved to: {output_file}")
+        else:
+            click.echo(output)
+    except (ImportError, KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 if __name__ == "__main__":

@@ -3,12 +3,28 @@
 所有函数都应是纯 Numba 函数，不依赖 Python 对象，只处理 Numpy 数组和基本类型。
 """
 
+from collections.abc import Callable
+from typing import Any, TypeVar
+
 import numpy as np
-from numba import njit
 
 from network_nlo_eval.core.constants import C_LIGHT, H_PLANCK, NP_TO_DB, PI
 from network_nlo_eval.core.types import NDArrayFloat
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+try:
+    from numba import njit
+except ImportError:  # 保持统计模型在无 JIT 的最小环境中可运行。
+
+    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:  # type: ignore[misc]
+        """Return an identity decorator when optional Numba is unavailable."""
+        del args, kwargs
+
+        def decorate(function: _F) -> _F:
+            return function
+
+        return decorate
 # =============================================================================
 # 0. 常用转换函数 (JIT 优化版本)
 # =============================================================================
@@ -450,7 +466,7 @@ def _compute_nli_variances(
             # 简化计算 phi_il
             # phi_il = 2 * PI**2 * (f_rel_hz[l] - f_rel_hz[i])
             # * (beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l] + f_rel_hz[i]))
-            # 原始用户代码中的 phi_il = 2 * PI**2 * (f_rel[l] - f_rel[i]) * (beta2 + PI * beta3 * (f_rel[l] + f_rel[i]))
+            # 原始公式: 2*pi^2*Δf*(beta2 + pi*beta3*(f_l+f_i)).
             # 确保符号速率统一
             phi_il = (
                 2
