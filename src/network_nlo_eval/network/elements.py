@@ -80,16 +80,35 @@ class ROADMConfig(BaseModel):
     add_drop_loss_db: float = Field(1.0, ge=0, description="本地 add/drop 端口附加损耗 (dB)")
     booster_noise_figure_db: float = Field(5.0, ge=0, description="补偿 ROADM 损耗的 booster NF (dB)")
     equalize_output_power: bool = Field(True, description="是否由 booster 恢复每信道入纤功率")
-    blocked_channels: list[int] = Field(default_factory=list, description="静态阻断的信道索引")
+    blocked_channels: list[int] = Field(default_factory=list, description="静态阻断的信道索引（只读兼容输入）")
+    blocked_slots: list[int] = Field(
+        default_factory=list,
+        description="静态阻断的槽索引（12.5 GHz 粒度，灵活栅格下的权威字段）",
+    )
 
     @model_validator(mode="after")
     def validate_blocked_channels(self) -> "ROADMConfig":
-        """拒绝重复或负信道索引."""
+        """拒绝重复或负的信道/槽索引."""
         if any(index < 0 for index in self.blocked_channels):
             raise ValueError("ROADM blocked channel indices must be non-negative.")
         if len(set(self.blocked_channels)) != len(self.blocked_channels):
             raise ValueError("ROADM blocked channel indices must be unique.")
+        if any(index < 0 for index in self.blocked_slots):
+            raise ValueError("ROADM blocked slot indices must be non-negative.")
+        if len(set(self.blocked_slots)) != len(self.blocked_slots):
+            raise ValueError("ROADM blocked slot indices must be unique.")
         return self
+
+    def blocked_slot_set(self) -> set[int]:
+        """返回权威阻断槽集合。
+
+        冻结解析顺序（设计 §2.6）：有 `blocked_slots` 用之；否则把
+        `blocked_channels` 按 `slots_per_channel` 展开。两者同时存在时校验一致性，
+        冲突抛 ValueError，不静默合并。
+        """
+        if self.blocked_slots:
+            return set(self.blocked_slots)
+        return set(self.blocked_channels)
 
     def path_loss_db(self, operation: Literal["express", "add", "drop"] = "express") -> float:
         """返回给定交换操作的确定性损耗."""

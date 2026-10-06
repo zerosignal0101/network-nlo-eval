@@ -170,3 +170,9 @@ sg_execution_times.rst
 !/results/fg1_physics_parity.json
 *.npz
 *.ipynb
+
+# FG-2 acceptance artifacts are committed so every F2-1..F2-8 number can be
+# recomputed from a tracked product (cross-WP rule 2). Placed after *.npz so the
+# negation takes effect.
+!/results/fg2_evidence.json
+!/results/fg2_golden_cplusl_230x50.npz

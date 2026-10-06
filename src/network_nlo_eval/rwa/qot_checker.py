@@ -10,6 +10,7 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
@@ -43,6 +44,34 @@ class QoTValidator:
     # ------------------------------------------------------------------
     # 公开接口
     # ------------------------------------------------------------------
+
+    @property
+    def num_nodes(self) -> int:
+        """ODE 节点数（= 活跃连接数），噪声数组按此长度分配。
+
+        遗留模式下等于 `spectrum_grid.num_channels`；灵活栅格下等于连接数
+        （设计 §2.4：一条连接一个节点，与槽数无关）。
+        """
+        return self.gn_evaluator.n_nodes
+
+    def _is_blocked(self, roadm, node_index: int) -> bool:
+        """判断某节点（连接）是否被该 ROADM 阻断。
+
+        灵活栅格下按**槽区间重叠**判定（切片语义）：连接与任一 `blocked_slots`
+        重叠即不可行。遗留模式保持按信道索引判定的既有行为。
+        """
+        connections = self.gn_evaluator.connections
+        if connections is not None:
+            if node_index >= len(connections):
+                return False
+            blocked_slots = set(roadm.blocked_slots)
+            if roadm.blocked_channels and self.gn_evaluator.slots_per_channel:
+                per_channel = self.gn_evaluator.slots_per_channel
+                for channel_index in roadm.blocked_channels:
+                    blocked_slots.update(range(channel_index * per_channel, (channel_index + 1) * per_channel))
+            conn = connections[node_index]
+            return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
+        return node_index in roadm.blocked_channels
 
     def verify_allocation(
         self,
@@ -165,9 +194,9 @@ class QoTValidator:
         num_full_spans = int(link_total_length_m // span_length_m)
         remainder_length_m = link_total_length_m % span_length_m
 
-        total_spm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_xpm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_ase = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_spm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_ase = np.zeros(self.num_nodes, dtype=np.float64)
         total_spans = 0
 
         if num_full_spans > 0:
@@ -258,7 +287,7 @@ class QoTValidator:
             total_spans += cache.span_count
 
             roadm = self.network_topology.get_roadm_config(v)
-            if channel_idx in roadm.blocked_channels:
+            if self._is_blocked(roadm, channel_idx):
                 return float("-inf")
             # ROADM 损耗统一按 main 的约定施加于信号与已累积噪声（不引入新噪声）。
             loss = 10 ** ((roadm.insertion_loss_db + roadm.filtering_penalty_db) / 10)
@@ -289,7 +318,7 @@ class QoTValidator:
             u, v = path[i], path[i + 1]
             link_state = network_state.get_link_state(u, v)
 
-            for ch_idx in range(self.spectrum_grid.num_channels):
+            for ch_idx in range(self.num_nodes):
                 if ch_idx == channel_idx:
                     continue
                 if not link_state.occupied_channels[ch_idx]:
@@ -313,9 +342,9 @@ class QoTValidator:
         fixed_span_length_km: float | None,
     ) -> NDArrayFloat:
         """构建新业务路径上各信道的 SNR (dB) 数组，用于返回值。"""
-        total_spm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_xpm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_ase = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_spm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_ase = np.zeros(self.num_nodes, dtype=np.float64)
         total_spans = 0
         u0, v0 = path[0], path[1]
         link_key0 = _normalize(u0, v0)
@@ -348,15 +377,15 @@ class QoTValidator:
             total_spm /= loss
             total_xpm /= loss
             total_ase /= loss
-            blocked = [index for index in roadm.blocked_channels if index < self.spectrum_grid.num_channels]
+            blocked = [index for index in range(self.num_nodes) if self._is_blocked(roadm, index)]
             if blocked:
                 signal_power[blocked] = 0
 
         penalty = total_spans**0.05 if total_spans > 0 else 1.0
         total_noise = total_spm * penalty + total_xpm + total_ase
 
-        snrs_db = np.full(self.spectrum_grid.num_channels, -np.inf, dtype=np.float64)
-        for ch_idx in range(self.spectrum_grid.num_channels):
+        snrs_db = np.full(self.num_nodes, -np.inf, dtype=np.float64)
+        for ch_idx in range(self.num_nodes):
             if total_noise[ch_idx] <= 0:
                 continue
             if signal_power[ch_idx] > 0:

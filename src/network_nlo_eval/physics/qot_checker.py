@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
+from network_nlo_eval.core.flexgrid import ConnectionSpec
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
 from network_nlo_eval.models.numba_kernels import _calc_beta2_from_d, _calc_beta3_from_s_d, _w_to_dbm
+from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
 
 if TYPE_CHECKING:
@@ -75,6 +78,7 @@ class PyNLOQoTEvaluator:
         seed: int = 42,
         compute_ctx_name: str = "cupy",
         pilot_info: dict[str, Any] | None = None,
+        connections: Sequence[ConnectionSpec] | None = None,
     ) -> None:
         """初始化拓扑波形 QoT 评估器。
 
@@ -85,6 +89,7 @@ class PyNLOQoTEvaluator:
             raise ValueError("Symbol rate and samples per symbol must be positive.")
         self.physical = _load_physical_layer()
         self.spectrum_grid = spectrum_grid
+        self.connections = list(connections) if connections is not None else None
         self.modulation = modulation
         self.symbol_rate_hz = symbol_rate_hz
         self.sps = sps
@@ -99,15 +104,47 @@ class PyNLOQoTEvaluator:
         self.tx_rrc = self.physical["RRCFilter"](sps=sps, roll_off=rrc_roll_off, is_matched_filter=False)
         self.rx_rrc = self.physical["RRCFilter"](sps=sps, roll_off=rrc_roll_off, is_matched_filter=True)
         self.demapper = self.physical["Demapper"](modulation=modulation, power_norm=True)
-        self.frequencies_hz = spectrum_grid.frequencies
-        self.center_freq_hz = spectrum_grid.center_frequency_hz
+        if self.connections is not None:
+            # 灵活栅格：每连接一个波形，频率为**连接中心**（设计 §3.4 / §3.5）。
+            self.frequencies_hz = np.array([conn.centre_hz for conn in self.connections], dtype=float)
+            self.center_freq_hz = (
+                self.connections[0].grid.band_center_hz if self.connections else spectrum_grid.center_frequency_hz
+            )
+        else:
+            self.frequencies_hz = spectrum_grid.frequencies
+            self.center_freq_hz = spectrum_grid.center_frequency_hz
         self.channels_spec = [
             self.physical["ChannelSpec"](index, frequency - self.center_freq_hz)
             for index, frequency in enumerate(self.frequencies_hz)
         ]
         self.wdm_plan = self.physical["WDMPlan"](self.center_freq_hz, self.channels_spec)
-        occupied_width = (spectrum_grid.num_channels - 1) * spectrum_grid.channel_spacing_hz
+        # 占用宽度：遗留按 (N-1)*spacing（单信道点阵）；灵活栅格按**实际连接集合的
+        # 带边缘**（设计 §4 S2）。宽连接下前者会低估真实占用带宽。
+        if self.connections is not None:
+            low = min(c.centre_hz - c.occupied_bandwidth_hz / 2 for c in self.connections)
+            high = max(c.centre_hz + c.occupied_bandwidth_hz / 2 for c in self.connections)
+            occupied_width = high - low
+            # WSS 兜底通带按**最宽连接**的占用带宽取，否则宽连接会被滤波掉
+            # （设计 §2.5 末段，物理上必须改）。
+            self._default_passband_hz = max(c.occupied_bandwidth_hz for c in self.connections)
+        else:
+            occupied_width = (spectrum_grid.num_channels - 1) * spectrum_grid.channel_spacing_hz
+            self._default_passband_hz = spectrum_grid.channel_spacing_hz
         self._mux_target_sr = max(symbol_rate_hz * sps, 1.25 * (occupied_width + symbol_rate_hz * (1 + rrc_roll_off)))
+
+    def _is_blocked(self, roadm, node_index: int) -> bool:
+        """灵活栅格下按槽区间重叠判定阻断；遗留模式按信道索引。"""
+        if self.connections is not None:
+            if node_index >= len(self.connections):
+                return False
+            blocked_slots = set(roadm.blocked_slots)
+            if roadm.blocked_channels and getattr(roadm, "_slots_per_channel_hint", None):
+                per_channel = roadm._slots_per_channel_hint
+                for channel_index in roadm.blocked_channels:
+                    blocked_slots.update(range(channel_index * per_channel, (channel_index + 1) * per_channel))
+            conn = self.connections[node_index]
+            return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
+        return node_index in roadm.blocked_channels
 
     def create_wdm_signal(
         self, launch_power_profile_w: NDArrayFloat, num_symbols: int = 1024
@@ -206,10 +243,10 @@ class PyNLOQoTEvaluator:
 
             if roadm is None:
                 continue
-            allowed = [index for index in active_channels if index not in roadm.blocked_channels]
+            allowed = [index for index in active_channels if not self._is_blocked(roadm, index)]
             current = self.physical["ROADM"](
                 pass_channels=allowed,
-                passband_hz=roadm.passband_hz or self.spectrum_grid.channel_spacing_hz,
+                passband_hz=roadm.passband_hz or self._default_passband_hz,
                 insertion_loss_db=roadm.path_loss_db(
                     "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
                 ),

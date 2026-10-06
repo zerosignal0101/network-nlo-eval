@@ -346,7 +346,7 @@ def _calc_xpm_variance_term_jit(
 def _compute_nli_variances(
     n_ch: int,
     n_span: int,
-    rs_hz: float,
+    symbol_rate_hz: NDArrayFloat,  # 逐连接符号率 (Hz)，形状 (N,)
     p_in_w: NDArrayFloat,
     p_out_exact_w: NDArrayFloat,  # 传入精确的数值解
     f_rel_hz: NDArrayFloat,
@@ -383,7 +383,7 @@ def _compute_nli_variances(
         t_i_tilde = t_tilde_array[i]
 
         sigma_spm_2[i] = _calc_spm_variance_jit(
-            p_in_w[i], rs_hz, n_span, gamma_ii, phi_i, alpha_power_npm[i], t_i_tilde, L_m, epsilon_n_span=0.05
+            p_in_w[i], symbol_rate_hz[i], n_span, gamma_ii, phi_i, alpha_power_npm[i], t_i_tilde, L_m, epsilon_n_span=0.05
         )
 
         xpm_sum_term = 0.0
@@ -402,8 +402,8 @@ def _compute_nli_variances(
             xpm_sum_term += _calc_xpm_variance_term_jit(
                 p_i_w=p_in_w[i],
                 p_l_w=p_in_w[l_idx],
-                rs_l_hz=rs_hz,
-                rs_i_hz=rs_hz,
+                rs_l_hz=symbol_rate_hz[l_idx],
+                rs_i_hz=symbol_rate_hz[i],
                 gamma_il=gamma_il,
                 phi_il=phi_il,
                 phi_base=phi_base,
@@ -457,7 +457,7 @@ def _calculate_ase_noise_variance(
     p_out_w: NDArrayFloat,  # 各信道出纤功率 (W)
     f_abs_hz: NDArrayFloat,  # 各信道绝对频率 (Hz)
     nf_lin: NDArrayFloat,  # 各信道线性噪声系数
-    rs_hz: float,  # 符号速率 (Hz)
+    symbol_rate_hz: NDArrayFloat,  # 逐连接符号率 (Hz)，形状 (N,)
     n_span: int,  # 跨段数量
 ) -> NDArrayFloat:
     """计算所有跨段累积的 ASE 噪声方差。
@@ -468,7 +468,7 @@ def _calculate_ase_noise_variance(
         p_out_w: 各信道出纤功率 (W)。
         f_abs_hz: 各信道绝对频率 (Hz)。
         nf_lin: 各信道线性噪声系数。
-        rs_hz: 符号速率 (Hz)。
+        symbol_rate_hz: 逐连接符号速率 (Hz)，长度须与 p_in_w 相同。
         n_span: 跨段数量。
     Returns:
         NDArrayFloat: 每个信道的 ASE 噪声方差 (W)。
@@ -479,7 +479,9 @@ def _calculate_ase_noise_variance(
             # 计算单跨段增益 (假设 EDFA 补偿损耗)
             G_i = p_in_w[i] / p_out_w[i]
 
-            total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * rs_hz
+            total_ase_variance[i] = (
+                n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * symbol_rate_hz[i]
+            )
             # print(f"{G_i}, {p_in_w[i]}/{p_out_w[i]}", end=", ")
             # print(f"Channel {i} ASE variance: {total_ase_variance[i]:.2e}")
 
@@ -503,7 +505,7 @@ def _calc_span_noise_and_power_jit(
     n2_m2_w: float,  # 非线性折射率
     # --- 系统与放大器参数 ---
     nf_lin_channels: NDArrayFloat,  # 放大器线性噪声系数 (数组)
-    symbol_rate_hz: float,  # 符号速率 (Hz)
+    symbol_rate_hz: NDArrayFloat,  # 逐连接符号速率 (Hz)，形状 (N,)
     n_effective_spans: int,  # 有效累积跨段数 (NLI计算用)
     # --- 物理常数 ---
     cr_w_m_hz: float,  # SRS 增益系数 Cr
@@ -513,8 +515,30 @@ def _calc_span_noise_and_power_jit(
     """【高性能内核】单跨段物理层评估的 JIT 版本。
 
     封装了损耗、SRS、SPM、XPM 和 ASE 的全套计算。
+
+    灵活栅格契约（设计 §2.5 / §3.4）：全部逐连接数组长度必须恰为 N
+    (= len(power_in_w)) 且同序对齐。`f_abs_hz[i]` 是第 i 条**连接的中心频率**
+    （不是栅格频率），`symbol_rate_hz[i]` 是该连接自己的符号率。
+    未占用连接（power_in_w == 0）仍占一个数组槽位以保持对齐。
+
+    Raises:
+        ValueError: 任一逐连接数组长度 != N。
     """
     num_channels = len(power_in_w)
+
+    # 形状守卫：njit 无法格式化动态消息，完整消息（含 (N,) 与实际形状）由
+    # Python 层 MultiBandISRSGN._calc_span_noise_and_power 抛出。此处的静态
+    # 消息是第二道防线——若缺失， njit 会对越界索引静默读越界内存。
+    if (
+        len(f_rel_hz) != num_channels
+        or len(f_abs_hz) != num_channels
+        or len(lambdas_m) != num_channels
+        or len(alpha_power_npm) != num_channels
+        or len(a_eff_m2) != num_channels
+        or len(nf_lin_channels) != num_channels
+        or len(symbol_rate_hz) != num_channels
+    ):
+        raise ValueError("per-connection arrays must all have length N = len(power_in_w).")
 
     # 1. 采用高精度 RK4 求解 ODE (计算包含了损耗和真实拉曼倾斜的出纤功率)
     # n_steps=20 在精度和速度间取得了极佳的平衡

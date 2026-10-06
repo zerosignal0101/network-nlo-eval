@@ -3,11 +3,13 @@
 ISRS-GN (Inter-channel Stimulated Raman Scattering - Generalized Noise)
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
+from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.numba_kernels import (
@@ -20,6 +22,7 @@ from network_nlo_eval.models.numba_kernels import (
     _db_to_lin,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
+from network_nlo_eval.network.slots import connection_overlaps_slots
 
 _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
 
@@ -67,17 +70,25 @@ class MultiBandISRSGN:
 
     def __init__(
         self,
-        grid: SpectrumGrid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         phi_kurtosis: float = 0.0,  # 0.0为高斯(默认), -0.6190为64QAM
+        connections: Sequence[ConnectionSpec] | None = None,
+        slots_per_channel: int | None = None,
     ):
         """初始化 ISRS-GN 评估器。
 
         Args:
-            grid: 频谱网格配置。
+            grid: 频谱网格配置（遗留 `SpectrumGrid` 或 `FlexibleGrid`）。
             ref_fiber_config: 参考光纤配置，用于计算各种波长相关参数。
-            symbol_rate_hz: 系统的符号速率 (Hz)。
+            symbol_rate_hz: 系统符号速率 (Hz)。仅在 `connections is None`
+                （遗留模式）时作为标量使用；给定 `connections` 时每连接的
+                `ConnectionSpec.symbol_rate_hz` 优先。
+            phi_kurtosis: 峰度修正，0.0 为高斯，-0.6190 为 64QAM。
+            connections: (可选) 灵活栅格连接列表。给定后进入**逐连接模式**：
+                全部逐连接数组按连接中心频率计算，`symbol_rate_hz` 变为逐连接
+                数组（设计 §2.5）。为 None 时保持遗留行为，数值逐位不变。
         """
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
@@ -86,17 +97,43 @@ class MultiBandISRSGN:
         self.cr_w_m_hz = _SRS_CR  # 拉曼增益系数
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
+        self.connections = list(connections) if connections is not None else None
+        if slots_per_channel is not None and slots_per_channel < 1:
+            raise ValueError(f"slots_per_channel must be >= 1, got {slots_per_channel}.")
+        self.slots_per_channel = slots_per_channel
 
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
 
-    def _precompute_channel_dependent_properties(self) -> None:
-        """预计算所有信道通用的波长依赖物理属性，如波长、有效模面积等。
+    @property
+    def n_nodes(self) -> int:
+        """ODE 节点数 = 活跃连接数（设计 §2.4：一条连接 = 一个节点）。"""
+        return int(self.f_abs_hz.shape[0])
 
-        这些属性在整个仿真中通常不变。
+    @property
+    def band_center_hz(self) -> float:
+        """`f_rel_hz` 的参考原点。遗留网格用中心频率，灵活栅格用频段中心。"""
+        if isinstance(self.grid, FlexibleGrid):
+            return self.grid.band_center_hz
+        return self.grid.center_frequency_hz
+
+    def _precompute_channel_dependent_properties(self) -> None:
+        """预计算逐连接通用的波长依赖物理属性，如波长、有效模面积等。
+
+        灵活栅格下这些量按**连接中心波长**计算（设计 §2.5 机械改），遗留模式下
+        按栅格频率计算——两者在固定栅格特例下逐位相同。
         """
-        self.lambdas_m = self.grid.wavelengths  # (m)
-        self.f_abs_hz = self.grid.frequencies  # (Hz)
+        if self.connections is not None:
+            # 每连接一个节点，节点频率 = 连接中心频率（§3.4）。
+            self.f_abs_hz = np.array([conn.centre_hz for conn in self.connections], dtype=np.float64)
+            self.symbol_rate_hz_channels = np.array(
+                [conn.symbol_rate_hz for conn in self.connections], dtype=np.float64
+            )
+        else:
+            self.f_abs_hz = self.grid.frequencies  # (Hz)
+            self.symbol_rate_hz_channels = np.full(self.f_abs_hz.shape[0], float(self.symbol_rate_hz))
+
+        self.lambdas_m = C_LIGHT / self.f_abs_hz  # (m)
 
         # 衰减系数 (Np/m)
         self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(
@@ -121,7 +158,7 @@ class MultiBandISRSGN:
         # beta2 和 beta3 (s^2/m, s^3/m)
         # 简化：在每个跨段的中心波长处计算 beta2 和 beta3，或使用参考波长
         # 这里使用参考波长处的 D 和 S 来计算
-        ref_lambda_m = C_LIGHT / self.grid.center_frequency_hz
+        ref_lambda_m = C_LIGHT / self.band_center_hz
         self.beta2_s2_m = _calc_beta2_from_d(self.ref_fiber_config.dispersion_parameter_d, ref_lambda_m)
         self.beta3_s3_m = _calc_beta3_from_s_d(
             self.ref_fiber_config.dispersion_slope_s,
@@ -130,9 +167,24 @@ class MultiBandISRSGN:
         )
 
         # 相对频率 (Hz)，用于 NLI/SRS 计算
-        self.f_rel_hz = self.f_abs_hz - self.grid.center_frequency_hz
-        self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
-        self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
+        self.f_rel_hz = self.f_abs_hz - self.band_center_hz
+        # 频带边缘 (Hz)：变宽连接下单条 Rs/2 不再是带边，必须按实际占用带计算
+        # （设计 §2.5）。遗留模式下占用带 = channel_spacing_hz，与旧的 Rs/2 口径
+        # 在 Rs == channel_spacing_hz 时一致。
+        if self.connections is not None:
+            low_edges = np.array(
+                [conn.centre_hz - conn.n_slots * conn.grid.slot_width_hz / 2 for conn in self.connections],
+                dtype=np.float64,
+            )
+            high_edges = np.array(
+                [conn.centre_hz + conn.n_slots * conn.grid.slot_width_hz / 2 for conn in self.connections],
+                dtype=np.float64,
+            )
+            self.f_m_hz = float(low_edges.min() - self.band_center_hz)
+            self.f_M_hz = float(high_edges.max() - self.band_center_hz)
+        else:
+            self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
+            self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
 
     def _calc_span_noise_and_power(
         self,
@@ -170,6 +222,15 @@ class MultiBandISRSGN:
         else:
             current_nf_lin = self.nf_lin_channels
 
+        # 1.5 形状契约校验（设计 §3.4）。逐连接数组必须长度恰为 N 且同序对齐；
+        # 消息含期望形状 (N,) 与实际形状。njit 内核只有静态消息，故完整诊断在此。
+        n_conn = self.n_nodes
+        if np.shape(power_in_w) != (n_conn,):
+            raise ValueError(f"power_in_w must have shape ({n_conn},), got {np.shape(power_in_w)}.")
+        current_nf_lin = np.asarray(current_nf_lin, dtype=np.float64)
+        if current_nf_lin.shape != (n_conn,):
+            raise ValueError(f"nf_lin_channels must have shape ({n_conn},), got {current_nf_lin.shape}.")
+
         # 2. 调用 JIT 内核 (热路径)
         p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit(
             power_in_w=power_in_w,
@@ -183,7 +244,7 @@ class MultiBandISRSGN:
             beta3_s3_m=self.beta3_s3_m,
             n2_m2_w=self.n2_m2_w,
             nf_lin_channels=current_nf_lin,
-            symbol_rate_hz=self.symbol_rate_hz,
+            symbol_rate_hz=self.symbol_rate_hz_channels,
             n_effective_spans=n_effective_spans,
             cr_w_m_hz=self.cr_w_m_hz,
             delta_f_co_hz=self.delta_f_co_hz,
@@ -204,12 +265,59 @@ class MultiBandISRSGN:
         key = fiber_config.model_dump_json()
         if key not in self._fiber_evaluator_cache:
             self._fiber_evaluator_cache[key] = MultiBandISRSGN(
-                self.grid, fiber_config, self.symbol_rate_hz, self.phi_kurtosis
+                self.grid,
+                fiber_config,
+                self.symbol_rate_hz,
+                self.phi_kurtosis,
+                self.connections,
+                self.slots_per_channel,
             )
         return self._fiber_evaluator_cache[key]
 
     # Backward-compatible internal alias for pre-integration callers.
     _for_fiber = for_fiber
+
+    def _resolve_blocked_node_indices(self, roadm: "ROADMConfig") -> list[int]:
+        """把 ROADM 的阻断声明解析为**节点（连接）索引**列表。
+
+        遗留模式（`connections is None`）：`blocked_channels` 直接就是节点索引，
+        越界者按既有行为丢弃（保持遗留数值不变）。
+
+        逐连接模式：`blocked_slots` 权威——连接只要与任一被阻断槽**重叠**即被
+        阻断（切片语义，设计 §2.5 末段 / §2.6）。宽连接因此会因细粒度阻断而
+        整体不可行，这是**语义改**。`blocked_channels` 仍作为只读兼容输入，按
+        `self.slots_per_channel` 展开后合并。
+
+        Raises:
+            ValueError: 逐连接模式下只给了 `blocked_channels` 而未提供
+                `slots_per_channel`（不做取整猜测，避免静默误判）。
+        """
+        n_nodes = self.n_nodes
+        blocked: set[int] = set()
+
+        if self.connections is not None:
+            blocked_slots: set[int] = set(roadm.blocked_slots)
+            if roadm.blocked_channels:
+                if self.slots_per_channel is None:
+                    raise ValueError(
+                        "blocked_channels is a legacy per-channel input; expanding it into slots "
+                        "requires slots_per_channel (channel_spacing_hz / slot_width_hz). "
+                        "Construct the evaluator with slots_per_channel=..., or use blocked_slots."
+                    )
+                for channel_index in roadm.blocked_channels:
+                    if channel_index < 0:
+                        continue
+                    blocked_slots.update(
+                        range(channel_index * self.slots_per_channel, (channel_index + 1) * self.slots_per_channel)
+                    )
+            for index, conn in enumerate(self.connections):
+                if connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots):
+                    blocked.add(index)
+            return sorted(blocked)
+
+        blocked.update(index for index in roadm.blocked_channels if index < n_nodes)
+        blocked.update(index for index in roadm.blocked_slots if index < n_nodes)
+        return sorted(blocked)
 
     def evaluate_path(self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat) -> PathQoTResult:
         """按拓扑顺序评估光纤、跨段 EDFA 和 ROADM。
@@ -220,8 +328,8 @@ class MultiBandISRSGN:
         与 `rwa/qot_checker` 的链路切分规则一致。
         """
         power = np.asarray(power_in_w, dtype=np.float64).copy()
-        if power.shape != (self.grid.num_channels,) or np.any(power < 0):
-            raise ValueError("power_in_w must be a non-negative vector with one value per channel.")
+        if power.shape != (self.n_nodes,) or np.any(power < 0):
+            raise ValueError("power_in_w must be a non-negative vector with one value per connection.")
         total_spm = np.zeros_like(power)
         total_xpm = np.zeros_like(power)
         total_ase = np.zeros_like(power)
@@ -257,7 +365,7 @@ class MultiBandISRSGN:
             total_spm /= loss
             total_xpm /= loss
             total_ase /= loss
-            blocked = [index for index in roadm.blocked_channels if index < self.grid.num_channels]
+            blocked = self._resolve_blocked_node_indices(roadm)
             if blocked:
                 power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
 
