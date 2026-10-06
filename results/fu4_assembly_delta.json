@@ -1,0 +1,544 @@
+{
+  "schema": "fu4_assembly_delta/v2",
+  "assembly": {
+    "before": "FG-tree lumped insertion_loss_db + filtering_penalty_db on signal and noise",
+    "after": "union: port loss + booster ASE + noise-only filtering_penalty_db"
+  },
+  "package_dir": "/home/zsig/Documents/gits/wt/fg-uwb-fid/src/network_nlo_eval",
+  "before": [
+    {
+      "scenario": {
+        "name": "legacy_two_hop_equalize_on",
+        "description": "Fixed grid, 2 hops, booster on (equalize_output_power=True).",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.125814425161867
+    },
+    {
+      "scenario": {
+        "name": "legacy_three_hop_equalize_on",
+        "description": "Fixed grid, 3 hops, booster on. Accumulates booster ASE 3x.",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 17.604538298040442
+    },
+    {
+      "scenario": {
+        "name": "legacy_two_hop_equalize_off",
+        "description": "Fixed grid, 2 hops, equalize_output_power=False. Answers the brief's required measurement: does the union collapse to the FG-tree result here?",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "equalize_output_power": false
+          },
+          "2": {
+            "equalize_output_power": false
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.125814425161867
+    },
+    {
+      "scenario": {
+        "name": "legacy_express_attenuation",
+        "description": "Fixed grid, 2 hops, express port attenuated 2 dB so express != drop.",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "express_attenuation_db": 2.0
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.125814425161867
+    },
+    {
+      "scenario": {
+        "name": "legacy_high_filtering",
+        "description": "Fixed grid, 2 hops, filtering_penalty_db=2.0 (heavily cascading WSS).",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "filtering_penalty_db": 2.0
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 21.681810666809035
+    },
+    {
+      "scenario": {
+        "name": "legacy_blocked_channel",
+        "description": "Fixed grid, 2 hops, probe channel blocked at node 1 -> SNR must be -inf.",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "blocked_channels": [
+              3
+            ]
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": false,
+      "snr_db": null
+    },
+    {
+      "scenario": {
+        "name": "flex_two_hop_equalize_on",
+        "description": "Flexible grid, 2 hops, booster on. Guards the FG-2 capability survives.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.125814425161867
+    },
+    {
+      "scenario": {
+        "name": "flex_three_hop_equalize_on",
+        "description": "Flexible grid, 3 hops, booster on.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 17.604538298040442
+    },
+    {
+      "scenario": {
+        "name": "flex_two_hop_equalize_off",
+        "description": "Flexible grid, 2 hops, equalize_output_power=False.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "equalize_output_power": false
+          },
+          "2": {
+            "equalize_output_power": false
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.125814425161867
+    },
+    {
+      "scenario": {
+        "name": "flex_blocked_slots",
+        "description": "Flexible grid, 2 hops, probe connection's slot interval overlaps a blocked slot at node 1 -> SNR must be -inf. This is the FG-2 slicing semantics.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "blocked_slots": [
+              13
+            ]
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": false,
+      "snr_db": null
+    }
+  ],
+  "after": [
+    {
+      "scenario": {
+        "name": "legacy_two_hop_equalize_on",
+        "description": "Fixed grid, 2 hops, booster on (equalize_output_power=True).",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 26.0347304295729
+    },
+    {
+      "scenario": {
+        "name": "legacy_three_hop_equalize_on",
+        "description": "Fixed grid, 3 hops, booster on. Accumulates booster ASE 3x.",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 24.152139265826385
+    },
+    {
+      "scenario": {
+        "name": "legacy_two_hop_equalize_off",
+        "description": "Fixed grid, 2 hops, equalize_output_power=False. Answers the brief's required measurement: does the union collapse to the FG-tree result here?",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "equalize_output_power": false
+          },
+          "2": {
+            "equalize_output_power": false
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.0296997909201
+    },
+    {
+      "scenario": {
+        "name": "legacy_express_attenuation",
+        "description": "Fixed grid, 2 hops, express port attenuated 2 dB so express != drop.",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "express_attenuation_db": 2.0
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 25.989211917341827
+    },
+    {
+      "scenario": {
+        "name": "legacy_high_filtering",
+        "description": "Fixed grid, 2 hops, filtering_penalty_db=2.0 (heavily cascading WSS).",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "filtering_penalty_db": 2.0
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 25.025781931578116
+    },
+    {
+      "scenario": {
+        "name": "legacy_blocked_channel",
+        "description": "Fixed grid, 2 hops, probe channel blocked at node 1 -> SNR must be -inf.",
+        "kind": "legacy",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "blocked_channels": [
+              3
+            ]
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": false,
+      "snr_db": null
+    },
+    {
+      "scenario": {
+        "name": "flex_two_hop_equalize_on",
+        "description": "Flexible grid, 2 hops, booster on. Guards the FG-2 capability survives.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 26.0347304295729
+    },
+    {
+      "scenario": {
+        "name": "flex_three_hop_equalize_on",
+        "description": "Flexible grid, 3 hops, booster on.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "roadm_overrides": {},
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 24.152139265826385
+    },
+    {
+      "scenario": {
+        "name": "flex_two_hop_equalize_off",
+        "description": "Flexible grid, 2 hops, equalize_output_power=False.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "equalize_output_power": false
+          },
+          "2": {
+            "equalize_output_power": false
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": true,
+      "snr_db": 23.0296997909201
+    },
+    {
+      "scenario": {
+        "name": "flex_blocked_slots",
+        "description": "Flexible grid, 2 hops, probe connection's slot interval overlaps a blocked slot at node 1 -> SNR must be -inf. This is the FG-2 slicing semantics.",
+        "kind": "flex",
+        "path": [
+          0,
+          1,
+          2
+        ],
+        "roadm_overrides": {
+          "1": {
+            "blocked_slots": [
+              13
+            ]
+          }
+        },
+        "channel_idx": 3,
+        "slots_per_channel": 4
+      },
+      "node_count": 8,
+      "accepted": false,
+      "snr_db": null
+    }
+  ],
+  "delta": [
+    {
+      "name": "legacy_two_hop_equalize_on",
+      "kind": "legacy",
+      "description": "Fixed grid, 2 hops, booster on (equalize_output_power=True).",
+      "before_snr_db": 23.125814425161867,
+      "after_snr_db": 26.0347304295729,
+      "delta_db": 2.908916004411033,
+      "moved": true
+    },
+    {
+      "name": "legacy_three_hop_equalize_on",
+      "kind": "legacy",
+      "description": "Fixed grid, 3 hops, booster on. Accumulates booster ASE 3x.",
+      "before_snr_db": 17.604538298040442,
+      "after_snr_db": 24.152139265826385,
+      "delta_db": 6.547600967785943,
+      "moved": true
+    },
+    {
+      "name": "legacy_two_hop_equalize_off",
+      "kind": "legacy",
+      "description": "Fixed grid, 2 hops, equalize_output_power=False. Answers the brief's required measurement: does the union collapse to the FG-tree result here?",
+      "before_snr_db": 23.125814425161867,
+      "after_snr_db": 23.0296997909201,
+      "delta_db": -0.09611463424176492,
+      "moved": true
+    },
+    {
+      "name": "legacy_express_attenuation",
+      "kind": "legacy",
+      "description": "Fixed grid, 2 hops, express port attenuated 2 dB so express != drop.",
+      "before_snr_db": 23.125814425161867,
+      "after_snr_db": 25.989211917341827,
+      "delta_db": 2.86339749217996,
+      "moved": true
+    },
+    {
+      "name": "legacy_high_filtering",
+      "kind": "legacy",
+      "description": "Fixed grid, 2 hops, filtering_penalty_db=2.0 (heavily cascading WSS).",
+      "before_snr_db": 21.681810666809035,
+      "after_snr_db": 25.025781931578116,
+      "delta_db": 3.343971264769081,
+      "moved": true
+    },
+    {
+      "name": "legacy_blocked_channel",
+      "kind": "legacy",
+      "description": "Fixed grid, 2 hops, probe channel blocked at node 1 -> SNR must be -inf.",
+      "before_snr_db": null,
+      "after_snr_db": null,
+      "delta_db": null,
+      "moved": false
+    },
+    {
+      "name": "flex_two_hop_equalize_on",
+      "kind": "flex",
+      "description": "Flexible grid, 2 hops, booster on. Guards the FG-2 capability survives.",
+      "before_snr_db": 23.125814425161867,
+      "after_snr_db": 26.0347304295729,
+      "delta_db": 2.908916004411033,
+      "moved": true
+    },
+    {
+      "name": "flex_three_hop_equalize_on",
+      "kind": "flex",
+      "description": "Flexible grid, 3 hops, booster on.",
+      "before_snr_db": 17.604538298040442,
+      "after_snr_db": 24.152139265826385,
+      "delta_db": 6.547600967785943,
+      "moved": true
+    },
+    {
+      "name": "flex_two_hop_equalize_off",
+      "kind": "flex",
+      "description": "Flexible grid, 2 hops, equalize_output_power=False.",
+      "before_snr_db": 23.125814425161867,
+      "after_snr_db": 23.0296997909201,
+      "delta_db": -0.09611463424176492,
+      "moved": true
+    },
+    {
+      "name": "flex_blocked_slots",
+      "kind": "flex",
+      "description": "Flexible grid, 2 hops, probe connection's slot interval overlaps a blocked slot at node 1 -> SNR must be -inf. This is the FG-2 slicing semantics.",
+      "before_snr_db": null,
+      "after_snr_db": null,
+      "delta_db": null,
+      "moved": false
+    }
+  ],
+  "summary": {
+    "scenario_count": 10,
+    "moved_count": 8,
+    "rejected_both_ends": 2,
+    "max_abs_delta_db": 6.547600967785943,
+    "min_delta_db": -0.09611463424176492,
+    "max_delta_db": 6.547600967785943
+  }
+}

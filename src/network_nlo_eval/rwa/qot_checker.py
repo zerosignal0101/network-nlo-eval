@@ -15,6 +15,10 @@ from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
+#: 普朗克常数 (J·s)。booster ASE 项 ``NF * h * nu * Rs * (G-1)`` 的系数，
+#: 与 RL 侧 `multiband_optical_rl/scan.py:56` 的 `_H_PLANCK` 同源同值。
+_H_PLANCK = 6.62607015e-34
+
 
 def _normalize(u: NodeID, v: NodeID) -> LinkKey:
     """返回规范化的链路键 (min, max)。"""
@@ -72,6 +76,49 @@ class QoTValidator:
             conn = connections[node_index]
             return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
         return node_index in roadm.blocked_channels
+
+    def _roadm_terms(self, roadm, is_last_hop: bool) -> tuple[float, float, float | None]:
+        """返回该 ROADM 的 ``(损耗, 滤波惩罚, booster NF 线性值)``。
+
+        FU-4 裁决（详见 ``docs/fu4_qot_assembly_adjudication.md`` §1）：
+
+        1. **损耗按端口区分**：``path_loss_db("drop"|"express")``，而不是把
+           ``filtering_penalty_db`` 并进损耗。依据是本仓 ``physics/qot_checker.py``
+           的波形模型早就按端口取损耗，且 ``express_attenuation_db`` /
+           ``add_drop_loss_db`` 是两个**独立存在且有文档**的字段——合并写法会让
+           它们彻底失效。
+        2. **booster**：``equalize_output_power`` 为真时，该 ROADM 后面挂一台
+           EDFA 把每信道功率拉回入纤值，于是信号**不再**被 ``loss`` 衰减，
+           代价是引入 booster ASE ``NF * h * nu * Rs * (loss - 1)``。
+        3. **滤波惩罚**是**只作用于噪声**的独立乘子，依据是
+           ``ROADMConfig.filtering_penalty_db`` 的字段文档写的是
+           “统计模型中的级联滤波 SNR 代价”——它是噪声域量，不是光功率损耗。
+
+        ``booster_nf_lin`` 在 ``equalize_output_power`` 为假时返回 ``None``，
+        表示该拓扑下没有 booster。
+        """
+        operation = "drop" if is_last_hop else "express"
+        loss = 10 ** (roadm.path_loss_db(operation) / 10)
+        filtering_penalty = 10 ** (roadm.filtering_penalty_db / 10)
+        booster_nf_lin = 10 ** (roadm.booster_noise_figure_db / 10) if roadm.equalize_output_power else None
+        return loss, filtering_penalty, booster_nf_lin
+
+    def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:
+        """返回该节点（连接）的 ``(中心频率 Hz, 符号率 Hz)``。
+
+        必须走 ``gn_evaluator`` 的**逐节点**数组，不能用
+        ``spectrum_grid.frequencies``：灵活栅格下 ``channel_idx`` 索引的是
+        连接（ODE 节点），与固定栅格的信道索引不是同一个索引空间。
+
+        遗留模式下 ``f_abs_hz is spectrum_grid.frequencies`` 且
+        ``symbol_rate_hz_channels`` 全等于标量 ``symbol_rate_hz``，故这条路
+        在 legacy 下逐位等价。
+        """
+        evaluator = self.gn_evaluator
+        return (
+            float(evaluator.f_abs_hz[channel_idx]),
+            float(evaluator.symbol_rate_hz_channels[channel_idx]),
+        )
 
     def verify_allocation(
         self,
@@ -289,12 +336,20 @@ class QoTValidator:
             roadm = self.network_topology.get_roadm_config(v)
             if self._is_blocked(roadm, channel_idx):
                 return float("-inf")
-            # ROADM 损耗统一按 main 的约定施加于信号与已累积噪声（不引入新噪声）。
-            loss = 10 ** ((roadm.insertion_loss_db + roadm.filtering_penalty_db) / 10)
-            signal_power /= loss
-            total_spm /= loss
-            total_xpm /= loss
-            total_ase /= loss
+            # FU-4 并集装配：损耗按端口区分；booster 恢复入纤功率（则信号不再被
+            # 衰减，转而引入 booster ASE）；滤波惩罚作为只作用于噪声的独立乘子。
+            loss, filtering_penalty, booster_nf = self._roadm_terms(roadm, i == len(path) - 2)
+            if booster_nf is not None:
+                frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)
+                total_ase += booster_nf * _H_PLANCK * frequency_hz * symbol_rate_hz * (loss - 1.0)
+            else:
+                signal_power /= loss
+                total_spm /= loss
+                total_xpm /= loss
+                total_ase /= loss
+            total_spm *= filtering_penalty
+            total_xpm *= filtering_penalty
+            total_ase *= filtering_penalty
 
         # SPM 相干累积惩罚
         penalty = total_spans**0.05 if total_spans > 0 else 1.0
@@ -371,12 +426,30 @@ class QoTValidator:
             total_spans += cache.span_count
 
             roadm = self.network_topology.get_roadm_config(v)
-            # ROADM 损耗统一按 main 的约定施加于信号与已累积噪声（不引入新噪声）。
-            loss = 10 ** ((roadm.insertion_loss_db + roadm.filtering_penalty_db) / 10)
-            signal_power /= loss
-            total_spm /= loss
-            total_xpm /= loss
-            total_ase /= loss
+            # FU-4 并集装配，逐节点向量化；与 _eval_service_snr 的标量分支
+            # 同源（同一个 _roadm_terms），只是频率/符号率改成逐节点数组。
+            loss, filtering_penalty, booster_nf = self._roadm_terms(roadm, i == len(path) - 2)
+            if booster_nf is not None:
+                booster_ase = (
+                    booster_nf
+                    * _H_PLANCK
+                    * self.gn_evaluator.f_abs_hz
+                    * self.gn_evaluator.symbol_rate_hz_channels
+                    * (loss - 1.0)
+                )
+                # 信号为 0 的节点 SNR 必为 -inf（下游按 signal_power>0 过滤），
+                # 故此处置 0 不改变任何输出值；保留它是为了与 RL 侧 scan.py
+                # 的快速通道保持逐位一致。
+                booster_ase[signal_power <= 0] = 0
+                total_ase += booster_ase
+            else:
+                signal_power /= loss
+                total_spm /= loss
+                total_xpm /= loss
+                total_ase /= loss
+            total_spm *= filtering_penalty
+            total_xpm *= filtering_penalty
+            total_ase *= filtering_penalty
             blocked = [index for index in range(self.num_nodes) if self._is_blocked(roadm, index)]
             if blocked:
                 signal_power[blocked] = 0
