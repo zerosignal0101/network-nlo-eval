@@ -1,0 +1,262 @@
+{
+  "b1_measured_speedup": 0.629266489358018,
+  "b68_measured_speedup": 7.427314589403416,
+  "b68_vs_fg4d_lower_bound_ratio": 1.2696264255390455,
+  "config": {
+    "batches": [
+      1,
+      4,
+      16,
+      68,
+      256
+    ],
+    "center_frequency_hz": 190212700000000.0,
+    "channel_spacing_hz": 50000000000.0,
+    "max_rel_deviation_budget": 1e-12,
+    "n_ch": 230,
+    "ode_accel": "matvec",
+    "phi_kurtosis": 0.0,
+    "rounds_cap": 12,
+    "span_length_m": 100000.0,
+    "target_seconds": 2.0
+  },
+  "fg4d_reference": {
+    "extrapolated_speedup_lower_bound": 5.85,
+    "extrapolated_speedup_upper": 7.2,
+    "frac_ge_4": 0.633,
+    "note": "FG-4d decision inputs, quoted for comparison only; NOT measured here.",
+    "real_batch_max": 142,
+    "real_batch_mean": 68.47,
+    "realised_prior_knife": 4.678
+  },
+  "loadavg_after": [
+    1.2,
+    4.26,
+    9.88
+  ],
+  "loadavg_before": [
+    1.22,
+    4.31,
+    9.93
+  ],
+  "loadavg_delta_1min": -0.020000000000000018,
+  "method": "same-process interleaved serial-vs-batch (order flipped each round), min-sample ratio; complete single-span kernel (RK4/SRS ODE + tensorised NLI + ASE) on both arms; both arms are library paths",
+  "numeric_check": [
+    {
+      "batch": 1,
+      "bit_identical": false,
+      "per_channel_rel": {
+        "ase": 1.0995682530908905e-15,
+        "p_out": 1.031579634971691e-15,
+        "spm": 1.063918912229132e-15,
+        "xpm": 2.6426068134080534e-15
+      },
+      "within_budget": true,
+      "worst_rel": 2.6426068134080534e-15
+    },
+    {
+      "batch": 4,
+      "bit_identical": false,
+      "per_channel_rel": {
+        "ase": 1.0995682530908905e-15,
+        "p_out": 1.031579634971691e-15,
+        "spm": 1.1096262985198726e-15,
+        "xpm": 2.6426068134080534e-15
+      },
+      "within_budget": true,
+      "worst_rel": 2.6426068134080534e-15
+    },
+    {
+      "batch": 16,
+      "bit_identical": false,
+      "per_channel_rel": {
+        "ase": 1.5195299967160766e-15,
+        "p_out": 1.3150190520694026e-15,
+        "spm": 1.2641361018251e-15,
+        "xpm": 5.0356552313378e-15
+      },
+      "within_budget": true,
+      "worst_rel": 5.0356552313378e-15
+    },
+    {
+      "batch": 68,
+      "bit_identical": false,
+      "per_channel_rel": {
+        "ase": 1.4075755646630074e-15,
+        "p_out": 1.2579230061185809e-15,
+        "spm": 1.3031683730144357e-15,
+        "xpm": 4.830995704401903e-15
+      },
+      "within_budget": true,
+      "worst_rel": 4.830995704401903e-15
+    },
+    {
+      "batch": 256,
+      "bit_identical": false,
+      "per_channel_rel": {
+        "ase": 1.5195299967160766e-15,
+        "p_out": 1.3150190520694026e-15,
+        "spm": 1.5209655083968226e-15,
+        "xpm": 5.343261972808739e-15
+      },
+      "within_budget": true,
+      "worst_rel": 5.343261972808739e-15
+    }
+  ],
+  "provenance": {
+    "cpu_count": 20,
+    "git_rev": "0c8bb6611cb0bbb1c4120ffc468246463fbc20cf",
+    "numpy": "2.5.3",
+    "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14"
+  },
+  "rows": [
+    {
+      "batch": 1,
+      "batched": {
+        "mean_s": 0.002330556744709611,
+        "median_s": 0.002322056912817061,
+        "min_s": 0.0018825139850378036,
+        "rounds": 12,
+        "spread_ratio": 1.6476323927663612
+      },
+      "batched_per_candidate_s": 0.0018825139850378036,
+      "loadavg_delta_1min": 0.0,
+      "loadavg_during": [
+        1.22,
+        4.31,
+        9.93
+      ],
+      "per_candidate_speedup": 0.629266489358018,
+      "rounds_run": 12,
+      "serial": {
+        "mean_s": 0.0013606120191980153,
+        "median_s": 0.001231973059475422,
+        "min_s": 0.0011846029665321112,
+        "rounds": 12,
+        "spread_ratio": 1.6612494597403098
+      },
+      "serial_per_candidate_s": 0.0011846029665321112,
+      "speedup_median_sample": 0.5305524824457568,
+      "speedup_min_sample": 0.629266489358018
+    },
+    {
+      "batch": 4,
+      "batched": {
+        "mean_s": 0.0028261604408423104,
+        "median_s": 0.0028947900282219052,
+        "min_s": 0.0022339019924402237,
+        "rounds": 12,
+        "spread_ratio": 1.4127065654868562
+      },
+      "batched_per_candidate_s": 0.0005584754981100559,
+      "loadavg_delta_1min": 0.0,
+      "loadavg_during": [
+        1.22,
+        4.31,
+        9.93
+      ],
+      "per_candidate_speedup": 2.103245795315167,
+      "rounds_run": 12,
+      "serial": {
+        "mean_s": 0.004728076348934944,
+        "median_s": 0.004721594043076038,
+        "min_s": 0.004698444972746074,
+        "rounds": 12,
+        "spread_ratio": 1.0240362731447383
+      },
+      "serial_per_candidate_s": 0.0011746112431865185,
+      "speedup_median_sample": 1.6310661557640602,
+      "speedup_min_sample": 2.103245795315167
+    },
+    {
+      "batch": 16,
+      "batched": {
+        "mean_s": 0.005344930813104535,
+        "median_s": 0.005302457022480667,
+        "min_s": 0.004597776918672025,
+        "rounds": 12,
+        "spread_ratio": 1.3055207062088965
+      },
+      "batched_per_candidate_s": 0.0002873610574170016,
+      "loadavg_delta_1min": 0.0,
+      "loadavg_during": [
+        1.22,
+        4.31,
+        9.93
+      ],
+      "per_candidate_speedup": 3.9444758566126112,
+      "rounds_run": 12,
+      "serial": {
+        "mean_s": 0.018901195357708882,
+        "median_s": 0.018895742017775774,
+        "min_s": 0.018135820049792528,
+        "rounds": 12,
+        "spread_ratio": 1.1254577415506455
+      },
+      "serial_per_candidate_s": 0.001133488753112033,
+      "speedup_median_sample": 3.5635823048945174,
+      "speedup_min_sample": 3.9444758566126112
+    },
+    {
+      "batch": 68,
+      "batched": {
+        "mean_s": 0.013145579733342553,
+        "median_s": 0.013701357995159924,
+        "min_s": 0.010140252998098731,
+        "rounds": 12,
+        "spread_ratio": 1.5953361328185318
+      },
+      "batched_per_candidate_s": 0.00014912136761909898,
+      "loadavg_delta_1min": 0.0,
+      "loadavg_during": [
+        1.22,
+        4.31,
+        9.93
+      ],
+      "per_candidate_speedup": 7.427314589403416,
+      "rounds_run": 12,
+      "serial": {
+        "mean_s": 0.07812175592213559,
+        "median_s": 0.07820596091914922,
+        "min_s": 0.07531484903302044,
+        "rounds": 12,
+        "spread_ratio": 1.1112167392902754
+      },
+      "serial_per_candidate_s": 0.001107571309309124,
+      "speedup_median_sample": 5.70789851245226,
+      "speedup_min_sample": 7.427314589403416
+    },
+    {
+      "batch": 256,
+      "batched": {
+        "mean_s": 0.03865166060027799,
+        "median_s": 0.039780449005775154,
+        "min_s": 0.03325122606474906,
+        "rounds": 7,
+        "spread_ratio": 1.3821583562023239
+      },
+      "batched_per_candidate_s": 0.00012988760181542602,
+      "loadavg_delta_1min": 0.0,
+      "loadavg_during": [
+        1.2,
+        4.26,
+        9.88
+      ],
+      "per_candidate_speedup": 7.591837650048609,
+      "rounds_run": 7,
+      "serial": {
+        "mean_s": 0.2582168161170557,
+        "median_s": 0.2567111869575456,
+        "min_s": 0.25243790994863957,
+        "rounds": 7,
+        "spread_ratio": 1.094374688199692
+      },
+      "serial_per_candidate_s": 0.0009860855857368733,
+      "speedup_median_sample": 6.453199834930907,
+      "speedup_min_sample": 7.591837650048609
+    }
+  ],
+  "schema_version": 1,
+  "worst_rel_deviation_overall": 5.343261972808739e-15
+}

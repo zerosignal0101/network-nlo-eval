@@ -1,0 +1,2932 @@
+{
+  "schema_version": 1,
+  "generated_by": "scripts/fg4g_attribution.py",
+  "verdict": "(B)",
+  "verdict_one_line": "0.314 dB 与 ode_accel 无关：同一棵 FG-4e 树下把档位从 off 换成 matvec，最差差值逐位相同；根因是两棵树 qot_checker.py 的 ROADM/booster QoT 语义不同，而 scan.py 复刻的是较新（ecz-dev）的那一套。",
+  "environment": {
+    "python": "3.12.14",
+    "numpy": "2.5.3",
+    "note": "loadavg 见各子探针 JSON 的 environment.loadavg；本刀不做加速比声明。"
+  },
+  "Q1_library_own_entrypoints": {
+    "schema_version": 1,
+    "what": "FG-4g Q1 — library-own-entry A/B: ode_accel=off vs matvec, identical inputs",
+    "package_paths": {
+      "network_nlo_eval": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+      "multiband_optical_rl": "/home/zsig/Documents/gits/wt/fg-batch-rl/src/multiband_optical_rl/__init__.py"
+    },
+    "environment": {
+      "python": "3.12.14",
+      "numpy": "2.5.3",
+      "loadavg": [
+        7.89111328125,
+        13.6748046875,
+        15.404296875
+      ]
+    },
+    "config": {
+      "ode_accel_default": "matvec",
+      "num_channels": 230,
+      "steps": "5,20,40",
+      "strides": "7",
+      "max_paths_per_hops": 2
+    },
+    "verify_allocation_snr_db": {
+      "n_cases": 102,
+      "n_cases_with_any_difference": 0,
+      "total_elements": 23460,
+      "n_nonfinite_mismatch_total": 0,
+      "worst_abs_db": 0.0,
+      "worst_abs_where": "steps=5,hops=1,band=0,stride=7,ch=0",
+      "worst_rel": 0.0,
+      "worst_rel_where": "steps=5,hops=1,band=0,stride=7,ch=0",
+      "n_verdict_mismatch": 0,
+      "n_infeasible_skipped": 698,
+      "note": "SNR 数组本身就是 dB；max_abs 因此是 dB 绝对差。verdict 不一致单独计数在 n_cases_with_any_difference 里。"
+    },
+    "_calc_span_noise_and_power": {
+      "n_cases": 48,
+      "n_cases_with_any_difference": 10,
+      "total_elements": 11040,
+      "n_nonfinite_mismatch_total": 0,
+      "worst_abs_db": 2.6469779601696886e-23,
+      "worst_abs_where": "link=(0, 6),L=100000m,full,sigma2_spm_w",
+      "worst_rel": 3.137754387198928e-16,
+      "worst_rel_where": "link=(0, 6),L=59000m,remainder,sigma2_xpm_w"
+    },
+    "evaluate_path": {
+      "n_cases": 30,
+      "n_cases_with_any_difference": 5,
+      "total_elements": 6900,
+      "n_nonfinite_mismatch_total": 0,
+      "worst_abs_db": 1.0339757656912846e-25,
+      "worst_abs_where": "link=(0, 6),evaluate_path,spm_noise_w",
+      "worst_rel": 3.7136528394772357e-16,
+      "worst_rel_where": "link=(0, 12),evaluate_path,xpm_noise_w",
+      "note": "snr_db 的 max_abs/max_rel 单位为 dB；其余分量单位为 W。"
+    }
+  },
+  "Q2_scan_vs_verify_allocation": {
+    "fg4e_tree_off": {
+      "schema_version": 1,
+      "what": "FG-4g Q2 — side-by-side orchestration trace, verify_allocation vs verify_for_scan",
+      "package_paths": {
+        "network_nlo_eval": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+        "multiband_optical_rl": "/home/zsig/Documents/gits/wt/fg-batch-rl/src/multiband_optical_rl/__init__.py"
+      },
+      "environment": {
+        "python": "3.12.14",
+        "numpy": "2.5.3",
+        "loadavg": [
+          6.130859375,
+          12.3857421875,
+          14.88427734375
+        ]
+      },
+      "ode_accel_default": "matvec",
+      "ode_accel_modes": [
+        "off",
+        "cached_g",
+        "matvec"
+      ],
+      "config": {
+        "out": "<q2_off>",
+        "steps": "5",
+        "strides": "7",
+        "max_paths_per_hops": 1,
+        "hops": "1,3,7",
+        "max_trace_cases": 2,
+        "force_accel": "off"
+      },
+      "cases": [
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 0,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.385654111619704,
+          "snr_B_db": 25.10002389364835,
+          "snr_abs_diff_db": 0.2856302179713559,
+          "snr_mismatch": true,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          },
+          "trace_A": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.352519019971632e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.1362952442620361e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3114612941202961e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9665345662667785e-07
+              }
+            ]
+          },
+          "trace_B": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.352519019971632e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.1362952442620361e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3114612941202961e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9665345662667785e-07
+              }
+            ]
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 7,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.48584287445229,
+          "snr_B_db": 25.198069748991966,
+          "snr_abs_diff_db": 0.28777312546032263,
+          "snr_mismatch": true,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          },
+          "trace_A": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3883817854287864e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.0997476290812662e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3441524466683036e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9272871928295344e-07
+              }
+            ]
+          },
+          "trace_B": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3883817854287864e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.0997476290812662e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3441524466683036e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9272871928295344e-07
+              }
+            ]
+          }
+        }
+      ],
+      "summary": {
+        "n_cases": 2,
+        "n_mismatch": 2,
+        "worst_snr_abs_diff_db": 0.28777312546032263,
+        "orchestration_kinds": [
+          "identical"
+        ]
+      }
+    },
+    "fg4e_tree_matvec": {
+      "schema_version": 1,
+      "what": "FG-4g Q2 — side-by-side orchestration trace, verify_allocation vs verify_for_scan",
+      "package_paths": {
+        "network_nlo_eval": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+        "multiband_optical_rl": "/home/zsig/Documents/gits/wt/fg-batch-rl/src/multiband_optical_rl/__init__.py"
+      },
+      "environment": {
+        "python": "3.12.14",
+        "numpy": "2.5.3",
+        "loadavg": [
+          5.8798828125,
+          12.2294921875,
+          14.8203125
+        ]
+      },
+      "ode_accel_default": "matvec",
+      "ode_accel_modes": [
+        "off",
+        "cached_g",
+        "matvec"
+      ],
+      "config": {
+        "out": "<q2_mv>",
+        "steps": "5",
+        "strides": "7",
+        "max_paths_per_hops": 1,
+        "hops": "1,3,7",
+        "max_trace_cases": 2,
+        "force_accel": "matvec"
+      },
+      "cases": [
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 0,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.385654111619704,
+          "snr_B_db": 25.10002389364835,
+          "snr_abs_diff_db": 0.2856302179713559,
+          "snr_mismatch": true,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          },
+          "trace_A": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.352519019971632e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.1362952442620361e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3114612941202961e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9665345662667785e-07
+              }
+            ]
+          },
+          "trace_B": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.352519019971632e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.1362952442620361e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3114612941202961e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9665345662667785e-07
+              }
+            ]
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 7,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.48584287445229,
+          "snr_B_db": 25.198069748991966,
+          "snr_abs_diff_db": 0.28777312546032263,
+          "snr_mismatch": true,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          },
+          "trace_A": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3883817854287864e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.0997476290812662e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3441524466683038e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9272871928295344e-07
+              }
+            ]
+          },
+          "trace_B": {
+            "n_kernel_calls": 2,
+            "calls": [
+              {
+                "i": 0,
+                "span_length_m": 100000.0,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3883817854287864e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.0997476290812662e-06
+              },
+              {
+                "i": 1,
+                "span_length_m": 58999.99900000001,
+                "n_effective_spans": 1,
+                "nf": 5.0,
+                "power_sum": 0.001,
+                "power_nonzero": 1,
+                "spm_sum": 1.3441524466683038e-07,
+                "xpm_sum": 0.0,
+                "ase_sum": 1.9272871928295344e-07
+              }
+            ]
+          }
+        }
+      ],
+      "summary": {
+        "n_cases": 2,
+        "n_mismatch": 2,
+        "worst_snr_abs_diff_db": 0.28777312546032263,
+        "orchestration_kinds": [
+          "identical"
+        ]
+      }
+    },
+    "ref_tree_ecz_dev": {
+      "schema_version": 1,
+      "what": "FG-4g Q2 — side-by-side orchestration trace, verify_allocation vs verify_for_scan",
+      "package_paths": {
+        "network_nlo_eval": "/home/zsig/Documents/gits/network-nlo-eval/src/network_nlo_eval/__init__.py",
+        "multiband_optical_rl": "/home/zsig/Documents/gits/wt/fg-batch-rl/src/multiband_optical_rl/__init__.py"
+      },
+      "environment": {
+        "python": "3.12.14",
+        "numpy": "2.5.3",
+        "loadavg": [
+          5.64892578125,
+          12.076171875,
+          14.75634765625
+        ]
+      },
+      "ode_accel_default": "<absent: pre-FG-4a tree>",
+      "ode_accel_modes": [],
+      "config": {
+        "out": "<q2_ref>",
+        "steps": "5",
+        "strides": "7",
+        "max_paths_per_hops": 1,
+        "hops": "1,3,7",
+        "max_trace_cases": 2,
+        "force_accel": null
+      },
+      "cases": [
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 0,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.09905849181593,
+          "snr_B_db": 25.09905849181593,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 7,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.19689604098451,
+          "snr_B_db": 25.19689604098451,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 14,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.286978420336517,
+          "snr_B_db": 25.286978420336517,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 21,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.36951940242909,
+          "snr_B_db": 25.36951940242909,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 28,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.444735021907874,
+          "snr_B_db": 25.444735021907874,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 35,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.512842592217208,
+          "snr_B_db": 25.512842592217208,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 42,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.574059709919503,
+          "snr_B_db": 25.574059709919503,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 49,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.62860326092916,
+          "snr_B_db": 25.62860326092916,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 56,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.676688442131145,
+          "snr_B_db": 25.676688442131145,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 63,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.718527810757944,
+          "snr_B_db": 25.718527810757944,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 70,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.75433037260155,
+          "snr_B_db": 25.75433037260155,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 77,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.784300718696976,
+          "snr_B_db": 25.784300718696976,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 84,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.80863821859119,
+          "snr_B_db": 25.80863821859119,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 91,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.827536276757993,
+          "snr_B_db": 25.827536276757993,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 98,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.841181657185377,
+          "snr_B_db": 25.841181657185377,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 105,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.84975387968761,
+          "snr_B_db": 25.84975387968761,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 112,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.853424690112856,
+          "snr_B_db": 25.853424690112856,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 119,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.852357605354243,
+          "snr_B_db": 25.852357605354243,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 126,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.846707532945228,
+          "snr_B_db": 25.846707532945228,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 133,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.836620464038717,
+          "snr_B_db": 25.836620464038717,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 0,
+          "channel": 140,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.822233237738267,
+          "snr_B_db": 25.822233237738267,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 142,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 26.167830582116945,
+          "snr_B_db": 26.167830582116945,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 149,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 26.146473060289782,
+          "snr_B_db": 26.146473060289782,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 156,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 26.121271251326714,
+          "snr_B_db": 26.121271251326714,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 163,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 26.092332159726546,
+          "snr_B_db": 26.092332159726546,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 170,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 26.059752842759984,
+          "snr_B_db": 26.059752842759984,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 177,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 26.023620526981873,
+          "snr_B_db": 26.023620526981873,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 184,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.984012771734356,
+          "snr_B_db": 25.984012771734356,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 191,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.940997675134273,
+          "snr_B_db": 25.940997675134273,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 198,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.894634118201463,
+          "snr_B_db": 25.894634118201463,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 205,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.84497204298821,
+          "snr_B_db": 25.84497204298821,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 212,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.79205276080262,
+          "snr_B_db": 25.79205276080262,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 219,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.735909286867628,
+          "snr_B_db": 25.735909286867628,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 1,
+          "band": 1,
+          "channel": 226,
+          "path": [
+            0,
+            6
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 25.676566698014987,
+          "snr_B_db": 25.676566698014987,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "identical",
+            "n_calls": 2
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 0,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.306497045459928,
+          "snr_B_db": 17.306497045459928,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 7,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.41070599649413,
+          "snr_B_db": 17.41070599649413,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 14,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.506977002600443,
+          "snr_B_db": 17.506977002600443,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 21,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.59551035605503,
+          "snr_B_db": 17.59551035605503,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 28,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.67650959856071,
+          "snr_B_db": 17.67650959856071,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 35,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.750180583952762,
+          "snr_B_db": 17.750180583952762,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 42,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.816730512623213,
+          "snr_B_db": 17.816730512623213,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 49,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.87636695246281,
+          "snr_B_db": 17.87636695246281,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 56,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.929296860645955,
+          "snr_B_db": 17.929296860645955,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 63,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.975725619790698,
+          "snr_B_db": 17.975725619790698,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 70,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.015856100967543,
+          "snr_B_db": 18.015856100967543,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 77,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.04988776476322,
+          "snr_B_db": 18.04988776476322,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 84,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.07801581018967,
+          "snr_B_db": 18.07801581018967,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 91,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.100430379720386,
+          "snr_B_db": 18.100430379720386,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 98,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.117315827192048,
+          "snr_B_db": 18.117315827192048,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 105,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.128850053776617,
+          "snr_B_db": 18.128850053776617,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 112,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.135203915750328,
+          "snr_B_db": 18.135203915750328,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 119,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.136540706394957,
+          "snr_B_db": 18.136540706394957,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 126,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.133015713089794,
+          "snr_B_db": 18.133015713089794,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 133,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.124775849507895,
+          "snr_B_db": 18.124775849507895,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 0,
+          "channel": 140,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.11195936182916,
+          "snr_B_db": 18.11195936182916,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 142,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.472002987586173,
+          "snr_B_db": 18.472002987586173,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 149,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.4518890420528,
+          "snr_B_db": 18.4518890420528,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 156,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.427652226398177,
+          "snr_B_db": 18.427652226398177,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 163,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.399402637459367,
+          "snr_B_db": 18.399402637459367,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 170,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.367240655165066,
+          "snr_B_db": 18.367240655165066,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 177,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.331257022603495,
+          "snr_B_db": 18.331257022603495,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 184,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.29153297892959,
+          "snr_B_db": 18.29153297892959,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 191,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.248140440448346,
+          "snr_B_db": 18.248140440448346,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 198,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.20114222529391,
+          "snr_B_db": 18.20114222529391,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 205,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.15059231726202,
+          "snr_B_db": 18.15059231726202,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 212,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.096536164533248,
+          "snr_B_db": 18.096536164533248,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 219,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 18.03901100923289,
+          "snr_B_db": 18.03901100923289,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 3,
+          "band": 1,
+          "channel": 226,
+          "path": [
+            0,
+            6,
+            19,
+            5
+          ],
+          "base_ok": true,
+          "fast_ok": true,
+          "snr_A_db": 17.9780462439998,
+          "snr_B_db": 17.9780462439998,
+          "snr_abs_diff_db": 0.0,
+          "snr_mismatch": false,
+          "orchestration": {
+            "kind": "span_length_m",
+            "i": 1,
+            "A": 93000.0,
+            "B": 58999.99900000001
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 1,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 8,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 15,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 22,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 29,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 36,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 43,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 50,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 58,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 65,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 72,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 79,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 86,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 93,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 100,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 107,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 114,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 121,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 128,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 0,
+          "channel": 135,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 142,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 149,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 156,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 163,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 170,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 177,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 184,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 191,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 198,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 205,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 212,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 219,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        },
+        {
+          "steps": 5,
+          "hops": 7,
+          "band": 1,
+          "channel": 226,
+          "path": [
+            0,
+            6,
+            10,
+            23,
+            27,
+            16,
+            21,
+            1
+          ],
+          "base_ok": false,
+          "fast_ok": false,
+          "orchestration": {
+            "kind": "power_profile",
+            "i": 0,
+            "max_abs": 0.001,
+            "argmax": 53,
+            "A": 0.001,
+            "B": 0.0
+          }
+        }
+      ],
+      "summary": {
+        "n_cases": 101,
+        "n_mismatch": 0,
+        "worst_snr_abs_diff_db": 0.0,
+        "orchestration_kinds": [
+          "identical",
+          "power_profile",
+          "span_length_m"
+        ]
+      }
+    },
+    "tier_invariance": {
+      "worst_abs_diff_db_off": 0.28777312546032263,
+      "worst_abs_diff_db_matvec": 0.28777312546032263,
+      "bit_identical_across_tiers": true
+    }
+  },
+  "Q3_golden_scope": {
+    "golden_file": "results/fg4a_golden.json",
+    "provenance": {
+      "captured_at_stage": "pre-FG-4a baseline",
+      "git_rev": "ea7ecb0dd01d701060cef3b4efa7dddb171ddc86",
+      "numpy": "2.5.3",
+      "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+      "python": "3.12.14"
+    },
+    "n_scenarios": 7,
+    "scenarios": {
+      "cl_full_100km": {
+        "kind": "span",
+        "n_output_keys": 4
+      },
+      "cl_full_64qam_80km": {
+        "kind": "span",
+        "n_output_keys": 4
+      },
+      "cl_nspan10": {
+        "kind": "span",
+        "n_output_keys": 4
+      },
+      "cl_partial_100km": {
+        "kind": "span",
+        "n_output_keys": 4
+      },
+      "cl_short_1km": {
+        "kind": "span",
+        "n_output_keys": 4
+      },
+      "flexgrid_mixed": {
+        "kind": "span",
+        "n_output_keys": 4
+      },
+      "path_cplusl_roadm": {
+        "kind": "path",
+        "n_output_keys": 7
+      }
+    },
+    "n_golden_cases": 31,
+    "layers_compared": [
+      "MultiBandISRSGN._calc_span_noise_and_power  (6 span scenarios x 4 arrays)",
+      "MultiBandISRSGN.evaluate_path              (1 path scenario x 7 arrays)"
+    ],
+    "input_construction": "全部经 tests/fg4a_scenarios.py 的稳定评估器 API 构造，不含 RL 的 NetworkTopology / QoTValidator / ROADM 编排",
+    "covers_rl_working_conditions": {
+      "N230_50GHz_CL": true,
+      "non_empty_occupancy": true,
+      "multi_hop_1_3_7_via_evaluate_path": false,
+      "two_bands_via_band_plan": false,
+      "roadm_equalize_booster_ase": false,
+      "note": "金标准覆盖 230×50 GHz C+L 与非空占用（cl_partial_100km 每 7 个空槽），也覆盖 evaluate_path 的 3 跳编排（path_cplusl_roadm），但用的是固定 ROADMConfig，不含 equalize booster 分支；也不经 QoTValidator，因此不含 band_plan 的两频段选择。"
+    }
+  },
+  "root_cause_evidence": {
+    "ref_tree": {
+      "path": "/home/zsig/Documents/gits/network-nlo-eval",
+      "branch": "ecz-dev",
+      "head": "70f851d",
+      "head_subject": "Add topology-aware QoT comparison across both engines.",
+      "has_ode_accel": false,
+      "qot_checker_sha256": "3ef3ac8a5f861fea"
+    },
+    "fg4e_tree": {
+      "path": "/home/zsig/Documents/gits/wt/fg-ode-fast",
+      "branch": "wp/fg-ode-fast",
+      "head": "164135d",
+      "has_ode_accel": true,
+      "qot_checker_sha256": "593b9eb68fac7b11"
+    },
+    "commits_in_ref_not_in_fg4e_touching_qot_checker": [
+      "70f851d Add topology-aware QoT comparison across both engines.",
+      "e78fc62 Fix SNR check and add noise cache.",
+      "e0392e9 Add physical qot checker."
+    ],
+    "semantic_differences": [
+      "ref _build_path_snr_array/_eval_service_snr 用 roadm.path_loss_db('drop'|'express') 区分末端/中间损耗；FG-4e 树用合并的 10**((insertion_loss_db+filtering_penalty_db)/10)",
+      "ref 在 equalize_output_power 为真时把 booster ASE 加进 total_ase；FG-4e 树没有这个分支，一律除以 loss",
+      "ref 把 filtering_penalty_db 单独乘一遍 total_*；FG-4e 树把它折进上面的合并 loss"
+    ]
+  }
+}

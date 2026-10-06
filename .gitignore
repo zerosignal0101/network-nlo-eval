@@ -201,3 +201,22 @@ sg_execution_times.rst
 # rather than from prose. Regenerate with
 # scripts/fu2_scu_evidence.py; verify with the same script's --check.
 !/results/fg_u2_scu.json
+
+# FG-4e acceptance artifacts: the batch-vs-serial speedup curve and the
+# per-candidate numeric check are the only source for the B=68 speedup, so they
+# are committed twice on purpose -- the two runs are independent samples and the
+# run-to-run spread is part of the reported result (see docs/fg4e_cpu_batching.md §4.2).
+!/results/fg4e_speedup_ab.json
+!/results/fg4e_speedup_ab_run2.json
+
+# FG-4g attribution artifact: the verdict that the 0.314 dB scan-vs-gate split
+# is a baseline skew and NOT an ode_accel effect rests entirely on the tier
+# invariance recorded here. docs/fg4g_matvec_attribution.md is rendered from it
+# and re-renderable via `scripts/fg4g_render_doc.py --check`, so the JSON has to
+# be tracked for the document to be verifiable rather than merely assertable.
+!/results/fg4g_attribution.json
+
+# FG-5 integration artifact: the post-merge ΔSNR table and the four re-run gate
+# results. docs/fg5_integration_note.md is rendered from it and re-renderable via
+# `scripts/fg5_integration_evidence.py --check`, tracked for the same reason.
+!/results/fg5_integration.json
