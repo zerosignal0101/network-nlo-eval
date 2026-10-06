@@ -34,13 +34,20 @@ The three mechanisms
    test file that §1.2 did not name still fails outright.
 
 2. **Expectation-token preservation** (:func:`token_count_violations`) — for
-   each authorised parity file, the number of occurrences of
+   each authorised file (both the tier-pin files *and* the policy-guard files),
+   the number of occurrences of
    ``np.array_equal`` / ``pytest.approx`` / ``allclose`` / ``isclose`` must be
    *exactly* what the baseline had. This is immune to the self-reference
    problem: rewriting a guard inside a file does not add or remove an
    ``array_equal``, whereas weakening one does. Comments are counted too, which
    only makes the check stricter (adding a comment that mentions the token
    would fail — see the note in :func:`token_count_violations`).
+
+   Covering the guard files matters: they are allowlist-authorised, so without
+   this they are the one place an expectation could be weakened undetected.
+   Mutation-verified — flipping ``np.array_equal`` to ``np.allclose`` in
+   ``test_fg4a_numeric_identity.py`` sailed past the guard while that file was
+   allowlisted but not token-checked.
 
 3. **Guard integrity** (:func:`guard_removed_violations`) — each G2 guard
    function must still exist, and must still consult this policy. A guard that
@@ -312,7 +319,13 @@ def collect_violations(repo_root: Path, baseline_rev: str) -> list[str]:
         repo_root, baseline_rev
     )]
     violations += guard_removed_violations(repo_root)
-    for name in AUTHORIZED_TIER_PIN_FILES:
+    # Token preservation must cover the policy-guard files as well, not just the
+    # three parity files. The guard files are allowlist-authorised (the policy they
+    # encode was adjudicated), so without this they would be the one place an
+    # expectation could be weakened undetected -- verified by mutation: flipping an
+    # ``np.array_equal`` to ``np.allclose`` in test_fg4a_numeric_identity.py passed
+    # the guard until this loop covered POLICY_GUARD_FILES too.
+    for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES:
         violations += token_count_violations(repo_root, baseline_rev, f"tests/{name}")
     for name in STRICT_TIER_PIN_FILES:
         violations += tier_pin_violations(repo_root, baseline_rev, f"tests/{name}")
