@@ -165,6 +165,8 @@ cython_debug/
 # Project excludes
 docs/_examples
 sg_execution_times.rst
-/results/
+/results/*
+!/results/fg1_golden_main.json
+!/results/fg1_physics_parity.json
 *.npz
 *.ipynb

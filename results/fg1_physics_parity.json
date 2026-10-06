@@ -1,0 +1,742 @@
+{
+  "failures": [],
+  "golden_file": "results/fg1_golden_main.json",
+  "golden_file_digest_note": "run scripts/fg1_parity.py --emit-golden against origin/main to regenerate",
+  "golden_source_branch": "origin/main",
+  "parity_ok": true,
+  "scenarios": {
+    "c_band_single": {
+      "checks": {
+        "ase_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0
+        },
+        "signal_power_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0
+        },
+        "snr_db": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0
+        },
+        "spm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0
+        },
+        "xpm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0
+        }
+      },
+      "pipeline_vs_reference": {
+        "available": true,
+        "checks": {
+          "ase_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 8,
+            "non_finite_mismatch": 0
+          },
+          "signal_power_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 8,
+            "non_finite_mismatch": 0
+          },
+          "snr_db": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 8,
+            "non_finite_mismatch": 0
+          },
+          "spm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 8,
+            "non_finite_mismatch": 0
+          },
+          "xpm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 8,
+            "non_finite_mismatch": 0
+          }
+        }
+      },
+      "scenario": {
+        "center_frequency_hz": 193100000000000.0,
+        "channel_spacing_hz": 50000000000.0,
+        "description": "8-ch C-band, one 80 km span, NF 5.5 dB, Gaussian statistics.",
+        "hops": [
+          {
+            "blocked_channels": [],
+            "length_km": 80.0,
+            "noise_figure_db": 5.5,
+            "roadm_filtering_penalty_db": 0.2,
+            "roadm_insertion_loss_db": null,
+            "span_km": 80.0,
+            "target_gain_db": 17.0
+          }
+        ],
+        "launch_power_w": 0.001,
+        "name": "c_band_single",
+        "num_channels": 8,
+        "phi_kurtosis": 0.0,
+        "symbol_rate_hz": 32000000000.0
+      },
+      "span_curve_checks": [
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "power_out_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "spm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "xpm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "ase_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 8,
+          "non_finite_mismatch": 0,
+          "span": 0
+        }
+      ]
+    },
+    "kurtosis_64qam": {
+      "checks": {
+        "ase_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0
+        },
+        "signal_power_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0
+        },
+        "snr_db": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0
+        },
+        "spm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0
+        },
+        "xpm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0
+        }
+      },
+      "pipeline_vs_reference": {
+        "available": true,
+        "checks": {
+          "ase_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 16,
+            "non_finite_mismatch": 0
+          },
+          "signal_power_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 16,
+            "non_finite_mismatch": 0
+          },
+          "snr_db": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 16,
+            "non_finite_mismatch": 0
+          },
+          "spm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 16,
+            "non_finite_mismatch": 0
+          },
+          "xpm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 16,
+            "non_finite_mismatch": 0
+          }
+        }
+      },
+      "scenario": {
+        "center_frequency_hz": 193100000000000.0,
+        "channel_spacing_hz": 50000000000.0,
+        "description": "16-ch C-band, one 120 km span, 64QAM phi_kurtosis=-0.619.",
+        "hops": [
+          {
+            "blocked_channels": [],
+            "length_km": 120.0,
+            "noise_figure_db": 5.5,
+            "roadm_filtering_penalty_db": 0.2,
+            "roadm_insertion_loss_db": null,
+            "span_km": 120.0,
+            "target_gain_db": 20.0
+          }
+        ],
+        "launch_power_w": 0.001,
+        "name": "kurtosis_64qam",
+        "num_channels": 16,
+        "phi_kurtosis": -0.619,
+        "symbol_rate_hz": 32000000000.0
+      },
+      "span_curve_checks": [
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "power_out_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "spm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "xpm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "ase_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 16,
+          "non_finite_mismatch": 0,
+          "span": 0
+        }
+      ]
+    },
+    "multiband_wide": {
+      "checks": {
+        "ase_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0
+        },
+        "signal_power_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0
+        },
+        "snr_db": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0
+        },
+        "spm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0
+        },
+        "xpm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0
+        }
+      },
+      "pipeline_vs_reference": {
+        "available": true,
+        "checks": {
+          "ase_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 80,
+            "non_finite_mismatch": 0
+          },
+          "signal_power_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 80,
+            "non_finite_mismatch": 0
+          },
+          "snr_db": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 80,
+            "non_finite_mismatch": 0
+          },
+          "spm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 80,
+            "non_finite_mismatch": 0
+          },
+          "xpm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 80,
+            "non_finite_mismatch": 0
+          }
+        }
+      },
+      "scenario": {
+        "center_frequency_hz": 191000000000000.0,
+        "channel_spacing_hz": 50000000000.0,
+        "description": "80 channels across the C/L boundary, 2x100 km, NF 5.0 dB.",
+        "hops": [
+          {
+            "blocked_channels": [],
+            "length_km": 100.0,
+            "noise_figure_db": 5.0,
+            "roadm_filtering_penalty_db": 0.2,
+            "roadm_insertion_loss_db": null,
+            "span_km": 100.0,
+            "target_gain_db": 20.0
+          },
+          {
+            "blocked_channels": [],
+            "length_km": 100.0,
+            "noise_figure_db": 5.0,
+            "roadm_filtering_penalty_db": 0.2,
+            "roadm_insertion_loss_db": null,
+            "span_km": 100.0,
+            "target_gain_db": 20.0
+          }
+        ],
+        "launch_power_w": 0.001,
+        "name": "multiband_wide",
+        "num_channels": 80,
+        "phi_kurtosis": 0.0,
+        "symbol_rate_hz": 32000000000.0
+      },
+      "span_curve_checks": [
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "power_out_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "spm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "xpm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "ase_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "power_out_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "spm_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "xpm_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "ase_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 80,
+          "non_finite_mismatch": 0,
+          "span": 0
+        }
+      ]
+    },
+    "roadm_hoop": {
+      "checks": {
+        "ase_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0
+        },
+        "signal_power_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0
+        },
+        "snr_db": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0
+        },
+        "spm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0
+        },
+        "xpm_w": {
+          "bit_exact": true,
+          "comparable": true,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0
+        }
+      },
+      "pipeline_vs_reference": {
+        "available": true,
+        "checks": {
+          "ase_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 12,
+            "non_finite_mismatch": 0
+          },
+          "signal_power_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 12,
+            "non_finite_mismatch": 0
+          },
+          "snr_db": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 12,
+            "non_finite_mismatch": 0
+          },
+          "spm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 12,
+            "non_finite_mismatch": 0
+          },
+          "xpm_w": {
+            "bit_exact": true,
+            "comparable": true,
+            "max_abs_dev": 0.0,
+            "max_rel_dev": 0.0,
+            "n_points": 12,
+            "non_finite_mismatch": 0
+          }
+        }
+      },
+      "scenario": {
+        "center_frequency_hz": 193100000000000.0,
+        "channel_spacing_hz": 50000000000.0,
+        "description": "12-ch C-band, two 60 km links through a 5 dB ROADM, channel 3 blocked.",
+        "hops": [
+          {
+            "blocked_channels": [],
+            "length_km": 60.0,
+            "noise_figure_db": 5.0,
+            "roadm_filtering_penalty_db": 0.2,
+            "roadm_insertion_loss_db": null,
+            "span_km": 60.0,
+            "target_gain_db": 15.0
+          },
+          {
+            "blocked_channels": [],
+            "length_km": 60.0,
+            "noise_figure_db": 5.0,
+            "roadm_filtering_penalty_db": 0.2,
+            "roadm_insertion_loss_db": 5.0,
+            "span_km": 60.0,
+            "target_gain_db": 15.0
+          }
+        ],
+        "launch_power_w": 0.001,
+        "name": "roadm_hoop",
+        "num_channels": 12,
+        "phi_kurtosis": 0.0,
+        "symbol_rate_hz": 32000000000.0
+      },
+      "span_curve_checks": [
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "power_out_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "spm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "xpm_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "ase_w",
+          "hop": 0,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "power_out_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "spm_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "xpm_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        },
+        {
+          "bit_exact": true,
+          "comparable": true,
+          "field": "ase_w",
+          "hop": 1,
+          "max_abs_dev": 0.0,
+          "max_rel_dev": 0.0,
+          "n_points": 12,
+          "non_finite_mismatch": 0,
+          "span": 0
+        }
+      ]
+    }
+  },
+  "schema": "fg1-parity-v1",
+  "tolerance": 0.0,
+  "tolerance_rationale": "numba_kernels.py is byte-identical to origin/main and the pipeline only orchestrates the same low-level kernel calls, so the expected deviation is exactly zero. Any non-zero deviation is a regression, not noise."
+}
