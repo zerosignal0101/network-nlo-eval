@@ -1,0 +1,114 @@
+{
+  "after_tree": {
+    "commit": "95a55ed",
+    "description": "wp/fg-integrate = merge(a233002, a06d34c)",
+    "repo": "/home/zsig/Documents/gits/wt/fg-integrate"
+  },
+  "before_tree": {
+    "commit": "(not a git repo)",
+    "expected_commit": "a233002",
+    "repo": "/tmp/fg5-before-phys"
+  },
+  "delta_snr_table": [
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "legacy_two_hop_equalize_on",
+      "snr_db_after": 26.0347304295729,
+      "snr_db_before": 26.0347304295729
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "legacy_three_hop_equalize_on",
+      "snr_db_after": 24.152139265826385,
+      "snr_db_before": 24.152139265826385
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "legacy_two_hop_equalize_off",
+      "snr_db_after": 23.0296997909201,
+      "snr_db_before": 23.0296997909201
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "legacy_express_attenuation",
+      "snr_db_after": 25.989211917341827,
+      "snr_db_before": 25.989211917341827
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "legacy_high_filtering",
+      "snr_db_after": 25.025781931578116,
+      "snr_db_before": 25.025781931578116
+    },
+    {
+      "accepted_after": false,
+      "accepted_before": false,
+      "delta_db": null,
+      "note": "rejected on both sides (无 SNR 可比；接受性仍单独比对)",
+      "scenario": "legacy_blocked_channel",
+      "snr_db_after": null,
+      "snr_db_before": null
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "flex_two_hop_equalize_on",
+      "snr_db_after": 26.0347304295729,
+      "snr_db_before": 26.0347304295729
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "flex_three_hop_equalize_on",
+      "snr_db_after": 24.152139265826385,
+      "snr_db_before": 24.152139265826385
+    },
+    {
+      "accepted_after": true,
+      "accepted_before": true,
+      "delta_db": 0.0,
+      "note": "",
+      "scenario": "flex_two_hop_equalize_off",
+      "snr_db_after": 23.0296997909201,
+      "snr_db_before": 23.0296997909201
+    },
+    {
+      "accepted_after": false,
+      "accepted_before": false,
+      "delta_db": null,
+      "note": "rejected on both sides (无 SNR 可比；接受性仍单独比对)",
+      "scenario": "flex_blocked_slots",
+      "snr_db_after": null,
+      "snr_db_before": null
+    }
+  ],
+  "description": "FG-5 物理仓整合证据：两条线合并前后的 ΔSNR。合并是增量式的，因此 legacy/并集路径的 SNR 应当逐位不变——本表就是那句话的复算。",
+  "scenario_source": "各树自己的 scripts/fu4_capture_golden.py（FU-4 走 rwa/qot_checker.py）",
+  "schema": "fg5_integration/v1",
+  "summary": {
+    "acceptance_changed": [],
+    "all_bit_identical": true,
+    "compared": 8,
+    "max_abs_delta_db": 0.0,
+    "scenarios": 10
+  }
+}

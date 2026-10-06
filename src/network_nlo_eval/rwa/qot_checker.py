@@ -13,6 +13,7 @@ from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
+from network_nlo_eval.rwa.link_noise import assemble_link_noise
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
 #: 普朗克常数 (J·s)。booster ASE 项 ``NF * h * nu * Rs * (G-1)`` 的系数，
@@ -241,37 +242,18 @@ class QoTValidator:
         num_full_spans = int(link_total_length_m // span_length_m)
         remainder_length_m = link_total_length_m % span_length_m
 
-        total_spm = np.zeros(self.num_nodes, dtype=np.float64)
-        total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
-        total_ase = np.zeros(self.num_nodes, dtype=np.float64)
-        total_spans = 0
-
-        if num_full_spans > 0:
-            _, s_spm, s_xpm, s_ase = evaluator._calc_span_noise_and_power(
-                power_profile,
-                span_length_m,
-                edfa_config,
-                None,
-                n_effective_spans=1,
-            )
-            total_spm += s_spm * num_full_spans
-            total_xpm += s_xpm * num_full_spans
-            total_ase += s_ase * num_full_spans
-            total_spans += num_full_spans
-
-        if remainder_length_m > 1.0:
-            _, r_spm, r_xpm, r_ase = evaluator._calc_span_noise_and_power(
-                power_profile,
-                remainder_length_m,
-                edfa_config,
-                n_effective_spans=1,
-            )
-            total_spm += r_spm
-            total_xpm += r_xpm
-            total_ase += r_ase
-            total_spans += 1
-
-        return LinkNoiseCache(spm=total_spm, xpm=total_xpm, ase=total_ase, span_count=total_spans)
+        # FG-5：这段噪声累加已提取到 `assemble_link_noise`，与 RL 侧共用同一个函数
+        # 对象。本方法现在只负责"从拓扑取值"（光纤参数 / EDFA / 跨段切分），
+        # 不再持有任何噪声算术——重复实现正是历史上两仓悄悄分叉的成因。
+        return assemble_link_noise(
+            evaluator=evaluator,
+            edfa_config=edfa_config,
+            power_profile=power_profile,
+            span_length_m=span_length_m,
+            num_full_spans=num_full_spans,
+            remainder_length_m=remainder_length_m,
+            num_channels=self.num_nodes,
+        )
 
     def _get_or_calc_noise_cache(
         self,
