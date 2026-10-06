@@ -186,3 +186,4 @@ sg_execution_times.rst
 !/results/fg4a_bench_fg4a.json
 !/results/fg4a_bench_fg4a_vs_baseline.json
 !/results/fg4a_speedup_ab.json
+!/results/fg4b_speedup_ab.json

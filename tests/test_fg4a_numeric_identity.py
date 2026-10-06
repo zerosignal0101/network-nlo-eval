@@ -55,6 +55,12 @@ from typing import Any
 import numpy as np
 import pytest
 from fg4a_scenarios import PATH_KEYS, SPAN_KEYS, build_scenarios
+from fg4b_tier_pin_policy import (
+    collect_violations,
+    tier_pin_violations,
+    token_count_violations,
+    unauthorized_test_edits,
+)
 
 from network_nlo_eval.models.isrs_gn import ODE_ACCEL_MODES
 
@@ -459,27 +465,39 @@ def test_f4a_frozen_dp_dz_is_still_byte_identical() -> None:
     )
 
 
+#: The G2 policy entry points this file's guard relies on. Kept as a live
+#: reference so the import is not dead: ``fg4b_tier_pin_policy`` asserts that
+#: this guard still consults them, i.e. that the guard has not been neutered.
+_FG4B_G2_POLICY_API = (
+    collect_violations,
+    tier_pin_violations,
+    token_count_violations,
+    unauthorized_test_edits,
+)
+
+
 def test_f4a_pre_existing_tests_were_not_modified() -> None:
-    """G2 discipline: no pre-existing test file may be edited by FG-4a.
+    """G2 discipline: no pre-existing test file may be edited without authority.
 
     The FG-4a additions are new files, which show up as ``A``; anything else
-    under ``tests/`` is an edit to an existing expectation.
-    """
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--name-status", BASELINE_REV, "--", "tests/"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover
-        pytest.skip(f"git diff failed: {exc}")
+    under ``tests/`` is an edit to an existing file.
 
-    offenders = [
-        line for line in diff.splitlines() if line and not line.startswith("A\t") and not line.startswith("A ")
-    ]
-    assert not offenders, f"pre-existing test files were modified: {offenders}"
+    FG-4b §1.2 authorised two things and nothing else: pinning F1-1/F1-2/F2-3 to
+    ``ode_accel="off"`` (their proposition is port fidelity, not the production
+    default), and updating the two G2 guard functions themselves so the check can
+    tell those apart. The original filename-level test could not express that, so
+    this is now *stricter*: an unauthorised file still fails outright, and within
+    an authorised file no line carrying an assertion or a numeric tolerance may
+    have been removed, while the guards must still exist and still consult the
+    policy. See ``fg4b_tier_pin_policy``.
+    """
+    unauthorized = unauthorized_test_edits(REPO_ROOT, BASELINE_REV)
+    assert not unauthorized, (
+        f"pre-existing test files were modified without §1.2 authorisation: {unauthorized}"
+    )
+
+    violations = collect_violations(REPO_ROOT, BASELINE_REV)
+    assert not violations, "§1.2 tier-pin edits must not change any expectation:\n" + "\n".join(violations)
 
 
 def test_f4a_capture_script_check_mode_passes() -> None:

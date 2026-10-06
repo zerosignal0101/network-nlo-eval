@@ -82,6 +82,15 @@ def _package_path() -> str:
 #: if it were written through ``matvec``.
 CAPTURE_MODE = "cached_g"
 
+#: Mode used by ``--check`` when the caller does not pass ``--ode-accel``.
+#:
+#: FG-4b made ``matvec`` the *production default* (:data:`ODE_ACCEL_DEFAULT`), but
+#: this script must **not** follow it: ``--check`` is the bit-exact self-check of
+#: the golden, and running it through ``matvec`` would silently downgrade it to a
+#: 1e-12 tolerance check — the exact evidence the golden is supposed to provide.
+#: Pinned to :data:`CAPTURE_MODE` so the default stays bit-exact.
+CHECK_DEFAULT_MODE = CAPTURE_MODE
+
 
 def collect(ode_accel: str = CAPTURE_MODE, *, for_capture: bool = False) -> dict[str, Any]:
     """Run every scenario and return the full golden payload.
@@ -207,7 +216,7 @@ def _compare(expected: dict[str, Any], actual: dict[str, Any], tolerance: float)
 
 def main() -> int:
     """Generate or check the golden file."""
-    from network_nlo_eval.models.isrs_gn import ODE_ACCEL_DEFAULT, ODE_ACCEL_MODES
+    from network_nlo_eval.models.isrs_gn import ODE_ACCEL_MODES
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="golden JSON path")
@@ -218,9 +227,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--ode-accel",
-        default=ODE_ACCEL_DEFAULT,
+        default=CHECK_DEFAULT_MODE,
         choices=list(ODE_ACCEL_MODES),
-        help="acceleration mode to run while checking (default: %(default)s)",
+        help=(
+            "acceleration mode to run while checking (default: %(default)s, pinned to a "
+            "bit-exact mode so --check stays a bit-exact self-check rather than a "
+            "tolerance check; it deliberately does NOT follow ODE_ACCEL_DEFAULT)"
+        ),
     )
     parser.add_argument(
         "--tolerance",

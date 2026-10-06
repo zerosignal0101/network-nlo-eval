@@ -56,6 +56,11 @@ def _pipeline_result(scenario):
         scenario.fiber(scenario.hops[0]),
         symbol_rate_hz=scenario.symbol_rate_hz,
         phi_kurtosis=scenario.phi_kurtosis,
+        # FG-4b §1.2: this test's proposition is "the ported pipeline is
+        # physics-neutral" — a statement about port fidelity, pinned to the frozen
+        # ``off`` tier. Production default is ``matvec`` and is gated separately at
+        # <=1e-12; the bit-equality assertion and its expectation are unchanged.
+        ode_accel="off",
     )
     fibers = [scenario.fiber(hop).model_copy(update={"max_span_length_km": hop.span_km}) for hop in scenario.hops]
     edfas = [scenario.edfa(hop) for hop in scenario.hops]

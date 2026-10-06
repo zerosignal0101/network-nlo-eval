@@ -703,8 +703,369 @@ def _compute_nli_variances(
 
 
 # =============================================================================
-# 4. ASE 噪声计算
+# 3b. FG-4b: NLI 张量化 —— 把构建期常量折进三张 (N,N) 张量
 # =============================================================================
+# 上面那个 `_compute_nli_variances` 是 FG-2 冻结的参考实现，**一个字节都不改**。
+# 本节另建等价变体，与 FG-4a 对 `dp_dz` 的处理同构。
+#
+# 关键观察（这是本刀的立足点）：XPM 的 O(N²) 双重循环里，**没有任何一项依赖
+# 逐跨段的功率**。进入 `_compute_nli_variances` 的每个量要么是逐连接常量
+# （`symbol_rate_hz` / `f_rel_hz` / `lambdas_m` / `a_eff_m2` / `alpha_power_npm`），
+# 要么是跨段常量（`L_m` / `beta_2` / `beta_3` / `n_2` / `phi_kurtosis` / `n_span`），
+# 唯一的数据相关量是 **t_tilde**——而它只通过
+#
+#     T_l = 1 + t_tilde[l]        （出现在 pre_factor 的 T_l^2）
+#     r_l  = -t_tilde[l] / T_l    （出现在 (l_ch, lp) 求和的系数 r_l^(l_ch+lp)）
+#
+# 两处进入。注意基线里 `a_t` / `k` 是按 **`alpha_l_npm`（即 l 通道的衰减）** 建的，
+# 与配对无关——它们本来就只是 (N,2) 的逐通道量，不是 (N,N)。基线在双层循环里
+# 反复重算它们，这本身就是 O(N²) 里可去掉的常数因子。
+#
+# 于是把 (l_ch, lp) ∈ {(0,0),(0,1),(1,0),(1,1)} 的四项按 r 的幂次归并：
+#
+#     sum_val[i,l] = W0 + 2*r_l*W1 + r_l^2*W2
+#
+# 其中 W0/W1/W2 是三张 (N,N) 张量，**全部在构建期一次算好**（含 arcsinh / arctan /
+# log 这些超越函数，以及 `log_arg > 0` 的分支选择、`|phi_il| < eps` 的钳位、
+# `den < 1e-12` 的泰勒兜底）。热路径只剩乘加与广播。
+#
+# 逐对相位项 `phi_il` 按 brief 要求写成外积形式：
+# `phi_il = (f_l - f_i) * phi_base(f_l + f_i)`，两个因子都是 (N,N) 外积。
+#
+# 逐连接带宽的语义**原样保留**：`rs_l_hz`（COI 自己的带宽）只进 term2 的对数项与
+# 分母，`rs_i_hz`（扰动信道带宽）只进 term1 的 arctan。两者都取自
+# `symbol_rate_hz`，没有退回成同一个标量。
+#
+# 与基线的浮点对应关系：逐项的乘法次序完全一致，差别只在 (1) l 方向求和由顺序
+# 累加变成成对求和，(2) (0,1) 与 (1,0) 两项按浮点交换律合并为一项 2*r*W1。
+# 偏差量级与证据见 docs/fg4b_nli_vectorization.md。
+
+#: SPM 的跨段指数因子 (n_span ** (1 + epsilon_n_span))。
+_NLI_SPAN_EXPONENT = 1.05
+
+
+@njit(cache=True)
+def _build_nli_tensors(
+    n_ch: int,
+    n_span: int,
+    symbol_rate_hz: NDArrayFloat,
+    f_rel_hz: NDArrayFloat,
+    lambdas_m: NDArrayFloat,
+    a_eff_m2: NDArrayFloat,
+    alpha_power_npm: NDArrayFloat,
+    L_m: float,
+    beta_2_s2_m: float,
+    beta_3_s3_m: float,
+    n_2_m2_w: float,
+    phi_kurtosis: float,
+) -> tuple[Any, ...]:
+    """构建 NLI 热路径所需的全部常量张量（构建期调用一次并缓存）。
+
+    所有数据相关的分支/选择都在这里做完——热路径不再有 ``if``：
+    ``log_arg > 0`` 的选择、``|phi_il| < eps`` 的钳位、以及 `_calc_alpha_tilde_and_kappa_jit`
+    内部的 ``den < 1e-12`` 泰勒兜底。
+
+    Returns:
+        tuple: ``(a0, a1, k0, k1, spm0, spm1, spm2, gamma_ii_sq, gamma_sq, w0, w1, w2)``
+
+        * ``a0, a1, k0, k1`` — (N,) 逐通道的 a_tilde / kappa（l = 0, 1 两档）；
+        * ``spm0, spm1, spm2`` — (N,) SPM 三项（已折入 coeff 幂次以外的常量，
+          不含跨段指数因子与 pre_factor）；
+        * ``gamma_ii_sq`` — (N,) 自相位 Gamma^2；
+        * ``gamma_sq`` — (N, N) 逐对 Gamma_il^2；
+        * ``w0, w1, w2`` — (N, N) XPM 的 (0,0) / (0,1)=(1,0) / (1,1) 合并项。
+    """
+    n_tilde = n_span if n_span > 1 else 0
+
+    # --- 逐通道：a_tilde 与 kappa（基线在双层循环内反复重算的同一批常量）---
+    a0 = np.empty(n_ch, dtype=np.float64)
+    a1 = np.empty(n_ch, dtype=np.float64)
+    k0 = np.empty(n_ch, dtype=np.float64)
+    k1 = np.empty(n_ch, dtype=np.float64)
+    for idx in range(n_ch):
+        a0[idx], k0[idx] = _calc_alpha_tilde_and_kappa_jit(alpha_power_npm[idx], L_m)
+        a1[idx], k1[idx] = _calc_alpha_tilde_and_kappa_jit(2 * alpha_power_npm[idx], L_m)
+
+    # --- SPM 系数（逐通道，无跨段数据依赖）---
+    gamma_ii_sq = np.empty(n_ch, dtype=np.float64)
+    spm0 = np.empty(n_ch, dtype=np.float64)
+    spm1 = np.empty(n_ch, dtype=np.float64)
+    spm2 = np.empty(n_ch, dtype=np.float64)
+    for i in range(n_ch):
+        gamma_ii = (2 * np.pi / lambdas_m[i]) * (2 * n_2_m2_w / (2 * a_eff_m2[i]))
+        gamma_ii_sq[i] = gamma_ii**2
+
+        phi_i = -4.0 * np.pi**2 * (beta_2_s2_m + 2.0 * np.pi * beta_3_s3_m * f_rel_hz[i])
+        if abs(phi_i) < _EPSILON:
+            phi_i = _EPSILON if phi_i >= 0 else -_EPSILON
+
+        # asinh 的自变量只依赖 phi_i 与 a_t，故逐通道一次算好
+        arg0 = (3.0 * phi_i * symbol_rate_hz[i] ** 2) / (8.0 * np.pi * a0[i])
+        arg1 = (3.0 * phi_i * symbol_rate_hz[i] ** 2) / (8.0 * np.pi * a1[i])
+        asinh0 = np.arcsinh(arg0)
+        asinh1 = np.arcsinh(arg1)
+        # num = 2*pi*k[l]*k[lp]*span_pow，span_pow 留到运行期乘（对它线性）
+        spm0[i] = 2.0 * np.pi * k0[i] * k0[i] / ((a0[i] + a0[i]) * phi_i) * (asinh0 + asinh0)
+        spm1[i] = 2.0 * np.pi * k0[i] * k1[i] / ((a0[i] + a1[i]) * phi_i) * (asinh0 + asinh1)
+        spm2[i] = 2.0 * np.pi * k1[i] * k1[i] / ((a1[i] + a1[i]) * phi_i) * (asinh1 + asinh1)
+
+    # --- XPM：逐对外积 ---
+    gamma_sq = np.empty((n_ch, n_ch), dtype=np.float64)
+    w0 = np.empty((n_ch, n_ch), dtype=np.float64)
+    w1 = np.empty((n_ch, n_ch), dtype=np.float64)
+    w2 = np.empty((n_ch, n_ch), dtype=np.float64)
+
+    num1 = n_span + (5.0 / 6.0) * phi_kurtosis
+    num2 = (5.0 / 6.0) * phi_kurtosis * np.pi * n_tilde
+
+    for i in range(n_ch):
+        # 逐对带宽语义：rs_i 是扰动信道 i 的符号率，只进 term1 的 arctan。
+        rs_i = symbol_rate_hz[i]
+        f_i = f_rel_hz[i]
+        lam_i = lambdas_m[i]
+        aeff_i = a_eff_m2[i]
+        for j in range(n_ch):
+            gamma_il = (2 * np.pi / lam_i) * (2 * n_2_m2_w / (aeff_i + a_eff_m2[j]))
+            gamma_sq[i, j] = gamma_il**2
+
+            # 逐对相位项写成外积：(f_l - f_i) * [-4*pi^2*(b2 + pi*b3*(f_i+f_l))]
+            delta_f_hz = f_rel_hz[j] - f_i
+            phi_base = -4.0 * np.pi**2 * (beta_2_s2_m + np.pi * beta_3_s3_m * (f_i + f_rel_hz[j]))
+            phi_il = delta_f_hz * phi_base
+            if abs(phi_il) < _EPSILON:
+                phi_il = _EPSILON if phi_il >= 0 else -_EPSILON
+            abs_phi_base = max(abs(phi_base), _EPSILON)
+
+            # rs_l 是 j 通道（COI）自己的带宽：只进 term2 的对数与分母。
+            rs_l = symbol_rate_hz[j]
+
+            # term1: atan 在构建期求值
+            t0 = np.arctan((phi_il * rs_i) / (2.0 * a0[j]))
+            t1 = np.arctan((phi_il * rs_i) / (2.0 * a1[j]))
+
+            # term2 的 log 选择在构建期完成（log_arg > 0 与基线的分支同构）
+            abs_df = abs(delta_f_hz)
+            log_arg = (2.0 * abs_df - rs_l) / (2.0 * abs_df + rs_l)
+            log_term = (2.0 * abs_df - rs_l) * np.log(log_arg) if log_arg > 0 else 0.0
+            log_plus = log_term + 2.0 * rs_l
+
+            # 逐项的乘法次序与基线一致
+            den1_00 = (a0[j] + a0[j]) * phi_il
+            den1_01 = (a0[j] + a1[j]) * phi_il
+            den1_11 = (a1[j] + a1[j]) * phi_il
+            term1_00 = (num1 / den1_00) * (t0 + t0)
+            term1_01 = (num1 / den1_01) * (t0 + t1)
+            term1_11 = (num1 / den1_11) * (t1 + t1)
+
+            den2_head = abs_phi_base * rs_l**2
+            den2_00 = den2_head * a0[j] * a0[j]
+            den2_01 = den2_head * a0[j] * a1[j]
+            den2_11 = den2_head * a1[j] * a1[j]
+            term2_00 = (num2 / den2_00) * log_plus
+            term2_01 = (num2 / den2_01) * log_plus
+            term2_11 = (num2 / den2_11) * log_plus
+
+            # 基线的 sum_val += coeff * 2 * k[l_ch] * k[lp] * (term1 + term2)
+            # 这里把 coeff 的幂次提出来：r^0 / r^1 / r^2。
+            w0[i, j] = 2.0 * k0[j] * k0[j] * (term1_00 + term2_00)
+            w1[i, j] = 2.0 * k0[j] * k1[j] * (term1_01 + term2_01)
+            w2[i, j] = 2.0 * k1[j] * k1[j] * (term1_11 + term2_11)
+
+    return a0, a1, k0, k1, spm0, spm1, spm2, gamma_ii_sq, gamma_sq, w0, w1, w2
+
+
+@njit(cache=True)
+def _compute_nli_variances_t(
+    n_ch: int,
+    n_span: int,
+    symbol_rate_hz: NDArrayFloat,
+    p_in_w: NDArrayFloat,
+    p_out_exact_w: NDArrayFloat,
+    alpha_power_npm: NDArrayFloat,
+    L_m: float,
+    spm0: NDArrayFloat,
+    spm1: NDArrayFloat,
+    spm2: NDArrayFloat,
+    gamma_ii_sq: NDArrayFloat,
+    gamma_sq: NDArrayFloat,
+    w0: NDArrayFloat,
+    w1: NDArrayFloat,
+    w2: NDArrayFloat,
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """FG-4b 变体：张量化的 NLI 方差（热路径无数据相关控制流）。
+
+    ``t_tilde`` 仍是唯一的数据相关量，它只经由 ``T = 1 + t_tilde`` 与
+    ``r = -t_tilde / T`` 进入；其余全部是构建期常量张量上的乘加与广播。
+    热路径因此是纯张量运算、无 ``if``，这正是 FG-4c 搬到 GPU / 加 batch 维所需要
+    的形状。
+
+    ``p_in <= 0`` 的连接与对角线在**求和之后统一掩码**：掩码作用在已算出的
+    (N, N) 张量上，因此即使某些惰性连接的 ``log`` / ``1/x`` 产生 ``nan`` / ``inf``，
+    也不会污染求和——这与基线逐对 ``continue`` 跳过它们等价。
+    """
+    # --- 1. 反向拟合等效拉曼倾斜 t_tilde（唯一的数据相关步骤）---
+    t_tilde = np.zeros(n_ch, dtype=np.float64)
+    for i in range(n_ch):
+        p_lin_out = p_in_w[i] * np.exp(-alpha_power_npm[i] * L_m)
+        if p_lin_out > 0:
+            g_raman = p_out_exact_w[i] / p_lin_out
+            t_tilde[i] = (g_raman - 1.0) / (1.0 - np.exp(-alpha_power_npm[i] * L_m))
+
+    big_t = 1.0 + t_tilde
+    ratio = -t_tilde / big_t  # r_l
+    ratio_sq = ratio * ratio
+
+    # --- 2. SPM（逐通道，纯张量）---
+    span_pow = float(n_span) ** _NLI_SPAN_EXPONENT
+    spm_sum = span_pow * (spm0 + 2.0 * ratio * spm1 + ratio_sq * spm2)
+    p_cube = p_in_w**3
+    spm_pre = ((16.0 / 27.0) * (gamma_ii_sq * p_cube / (symbol_rate_hz**2))) * (big_t * big_t)
+    sigma_spm_2 = np.where(p_in_w > 0, np.maximum(spm_pre * spm_sum, 0.0), 0.0)
+
+    # --- 3. XPM（(N, N) 张量 + l 方向广播）---
+    # sum_val[i, l] = W0 + 2*r_l*W1 + r_l^2*W2
+    xpm_sum = w0 + 2.0 * (ratio * w1) + ratio_sq * w2
+    # pre_factor[i, l]，乘法次序与基线一致：(gamma^2 * p_l^2) * p_i / rs_l
+    #
+    # 轴向必须写死：p_l 走最后一轴（axis=1），p_i 走第一轴（axis=0）。一维数组
+    # 默认对齐**最后**一轴，所以 `p_l` 可直接广播，而 `p_i` 必须显式 p_in_w[:, None]，
+    # 否则会静默变成 p_l——在满载（p_i == p_l）下这个错误完全不可见，只有像
+    # path_cplusl_roadm 那样经过拉曼倾斜、逐通道功率不再相同时才会暴露。
+    p_sq = p_in_w**2
+    pre = ((gamma_sq * p_sq) * p_in_w[:, None]) / symbol_rate_hz
+    pre = ((32.0 / 27.0) * pre) * (big_t * big_t)
+    terms = np.maximum(pre * xpm_sum, 0.0)
+
+    # 掩码：两端都通电、且不是自配对。基线在这两种情况下直接 continue。
+    idx = np.arange(n_ch)
+    active = (p_in_w[:, None] > 0) & (p_in_w[None, :] > 0) & (idx[:, None] != idx[None, :])
+    sigma_xpm_2 = np.sum(np.where(active, terms, 0.0), axis=1)
+
+    return sigma_spm_2, sigma_xpm_2
+
+
+# -----------------------------------------------------------------------------
+# NLI 张量缓存：按 (逐连接栅格, 跨段参数, 峰度) 记忆化
+# -----------------------------------------------------------------------------
+# 与 G 缓存同构：键是**值**键（``tobytes()``），因此两个数值相同但对象不同的
+# 逐连接数组会命中同一条缓存，而不会误用别人的张量。
+#
+# ``n_span`` 必须进键：XPM 的 ``num1 = n_span + (5/6)*phi_kurtosis`` 与
+# ``n_tilde`` 都被折进了 W0/W1/W2，因此换跨段数必须重建。
+_NLI_CACHE: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+_NLI_CACHE_STATS = {"hits": 0, "misses": 0, "builds": 0}
+_NLI_CACHE_MAX_ENTRIES = 8
+
+
+def nli_cache_stats() -> dict[str, int]:
+    """返回 NLI 张量缓存的命中/未命中计数——用于证明跨调用复用确实发生。"""
+    return dict(_NLI_CACHE_STATS)
+
+
+def _nli_cache_key(
+    n_ch: int,
+    n_span: int,
+    symbol_rate_hz: NDArrayFloat,
+    f_rel_hz: NDArrayFloat,
+    lambdas_m: NDArrayFloat,
+    a_eff_m2: NDArrayFloat,
+    alpha_power_npm: NDArrayFloat,
+    L_m: float,
+    beta_2_s2_m: float,
+    beta_3_s3_m: float,
+    n_2_m2_w: float,
+    phi_kurtosis: float,
+) -> tuple[Any, ...]:
+    """NLI 张量缓存键：五组逐连接栅格的值 + 全部跨段标量。"""
+    return (
+        int(n_ch),
+        int(n_span),
+        np.ascontiguousarray(symbol_rate_hz, dtype=np.float64).tobytes(),
+        np.ascontiguousarray(f_rel_hz, dtype=np.float64).tobytes(),
+        np.ascontiguousarray(lambdas_m, dtype=np.float64).tobytes(),
+        np.ascontiguousarray(a_eff_m2, dtype=np.float64).tobytes(),
+        np.ascontiguousarray(alpha_power_npm, dtype=np.float64).tobytes(),
+        float(L_m),
+        float(beta_2_s2_m),
+        float(beta_3_s3_m),
+        float(n_2_m2_w),
+        float(phi_kurtosis),
+    )
+
+
+def nli_tensors(
+    n_ch: int,
+    n_span: int,
+    symbol_rate_hz: NDArrayFloat,
+    f_rel_hz: NDArrayFloat,
+    lambdas_m: NDArrayFloat,
+    a_eff_m2: NDArrayFloat,
+    alpha_power_npm: NDArrayFloat,
+    L_m: float,
+    beta_2_s2_m: float,
+    beta_3_s3_m: float,
+    n_2_m2_w: float,
+    phi_kurtosis: float,
+) -> tuple[NDArrayFloat, ...]:
+    """返回**缓存的** NLI 构建期张量，供 `_calc_span_noise_and_power_jit` 使用。
+
+    顺序为 ``(spm0, spm1, spm2, gamma_ii_sq, gamma_sq, w0, w1, w2)``。返回值
+    被标记为只读，以免调用方就地改坏共享张量。
+
+    与 :func:`raman_g_matrix` 同理：条目过多时整体清空（键含完整逐连接栅格，
+    清空只是重算）。
+    """
+    key = _nli_cache_key(
+        n_ch,
+        n_span,
+        symbol_rate_hz,
+        f_rel_hz,
+        lambdas_m,
+        a_eff_m2,
+        alpha_power_npm,
+        L_m,
+        beta_2_s2_m,
+        beta_3_s3_m,
+        n_2_m2_w,
+        phi_kurtosis,
+    )
+    cached = _NLI_CACHE.get(key)
+    if cached is not None:
+        _NLI_CACHE_STATS["hits"] += 1
+        return cached
+    _NLI_CACHE_STATS["misses"] += 1
+    built = _build_nli_tensors(
+        n_ch,
+        n_span,
+        np.ascontiguousarray(symbol_rate_hz, dtype=np.float64),
+        np.ascontiguousarray(f_rel_hz, dtype=np.float64),
+        np.ascontiguousarray(lambdas_m, dtype=np.float64),
+        np.ascontiguousarray(a_eff_m2, dtype=np.float64),
+        np.ascontiguousarray(alpha_power_npm, dtype=np.float64),
+        L_m,
+        beta_2_s2_m,
+        beta_3_s3_m,
+        n_2_m2_w,
+        phi_kurtosis,
+    )
+    # 只取热路径需要的八个；a0/a1/k0/k1 已被折进 w*/spm*，不外传。
+    tensors = (
+        built[4],  # spm0
+        built[5],  # spm1
+        built[6],  # spm2
+        built[7],  # gamma_ii_sq
+        built[8],  # gamma_sq
+        built[9],  # w0
+        built[10],  # w1
+        built[11],  # w2
+    )
+    for tensor in tensors:
+        tensor.flags.writeable = False
+    _NLI_CACHE_STATS["builds"] += 1
+    if len(_NLI_CACHE) >= _NLI_CACHE_MAX_ENTRIES:
+        _NLI_CACHE.clear()
+    _NLI_CACHE[key] = tensors
+    return tensors
 
 
 @njit(cache=True)
@@ -796,6 +1157,15 @@ def _calc_span_noise_and_power_jit(
     g_full: NDArrayFloat | None = None,  # 缓存的完整 G (N,N)：变体一，逐位相等
     g_gain: NDArrayFloat | None = None,  # 缓存的严格上三角增益部分：变体二
     g_loss: NDArrayFloat | None = None,  # 缓存的严格下三角频率比加权损耗部分
+    # --- FG-4b: 可选的预计算 NLI 张量（默认 None = 走冻结的逐对基线）---
+    nli_spm0: NDArrayFloat | None = None,  # (N,)  SPM 的 (0,0) 项
+    nli_spm1: NDArrayFloat | None = None,  # (N,)  SPM 的 (0,1)=(1,0) 项
+    nli_spm2: NDArrayFloat | None = None,  # (N,)  SPM 的 (1,1) 项
+    nli_gamma_ii_sq: NDArrayFloat | None = None,  # (N,)  自相位 Gamma_ii^2
+    nli_gamma_sq: NDArrayFloat | None = None,  # (N,N) 逐对 Gamma_il^2
+    nli_w0: NDArrayFloat | None = None,  # (N,N)  XPM 的 (0,0) 项
+    nli_w1: NDArrayFloat | None = None,  # (N,N)  XPM 的 (0,1)=(1,0) 项
+    nli_w2: NDArrayFloat | None = None,  # (N,N)  XPM 的 (1,1) 项
 ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
     """【高性能内核】单跨段物理层评估的 JIT 版本。
 
@@ -813,6 +1183,12 @@ def _calc_span_noise_and_power_jit(
     * ``g_gain``/``g_loss`` given（且无 ``g_full``）->
       `_calc_exact_power_profile_ode_matvec`，去分支两次 matvec，求和次序改变；
     * 都不给 -> 原 `_calc_exact_power_profile_ode`（FG-2 冻结的参考实现）。
+
+    FG-4b 加速（八个 ``nli_*`` 参数**全部**为 None 时，NLI 走冻结的逐对基线）：
+
+    * 全部给 -> `_compute_nli_variances_t`，张量化 NLI。构建期的
+      arcsinh / arctan / log 与分支选择已折进张量，热路径无数据相关控制流；
+    * 都不给 -> 原 `_compute_nli_variances`（FG-2 冻结的参考实现）。
 
     Raises:
         ValueError: 任一逐连接数组长度 != N。
@@ -853,22 +1229,44 @@ def _calc_span_noise_and_power_jit(
         )
 
     # 2. 调用 NLI 引擎，此时它将利用上述精准结果来拟合有效的 T_tilde 边界
-    sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
-        len(power_in_w),
-        n_effective_spans,
-        symbol_rate_hz,
-        power_in_w,
-        p_out_after_fiber,  # 传参增加 p_out_after_fiber
-        f_rel_hz,
-        lambdas_m,
-        a_eff_m2,
-        alpha_power_npm,
-        span_length_m,
-        beta2_s2_m,
-        beta3_s3_m,
-        n2_m2_w,
-        phi_kurtosis,
-    )
+    # 2. 调用 NLI 引擎，此时它将利用上述精准结果来拟合有效的 T_tilde 边界
+    # FG-4b：调用侧传入构建期缓存的 NLI 张量时走张量化变体；八个参数全为 None
+    # 时逐字节保持 FG-2 冻结的参考路径。
+    if nli_w0 is not None and nli_gamma_sq is not None and nli_spm0 is not None:
+        sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances_t(
+            len(power_in_w),
+            n_effective_spans,
+            symbol_rate_hz,
+            power_in_w,
+            p_out_after_fiber,
+            alpha_power_npm,
+            span_length_m,
+            nli_spm0,
+            nli_spm1,
+            nli_spm2,
+            nli_gamma_ii_sq,
+            nli_gamma_sq,
+            nli_w0,
+            nli_w1,
+            nli_w2,
+        )
+    else:
+        sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
+            len(power_in_w),
+            n_effective_spans,
+            symbol_rate_hz,
+            power_in_w,
+            p_out_after_fiber,  # 传参增加 p_out_after_fiber
+            f_rel_hz,
+            lambdas_m,
+            a_eff_m2,
+            alpha_power_npm,
+            span_length_m,
+            beta2_s2_m,
+            beta3_s3_m,
+            n2_m2_w,
+            phi_kurtosis,
+        )
 
     # 5. 计算 ASE 噪声方差
     sigma2_ase_w = _calculate_ase_noise_variance(

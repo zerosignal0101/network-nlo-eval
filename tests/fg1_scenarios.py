@@ -202,6 +202,12 @@ def run_reference(scenario: Scenario) -> dict[str, Any]:
         scenario.fiber(scenario.hops[0]),
         symbol_rate_hz=scenario.symbol_rate_hz,
         phi_kurtosis=scenario.phi_kurtosis,
+        # FG-4b §1.2: this is the *port-fidelity* reference, so it is pinned to the
+        # frozen ``off`` tier on purpose — the assertion is bit-equality with
+        # origin/main, which is a statement about the port, not about which
+        # acceleration tier production happens to default to. Production default is
+        # ``matvec`` (gated separately at <=1e-12 by tests/test_fg4a_numeric_identity.py).
+        ode_accel="off",
     )
 
     power = scenario.launch_power()
@@ -219,6 +225,8 @@ def run_reference(scenario: Scenario) -> dict[str, Any]:
                 scenario.fiber(hop),
                 symbol_rate_hz=scenario.symbol_rate_hz,
                 phi_kurtosis=scenario.phi_kurtosis,
+                # Same freeze-point rationale as the hop-0 evaluator above.
+                ode_accel="off",
             )
         edfa = scenario.edfa(hop)
         roadm = scenario.roadm(hop)

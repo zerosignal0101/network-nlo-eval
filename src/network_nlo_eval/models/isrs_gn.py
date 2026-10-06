@@ -5,6 +5,7 @@ ISRS-GN (Inter-channel Stimulated Raman Scattering - Generalized Noise)
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -21,6 +22,8 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_span_noise_and_power_jit,
     _db_to_lin,
     g_cache_stats,
+    nli_cache_stats,
+    nli_tensors,
     raman_g_matrix,
     raman_g_pair_matrices,
 )
@@ -40,13 +43,29 @@ _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
 #:     G 缓存**并且**把逐对分支换成两次 matvec。数学式不变，但浮点求和次序
 #:     改变，实测最大相对偏差 ~1e-14（F4a-4 预算是 1e-12）。
 #:
-#: 默认是 ``"cached_g"`` 而不是更快的 ``"matvec"``，这是一个**契约**决定而非性能
-#: 疏漏：本仓库既有的 F1-1 / F1-2 / F2-3 三个测试用 ``np.array_equal`` 把公共
-#: API 的输出钉死在 origin/main 的金标准上。matvec 的末位重排会让这三个测试
-#: 失败，而按 G2 纪律不允许改它们的期望值——所以 ``matvec`` 只能是**显式选入**
-#: 的档位。``"cached_g"`` 逐位等价于基线，因此可安全地作为默认。
+#: **默认是 ``"matvec"``**（FG-4b 编排方裁定）——生产路径要快。
+#:
+#: FG-4a 最初把默认档定为 ``"cached_g"``，理由是 F1-1 / F1-2 / F2-3 三个既有测试
+#: 用 ``np.array_equal`` 把公共 API 输出钉死在 origin/main 的金标准上，而 matvec
+#: 的末位重排会让它们失败。裁定**不通过放宽那三条断言来解除**这条锁，而是把三条
+#: 测试**显式构造为 ``ode_accel="off"``**：
+#:
+#: * 这三个测试的命题是"reconcile 没有改变 origin/main 的物理"——这是关于**移植
+#:   保真度**的陈述，与"生产默认档选哪个"无关。用 off 档跑，命题原样成立、强度
+#:   原样保留（仍是逐位相等，期望值一字未改）。
+#: * 生产默认档（matvec）由 FG-4a 的金标准以 <=1e-12 相对偏差把关
+#:   （``tests/test_fg4a_numeric_identity.py``，预算常量不得放宽）。
+#:
+#: 于是证据链被拆成两段，每段各自成立、各自有测试，且都比"把三条断言改成容差"
+#: 更强::
+#:
+#:     origin/main --(off 档, 逐位)--> FG-2 树 --(默认 matvec, <=1e-12)--> 生产
+#:
+#: 这是一次**有意记录在案的契约放宽**（见 docs/fg4b_nli_vectorization.md §1），
+#: 不是顺手绕过：整个加速程序（matvec、NLI 张量化、GPU/批量）都会重排浮点求和，
+#: 若默认档被逐位相等钉死，后面每一刀都会被同一条断言挡住。
 ODE_ACCEL_MODES = ("off", "cached_g", "matvec")
-ODE_ACCEL_DEFAULT = "cached_g"
+ODE_ACCEL_DEFAULT = "matvec"
 
 
 @dataclass
@@ -227,6 +246,81 @@ class MultiBandISRSGN:
         elif self.ode_accel == "matvec":
             self._g_gain, self._g_loss = raman_g_pair_matrices(self.f_abs_hz, self.cr_w_m_hz)
 
+        # FG-4b：NLI 张量是 (N,N) 量级、且含全部超越函数，只在构建期算一次。
+        # 与功率无关（唯一的数据相关量 t_tilde 留在热路径），因此同样每个
+        # evaluator 预计算一次、跨所有跨段复用。`n_span` 进缓存键，故这里延迟到
+        # 首次调用再建，见 _nli_tensors_for_span。
+        self._nli_cache_key: tuple[Any, ...] | None = None
+        self._nli_cache_value: tuple[NDArrayFloat, ...] | None = None
+
+    def _nli_kernel_kwargs(self, n_effective_spans: int, span_length_m: float) -> dict[str, Any]:
+        """给内核的八个 ``nli_*`` 参数。
+
+        档位分工是刻意保持的：**只有 ``matvec`` 使用张量化 NLI**。
+
+        * ``off`` —— 冻结点，八个参数全 None，逐字节走 FG-2 冻结的逐对基线。
+          这正是 F4b-2「off 档仍与 origin/main 逐位相等」得以成立的前提。
+        * ``cached_g`` —— FG-4a 的**逐位相等**档：只做 G 缓存，不重排任何求和。
+          因此它**必须**继续走冻结的逐对 NLI；否则 F4a-3（cached_g 与金标准逐位
+          相等）会被本刀悄悄破坏。一个档位只引入一类浮点重排，是这张表能读懂、
+          能逐档取证的原因。
+        * ``matvec`` —— 生产默认：去分支 matvec + 张量化 NLI，合计允许 <=1e-12。
+        """
+        if self.ode_accel != "matvec":
+            return {
+                "nli_spm0": None,
+                "nli_spm1": None,
+                "nli_spm2": None,
+                "nli_gamma_ii_sq": None,
+                "nli_gamma_sq": None,
+                "nli_w0": None,
+                "nli_w1": None,
+                "nli_w2": None,
+            }
+        spm0, spm1, spm2, gamma_ii_sq, gamma_sq, w0, w1, w2 = self._nli_tensors_for_span(
+            n_effective_spans, span_length_m
+        )
+        return {
+            "nli_spm0": spm0,
+            "nli_spm1": spm1,
+            "nli_spm2": spm2,
+            "nli_gamma_ii_sq": gamma_ii_sq,
+            "nli_gamma_sq": gamma_sq,
+            "nli_w0": w0,
+            "nli_w1": w1,
+            "nli_w2": w2,
+        }
+
+    def _nli_tensors_for_span(self, n_effective_spans: int, span_length_m: float) -> tuple[NDArrayFloat, ...]:
+        """取该 (跨段数, 跨段长度) 对应的 NLI 构建期张量（实例内记忆化）。
+
+        ``span_length_m`` 必须进键：``a_tilde``/``kappa`` 依赖 ``alpha * L``，
+        折进 W0/W1/W2 与 spm* 后就不可分离了。跨段数在 ``evaluate_path`` 里逐段
+        推进，因此同一组合重复出现时直接复用，换组合才重建。
+        """
+        key = (int(n_effective_spans), float(span_length_m))
+        if self._nli_cache_key == key and self._nli_cache_value is not None:
+            nli_cache_stats()["hits"] += 1
+            return self._nli_cache_value
+        tensors = nli_tensors(
+            self.n_nodes,
+            int(n_effective_spans),
+            self.symbol_rate_hz_channels,
+            self.f_rel_hz,
+            self.lambdas_m,
+            self.a_eff_m2_channels,
+            self.alpha_power_npm_channels,
+            float(span_length_m),
+            self.beta2_s2_m,
+            self.beta3_s3_m,
+            self.n2_m2_w,
+            self.phi_kurtosis,
+        )
+        nli_cache_stats()["misses"] += 1
+        self._nli_cache_key = key
+        self._nli_cache_value = tensors
+        return tensors
+
     @property
     def g_cache_hits(self) -> int:
         """FG-4a 证据：G 缓存命中次数（跨调用复用的直接计数）。"""
@@ -299,6 +393,9 @@ class MultiBandISRSGN:
             g_full=self._g_full,
             g_gain=self._g_gain,
             g_loss=self._g_loss,
+            # FG-4b：默认档传构建期张量；``ode_accel="off"`` 传全 None，
+            # 逐字节走冻结的逐对 NLI 基线。
+            **self._nli_kernel_kwargs(n_effective_spans, span_length_m),
         )
 
         # 3. 处理 ROADM 插入损耗 (可选，在 Python 层处理非线性外围逻辑)
