@@ -448,7 +448,16 @@ class MultiBandISRSGN:
         return p_out_fiber, s2_spm, s2_xpm, s2_ase
 
     def for_fiber(self, fiber_config: FiberSpanConfig) -> "MultiBandISRSGN":
-        """返回匹配链路光纤参数的缓存评估器."""
+        """返回匹配链路光纤参数的缓存评估器.
+
+        FU-2：这里过去**漏传** ``raman_spectrum``，子评估器因此总是退回默认档
+        ``legacy``。后果是 ``evaluate_path``（唯一真正的端到端路径）在结构上
+        **永远拿不到 tabular 谱**——FG-U1 的证据脚本因为直接调用
+        ``_calc_span_noise_and_power`` 绕开了 ``for_fiber``，所以一直没暴露。
+        超宽带评估必须走 ``evaluate_path``，故本刀补上这一处透传。
+
+        ``legacy`` 不受影响：它本就是默认值，传不传都是同一个值，逐位不变。
+        """
         key = fiber_config.model_dump_json()
         if key not in self._fiber_evaluator_cache:
             self._fiber_evaluator_cache[key] = MultiBandISRSGN(
@@ -459,6 +468,7 @@ class MultiBandISRSGN:
                 self.connections,
                 self.slots_per_channel,
                 self.ode_accel,
+                self.raman_spectrum,
             )
         return self._fiber_evaluator_cache[key]
 

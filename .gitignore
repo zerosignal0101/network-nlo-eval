@@ -193,3 +193,11 @@ sg_execution_times.rst
 # error, asymmetry magnitudes) must be recomputable from a tracked product
 # rather than from prose.
 !/results/fg_u1_raman.json
+
+# FU-2 acceptance artifact, same rationale: every number in
+# docs/fu2_scu_evaluation.md (band edges, guards, span report, N / bandwidth /
+# occupancy, per-band launch power, per-channel SNR, Raman tilt, legacy-vs-tabular
+# deltas, and the U/L gap ablation) must be recomputable from a tracked product
+# rather than from prose. Regenerate with
+# scripts/fu2_scu_evidence.py; verify with the same script's --check.
+!/results/fg_u2_scu.json
