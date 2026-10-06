@@ -78,9 +78,16 @@ FG-4b 的 XPM pre-factor 里 `p_i` 曾经隐式广播到最后一轴、于是静
 | --- | --- | --- |
 | 均匀栅格 B∈{1,4,16,68,256} | **5.343e-15** | XPM，B=256 |
 | 部分占空（含惰性通道 + 两端空槽）B∈{1,4,16,68} | 4.831e-15 | XPM，B=68 |
-| 灵活栅格（逐连接符号率 + 64QAM `phi_kurtosis=-0.619`） | 3.197e-15 | XPM |
-| n_span∈{1,2,5} × 跨长∈{100 km, 75 km} | 3.090e-15 | XPM |
+| 灵活栅格（逐连接符号率，**`phi_kurtosis=0.0`**） | 3.197e-15 | XPM |
+| 灵活栅格 + **真 64QAM `phi_kurtosis=-0.619`** × n_span∈{1,2,3,5}〔编排方补测〕 | **1.225e-15** | XPM，n_span=3 |
+| n_span∈{1,2,5} × 跨长∈{100 km, 75 km}（`phi_kurtosis=0.0`） | 3.090e-15 | XPM |
 | EDFA 标量 NF 覆盖 | 2.643e-15 | XPM |
+
+> **编排方更正（2026-10-06）**：本表原先有一行写"灵活栅格（逐连接符号率 + 64QAM
+> `phi_kurtosis=-0.619`） 3.197e-15"，**标签是错的**——共享的 `_flexgrid_evaluator`
+> 构造时写死 `phi_kurtosis=PHI_KURTOSIS_GAUSSIAN`（= 0.0），该行实际是 Gaussian 算的
+> （复现同一配置得到完全相同的 3.197e-15）。真正的 `-0.619` 组合由编排方补测，
+> 并把用例固化进 `test_batch_matches_serial_nonzero_kurtosis_multispan`。
 
 逐通道（A/B 两个 JSON 的 `numeric_check`）：
 
@@ -100,9 +107,15 @@ FG-4b 的 XPM pre-factor 里 `p_i` 曾经隐式广播到最后一轴、于是静
 一处**结构性假设**（诚实标注，不是偏差）：串行在**逐项**上 `np.maximum(pre*xpm_sum, 0)`，
 批量在**求和之后**取 `maximum`。二者仅当各项非负时等价。默认 `phi_kurtosis=0` 时
 `num2 = 0` ⇒ `w_k > 0` ⇒ 各项非负，故确实等价；64QAM 下 `n_span=1` 时 `n_tilde=0` ⇒
-同样非负（§2 的灵活栅格用例正是这条路径，且偏差 3.20e-15 在预算内）。若将来出现
-`phi_kurtosis ≠ 0` **且** `n_span > 1` 的组合，逐项截断与求和后截断可能分道，此时需要
-重新取证——**本刀未测该组合**（§6）。
+同样非负。若 `phi_kurtosis ≠ 0` **且** `n_span > 1`（此时 `n_tilde = n_span ≠ 0`，`num2 ≠ 0`），
+逐项截断与求和后截断**理论上**可能分道。
+
+**编排方补测（2026-10-06）**：该组合已实测，**未发现分道**——
+用真正的 `phi_kurtosis=-0.619` 构造灵活栅格 evaluator，`n_span ∈ {1,2,3,5}` 共 4 个跨段长度上
+最差相对偏差 **1.225e-15**（比 Gaussian 情形还小），远在预算内。用例已固化为
+`test_batch_matches_serial_nonzero_kurtosis_multispan`（4 个参数化点），
+故该分支今后**不会再无覆盖地漂移**。注意 `n_span` 影响 `n_tilde`，所以这条必须与
+`phi_kurtosis≠0` **同时**取非默认值才有效——单独测任一个都不覆盖它。
 
 ---
 

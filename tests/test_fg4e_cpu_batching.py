@@ -29,8 +29,12 @@ loaded grid (``p_i == p_l``) and only appeared once Raman tilt made the
 per-channel powers differ. The batch kernel folds ``T**2`` onto the
 *perturbation* axis ``l`` for exactly the same reason, so:
 
-* the **non-uniform grid** case (``phi_kurtosis=-0.619`` flexible grid) is in
-  the equivalence sweep — it is the shape that exposes an axis mistake;
+* the **non-uniform grid** case is in the equivalence sweep — it is the shape
+  that exposes an axis mistake. Note it runs at ``phi_kurtosis = 0.0`` (the
+  shared ``_flexgrid_evaluator`` hardcodes Gaussian): the **64QAM kurtosis**
+  combination is covered separately by
+  ``test_batch_matches_serial_nonzero_kurtosis_multispan``, which builds its own
+  evaluator so the ``phi_kurtosis != 0`` path is genuinely exercised;
 * the **zero-power** case is in the sweep, because the batch kernel replaces the
   per-pair ``continue`` with three algebraic masks (diagonal zeroed at build
   time, ``p_sq[b,l] == 0`` kills ``u*``, and ``P > 0`` on the output). A mask
@@ -58,8 +62,12 @@ from fg4a_scenarios import (
 )
 
 from network_nlo_eval.models.batch_kernels import MAX_REL_DEVIATION, worst_relative_deviation
-from network_nlo_eval.models.isrs_gn import batch_cache_stats
+from network_nlo_eval.models.isrs_gn import MultiBandISRSGN, batch_cache_stats
 from network_nlo_eval.network.elements import EDFAConfig
+
+import fg4a_scenarios as _scen
+from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+from network_nlo_eval.network.elements import FiberSpanConfig
 
 SPAN_LENGTH_M = 100e3
 
@@ -150,10 +158,12 @@ def test_batch_matches_serial_partially_loaded(batch: int) -> None:
 
 
 def test_batch_matches_serial_on_nonuniform_grid() -> None:
-    """F4e-1 on a flexible grid with per-connection symbol rates and 64QAM kurtosis.
+    """F4e-1 on a flexible grid with per-connection symbol rates.
 
     This is the shape that makes ``p_i != p_l`` within a single candidate, which
     is precisely the condition under which FG-4b's ``p_i`` axis bug was invisible.
+    Runs at ``phi_kurtosis = 0.0``; the non-zero-kurtosis combination is covered by
+    ``test_batch_matches_serial_nonzero_kurtosis_multispan``.
     """
     ev = _flexgrid_evaluator("matvec")
     n_ch = ev.n_nodes
@@ -164,6 +174,73 @@ def test_batch_matches_serial_on_nonuniform_grid() -> None:
     profiles[3] = profiles[3] * 1.7
     ref, bat = _both_arms(ev, profiles)
     _assert_within_budget(ref, bat, "flexgrid/nonuniform")
+
+
+def _flexgrid_evaluator_with_kurtosis(phi_kurtosis: float):
+    """Copy of ``fg4a_scenarios._flexgrid_evaluator`` with a settable kurtosis.
+
+    The shared helper hardcodes ``PHI_KURTOSIS_GAUSSIAN``, so the non-uniform-grid
+    case above only ever exercises ``phi_kurtosis = 0.0``. The clamp-order
+    assumption in ``docs/fg4e_cpu_batching.md`` (serial clamps per term, batch
+    clamps after summing) is only at risk when ``phi_kurtosis != 0``; that
+    combination needs its own evaluator. Rebuilding it here rather than
+    parameterising the shared helper keeps ``fg4a_scenarios.py`` (a pre-existing
+    file under the G2 guard) untouched.
+    """
+    grid = FlexibleGrid(
+        slot_width_hz=_scen.SLOT_WIDTH_HZ, num_slots=_scen.NUM_SLOTS, band_low_edge_hz=186.1e12
+    )
+    connections: list[ConnectionSpec] = []
+    connection_id = 0
+    first_slot = 0
+    plan = ((4, 100e9, "QPSK", 50e9), (2, 100e9, "64QAM", 100e9 / 6), (8, 200e9, "QPSK", 100e9))
+    index = 0
+    while first_slot + 2 <= _scen.NUM_SLOTS:
+        n_slots, bit_rate, modulation, rs = plan[index % len(plan)]
+        if first_slot + n_slots > _scen.NUM_SLOTS:
+            break
+        connections.append(
+            ConnectionSpec(
+                grid=grid,
+                connection_id=connection_id,
+                first_slot=first_slot,
+                n_slots=n_slots,
+                bit_rate_bps=bit_rate,
+                modulation=modulation,
+                symbol_rate_hz=rs,
+                roll_off=0.0,
+                launch_power_w=0.0 if connection_id % 5 == 4 else 1e-3,
+            )
+        )
+        connection_id += 1
+        first_slot += n_slots + (2 if n_slots == 8 else 1)
+        index += 1
+
+    return MultiBandISRSGN(
+        grid=grid,
+        ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
+        symbol_rate_hz=_scen.SYMBOL_RATE_HZ,
+        phi_kurtosis=phi_kurtosis,
+        connections=connections,
+        slots_per_channel=_scen.SLOTS_PER_CHANNEL,
+        ode_accel="matvec",
+    )
+
+
+@pytest.mark.parametrize("n_span,span_m", [(1, SPAN_LENGTH_M), (2, SPAN_LENGTH_M), (3, SPAN_LENGTH_M), (5, 75e3)])
+def test_batch_matches_serial_nonzero_kurtosis_multispan(n_span: int, span_m: float) -> None:
+    """F4e-1 on the combination the clamp-order note leaves open: ``phi_kurtosis != 0`` AND ``n_span > 1``.
+
+    ``n_tilde = n_span if n_span > 1 else 0`` feeds ``num2``, so 64QAM kurtosis at
+    ``n_span = 1`` cannot exercise the branch where a per-term clamp and a
+    sum-then-clamp could disagree. This is also the realistic workload shape
+    (400G/64QAM over several 100 km spans). Measured worst deviation is ~1e-15.
+    """
+    ev = _flexgrid_evaluator_with_kurtosis(_scen.PHI_KURTOSIS_64QAM)
+    profiles = _candidate_batch(8, ev.n_nodes)
+    profiles[3] = profiles[3] * 1.7
+    ref, bat = _both_arms(ev, profiles, span_m, n_span)
+    _assert_within_budget(ref, bat, f"64QAM/kurtosis/n_span={n_span}/L={span_m/1e3:g}km")
 
 
 def test_batch_matches_serial_across_span_count_and_span_length() -> None:
