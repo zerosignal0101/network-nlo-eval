@@ -13,6 +13,11 @@ from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.models.batch_kernels import (
+    BatchSpanConstants,
+    batched_span_noise_and_power,
+    build_batch_constants,
+)
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -66,6 +71,18 @@ _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
 #: 若默认档被逐位相等钉死，后面每一刀都会被同一条断言挡住。
 ODE_ACCEL_MODES = ("off", "cached_g", "matvec")
 ODE_ACCEL_DEFAULT = "matvec"
+
+#: FG-4e 批量常量包的命中/未命中计数——证明 (N,N) 常量确实跨候选复用。
+_BATCH_CACHE_STATS = {"hits": 0, "misses": 0}
+
+
+def batch_cache_stats() -> dict[str, int]:
+    """返回批量常量包缓存的命中/未命中计数。
+
+    与 :func:`~network_nlo_eval.models.numba_kernels.g_cache_stats` 同构：证据不是
+    "我说它复用了"，而是命中计数确实随批量调用增长。
+    """
+    return dict(_BATCH_CACHE_STATS)
 
 
 @dataclass
@@ -253,6 +270,65 @@ class MultiBandISRSGN:
         self._nli_cache_key: tuple[Any, ...] | None = None
         self._nli_cache_value: tuple[NDArrayFloat, ...] | None = None
 
+        # FG-4e：批量入口的构建期常量包。与 _nli_cache 同构（同样按
+        # (跨段数, 跨段长度) 记忆化），但它把拉曼矩阵**转置**并把
+        # gamma_sq*w_k 折成转置且对角置零的三张 (N,N)，因此**必须**
+        # 在实例内单独缓存，不能与 _nli_cache 共用同一份。
+        self._batch_constants_key: tuple[Any, ...] | None = None
+        self._batch_constants_value: Any | None = None
+
+    def _batch_constants_for_span(
+        self, n_effective_spans: int, span_length_m: float
+    ) -> "BatchSpanConstants":
+        """取该 (跨段数, 跨段长度) 对应的批量常量包（实例内记忆化）。
+
+        缓存键与 :meth:`_nli_tensors_for_span` 同构：``span_length_m`` 必须进键
+        （``lin_decay`` 依赖 ``alpha*L``），``n_effective_spans`` 也进键（决定
+        SPM 跨段指数因子，且已经折进 NLI 张量）。
+
+        与串行路径的差别只有一处、且是刻意的：串行每个 evaluator 都持有
+        ``(N,N)`` 矩阵复用，但批量路径把它们**跨候选**复用，所以一个 batch
+        调用只付一次构建成本。
+        """
+        key = (int(n_effective_spans), float(span_length_m))
+        if self._batch_constants_key == key and self._batch_constants_value is not None:
+            # 直接改模块级 dict：``batch_cache_stats()`` 返回的是**副本**，
+            # 对返回值自增会写进临时对象，计数永远停在 0（证据就废了）。
+            _BATCH_CACHE_STATS["hits"] += 1
+            return self._batch_constants_value
+        if self.ode_accel != "matvec":
+            raise ValueError(
+                "calc_span_noise_and_power_batch requires ode_accel='matvec': the batched "
+                "kernel is the batch form of the default tier's maths (matvec ODE + tensorised "
+                f"NLI). Got ode_accel={self.ode_accel!r}."
+            )
+        g_gain, g_loss = self._g_gain, self._g_loss
+        if g_gain is None or g_loss is None:
+            raise ValueError("batched kernel requires the cached Raman pair matrices.")
+        tensors = self._nli_tensors_for_span(n_effective_spans, span_length_m)
+        spm0, spm1, spm2, gamma_ii_sq, gamma_sq, w0, w1, w2 = tensors
+        value = build_batch_constants(
+            g_gain=g_gain,
+            g_loss=g_loss,
+            alpha=self.alpha_power_npm_channels,
+            spm0=spm0,
+            spm1=spm1,
+            spm2=spm2,
+            gamma_ii_sq=gamma_ii_sq,
+            gamma_sq=gamma_sq,
+            w0=w0,
+            w1=w1,
+            w2=w2,
+            rs=self.symbol_rate_hz_channels,
+            f_abs=self.f_abs_hz,
+            nf_lin=self.nf_lin_channels,
+            span_length_m=span_length_m,
+        )
+        _BATCH_CACHE_STATS["misses"] += 1
+        self._batch_constants_key = key
+        self._batch_constants_value = value
+        return value
+
     def _nli_kernel_kwargs(self, n_effective_spans: int, span_length_m: float) -> dict[str, Any]:
         """给内核的八个 ``nli_*`` 参数。
 
@@ -406,6 +482,74 @@ class MultiBandISRSGN:
             p_out_fiber = p_out_fiber / loss_lin
 
         return p_out_fiber, s2_spm, s2_xpm, s2_ase
+
+    def calc_span_noise_and_power_batch(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None = None,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """FG-4e：单跨段内核的**批量入口**（新增，默认路径不受影响）。
+
+        与 :meth:`_calc_span_noise_and_power` 算同一件事，区别只在布局：这里一次
+        评估 B 个候选，形状是 ``(B, N)`` 进、四个 ``(B, N)`` 出。热路径是
+        ``(B,N) @ (N,N)`` 的 GEMM（ODE 每子步两次 + XPM 三次），**无数据相关
+        控制流**；(N,N) 的构建期常量不按 batch 复制。
+
+        本方法是**新增入口，不是替换**：``ode_accel`` 的 ``"off"`` / ``"cached_g"``
+        / ``"matvec"``（默认）三个档位与 ``evaluate_path`` 的编排逻辑一字未改。
+        批量是默认档数学式的批量形态，所以要求 ``ode_accel == "matvec"``。
+
+        逐候选与串行路径的相对偏差预算为 1e-12（沿用 FG-4a/FG-4b 常量）。
+        唯一差别是 l 方向求和由成对求和变成 GEMM 累加。
+
+        Args:
+            power_in_w: ``(B, N)`` 候选入纤功率 (W)。**零功率是合法的**：惰性连接
+                仍占一个槽位，掩码语义与串行完全一致。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: (可选) 跨段后 EDFA 配置，仅用其全频段 NF 覆盖，语义与
+                串行一致。
+            roadm_config: (可选) 跨段后 ROADM 配置，插入损耗处理与串行一致。
+            n_effective_spans: 有效跨段数。
+
+        Returns:
+            Tuple 包含 ``(power_out_w, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w)``，
+            四个都是 ``(B, N)``，逐候选等于串行路径对同一候选的结果。
+
+        Raises:
+            ValueError: ``ode_accel`` 不是 ``"matvec"``；``power_in_w`` 不是
+                ``(B, N)`` 或 N 与本 evaluator 不符；NF 覆盖数组长度不对。
+        """
+        P = np.asarray(power_in_w, dtype=np.float64)
+        n_conn = self.n_nodes
+        if P.ndim != 2 or P.shape[1] != n_conn:
+            raise ValueError(
+                f"power_in_w must have shape (B, {n_conn}), got {np.shape(power_in_w)}."
+            )
+
+        # NF 覆盖：与串行同一套解析（全频段 float 或逐通道数组），只在形状
+        # (N,) 时才是"逐连接覆盖"，因此不会被 batch 轴误伤。
+        if edfa_config is not None and edfa_config.noise_figure_db is not None:
+            nf_db = edfa_config.noise_figure_db
+            if isinstance(nf_db, float):
+                current_nf_lin = np.full(n_conn, 10 ** (nf_db / 10), dtype=np.float64)
+            else:
+                current_nf_lin = 10 ** (np.asarray(nf_db, dtype=float) / 10)
+        else:
+            current_nf_lin = None
+
+        constants = self._batch_constants_for_span(n_effective_spans, span_length_m)
+        p_out, s2_spm, s2_xpm, s2_ase = batched_span_noise_and_power(
+            constants, P, span_length_m, n_effective_spans, current_nf_lin
+        )
+
+        if roadm_config is not None:
+            loss_lin = _db_to_lin(roadm_config.insertion_loss_db + roadm_config.filtering_penalty_db)
+            p_out = p_out / loss_lin
+
+        return p_out, s2_spm, s2_xpm, s2_ase
 
     def for_fiber(self, fiber_config: FiberSpanConfig) -> "MultiBandISRSGN":
         """返回匹配链路光纤参数的缓存评估器."""

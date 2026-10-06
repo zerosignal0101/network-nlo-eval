@@ -187,3 +187,10 @@ sg_execution_times.rst
 !/results/fg4a_bench_fg4a_vs_baseline.json
 !/results/fg4a_speedup_ab.json
 !/results/fg4b_speedup_ab.json
+
+# FG-4e acceptance artifacts: the batch-vs-serial speedup curve and the
+# per-candidate numeric check are the only source for the B=68 speedup, so they
+# are committed twice on purpose -- the two runs are independent samples and the
+# run-to-run spread is part of the reported result (see docs/fg4e_cpu_batching.md §4.2).
+!/results/fg4e_speedup_ab.json
+!/results/fg4e_speedup_ab_run2.json
