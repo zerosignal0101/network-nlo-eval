@@ -19,6 +19,16 @@ class SpectrumGrid:
     channel_spacing_hz: float  # 信道间隔 (Hz)
     center_frequency_hz: float  # 中心频率 (Hz)
 
+    def __post_init__(self) -> None:
+        """验证网格尺寸及全部绝对频率."""
+        if isinstance(self.num_channels, bool) or not isinstance(self.num_channels, int) or self.num_channels <= 0:
+            raise ValueError("num_channels must be a positive integer.")
+        if self.channel_spacing_hz <= 0 or self.center_frequency_hz <= 0:
+            raise ValueError("Channel spacing and center frequency must be positive.")
+        lowest = self.center_frequency_hz - (self.num_channels - 1) * self.channel_spacing_hz / 2
+        if lowest <= 0:
+            raise ValueError("Spectrum grid contains a non-positive optical frequency.")
+
     @property
     def frequencies(self) -> NDArrayFloat:
         """生成绝对频率网格 (Hz).
