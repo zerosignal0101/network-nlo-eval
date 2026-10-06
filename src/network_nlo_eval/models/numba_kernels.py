@@ -10,6 +10,7 @@ from numba import njit
 
 from network_nlo_eval.core.constants import C_LIGHT, H_PLANCK, NP_TO_DB, PI
 from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.physics.raman_spectrum import TABLE_STEP_THZ, load_raman_gain_table
 
 # =============================================================================
 # 0. 常用转换函数 (JIT 优化版本)
@@ -408,8 +409,130 @@ def _calc_exact_power_profile_ode_matvec(
     return p
 
 
+# =============================================================================
+# 2c. FG-U1：宽波段拉曼谱 `tabular` 档（谱源见 physics/raman_spectrum.py）
+# =============================================================================
+# 上面两个 builder 把 legacy 折线**逐条抄**了三遍。FG-U1 保留它们一字不动
+# （legacy 档必须逐位不变，FG-4a 的金标准建立在它上面），另建一对 tabular 版本：
+#
+# * 谱形来自 `physics.raman_spectrum` —— Lin & Agrawal (2006) 的石英拉曼响应
+#   函数经傅里叶变换得到的**闭式**增益谱，提交了数据表并有自检；
+# * 组装期按表格**线性插值**，插值只发生在这里（构建期，每个 evaluator 一次），
+#   热路径的两次 matvec / RK4 **一行都没有变**；
+# * 归一化锚点是 13.2 THz，两档在该点的 G 值**逐位相等**，`cr_w_m_hz` 的
+#   单位与含义完全一致，因此 legacy vs tabular 的差别**只来自谱形**。
+
+#: 归一化锚点 (THz)：两档在此处 `G = cr_w_m_hz * 13.2e12`。
+_RAMAN_PEAK_ANCHOR_THZ = 13.2
+
+
+@njit(cache=True, inline="always")
+def _interp_uniform_shape(df_thz: float, df0: float, step: float, n: int, shape_values: NDArrayFloat) -> float:
+    """均匀栅格线性插值的 njit 版本（`tabular` 档的谱取值）。
+
+    必须是 `physics.raman_spectrum.interp_raman_gain_shape` 的**逐位等价镜像**——
+    `tests/test_fg_u1_raman_spectrum.py::test_kernel_interpolator_matches_numpy` 盯着这条。
+
+    超出 ``[df0, df0+step*(n-1)]`` 返回 0：真实谱在表尾只剩峰值的 ~2.5%，
+    Lorentzian 尾巴本就趋于 0，显式截断优于外推（见文档"超出表范围的截断"）。
+
+    只在**构建期**（每个 evaluator 一次）被调用；热路径不含它。
+    """
+    if df_thz < df0 or df_thz > df0 + step * (n - 1):
+        return 0.0
+    x = (df_thz - df0) / step
+    idx = int(x)
+    if idx >= n - 1:
+        idx = n - 2
+    frac = x - idx
+    return shape_values[idx] * (1.0 - frac) + shape_values[idx + 1] * frac
+
+
+@njit(cache=True)
+def _build_g_matrix_tabular(
+    f_hz: NDArrayFloat,
+    cr_w_m_hz: float,
+    df_grid_thz: NDArrayFloat,
+    shape_values: NDArrayFloat,
+    df_step_thz: float,
+) -> NDArrayFloat:
+    """构建完整的拉曼增益矩阵 G (N×N) —— `tabular` 档，**对称**。
+
+    `G[i,k] = cr_w_m_hz * 13.2e12 * S(|df|)`。
+
+    为什么这里没有不对称档：完整 G 只有一个**对称**矩阵，`_calc_dp_dz` 事后靠
+    `f_hz[k] > f_hz[i]` 的符号判据去区分增益/损耗——单张矩阵在结构上就**装不下**
+    Stokes 与 anti-Stokes 两个不同的值。要表达不对称必须走矩阵对
+    （`_build_g_pair_matrices_tabular`，即 `matvec` 档）。这一点由
+    `isrs_gn` 在构造时显式拒绝不成立的组合，而不是在这里悄悄退化。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))，语义与 legacy 档完全相同。
+        df_grid_thz: 谱表频差栅格 (THz)，严格递增、均匀。
+        shape_values: 与栅格对应的形状值，`S(13.2 THz) == 1`。
+        df_step_thz: 谱表步长 (THz)。
+
+    Returns
+    -------
+        NDArrayFloat: (N, N) 拉曼增益矩阵。
+    """
+    n = len(f_hz)
+    n_grid = len(shape_values)
+    df0 = df_grid_thz[0]
+    g = np.zeros((n, n), dtype=np.float64)
+    peak_g = cr_w_m_hz * _RAMAN_PEAK_ANCHOR_THZ * 1e12
+    for i in range(n):
+        for k in range(n):
+            df_thz = abs(f_hz[i] - f_hz[k]) / 1e12
+            g[i, k] = peak_g * _interp_uniform_shape(df_thz, df0, df_step_thz, n_grid, shape_values)
+    return g
+
+
+@njit(cache=True)
+def _build_g_pair_matrices_tabular(
+    f_hz: NDArrayFloat,
+    cr_w_m_hz: float,
+    df_grid_thz: NDArrayFloat,
+    shape_values: NDArrayFloat,
+    df_step_thz: float,
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """`tabular` 档的去分支矩阵对 (g_gain, g_loss)，均为 (N, N)。
+
+    与 legacy 版 `_build_g_pair_matrices` 的**结构完全一致**——频率更高的列只进
+    `g_gain`，频率更低的列只进 `g_loss`（并乘能量守恒的频率比 f_k/f_i），
+    差别只在 G 的取值来自谱表插值而非折线。`cached_g` 档因此也能用它。
+
+    **不对称性**：这里沿用 legacy 的**对称近似**（`abs(df)` + 符号判据分增益/损耗）。
+    本 WP 不实现 Stokes/anti-Stokes 不对称，理由与量级见
+    `docs/fg-u1_raman_spectrum.md` 的"不对称"一节：模型里**所有**非对角相互作用都
+    是 Stokes 过程（能量恒由高频流向低频），因此玻色因子 `(n_B+1)` 会同时作用于两个
+    分支，等价于一次**全局幅度重整化**而不是谱形修正——它会破坏与 legacy 在
+    13.2 THz 的逐位相等的锚点，且需要连同能量守恒因子一起重新推导，超出本 WP 范围。
+    """
+    n = len(f_hz)
+    n_grid = len(shape_values)
+    df0 = df_grid_thz[0]
+    g_gain = np.zeros((n, n), dtype=np.float64)
+    g_loss = np.zeros((n, n), dtype=np.float64)
+    peak_g = cr_w_m_hz * _RAMAN_PEAK_ANCHOR_THZ * 1e12
+    for i in range(n):
+        f_i = f_hz[i]
+        for k in range(n):
+            f_k = f_hz[k]
+            if f_k > f_i:
+                df_thz = (f_k - f_i) / 1e12
+                g_gain[i, k] = peak_g * _interp_uniform_shape(df_thz, df0, df_step_thz, n_grid, shape_values)
+            elif f_k < f_i:
+                df_thz = (f_i - f_k) / 1e12
+                gain = peak_g * _interp_uniform_shape(df_thz, df0, df_step_thz, n_grid, shape_values)
+                # 能量守恒转移：损耗与增益呈频率比
+                g_loss[i, k] = (f_k / f_i) * gain
+    return g_gain, g_loss
+
+
 # -----------------------------------------------------------------------------
-# G 缓存：按 (频率栅格, cr_w_m_hz, 谱形常数) 记忆化
+# G 缓存：按 (频率栅格, cr_w_m_hz, 谱形) 记忆化
 # -----------------------------------------------------------------------------
 # 只读数组的缓存键：`f_hz.tobytes()` 是**值**键，因此两个数值相同但对象不同的
 # 频率数组会命中同一条缓存，而不会误用别人的矩阵。
@@ -423,14 +546,22 @@ def g_cache_stats() -> dict[str, int]:
     return dict(_G_CACHE_STATS)
 
 
-def _g_cache_key(f_hz: NDArrayFloat, cr_w_m_hz: float) -> tuple[bytes, float, float, float, int]:
-    """G 缓存键：频率栅格的值、Cr、两条谱形常数与形状。"""
+def _g_cache_key(
+    f_hz: NDArrayFloat, cr_w_m_hz: float, spectrum: str = "legacy"
+) -> tuple[bytes, float, float, float, int, str]:
+    """G 缓存键：频率栅格的值、Cr、两条谱形常数、形状与**谱档标签**。
+
+    FG-U1 起键里多一个 ``spectrum`` 标签，使 legacy 折线与 tabular 宽波段谱
+    不会在同一个键下互相覆盖。这是**纯增键**：legacy 条目的键变长了，但算出来的
+    G 一位都没变，故 legacy 档的缓存命中与数值都**逐位不变**。
+    """
     return (
         np.ascontiguousarray(f_hz, dtype=np.float64).tobytes(),
         float(cr_w_m_hz),
         _RAMAN_LINEAR_LIMIT_THZ,
         _RAMAN_FLOOR_THZ,
         int(len(f_hz)),
+        spectrum,
     )
 
 
@@ -439,6 +570,76 @@ def _cache_put(key: tuple[Any, ...], value: tuple[Any, ...]) -> None:
     if len(_G_CACHE) >= _G_CACHE_MAX_ENTRIES:
         _G_CACHE.clear()
     _G_CACHE[key] = value
+
+
+def raman_g_matrix_tabular(f_hz: NDArrayFloat, cr_w_m_hz: float) -> NDArrayFloat:
+    """返回**缓存的** `tabular` 档完整拉曼增益矩阵 G (N×N)。
+
+    与 :func:`raman_g_matrix` 共用同一套缓存机制，只是键里多一个谱档标签，
+    因此两个档位的矩阵可以同时常驻而不会互相覆盖。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))，语义与 legacy 完全相同。
+    Returns:
+        NDArrayFloat: (N, N) 只读的拉曼增益矩阵。
+    """
+    key = _g_cache_key(f_hz, cr_w_m_hz, "tabular")
+    cached = _G_CACHE.get(key)
+    if cached is not None and cached[0] is not None:
+        _G_CACHE_STATS["hits"] += 1
+        return cached[0]
+    _G_CACHE_STATS["misses"] += 1
+    df_grid, shape_values = load_raman_gain_table()
+    g = _build_g_matrix_tabular(
+        np.ascontiguousarray(f_hz, dtype=np.float64),
+        cr_w_m_hz,
+        df_grid,
+        shape_values,
+        TABLE_STEP_THZ,
+    )
+    g.flags.writeable = False
+    _G_CACHE_STATS["builds"] += 1
+    _cache_put(key, (g,))
+    return g
+
+
+def raman_g_pair_matrices_tabular(
+    f_hz: NDArrayFloat, cr_w_m_hz: float
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """返回**缓存的** `tabular` 档去分支矩阵对 (g_gain, g_loss)，均为 (N, N) 只读。
+
+    谱表从 `physics.raman_spectrum.load_raman_gain_table()` 读（该函数自带
+    ``lru_cache``，谱表只解析一次）；插值只在构建期发生，热路径不受影响。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))，语义与 legacy 完全相同。
+    Returns:
+        tuple: (g_gain, g_loss)。
+    """
+    key = _g_cache_key(f_hz, cr_w_m_hz, "tabular")
+    cached = _G_CACHE.get(key)
+    if cached is not None and len(cached) == 3:
+        _G_CACHE_STATS["hits"] += 1
+        return cached[1], cached[2]
+    _G_CACHE_STATS["misses"] += 1
+    df_grid, shape_values = load_raman_gain_table()
+    g_gain, g_loss = _build_g_pair_matrices_tabular(
+        np.ascontiguousarray(f_hz, dtype=np.float64),
+        cr_w_m_hz,
+        df_grid,
+        shape_values,
+        TABLE_STEP_THZ,
+    )
+    g_gain.flags.writeable = False
+    g_loss.flags.writeable = False
+    _G_CACHE_STATS["builds"] += 1
+    if cached is None:
+        _cache_put(key, (None, g_gain, g_loss))
+    else:  # pragma: no cover - 仅当已有 full-G 条目时走到
+        _G_CACHE[key] = (cached[0], g_gain, g_loss)
+    return g_gain, g_loss
 
 
 def raman_g_matrix(f_hz: NDArrayFloat, cr_w_m_hz: float) -> NDArrayFloat:
@@ -455,7 +656,10 @@ def raman_g_matrix(f_hz: NDArrayFloat, cr_w_m_hz: float) -> NDArrayFloat:
     """
     key = _g_cache_key(f_hz, cr_w_m_hz)
     cached = _G_CACHE.get(key)
-    if cached is not None:
+    # `cached[0]` 在"只存了矩阵对"的条目里是 None（槽位 0 是 full-G 的位置）。
+    # FG-U1 修掉了这里原有的 `cached is not None` 判据缺陷：那会让"先取矩阵对、
+    # 再取完整 G"的调用顺序直接返回 None 而不是崩溃或重建。数值不受影响。
+    if cached is not None and cached[0] is not None:
         _G_CACHE_STATS["hits"] += 1
         return cached[0]
     _G_CACHE_STATS["misses"] += 1

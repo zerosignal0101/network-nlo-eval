@@ -187,3 +187,9 @@ sg_execution_times.rst
 !/results/fg4a_bench_fg4a_vs_baseline.json
 !/results/fg4a_speedup_ab.json
 !/results/fg4b_speedup_ab.json
+
+# FG-U1 acceptance artifact, same rationale: every legacy-vs-tabular number in
+# docs/fg-u1_raman_spectrum.md (tilt, per-channel SNR deltas, interpolation
+# error, asymmetry magnitudes) must be recomputable from a tracked product
+# rather than from prose.
+!/results/fg_u1_raman.json

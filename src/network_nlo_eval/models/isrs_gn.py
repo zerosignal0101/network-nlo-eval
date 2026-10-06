@@ -25,7 +25,9 @@ from network_nlo_eval.models.numba_kernels import (
     nli_cache_stats,
     nli_tensors,
     raman_g_matrix,
+    raman_g_matrix_tabular,
     raman_g_pair_matrices,
+    raman_g_pair_matrices_tabular,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
@@ -66,6 +68,21 @@ _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
 #: 若默认档被逐位相等钉死，后面每一刀都会被同一条断言挡住。
 ODE_ACCEL_MODES = ("off", "cached_g", "matvec")
 ODE_ACCEL_DEFAULT = "matvec"
+
+#: FG-U1 拉曼增益谱档位。
+#:
+#: ``"legacy"``
+#:     合成折线（13.2 THz 线性爬升、15.6 THz 跌到零、之后恒零）。这是 FG-4a 的
+#:     数值金标准与下游全部既有期望值所依赖的那条曲线，**默认档，逐位不变**。
+#: ``"tabular"``
+#:     有出处的宽波段熔融石英谱（Lin & Agrawal 2006 的响应函数经傅里叶变换得到的
+#:     闭式增益谱，见 `physics.raman_spectrum`）。它会**改变结果**——这是物理改进，
+#:     不是数值重排，因此走**自己的验收闸门**，不与速度线的 <=1e-12 同结果预算混用。
+#:
+#: 两档都用 ``G = cr_w_m_hz * 13.2e12 * S(|df|)`` 的同一语义：``cr_w_m_hz`` 管幅度、
+#: ``S`` 管谱形，且在 13.2 THz 处**逐位相等**（legacy 的 ``S`` 就是那条折线）。
+RAMAN_SPECTRUM_MODES = ("legacy", "tabular")
+RAMAN_SPECTRUM_DEFAULT = "legacy"
 
 
 @dataclass
@@ -118,6 +135,7 @@ class MultiBandISRSGN:
         connections: Sequence[ConnectionSpec] | None = None,
         slots_per_channel: int | None = None,
         ode_accel: str = ODE_ACCEL_DEFAULT,
+        raman_spectrum: str = RAMAN_SPECTRUM_DEFAULT,
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -134,9 +152,24 @@ class MultiBandISRSGN:
             ode_accel: FG-4a ODE 加速档位，见 :data:`ODE_ACCEL_MODES`。
                 ``"off"`` 保持 FG-2 冻结路径；``"cached_g"`` 与基线逐位相等；
                 ``"matvec"``（默认）用去分支两次 matvec，相对偏差 <= 1e-12。
+            raman_spectrum: FG-U1 拉曼增益谱档位，见 :data:`RAMAN_SPECTRUM_MODES`。
+                ``"legacy"``（默认）= 合成折线，逐位不变；``"tabular"`` = 有出处的
+                宽波段熔融石英谱，**会改变结果**，需走自己的验收闸门。
+                ``"tabular"`` 与 ``ode_accel="off"`` 不兼容（见下）。
+        Raises:
+            ValueError: 档位名非法，或 ``tabular`` 与 ``ode_accel="off"`` 的组合。
         """
         if ode_accel not in ODE_ACCEL_MODES:
             raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
+        if raman_spectrum not in RAMAN_SPECTRUM_MODES:
+            raise ValueError(f"raman_spectrum must be one of {RAMAN_SPECTRUM_MODES}, got {raman_spectrum!r}.")
+        if raman_spectrum == "tabular" and ode_accel == "off":
+            # `off` 是 FG-2 冻结的参考路径，它在核内逐对重建 legacy 折线，
+            # 结构上无法换谱。这里显式拒绝，而不是悄悄退回 legacy。
+            raise ValueError(
+                'raman_spectrum="tabular" requires ode_accel="cached_g" or "matvec"; '
+                'ode_accel="off" is the frozen legacy-only reference path.'
+            )
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
         self.symbol_rate_hz = symbol_rate_hz
@@ -144,6 +177,7 @@ class MultiBandISRSGN:
         self.cr_w_m_hz = _SRS_CR  # 拉曼增益系数
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.ode_accel = ode_accel
+        self.raman_spectrum = raman_spectrum
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
         self.connections = list(connections) if connections is not None else None
         if slots_per_channel is not None and slots_per_channel < 1:
@@ -242,9 +276,15 @@ class MultiBandISRSGN:
         self._g_gain: NDArrayFloat | None = None
         self._g_loss: NDArrayFloat | None = None
         if self.ode_accel == "cached_g":
-            self._g_full = raman_g_matrix(self.f_abs_hz, self.cr_w_m_hz)
+            if self.raman_spectrum == "tabular":
+                self._g_full = raman_g_matrix_tabular(self.f_abs_hz, self.cr_w_m_hz)
+            else:
+                self._g_full = raman_g_matrix(self.f_abs_hz, self.cr_w_m_hz)
         elif self.ode_accel == "matvec":
-            self._g_gain, self._g_loss = raman_g_pair_matrices(self.f_abs_hz, self.cr_w_m_hz)
+            if self.raman_spectrum == "tabular":
+                self._g_gain, self._g_loss = raman_g_pair_matrices_tabular(self.f_abs_hz, self.cr_w_m_hz)
+            else:
+                self._g_gain, self._g_loss = raman_g_pair_matrices(self.f_abs_hz, self.cr_w_m_hz)
 
         # FG-4b：NLI 张量是 (N,N) 量级、且含全部超越函数，只在构建期算一次。
         # 与功率无关（唯一的数据相关量 t_tilde 留在热路径），因此同样每个
