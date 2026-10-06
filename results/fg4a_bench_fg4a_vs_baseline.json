@@ -1,0 +1,152 @@
+{
+  "baseline": "results/fg4a_bench_baseline.json",
+  "baseline_label": "baseline-fg4a",
+  "candidate": "results/fg4a_bench_fg4a.json",
+  "candidate_label": "fg4a-optimized",
+  "load_comparability_tolerance": 5.0,
+  "loadavg_1min": {
+    "baseline": 42.13,
+    "candidate": 10.6
+  },
+  "loads_comparable": false,
+  "measurements": {
+    "calc_dp_dz_matvec": {
+      "status": "absent_in_baseline"
+    },
+    "calc_dp_dz_single": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 5.258398596197367e-05,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 3.529898822307587e-05,
+      "comparable": false,
+      "speedup": 1.4896740277557912
+    },
+    "calc_exact_power_profile_ode": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 0.007239909027703106,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 0.0028407139470800757,
+      "comparable": false,
+      "speedup": 2.5486230442684636
+    },
+    "calc_exact_power_profile_ode_nsteps1": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 0.00025446899235248566,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 0.0001896080793812871,
+      "comparable": false,
+      "speedup": 1.3420788459165198
+    },
+    "calc_span_noise_and_power_jit": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 0.007816970930434763,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 0.0050854559522122145,
+      "comparable": false,
+      "speedup": 1.5371229254349
+    },
+    "calc_span_noise_and_power_jit_cached_g": {
+      "status": "absent_in_baseline"
+    },
+    "calc_span_noise_and_power_jit_matvec": {
+      "status": "absent_in_baseline"
+    },
+    "calculate_ase_noise_variance": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 1.3599637895822525e-06,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 8.950009942054749e-07,
+      "comparable": false,
+      "speedup": 1.5195109261186264
+    },
+    "compute_nli_variances": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 0.0034563629887998104,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 0.0022684999275952578,
+      "comparable": false,
+      "speedup": 1.5236337223355156
+    },
+    "evaluate_path_2_span": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 0.01556779199745506,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 0.009875236079096794,
+      "comparable": false,
+      "speedup": 1.5764475778364295
+    },
+    "g_matrix_python_loop": {
+      "baseline_loadavg": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "baseline_min_s": 0.023212390020489693,
+      "candidate_loadavg": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "candidate_min_s": 0.012746291002258658,
+      "comparable": false,
+      "speedup": 1.8211093734150923
+    }
+  },
+  "verdict": "load averages DIFFER by more than the tolerance; speedups are NOT quotable as a clean speedup on this machine \u2014 re-measure when the host is quiet"
+}

@@ -3,6 +3,8 @@
 所有函数都应是纯 Numba 函数，不依赖 Python 对象，只处理 Numpy 数组和基本类型。
 """
 
+from typing import Any
+
 import numpy as np
 from numba import njit
 
@@ -212,6 +214,285 @@ def _calc_exact_power_profile_ode(
                 p[i] = 0.0
 
     return p
+
+
+# =============================================================================
+# 2b. FG-4a: G 矩阵的提升（缓存）与去分支（两次 matvec）
+# =============================================================================
+# 背景：`_calc_exact_power_profile_ode` 里的 G 只依赖 `f_hz`、`cr_w_m_hz` 与
+# 谱形常数（13.2 / 15.6 THz），**与功率无关**，却在每跨段用双层循环重建。
+# FG-2 的 F2-7 把 `_calc_exact_power_profile_ode` 的函数体逐字节冻结了，因此
+# 这里**不修改**那个函数，而是另建两个等价变体：调用侧预计算 G 并缓存，
+# 变体直接接收它。
+#
+# 两个变体都刻意复制冻结函数的 RK4 循环（逐步、逐步长、逐步累加顺序一致），
+# 唯一的差别是不再重建 G。`_calc_exact_power_profile_ode_with_g` 内部仍调用
+# 未改动的 `_calc_dp_dz`，因此输出与基线**逐位相等**；
+# `_calc_exact_power_profile_ode_matvec` 换用去分支的两次 matvec，求和次序
+# 改变，偏差量级见 docs/fg4a_accel_design.md。
+
+#: 拉曼谱形常数：线性增长区上界与峰值跌落区上界 (THz)。
+_RAMAN_LINEAR_LIMIT_THZ = 13.2
+_RAMAN_FLOOR_THZ = 15.6
+
+
+@njit(cache=True)
+def _build_g_matrix(f_hz: NDArrayFloat, cr_w_m_hz: float) -> NDArrayFloat:
+    """构建完整的拉曼增益矩阵 G (N×N)。
+
+    算术与 `_calc_exact_power_profile_ode` 内的双层循环**逐条一致**（同样的
+    阈值、同样的运算次序），因此在调用侧预计算的 G 与核内重建的 G 逐位相同。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))。
+    Returns:
+        NDArrayFloat: (N, N) 拉曼增益矩阵。
+    """
+    n = len(f_hz)
+    g = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        for k in range(n):
+            df_thz = abs(f_hz[i] - f_hz[k]) / 1e12
+            if df_thz <= _RAMAN_LINEAR_LIMIT_THZ:
+                # 线性增长区
+                value = cr_w_m_hz * (df_thz * 1e12)
+            elif df_thz < _RAMAN_FLOOR_THZ:
+                # 峰值跌落区 (匹配 Fig. 4)
+                peak_g = cr_w_m_hz * 13.2e12
+                value = peak_g * (_RAMAN_FLOOR_THZ - df_thz) / (_RAMAN_FLOOR_THZ - _RAMAN_LINEAR_LIMIT_THZ)
+            else:
+                # 频差过大，不再产生受激拉曼
+                value = 0.0
+            g[i, k] = value
+    return g
+
+
+@njit(cache=True)
+def _build_g_pair_matrices(f_hz: NDArrayFloat, cr_w_m_hz: float) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """把 G 预分为严格上三角的增益部分与严格下三角的加权损耗部分。
+
+    基线 `_calc_dp_dz` 逐对判断 `f_hz[k] > f_hz[i]`，把贡献累加进两个标量。
+    这里把判断**搬到构建期**：频率更高的列只进 `g_gain`，频率更低的列只进
+    `g_loss`（并预先乘上能量守恒的频率比 f_k/f_i）。于是运行期退化为两次 matvec。
+
+    与基线的浮点对应关系：`g_loss[i, k] = (f_hz[k] / f_hz[i]) * G[i, k]`，
+    而基线累加的是 `(f_hz[k] / f_hz[i]) * G[i, k] * p[k]`。逐项的乘法次序
+    完全相同，差别只在于求和由一次 k 序号的标量累加变成 BLAS 的 dot。
+
+    对角线与同频元素在基线中两个分支都不命中（贡献为 0），此处同样留 0。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))。
+    Returns:
+        tuple: (g_gain, g_loss)，均为 (N, N) float64。
+    """
+    n = len(f_hz)
+    g_gain = np.zeros((n, n), dtype=np.float64)
+    g_loss = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        f_i = f_hz[i]
+        for k in range(n):
+            f_k = f_hz[k]
+            if f_k > f_i:
+                df_thz = (f_k - f_i) / 1e12
+                if df_thz <= _RAMAN_LINEAR_LIMIT_THZ:
+                    g_gain[i, k] = cr_w_m_hz * (df_thz * 1e12)
+                elif df_thz < _RAMAN_FLOOR_THZ:
+                    peak_g = cr_w_m_hz * 13.2e12
+                    g_gain[i, k] = peak_g * (_RAMAN_FLOOR_THZ - df_thz) / (
+                        _RAMAN_FLOOR_THZ - _RAMAN_LINEAR_LIMIT_THZ
+                    )
+                # else: 频差过大，保持 0
+            elif f_k < f_i:
+                df_thz = (f_i - f_k) / 1e12
+                if df_thz <= _RAMAN_LINEAR_LIMIT_THZ:
+                    gain = cr_w_m_hz * (df_thz * 1e12)
+                elif df_thz < _RAMAN_FLOOR_THZ:
+                    peak_g = cr_w_m_hz * 13.2e12
+                    gain = peak_g * (_RAMAN_FLOOR_THZ - df_thz) / (
+                        _RAMAN_FLOOR_THZ - _RAMAN_LINEAR_LIMIT_THZ
+                    )
+                else:
+                    gain = 0.0
+                # 能量守恒转移：损耗与增益呈频率比
+                g_loss[i, k] = (f_k / f_i) * gain
+    return g_gain, g_loss
+
+
+@njit(cache=True)
+def _calc_dp_dz_matvec(
+    p: NDArrayFloat, g_gain: NDArrayFloat, g_loss: NDArrayFloat, alpha_npm: NDArrayFloat
+) -> NDArrayFloat:
+    """去分支的 dP/dz：两次 matvec 取代逐对 if。
+
+    `dP/dz = p * (g_gain @ p - g_loss @ p - alpha)`。
+
+    与 `_calc_dp_dz` 相比没有改变数学式，只把逐对分支换成 BLAS dot；因此这是
+    FG-4c GPU/batch 化的形状（整块矩阵乘向量，无数据相关的控制流）。
+    """
+    gain_term = g_gain @ p
+    loss_term = g_loss @ p
+    n = len(p)
+    dp = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        dp[i] = (gain_term[i] - loss_term[i] - alpha_npm[i]) * p[i]
+    return dp
+
+
+@njit(cache=True)
+def _calc_exact_power_profile_ode_with_g(
+    p_in_w: NDArrayFloat,
+    G: NDArrayFloat,
+    f_hz: NDArrayFloat,
+    alpha_npm: NDArrayFloat,
+    L_m: float,
+    n_steps: int = 20,
+) -> NDArrayFloat:
+    """FG-4a 变体一：接收**预计算并缓存**的 G，内部仍用原始 `_calc_dp_dz`。
+
+    RK4 循环与冻结的 `_calc_exact_power_profile_ode` 逐步一致（同样的 4 次
+    `_calc_dp_dz` 调用、同样的组合系数、同样的负功率截断），唯一差别是跳过
+    G 的双层重建。因此输出与基线**逐位相等**。
+    """
+    N = len(p_in_w)
+    dz = L_m / n_steps
+    p = p_in_w.copy()
+
+    for _ in range(n_steps):
+        k1 = _calc_dp_dz(p, G, f_hz, alpha_npm)
+        k2 = _calc_dp_dz(p + 0.5 * dz * k1, G, f_hz, alpha_npm)
+        k3 = _calc_dp_dz(p + 0.5 * dz * k2, G, f_hz, alpha_npm)
+        k4 = _calc_dp_dz(p + dz * k3, G, f_hz, alpha_npm)
+
+        p += (dz / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+        for i in range(N):
+            if p[i] < 0:
+                p[i] = 0.0
+
+    return p
+
+
+@njit(cache=True)
+def _calc_exact_power_profile_ode_matvec(
+    p_in_w: NDArrayFloat,
+    g_gain: NDArrayFloat,
+    g_loss: NDArrayFloat,
+    alpha_npm: NDArrayFloat,
+    L_m: float,
+    n_steps: int = 20,
+) -> NDArrayFloat:
+    """FG-4a 变体二：去分支 matvec 积分器（`_calc_dp_dz_matvec` 版）。
+
+    RK4 循环与冻结函数逐步一致，唯一差别是 4 次子调用换成 matvec 版本。
+    求和次序因此改变，偏差量级为浮点舍入 (见 docs/fg4a_accel_design.md)。
+    """
+    N = len(p_in_w)
+    dz = L_m / n_steps
+    p = p_in_w.copy()
+
+    for _ in range(n_steps):
+        k1 = _calc_dp_dz_matvec(p, g_gain, g_loss, alpha_npm)
+        k2 = _calc_dp_dz_matvec(p + 0.5 * dz * k1, g_gain, g_loss, alpha_npm)
+        k3 = _calc_dp_dz_matvec(p + 0.5 * dz * k2, g_gain, g_loss, alpha_npm)
+        k4 = _calc_dp_dz_matvec(p + dz * k3, g_gain, g_loss, alpha_npm)
+
+        p += (dz / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+        for i in range(N):
+            if p[i] < 0:
+                p[i] = 0.0
+
+    return p
+
+
+# -----------------------------------------------------------------------------
+# G 缓存：按 (频率栅格, cr_w_m_hz, 谱形常数) 记忆化
+# -----------------------------------------------------------------------------
+# 只读数组的缓存键：`f_hz.tobytes()` 是**值**键，因此两个数值相同但对象不同的
+# 频率数组会命中同一条缓存，而不会误用别人的矩阵。
+_G_CACHE: dict[tuple[bytes, float, float, float, int], tuple[Any, ...]] = {}
+_G_CACHE_STATS = {"hits": 0, "misses": 0, "builds": 0}
+_G_CACHE_MAX_ENTRIES = 32
+
+
+def g_cache_stats() -> dict[str, int]:
+    """返回 G 缓存的命中/未命中计数——用于证明跨调用复用确实发生。"""
+    return dict(_G_CACHE_STATS)
+
+
+def _g_cache_key(f_hz: NDArrayFloat, cr_w_m_hz: float) -> tuple[bytes, float, float, float, int]:
+    """G 缓存键：频率栅格的值、Cr、两条谱形常数与形状。"""
+    return (
+        np.ascontiguousarray(f_hz, dtype=np.float64).tobytes(),
+        float(cr_w_m_hz),
+        _RAMAN_LINEAR_LIMIT_THZ,
+        _RAMAN_FLOOR_THZ,
+        int(len(f_hz)),
+    )
+
+
+def _cache_put(key: tuple[Any, ...], value: tuple[Any, ...]) -> None:
+    """写入缓存；条目过多时整体清空（键含完整频率栅格，清空只是重算）。"""
+    if len(_G_CACHE) >= _G_CACHE_MAX_ENTRIES:
+        _G_CACHE.clear()
+    _G_CACHE[key] = value
+
+
+def raman_g_matrix(f_hz: NDArrayFloat, cr_w_m_hz: float) -> NDArrayFloat:
+    """返回**缓存的**完整拉曼增益矩阵 G (N×N)。
+
+    同一 (频率栅格, Cr, 谱形常数) 的后续调用直接命中缓存，不再逐对重建。
+    返回值被标记为只读，以免调用方就地改坏共享矩阵。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))。
+    Returns:
+        NDArrayFloat: (N, N) 只读的拉曼增益矩阵。
+    """
+    key = _g_cache_key(f_hz, cr_w_m_hz)
+    cached = _G_CACHE.get(key)
+    if cached is not None:
+        _G_CACHE_STATS["hits"] += 1
+        return cached[0]
+    _G_CACHE_STATS["misses"] += 1
+    g = _build_g_matrix(np.ascontiguousarray(f_hz, dtype=np.float64), cr_w_m_hz)
+    g.flags.writeable = False
+    _G_CACHE_STATS["builds"] += 1
+    _cache_put(key, (g,))
+    return g
+
+
+def raman_g_pair_matrices(f_hz: NDArrayFloat, cr_w_m_hz: float) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """返回**缓存的**去分支矩阵对 (g_gain, g_loss)，均为 (N, N) 只读。
+
+    与 :func:`raman_g_matrix` 共用同一套缓存键，两者可同时常驻。
+
+    Args:
+        f_hz: 各节点绝对频率 (Hz)。
+        cr_w_m_hz: SRS 增益系数 Cr (1/(W·m·Hz))。
+    Returns:
+        tuple: (g_gain, g_loss)。
+    """
+    key = _g_cache_key(f_hz, cr_w_m_hz)
+    cached = _G_CACHE.get(key)
+    if cached is not None and len(cached) == 3:
+        _G_CACHE_STATS["hits"] += 1
+        return cached[1], cached[2]
+    _G_CACHE_STATS["misses"] += 1
+    f = np.ascontiguousarray(f_hz, dtype=np.float64)
+    g_gain, g_loss = _build_g_pair_matrices(f, cr_w_m_hz)
+    g_gain.flags.writeable = False
+    g_loss.flags.writeable = False
+    _G_CACHE_STATS["builds"] += 1
+    if cached is None:
+        _cache_put(key, (None, g_gain, g_loss))
+    else:  # pragma: no cover - 仅当已有 full-G 条目时走到
+        _G_CACHE[key] = (cached[0], g_gain, g_loss)
+    return g_gain, g_loss
 
 
 # =============================================================================
@@ -511,6 +792,10 @@ def _calc_span_noise_and_power_jit(
     cr_w_m_hz: float,  # SRS 增益系数 Cr
     delta_f_co_hz: float,  # SRS 截断频率
     phi_kurtosis: float = 0.0,  # 0.0为高斯(默认), -0.6190为64QAM
+    # --- FG-4a: 可选的预计算拉曼矩阵（默认 None = 保持冻结的基线路径） ---
+    g_full: NDArrayFloat | None = None,  # 缓存的完整 G (N,N)：变体一，逐位相等
+    g_gain: NDArrayFloat | None = None,  # 缓存的严格上三角增益部分：变体二
+    g_loss: NDArrayFloat | None = None,  # 缓存的严格下三角频率比加权损耗部分
 ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
     """【高性能内核】单跨段物理层评估的 JIT 版本。
 
@@ -520,6 +805,14 @@ def _calc_span_noise_and_power_jit(
     (= len(power_in_w)) 且同序对齐。`f_abs_hz[i]` 是第 i 条**连接的中心频率**
     （不是栅格频率），`symbol_rate_hz[i]` 是该连接自己的符号率。
     未占用连接（power_in_w == 0）仍占一个数组槽位以保持对齐。
+
+    FG-4a 加速（三个参数全部为 None 时行为与基线逐位相同）：
+
+    * ``g_full`` given  -> `_calc_exact_power_profile_ode_with_g`，跳过 G 重建，
+      内部仍用未改动的 `_calc_dp_dz`，因此**逐位相等**；
+    * ``g_gain``/``g_loss`` given（且无 ``g_full``）->
+      `_calc_exact_power_profile_ode_matvec`，去分支两次 matvec，求和次序改变；
+    * 都不给 -> 原 `_calc_exact_power_profile_ode`（FG-2 冻结的参考实现）。
 
     Raises:
         ValueError: 任一逐连接数组长度 != N。
@@ -542,9 +835,22 @@ def _calc_span_noise_and_power_jit(
 
     # 1. 采用高精度 RK4 求解 ODE (计算包含了损耗和真实拉曼倾斜的出纤功率)
     # n_steps=20 在精度和速度间取得了极佳的平衡
-    p_out_after_fiber = _calc_exact_power_profile_ode(
-        power_in_w, f_abs_hz, alpha_power_npm, span_length_m, cr_w_m_hz, n_steps=20
-    )
+    # FG-4a：调用侧可传入缓存的拉曼矩阵以跳过 G 的逐对重建。三个分支的数学
+    # 结果相同，优先级为 g_full > (g_gain, g_loss) > 现场重建。
+    if g_full is not None:
+        # 变体一：G 已缓存，内部仍走原始 _calc_dp_dz -> 逐位相等。
+        p_out_after_fiber = _calc_exact_power_profile_ode_with_g(
+            power_in_w, g_full, f_abs_hz, alpha_power_npm, span_length_m, n_steps=20
+        )
+    elif g_gain is not None and g_loss is not None:
+        # 变体二：去分支两次 matvec -> 求和次序改变，偏差为浮点舍入。
+        p_out_after_fiber = _calc_exact_power_profile_ode_matvec(
+            power_in_w, g_gain, g_loss, alpha_power_npm, span_length_m, n_steps=20
+        )
+    else:
+        p_out_after_fiber = _calc_exact_power_profile_ode(
+            power_in_w, f_abs_hz, alpha_power_npm, span_length_m, cr_w_m_hz, n_steps=20
+        )
 
     # 2. 调用 NLI 引擎，此时它将利用上述精准结果来拟合有效的 T_tilde 边界
     sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(

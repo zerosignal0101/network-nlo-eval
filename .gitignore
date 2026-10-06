@@ -176,3 +176,13 @@ sg_execution_times.rst
 # negation takes effect.
 !/results/fg2_evidence.json
 !/results/fg2_golden_cplusl_230x50.npz
+
+# FG-4a acceptance artifacts are committed for the same reason: the golden is
+# the gate every later optimisation must pass, and the timings are the only
+# source for the speedup numbers, so both must be recomputable from a tracked
+# product rather than from prose.
+!/results/fg4a_golden.json
+!/results/fg4a_bench_baseline.json
+!/results/fg4a_bench_fg4a.json
+!/results/fg4a_bench_fg4a_vs_baseline.json
+!/results/fg4a_speedup_ab.json

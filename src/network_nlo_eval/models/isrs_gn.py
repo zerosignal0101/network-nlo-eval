@@ -20,11 +20,33 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_nf_lin_jit,
     _calc_span_noise_and_power_jit,
     _db_to_lin,
+    g_cache_stats,
+    raman_g_matrix,
+    raman_g_pair_matrices,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
 
 _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
+
+#: FG-4a ODE 加速档位。
+#:
+#: ``"off"``
+#:     每次调用都在核内重建 G —— FG-2 冻结的参考路径。
+#: ``"cached_g"``
+#:     G 按 (频率栅格, Cr, 谱形常数) 预计算并缓存，内部仍用未改动的
+#:     ``_calc_dp_dz``。输出与基线**逐位相等**。
+#: ``"matvec"``
+#:     G 缓存**并且**把逐对分支换成两次 matvec。数学式不变，但浮点求和次序
+#:     改变，实测最大相对偏差 ~1e-14（F4a-4 预算是 1e-12）。
+#:
+#: 默认是 ``"cached_g"`` 而不是更快的 ``"matvec"``，这是一个**契约**决定而非性能
+#: 疏漏：本仓库既有的 F1-1 / F1-2 / F2-3 三个测试用 ``np.array_equal`` 把公共
+#: API 的输出钉死在 origin/main 的金标准上。matvec 的末位重排会让这三个测试
+#: 失败，而按 G2 纪律不允许改它们的期望值——所以 ``matvec`` 只能是**显式选入**
+#: 的档位。``"cached_g"`` 逐位等价于基线，因此可安全地作为默认。
+ODE_ACCEL_MODES = ("off", "cached_g", "matvec")
+ODE_ACCEL_DEFAULT = "cached_g"
 
 
 @dataclass
@@ -76,6 +98,7 @@ class MultiBandISRSGN:
         phi_kurtosis: float = 0.0,  # 0.0为高斯(默认), -0.6190为64QAM
         connections: Sequence[ConnectionSpec] | None = None,
         slots_per_channel: int | None = None,
+        ode_accel: str = ODE_ACCEL_DEFAULT,
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -89,13 +112,19 @@ class MultiBandISRSGN:
             connections: (可选) 灵活栅格连接列表。给定后进入**逐连接模式**：
                 全部逐连接数组按连接中心频率计算，`symbol_rate_hz` 变为逐连接
                 数组（设计 §2.5）。为 None 时保持遗留行为，数值逐位不变。
+            ode_accel: FG-4a ODE 加速档位，见 :data:`ODE_ACCEL_MODES`。
+                ``"off"`` 保持 FG-2 冻结路径；``"cached_g"`` 与基线逐位相等；
+                ``"matvec"``（默认）用去分支两次 matvec，相对偏差 <= 1e-12。
         """
+        if ode_accel not in ODE_ACCEL_MODES:
+            raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
         self.symbol_rate_hz = symbol_rate_hz
         self.phi_kurtosis = phi_kurtosis
         self.cr_w_m_hz = _SRS_CR  # 拉曼增益系数
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
+        self.ode_accel = ode_accel
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
         self.connections = list(connections) if connections is not None else None
         if slots_per_channel is not None and slots_per_channel < 1:
@@ -186,6 +215,23 @@ class MultiBandISRSGN:
             self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
             self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
 
+        # FG-4a：拉曼矩阵只依赖频率栅格与 Cr，与功率无关，因此在这里（每个
+        # evaluator 一次）预计算一次，跨所有跨段复用。缓存键是频率栅格的**值**，
+        # 所以同一栅格的不同 evaluator 会命中同一条缓存条目。
+        # `g_cache_stats()` 暴露命中/未命中计数以证明复用确实发生。
+        self._g_full: NDArrayFloat | None = None
+        self._g_gain: NDArrayFloat | None = None
+        self._g_loss: NDArrayFloat | None = None
+        if self.ode_accel == "cached_g":
+            self._g_full = raman_g_matrix(self.f_abs_hz, self.cr_w_m_hz)
+        elif self.ode_accel == "matvec":
+            self._g_gain, self._g_loss = raman_g_pair_matrices(self.f_abs_hz, self.cr_w_m_hz)
+
+    @property
+    def g_cache_hits(self) -> int:
+        """FG-4a 证据：G 缓存命中次数（跨调用复用的直接计数）。"""
+        return g_cache_stats()["hits"]
+
     def _calc_span_noise_and_power(
         self,
         power_in_w: NDArrayFloat,
@@ -249,6 +295,10 @@ class MultiBandISRSGN:
             cr_w_m_hz=self.cr_w_m_hz,
             delta_f_co_hz=self.delta_f_co_hz,
             phi_kurtosis=self.phi_kurtosis,
+            # FG-4a：全部为 None 时内核走 FG-2 冻结的参考路径。
+            g_full=self._g_full,
+            g_gain=self._g_gain,
+            g_loss=self._g_loss,
         )
 
         # 3. 处理 ROADM 插入损耗 (可选，在 Python 层处理非线性外围逻辑)
@@ -271,6 +321,7 @@ class MultiBandISRSGN:
                 self.phi_kurtosis,
                 self.connections,
                 self.slots_per_channel,
+                self.ode_accel,
             )
         return self._fiber_evaluator_cache[key]
 
