@@ -203,3 +203,82 @@ ecz-dev 改为 `None`→`fiber.max_span_length_km`。`rwa/qot_checker` 与 `isrs
 - `physics_nlo_eval`（波形引擎）**本机未安装** → `test_waveform_route_smoke` 走
   `pytest.importorskip`，对应 brief 里的 **1 skipped**。波形路径本轮**未实测**。
 - 测试命令必须带 `PYTHONPATH=$PWD/src`（editable 装的 `.pth` 指向主检出，与 cwd 无关）。
+
+---
+
+## 7. 实施结果（实施后回填）
+
+### 7.1 等价性证据
+
+黄金文件 `results/fg1_golden_main.json` 由 `git archive origin/main`（`87850a1`）导出的
+**纯净 main 树**跑出，文件内记录了 `source_branch` / `source_commit` / `source_tree`。
+场景定义 `tests/fg1_scenarios.py` **只用 main 上就存在的 API**，两侧跑的是同一份代码。
+
+`results/fg1_physics_parity.json`（`parity_ok: true`，`failures: 0`，`tolerance: 0.0`）：
+
+| 场景 | 信道数 | phi_kurtosis | 低层 vs main | 逐跨段曲线 vs main | `evaluate_path` vs 参考 |
+|---|---|---|---|---|---|
+| `c_band_single` | 8 | 0.0 | 逐位相同 | 4 点全同 | 逐位相同 |
+| `multiband_wide` | 80 | 0.0 | 逐位相同 | 8 点全同 | 逐位相同 |
+| `kurtosis_64qam` | 16 | −0.619 | 逐位相同 | 4 点全同 | 逐位相同 |
+| `roadm_hoop` | 12 | 0.0 | 逐位相同 | 8 点全同 | 逐位相同 |
+
+所有条目 `max_abs_dev = 0.0`、`max_rel_dev = 0.0`。
+
+**核心结论**：`evaluate_path` 与 main 逐位相同 ⇒ 新管线是**物理中性**的编排层，
+没有重复计入、没有重排跨段、没有改变噪声语义。这是本轮最关键的一条证据。
+
+**非退化性**：`multiband_wide` 首跨段 SRS 功率倾斜 1.189×（`P∈[2.147e-5, 2.553e-5] W`），
+说明 RK4 ODE 的信道间拉曼耦合确实被激发；`kurtosis_64qam` 对 `phi_kurtosis` 敏感
+（测试 `test_kurtosis_scenario_is_sensitive_to_phi_kurtosis` 断言其 SNR 随该参数变化）。
+因此这不是一组"恰好相等"的平凡数字。
+
+**测试有牙**（负控制）：在临时副本里把 ODE 积分步数 `n_steps` 20→21，
+8 条 parity 断言全部失败（`8 failed, 5 passed`）。
+
+### 7.2 测试
+
+`PYTHONPATH=$PWD/src python -m pytest -q` → **18 passed, 1 skipped**
+（ecz-dev 的 5 passed/1 skipped + main 的 `test_main.py` + 12 条 FG-1 parity 断言）。
+
+### 7.3 与计划的偏差（如实记录）
+
+1. **`.github/` 与 `.claude/` 未删除**。brief 把"仓库清理"列在交付物 2，
+   但同时要求 parity 测试"进 CI 集合"。删掉 `.github/workflows/` 就删掉了 CI 本身，
+   二者直接冲突。删除不可逆（且本 WP 不允许推 `origin`），
+   故**保留**并在此显式标出，**留给用户决定**。`README.md` 已按计划移植。
+2. **`.gitignore` 未照搬 ecz-dev**。ecz-dev 把 `/results/` 改成 `results/`，
+   但两者都会忽略整个 `results/` 目录，会把本 WP 的交付产物悄悄排除掉。
+   改为保留 `/results/*` 并用否定规则显式放行两个 parity 产物。
+3. **`rwa/qot_checker.py` 的 ROADM 分支被改写**（偏离照搬 ecz-dev）：
+   原版用 `path_loss_db()` + booster 均衡并另加 booster ASE，与 §3 C1 冲突，
+   且会与 `evaluate_path` 的行为不一致。已统一为 main 的规则
+   （`insertion_loss + filtering_penalty` 施加于信号与已累积噪声，不引入新噪声），
+   两处 ROADM 分支改法相同。
+4. **修掉一个 main 侧的潜在 bug**：`edfa_config` 非空但 `noise_figure_db` 为 `None` 时
+   `current_nf_lin` 未绑定。改为回落到 `nf_lin_channels`。
+   这**只影响原本会抛 `NameError` 的输入**，对所有可达路径数值**零影响**
+   （parity 逐位相同即为证）。
+5. **C1 的功能代价（重申）**：`ROADMConfig.equalize_output_power` /
+   `booster_noise_figure_db` / `raman_pumps` / `use_attenuation_polynomial`
+   在**统计内核中不生效**，仅波形引擎使用；`blocked_channels` 在统计侧仍执行置零。
+6. **波形路径未实测**：`physics_nlo_eval` 未安装，1 skipped。属环境限制，非本轮缺陷。
+
+### 7.4 复算命令
+
+```bash
+cd /home/zsig/Documents/gits/wt/fg-reconcile
+PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python -c \
+  "import network_nlo_eval as m; print(m.__file__)"   # 须落在本 worktree 内
+
+# 重新生成本分支侧比对结果
+PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python scripts/fg1_parity.py \
+  --check results/fg1_golden_main.json --out results/fg1_physics_parity.json
+
+# 重新生成黄金（须在纯净 main 树上执行）
+FG1_SOURCE_COMMIT=$(git rev-parse origin/main) \
+PYTHONPATH=<main-tree>/src ~/miniconda3/envs/rl/bin/python scripts/fg1_parity.py \
+  --emit-golden results/fg1_golden_main.json
+
+PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python -m pytest -q
+```
