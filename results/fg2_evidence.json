@@ -1,11 +1,11 @@
 {
   "meta": {
-    "git_rev": "0c2546f3059ad2140121c67c8e9e6f0cbaf66ec0",
+    "git_rev": "34f1e2e2fb1f500eff7fb766bd7f0bfc6add2ac5",
     "git_branch": "wp/fg-nlo-impl",
     "python": "3.12.14",
     "numpy": "2.5.3",
     "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
-    "loadavg": "3.77 9.61 10.64 3/1677 2056359",
+    "loadavg": "5.36 8.71 10.23 4/1686 2066456",
     "golden_git_rev": "0c2546f3059ad2140121c67c8e9e6f0cbaf66ec0"
   },
   "parameters": {
