@@ -1,5 +1,6 @@
 """路由计算 (K-Shortest Path) 模块。"""
 
+import warnings
 from collections.abc import Iterator
 from itertools import islice
 
@@ -37,7 +38,7 @@ class PathCache:
         # NetworkX 的 shortest_simple_paths 需要一个图对象。
         # 我们从 NetworkTopology 内部的 NetworkX 图获取。
         # 确保使用 "weight" 属性，如果它存在于原始图中
-        nx_graph = self.network_topology._network_raw
+        nx_graph = self.network_topology.get_network_graph()
 
         # 遍历所有可能的源-目的节点对
         for i in range(len(internal_nodes)):
@@ -76,8 +77,12 @@ class PathCache:
                 except nx.NetworkXNoPath:
                     # 如果没有路径，则该对之间没有可用的 KSP
                     pass
-                except Exception as e:
-                    print(f"Error precomputing KSP for ({source_idx}, {dest_idx}): {e}")
+                except (KeyError, TypeError, ValueError) as exc:
+                    warnings.warn(
+                        f"Error precomputing KSP for ({source_idx}, {dest_idx}): {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
 
     def get_paths(self, source_idx: NodeID, dest_idx: NodeID) -> list[list[NodeID]]:
         """从缓存中获取指定源-目的节点对的 KSP 路径。

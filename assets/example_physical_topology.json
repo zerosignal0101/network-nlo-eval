@@ -1,0 +1,88 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": 101,
+      "x": 0.0,
+      "y": 0.0,
+      "roadm": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": 50000000000.0,
+        "filter_order": 4,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0
+      }
+    },
+    {
+      "id": 102,
+      "x": 1.0,
+      "y": 0.0,
+      "roadm": {
+        "insertion_loss_db": 5.5,
+        "passband_hz": 48000000000.0,
+        "filter_order": 6,
+        "express_attenuation_db": 0.5,
+        "filtering_penalty_db": 0.25,
+        "booster_noise_figure_db": 5.2
+      }
+    },
+    {
+      "id": 103,
+      "x": 2.0,
+      "y": 0.0,
+      "roadm": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": 50000000000.0,
+        "filter_order": 4,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": 101,
+      "target": 102,
+      "weight": 80.0,
+      "fiber": {
+        "max_span_length_km": 80.0,
+        "attenuation_db_km_ref": 0.2,
+        "dispersion_parameter_d": 17.0,
+        "dispersion_slope_s": 0.06,
+        "nonlinear_index_n2": 2.6e-20,
+        "effective_area_um2_ref": 80.0
+      },
+      "edfa": {
+        "target_gain_db": null,
+        "noise_figure_db": 5.0
+      }
+    },
+    {
+      "source": 102,
+      "target": 103,
+      "weight": 120.0,
+      "fiber": {
+        "max_span_length_km": 60.0,
+        "attenuation_db_km_ref": 0.21,
+        "dispersion_parameter_d": 16.7,
+        "dispersion_slope_s": 0.058,
+        "nonlinear_index_n2": 2.6e-20,
+        "effective_area_um2_ref": 82.0,
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1455.0,
+            "power_w": 0.35,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "edfa": {
+        "target_gain_db": null,
+        "noise_figure_db": 5.5
+      }
+    }
+  ]
+}
