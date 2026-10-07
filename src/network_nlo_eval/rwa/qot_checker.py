@@ -4,12 +4,15 @@
 """
 
 import math
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
@@ -24,6 +27,225 @@ _H_PLANCK = 6.62607015e-34
 def _normalize(u: NodeID, v: NodeID) -> LinkKey:
     """返回规范化的链路键 (min, max)。"""
     return LinkKey((u, v) if u < v else (v, u))
+
+
+# ======================================================================
+# ROADM 常量折叠与单信道路径 SNR 累积的唯一真源（FG-11）
+# ======================================================================
+#
+# FG-5 把链路噪声装配收敛成 `rwa/link_noise.py:assemble_link_noise`，但它列出的
+# 未闭合项还有两条留在原地，本节把它们各留**一份**定义：
+#
+# 1. **单信道 SNR 递推**：原 `QoTValidator._eval_service_snr` 的循环体，与 RL 侧
+#    `ScanValidator._service_snr` / `_path_channel_snr` 各写一份，物理公式相同。
+#    副本正是 FU-4 那次"两边 SNR 相差 0.2878 dB 却全仓无测试变红"的成因。
+# 2. **ROADM 常量折叠**：`10 ** (path_loss_db(op) / 10)` 等原本两仓各求值一次。
+#
+# **两侧保留的差异只有取值来源，不含任何算术**——与 `link_noise.py` 的分工一致：
+#
+# * **阻断判定**：物理侧可能处在逐连接（灵活栅格）模式，阻断是**槽区间重叠**语义，
+#   由 `QoTValidator._is_blocked` 判定；RL 侧 `env.py` 构造 `MultiBandISRSGN` 时
+#   **不传** `connections`，恒为遗留固定栅格，阻断就是信道下标集合成员判定。
+#   两者由调用方各自传入的 `is_blocked` 谓词表达，本模块**不选边**。
+# * **频率/符号率**：物理侧取 `gn_evaluator` 的逐节点数组，RL 侧取频谱栅格与标量
+#   符号率。遗留模式下二者逐位相同（`f_abs_hz is grid.frequencies`，
+#   `symbol_rate_hz_channels` 每项都等于标量），灵活栅格下不同。调用方各自求值
+#   后按标量传入。
+#
+# **为什么放在本文件而不是新建 `rwa/snr_terms.py`。** 两者同属 `network_nlo_eval/rwa/`
+# 这一层，但 `tests/test_fu4_assembly_union.py::test_fu4_6b_union_keeps_every_fg2_
+# capability_symbol` 是一条**源码级守卫**，它按字面检查 `path_loss_db` /
+# `booster_noise_figure_db` / `filtering_penalty_db` 仍在 `rwa/qot_checker.py` 里。
+# 那条守卫要守的是"能力没被删掉"，而拆到新文件会让它在物理**完好无损**的情况下变红。
+# 为一个私有实现的搬迁去改既有测试的期望值是本仓明令禁止的（G2 纪律），所以这里
+# 选择留在原文件：条件反射的新模块反而会踩到既有守卫。
+
+#: 一跳上交给累积器的材料：(该跳的 ROADM 常量, 该跳的噪声缓存)。
+#:
+#: 用**可迭代对象**而不是列表，是为了让物理侧保持**惰性**：`_eval_service_snr`
+#: 在遇到被阻断的跳时立刻返回 `-inf`，若先把整条路径的噪声都算出来，后面那些跳的
+#: `LinkState.noise_cache` 写回时机就变了（`_get_or_calc_noise_cache` 有写回副作用）。
+#: 传惰性迭代器则在返回点自然停止拉取。
+HopPair = tuple["RoadmTerms", LinkNoiseCache]
+
+
+@dataclass(frozen=True)
+class RoadmTerms:
+    """一个 (节点, 端口操作) 上与候选信道无关的 ROADM 常量。"""
+
+    config: ROADMConfig = field(compare=False, repr=False)
+    """原始配置。**只为阻断判定保留**——灵活栅格下判定要回到配置上的槽集合。"""
+    loss: float
+    """``10 ** (path_loss_db(operation) / 10)``。"""
+    filtering_penalty: float
+    """``10 ** (filtering_penalty_db / 10)``。"""
+    equalize: bool
+    """是否由 booster 把每信道功率拉回入纤值（等价于"有 booster NF"）。"""
+    booster_nf: float | None
+    """``10 ** (booster_noise_figure_db / 10)``；无 booster 时为 ``None``。
+
+    与 :attr:`booster_base` **不是冗余**：向量路径按上游写法
+    ``nf * h * f * sr * (loss - 1)`` 逐元素算，需要**未乘 h** 的 NF；
+    标量路径用折好的 :attr:`booster_base`。两者都必须由本模块一次算出——
+    反推（``booster_base / h``）会引入一次除法，**逐位不等**。
+    """
+    booster_base: float
+    """``10 ** (booster_noise_figure_db / 10) * h``（无 booster 时取按 NF 字段算出的值）。"""
+    blocked: frozenset[int]
+    """遗留固定栅格下的静态阻断信道下标。"""
+
+
+def fold_roadm_terms(config: ROADMConfig, *, is_last_hop: bool) -> RoadmTerms:
+    """把一个 ROADM 配置折成 :class:`RoadmTerms`。
+
+    这是 ROADM 常量折叠的**唯一**定义。FU-4 裁决（详见
+    ``docs/fu4_qot_assembly_adjudication.md`` §1）在这里落地：
+
+    1. **损耗按端口区分**：``path_loss_db("drop" | "express")``，不把
+       ``filtering_penalty_db`` 并进损耗——后者是噪声域量，不是光功率损耗。
+    2. **booster**：``equalize_output_power`` 为真时信号**不再**被 ``loss`` 衰减，
+       代价是引入 ``NF * h * f * Rs * (loss - 1)`` 的 booster ASE。
+    3. **滤波惩罚**是只作用于噪声的独立乘子。
+
+    Args:
+        config: 该节点的 ROADM 配置。
+        is_last_hop: 是否为路径的**末端**跳（决定取 ``drop`` 还是 ``express`` 端口）。
+
+    Returns
+    -------
+        RoadmTerms: 折叠好的常量。两仓共用这一个函数对象。
+    """
+    operation = "drop" if is_last_hop else "express"
+    nf_lin = 10 ** (config.booster_noise_figure_db / 10)
+    booster_nf_lin = nf_lin if config.equalize_output_power else None
+    return RoadmTerms(
+        config=config,
+        loss=10 ** (config.path_loss_db(operation) / 10),
+        filtering_penalty=10 ** (config.filtering_penalty_db / 10),
+        equalize=config.equalize_output_power,
+        booster_nf=booster_nf_lin,
+        booster_base=nf_lin * _H_PLANCK,
+        blocked=frozenset(config.blocked_channels),
+    )
+
+
+def accumulate_service_snr(
+    hops: Iterable[HopPair],
+    *,
+    channel_idx: int,
+    launch_power_w: float,
+    frequency_hz: float,
+    symbol_rate_hz: float,
+    is_blocked: Callable[[RoadmTerms], bool],
+) -> float:
+    """沿服务自身路径累积噪声，给出单信道 SNR (dB)。
+
+    对应上游 ``QoTValidator._eval_service_snr`` 的语义：被阻断即 ``-inf``，
+    噪声为 0 时给 ``+inf``（正无穷 SNR），booster 项在信号功率为 0 时**仍然**计入。
+
+    Args:
+        hops: 逐跳的 ``(ROADM 常量, 噪声缓存)``。可以是惰性迭代器：遇到被阻断的
+            跳会立刻停止拉取，从而不触碰后面那些跳的噪声缓存写回。
+        channel_idx: 候选信道（遗留模式下即 ODE 节点下标）。
+        launch_power_w: 该业务的发射功率，作为信号功率起点 (W)。
+        frequency_hz: 该节点的中心频率 (Hz)，由调用方按自身栅格语义求值。
+        symbol_rate_hz: 该节点的符号率 (Hz)，同上。
+        is_blocked: 判定某一跳的该信道是否被阻断。由调用方提供，因为遗留与灵活
+            两种栅格的阻断语义不同（见模块文档）。
+
+    Returns
+    -------
+        float: SNR (dB)；被阻断为 ``-inf``，噪声为 0 为 ``+inf``。
+    """
+    total_spm = 0.0
+    total_xpm = 0.0
+    total_ase = 0.0
+    signal_power = launch_power_w
+    total_spans = 0
+
+    for roadm, cache in hops:
+        total_spm += cache.spm.item(channel_idx)
+        total_xpm += cache.xpm.item(channel_idx)
+        total_ase += cache.ase.item(channel_idx)
+        total_spans += cache.span_count
+
+        if is_blocked(roadm):
+            return float("-inf")
+        if roadm.equalize:
+            total_ase += roadm.booster_base * frequency_hz * symbol_rate_hz * (roadm.loss - 1.0)
+        else:
+            signal_power /= roadm.loss
+            total_spm /= roadm.loss
+            total_xpm /= roadm.loss
+            total_ase /= roadm.loss
+        total_spm *= roadm.filtering_penalty
+        total_xpm *= roadm.filtering_penalty
+        total_ase *= roadm.filtering_penalty
+
+    penalty = total_spans**0.05 if total_spans > 0 else 1.0
+    noise = total_spm * penalty + total_xpm + total_ase
+    if noise <= 0:
+        return float("inf")
+    return 10.0 * math.log10(signal_power / noise)
+
+
+def accumulate_path_channel_snr(
+    hops: Iterable[HopPair],
+    *,
+    channel_idx: int,
+    launch_power_w: float,
+    frequency_hz: float,
+    symbol_rate_hz: float,
+    is_blocked: Callable[[RoadmTerms], bool],
+) -> float:
+    """给出路径上**单个**信道上的 SNR (dB)，语义同 ``_build_path_snr_array``。
+
+    与 :func:`accumulate_service_snr` 的**两处故意差异**，都对应上游
+    ``_build_path_snr_array`` 的真实行为，不能互相顶替：
+
+    1. booster ASE 在信号功率为 0 时**不加**（上游 ``booster_ase[signal_power <= 0] = 0``）；
+    2. 被阻断时把 ``signal_power`` 清零并**继续**走完路径；
+    3. 噪声为 0 **或**信号功率非正时返回 ``-inf``（而非 ``+inf``）。
+
+    上游那个逐信道循环里没有任何跨信道的归约，每一步都是逐元素运算，因此本函数
+    在下标 ``channel_idx`` 上的取值与上游整条数组在该元素上**逐位相等**。
+    """
+    total_spm = 0.0
+    total_xpm = 0.0
+    total_ase = 0.0
+    signal_power = launch_power_w
+    total_spans = 0
+
+    for roadm, cache in hops:
+        total_spm += cache.spm.item(channel_idx)
+        total_xpm += cache.xpm.item(channel_idx)
+        total_ase += cache.ase.item(channel_idx)
+        total_spans += cache.span_count
+
+        if roadm.equalize:
+            if signal_power > 0:
+                total_ase += (
+                    roadm.booster_base * frequency_hz * symbol_rate_hz * (roadm.loss - 1.0)
+                )
+        else:
+            signal_power /= roadm.loss
+            total_spm /= roadm.loss
+            total_xpm /= roadm.loss
+            total_ase /= roadm.loss
+        total_spm *= roadm.filtering_penalty
+        total_xpm *= roadm.filtering_penalty
+        total_ase *= roadm.filtering_penalty
+        # 构造上不可达：候选信道一旦被任一跳阻断，`accumulate_service_snr` 已在
+        # 同一路径上返回 -inf，第 3 步门限随即否决，流程走不到这里。保留是为了与
+        # 上游 `_build_path_snr_array` 的同一行保持一字不差的对应关系。
+        if is_blocked(roadm):
+            signal_power = 0.0
+
+    penalty = total_spans**0.05 if total_spans > 0 else 1.0
+    noise = total_spm * penalty + total_xpm + total_ase
+    if noise <= 0 or signal_power <= 0:
+        return float("-inf")
+    return 10.0 * math.log10(signal_power / noise)
 
 
 class QoTValidator:
@@ -81,28 +303,23 @@ class QoTValidator:
     def _roadm_terms(self, roadm, is_last_hop: bool) -> tuple[float, float, float | None]:
         """返回该 ROADM 的 ``(损耗, 滤波惩罚, booster NF 线性值)``。
 
-        FU-4 裁决（详见 ``docs/fu4_qot_assembly_adjudication.md`` §1）：
+        FG-11 起这只是 :func:`network_nlo_eval.rwa.snr_terms.fold_roadm_terms` 的
+        薄封装——**折叠逻辑的唯一真源在物理仓的共享模块里**，RL 侧
+        ``ScanValidator`` 也调同一个函数对象。
 
-        1. **损耗按端口区分**：``path_loss_db("drop"|"express")``，而不是把
-           ``filtering_penalty_db`` 并进损耗。依据是本仓 ``physics/qot_checker.py``
-           的波形模型早就按端口取损耗，且 ``express_attenuation_db`` /
-           ``add_drop_loss_db`` 是两个**独立存在且有文档**的字段——合并写法会让
-           它们彻底失效。
-        2. **booster**：``equalize_output_power`` 为真时，该 ROADM 后面挂一台
-           EDFA 把每信道功率拉回入纤值，于是信号**不再**被 ``loss`` 衰减，
-           代价是引入 booster ASE ``NF * h * nu * Rs * (loss - 1)``。
-        3. **滤波惩罚**是**只作用于噪声**的独立乘子，依据是
-           ``ROADMConfig.filtering_penalty_db`` 的字段文档写的是
-           “统计模型中的级联滤波 SNR 代价”——它是噪声域量，不是光功率损耗。
+        **返回形状刻意保持原样（三元组），没有改成 ``RoadmTerms``。** 试过改成
+        dataclass，代价是 ``tests/test_fu4_assembly_union.py`` 里三条按三元组解包的
+        断言直接红——而那三条要守的物理结论（drop/express 损耗不同、滤波只乘噪声、
+        booster 只在 equalize 下存在）**一条都没有因为这次重构而失效**。为了让一个
+        私有辅助函数的签名去改既有测试的期望值，是本刀明令禁止的（G2 纪律），
+        所以这里保住签名，只把**折叠**收敛到一处。
 
-        ``booster_nf_lin`` 在 ``equalize_output_power`` 为假时返回 ``None``，
-        表示该拓扑下没有 booster。
+        FU-4 裁决（详见 ``docs/fu4_qot_assembly_adjudication.md`` §1）的三条——
+        损耗按端口区分、booster 恢复入纤功率、滤波惩罚只作用于噪声——
+        现在落在共享模块里，两仓不会再各写一份。
         """
-        operation = "drop" if is_last_hop else "express"
-        loss = 10 ** (roadm.path_loss_db(operation) / 10)
-        filtering_penalty = 10 ** (roadm.filtering_penalty_db / 10)
-        booster_nf_lin = 10 ** (roadm.booster_noise_figure_db / 10) if roadm.equalize_output_power else None
-        return loss, filtering_penalty, booster_nf_lin
+        terms = fold_roadm_terms(roadm, is_last_hop=is_last_hop)
+        return terms.loss, terms.filtering_penalty, terms.booster_nf
 
     def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:
         """返回该节点（连接）的 ``(中心频率 Hz, 符号率 Hz)``。
@@ -291,55 +508,48 @@ class QoTValidator:
         - 受影响链路从 temp_noise_cache 读取（含假设分配后的功率谱）。
         - 未受影响链路从 LinkState.noise_cache 读取（惰性缓存）。
         - 使用服务自身的 launch_power_w 作为信号功率。
+
+        FG-11 起本方法**只做取值**，递推交给共享的
+        :func:`network_nlo_eval.rwa.snr_terms.accumulate_service_snr`——那是这条
+        递推的唯一真源，RL 侧 ``ScanValidator`` 也调同一个函数对象。
+
+        这里保留的差异只有**取值来源**，不含任何算术：
+
+        * 噪声缓存的取法（``temp_noise_cache`` → ``LinkState`` → 惰性写回）；
+        * ROADM 配置按**路径终点节点** ``v`` 逐跳取，并按端口折叠；
+        * 阻断判定用本类的 ``_is_blocked``（逐连接模式下是**槽区间重叠**语义）；
+        * 频率/符号率取 ``gn_evaluator`` 的**逐节点**数组。
+
+        **惰性必须保留。** 下面传的是生成器而不是预先建好的列表：被阻断的跳会让
+        共享核立刻返回 ``-inf``，生成器随之停止拉取，于是该跳之后的链路**不会**被
+        写回 ``LinkState.noise_cache``。若改成先建列表，那些写回就会提前发生，
+        ``reopt/trial.py`` 依赖的缓存时机语义随之改变。
         """
-        total_spm = 0.0
-        total_xpm = 0.0
-        total_ase = 0.0
-        signal_power = launch_power_w
-        total_spans = 0
+        frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)
+        last_hop = len(path) - 2
 
-        for i in range(len(path) - 1):
-            u, v = path[i], path[i + 1]
-            link_key = _normalize(u, v)
-            link_state = network_state.get_link_state(u, v)
+        def _hops():
+            for i in range(len(path) - 1):
+                u, v = path[i], path[i + 1]
+                link_key = _normalize(u, v)
+                link_state = network_state.get_link_state(u, v)
+                cache = self._get_or_calc_noise_cache(
+                    link_key, link_state, temp_noise_cache, fixed_span_length_km
+                )
+                roadm = self.network_topology.get_roadm_config(v)
+                # 直接给共享核 `RoadmTerms`，而不是本类那个三元组封装——
+                # 标量路径走共享核，向量路径 `_build_path_snr_array` 走三元组封装，
+                # 两条路的折叠都出自同一个 `fold_roadm_terms`。
+                yield fold_roadm_terms(roadm, is_last_hop=i == last_hop), cache
 
-            cache = self._get_or_calc_noise_cache(
-                link_key,
-                link_state,
-                temp_noise_cache,
-                fixed_span_length_km,
-            )
-
-            total_spm += cache.spm[channel_idx]
-            total_xpm += cache.xpm[channel_idx]
-            total_ase += cache.ase[channel_idx]
-            total_spans += cache.span_count
-
-            roadm = self.network_topology.get_roadm_config(v)
-            if self._is_blocked(roadm, channel_idx):
-                return float("-inf")
-            # FU-4 并集装配：损耗按端口区分；booster 恢复入纤功率（则信号不再被
-            # 衰减，转而引入 booster ASE）；滤波惩罚作为只作用于噪声的独立乘子。
-            loss, filtering_penalty, booster_nf = self._roadm_terms(roadm, i == len(path) - 2)
-            if booster_nf is not None:
-                frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)
-                total_ase += booster_nf * _H_PLANCK * frequency_hz * symbol_rate_hz * (loss - 1.0)
-            else:
-                signal_power /= loss
-                total_spm /= loss
-                total_xpm /= loss
-                total_ase /= loss
-            total_spm *= filtering_penalty
-            total_xpm *= filtering_penalty
-            total_ase *= filtering_penalty
-
-        # SPM 相干累积惩罚
-        penalty = total_spans**0.05 if total_spans > 0 else 1.0
-        noise = total_spm * penalty + total_xpm + total_ase
-
-        if noise <= 0:
-            return float("inf")
-        return 10.0 * math.log10(signal_power / noise)
+        return accumulate_service_snr(
+            _hops(),
+            channel_idx=channel_idx,
+            launch_power_w=launch_power_w,
+            frequency_hz=frequency_hz,
+            symbol_rate_hz=symbol_rate_hz,
+            is_blocked=lambda terms: self._is_blocked(terms.config, channel_idx),
+        )
 
     def _collect_affected_services(
         self,
@@ -408,8 +618,8 @@ class QoTValidator:
             total_spans += cache.span_count
 
             roadm = self.network_topology.get_roadm_config(v)
-            # FU-4 并集装配，逐节点向量化；与 _eval_service_snr 的标量分支
-            # 同源（同一个 _roadm_terms），只是频率/符号率改成逐节点数组。
+            # FU-4 并集装配，逐节点向量化；与 _eval_service_snr 的标量分支同源
+            # （同一个 fold_roadm_terms），只是频率/符号率改成逐节点数组。
             loss, filtering_penalty, booster_nf = self._roadm_terms(roadm, i == len(path) - 2)
             if booster_nf is not None:
                 booster_ase = (
