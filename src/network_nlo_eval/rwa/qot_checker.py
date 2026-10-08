@@ -77,6 +77,16 @@ class RoadmTerms:
     """原始配置。**只为阻断判定保留**——灵活栅格下判定要回到配置上的槽集合。"""
     loss: float
     """``10 ** (path_loss_db(operation) / 10)``。"""
+    loss_db: float
+    """``path_loss_db(operation)`` —— :attr:`loss` 的 **dB 形式，同一次求值**。
+
+    给波形侧（``physics/qot_checker.py``）用：那里的物理 ROADM / EDFA 元件收的是 dB。
+    本字段**不是** ``10 * log10(loss)`` 的反算——那个反算在 IEEE-754 下**不保证逐位
+    还原**（FG-17 实测：合成配置网格 39.6%、随机 dB 5.57% 差 1 ulp，见
+    ``results/fg17_assembly_evidence.json``），那会让"收敛"变成一次静默的数值改动。
+    这里保留折叠时**同一次** ``path_loss_db`` 求值的 dB 结果，波形侧拿到的值因此与
+    它自己直接读配置**逐位相同**。
+    """
     filtering_penalty: float
     """``10 ** (filtering_penalty_db / 10)``。"""
     equalize: bool
@@ -91,6 +101,13 @@ class RoadmTerms:
     """
     booster_base: float
     """``10 ** (booster_noise_figure_db / 10) * h``（无 booster 时取按 NF 字段算出的值）。"""
+    booster_nf_db: float
+    """``config.booster_noise_figure_db`` —— :attr:`booster_nf` 的 **dB 形式，同一次求值**。
+
+    与 :attr:`loss_db` 同理，给收 dB 的波形侧元件用；不是 ``10 * log10(booster_nf)``
+    的反算（FG-17 实测该反算不保证逐位还原）。注意本字段**不随 ``equalize`` 门控**，
+    与 :attr:`booster_nf` 的 ``None`` 语义不同：是否建 booster 由 :attr:`equalize` 决定。
+    """
     blocked: frozenset[int]
     """遗留固定栅格下的静态阻断信道下标。"""
 
@@ -118,13 +135,18 @@ def fold_roadm_terms(config: ROADMConfig, *, is_last_hop: bool) -> RoadmTerms:
     operation = "drop" if is_last_hop else "express"
     nf_lin = 10 ** (config.booster_noise_figure_db / 10)
     booster_nf_lin = nf_lin if config.equalize_output_power else None
+    # 只求值一次，dB 与线性两个形式共用它——波形侧要 dB，统计侧要线性（见 RoadmTerms.loss_db）。
+    loss_db = config.path_loss_db(operation)
+    booster_nf_db = config.booster_noise_figure_db
     return RoadmTerms(
         config=config,
-        loss=10 ** (config.path_loss_db(operation) / 10),
+        loss=10 ** (loss_db / 10),
+        loss_db=loss_db,
         filtering_penalty=10 ** (config.filtering_penalty_db / 10),
         equalize=config.equalize_output_power,
         booster_nf=booster_nf_lin,
         booster_base=nf_lin * _H_PLANCK,
+        booster_nf_db=booster_nf_db,
         blocked=frozenset(config.blocked_channels),
     )
 

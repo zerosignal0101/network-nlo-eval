@@ -15,6 +15,7 @@ from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
 from network_nlo_eval.models.numba_kernels import _calc_beta2_from_d, _calc_beta3_from_s_d, _w_to_dbm
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
+from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
 
 if TYPE_CHECKING:
     from network_nlo_eval.network.topology import NetworkTopology
@@ -244,20 +245,23 @@ class PyNLOQoTEvaluator:
             if roadm is None:
                 continue
             allowed = [index for index in active_channels if not self._is_blocked(roadm, index)]
+            # ROADM 装配走 `rwa/` 的**同一份**折叠（FG-17 收敛）。此处原先自持一份装配：
+            # 自己判末跳、自己读 `path_loss_db`、自己读 `equalize_output_power` 与
+            # `booster_noise_figure_db`。现在三项都来自 `fold_roadm_terms`，
+            # 与统计侧 / RL 侧共用同一个函数对象、同一套端口语义。
+            terms = fold_roadm_terms(roadm, is_last_hop=hop_index == len(optical_path.fiber_configs) - 1)
             current = self.physical["ROADM"](
                 pass_channels=allowed,
                 passband_hz=roadm.passband_hz or self._default_passband_hz,
-                insertion_loss_db=roadm.path_loss_db(
-                    "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
-                ),
+                # `loss_db` 是折叠时同一次 `path_loss_db` 求值的 dB 形式，
+                # **不是** `10 * log10(loss)` 反算，故与原先直接读配置逐位相同。
+                insertion_loss_db=terms.loss_db,
                 filter_order=roadm.filter_order,
             ).forward(current)
-            if roadm.equalize_output_power:
+            if terms.equalize:
                 current = self.physical["EDFA"](
-                    gain_db=roadm.path_loss_db(
-                        "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
-                    ),
-                    nf_db=roadm.booster_noise_figure_db,
+                    gain_db=terms.loss_db,
+                    nf_db=terms.booster_nf_db,
                     seed=self.seed + hop_index + 1,
                 ).forward(current)
         return current
