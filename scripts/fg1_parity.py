@@ -145,6 +145,11 @@ def check(golden_path: Path, out_path: Path) -> int:
     }
 
     failures: list[str] = []
+    #: (B) 装配层的分歧**不是**失败项。编排方 FG-14 §0 裁定它是**出处**不变量，
+    #: 幅度被显式记录在 ``results/fg14_assembly_divergence.json``，并由
+    #: ``tests/test_fg14_assembly_provenance.py`` 钉住"不许悄悄扩大"。
+    #: 这里保留它是为了让 diff 里看得见分歧有多大，而不是把它从报告里抹掉。
+    assembly_divergences: list[str] = []
     for scenario in SCENARIOS:
         expected = golden["scenarios"].get(scenario.name)
         if expected is None:
@@ -183,12 +188,20 @@ def check(golden_path: Path, out_path: Path) -> int:
                 cmp = _compare(np.array(expected[key], dtype=float), np.array(pipeline[key], dtype=float))
                 pipe_checks[key] = cmp
                 if not cmp.get("bit_exact"):
-                    failures.append(f"{scenario.name}.pipeline.{key}: {cmp}")
+                    assembly_divergences.append(
+                        f"{scenario.name}.pipeline.{key}: max_abs_dev={cmp.get('max_abs_dev')!r} "
+                        f"max_rel_dev={cmp.get('max_rel_dev')!r}"
+                    )
             entry["pipeline_vs_reference"] = {"available": True, "checks": pipe_checks}
         report["scenarios"][scenario.name] = entry
 
     report["failures"] = failures
     report["parity_ok"] = not failures
+    report["assembly_divergences"] = assembly_divergences
+    report["assembly_divergence_note"] = (
+        "命题 (B)：装配层与 origin/main 的分歧，被编排方 FG-14 §0 授权，"
+        "不计入 parity_ok；权威读数见 results/fg14_assembly_divergence.json。"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -196,6 +209,10 @@ def check(golden_path: Path, out_path: Path) -> int:
     print(f"parity_ok = {report['parity_ok']}  failures = {len(failures)}")
     for failure in failures[:20]:
         print("  FAIL", failure)
+    if assembly_divergences:
+        print(f"\n装配层分歧（命题 B，已授权，不计入 parity_ok）= {len(assembly_divergences)} 条：")
+        for item in assembly_divergences[:20]:
+            print("  DIVERGE", item)
     return 0 if report["parity_ok"] else 1
 
 

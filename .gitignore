@@ -231,3 +231,14 @@ sg_execution_times.rst
 # by `scripts/fg13_impact_probe.py`.
 !/results/fg13_roadm_probe.json
 !/results/fg13_impact_probe.json
+
+# FG-14 provenance-divergence artifacts, same rationale as FG-13 above: (B) says
+# the assembly follows the in-repo authoritative definition and that its
+# divergence from origin/main is authorized, so the magnitude, mechanism and
+# authorization source must be recomputable from a tracked product rather than
+# prose. `fg14_assembly_divergence.json` also carries the "divergence must not
+# silently grow" ceiling that tests/test_fg14_assembly_provenance.py pins;
+# `fg14_pre_fix_baseline.json` is the frozen pre-fix reading that Gate 2's
+# per-scenario dBSNR table is measured against.
+!/results/fg14_assembly_divergence.json
+!/results/fg14_pre_fix_baseline.json

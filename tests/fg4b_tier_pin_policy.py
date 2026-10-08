@@ -76,6 +76,7 @@ This is a recorded, deliberate contract relaxation, not a silent bypass.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -83,7 +84,6 @@ from pathlib import Path
 #: the *only* change authorised in each: pinning ``ode_accel="off"``.
 AUTHORIZED_TIER_PIN_FILES: tuple[str, ...] = (
     "fg1_scenarios.py",  # builds the F1-1 low-level reference evaluator
-    "test_fg1_physics_parity.py",  # F1-2: the evaluate_path pipeline
     "test_fg2_flexible_grid.py",  # F2-3: the flexible-grid span kernel
 )
 
@@ -93,8 +93,34 @@ AUTHORIZED_TIER_PIN_FILES: tuple[str, ...] = (
 #: be inspecting its own rewrite. It is covered by token preservation instead.
 STRICT_TIER_PIN_FILES: tuple[str, ...] = (
     "fg1_scenarios.py",
+)
+
+#: ---------------------------------------------------------------------------
+#: FG-14（编排方 brief §0）的授权：把命题 (B) 从 (A) 的文件里**迁出**。
+#:
+#: FG-1 的 ``test_fg1_physics_parity.py`` 原本把两件事揉进同一句话：(A) 内核逐位、
+#: (B) 装配逐位复现 main。编排方裁定 (B) 是**出处**不变量而非物理不变量，且
+#: 授权把两者拆开、装配改为遵循仓内权威定义 ``ROADMConfig.path_loss_db()``。
+#:
+#: 这是一次**有书面裁决**的授权，与 §1.2 的 tier pin 同性质 —— 所以它被记在
+#: 这里，而不是靠删掉守卫或放宽期望值来"变绿"。授权范围被 :func:`fg14_relocation_violations`
+#: 夹住：**只有** :data:`FG14_RELOCATED_TESTS` 里那一条可以离开该文件。
+#: ---------------------------------------------------------------------------
+
+#: 本刀授权编辑的既有测试文件（每个文件的授权内容见上面的说明）。
+FG14_AUTHORIZED_FILES: tuple[str, ...] = (
     "test_fg1_physics_parity.py",
 )
+
+#: 授权从 ``tests/test_fg1_physics_parity.py`` 迁走的**测试函数名**，逐条列明。
+#: 迁走的命题 (B) 在 ``tests/test_fg14_assembly_provenance.py`` 里有对位守卫。
+FG14_RELOCATED_TESTS: tuple[str, ...] = (
+    "test_pipeline_matches_origin_main",
+)
+
+#: 命题 (B) 迁往的文件；:func:`fg14_relocation_violations` 会检查它存在，
+#: 以免"迁出"变成"删除"。
+FG14_RELOCATION_TARGET = "test_fg14_assembly_provenance.py"
 
 #: The G2 guard functions themselves. §1.2 adjudicated the *policy* they encode,
 #: so these files are authorised to change; :func:`guard_removed_violations`
@@ -181,8 +207,11 @@ def modified_test_files(repo_root: Path, baseline_rev: str) -> list[str]:
 
 
 def unauthorized_test_edits(repo_root: Path, baseline_rev: str) -> list[str]:
-    """Names of modified pre-existing test files that §1.2 did not authorise."""
-    authorized = {f"tests/{name}" for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES}
+    """Names of modified pre-existing test files that no adjudication authorised."""
+    authorized = {
+        f"tests/{name}"
+        for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES + FG14_AUTHORIZED_FILES
+    }
     return [path for path in modified_test_files(repo_root, baseline_rev) if path not in authorized]
 
 
@@ -310,6 +339,50 @@ def guard_removed_violations(repo_root: Path) -> list[str]:
     return violations
 
 
+def _test_function_names(source: str) -> set[str]:
+    """Top-level ``def test_*`` names in a test module."""
+    return set(re.findall(r"^def (test_\w+)", source, flags=re.MULTILINE))
+
+
+def fg14_relocation_violations(repo_root: Path, baseline_rev: str) -> list[str]:
+    """The FG-14 authorisation's floor: **only** proposition (B) may leave.
+
+    FG-14 is allowed to relocate the ``evaluate_path`` pipeline assertion out of
+    ``test_fg1_physics_parity.py``, because the orchestrator adjudicated that
+    proposition as a *provenance* invariant rather than a physics one. That is a
+    narrow authorisation, so it is bounded on both sides:
+
+    * every other test in the file must **still be there** — proposition (A), the
+      kernel bit-exactness checks, cannot be silently dropped along with it;
+    * the relocation target must **exist**, so "relocating" cannot degenerate
+      into "deleting".
+
+    A file that never existed at the baseline yields no violations rather than a
+    vacuous pass-by-comparison; the existence checks above are what cover that.
+    """
+    violations: list[str] = []
+    for name in FG14_AUTHORIZED_FILES:
+        path = f"tests/{name}"
+        reference = _content_baseline(repo_root, baseline_rev, path)
+        current_path = repo_root / path
+        if reference is None or not current_path.exists():  # pragma: no cover
+            continue
+        before = _test_function_names(_git(repo_root, "show", f"{reference}:{path}") or "")
+        after = _test_function_names(current_path.read_text(encoding="utf-8"))
+        lost = before - after
+        unexpected = lost - set(FG14_RELOCATED_TESTS)
+        if unexpected:
+            violations.append(
+                f"{path}: tests removed beyond the FG-14 authorisation {FG14_RELOCATED_TESTS}: "
+                f"{sorted(unexpected)}"
+            )
+        if not (repo_root / "tests" / FG14_RELOCATION_TARGET).exists():
+            violations.append(
+                f"{path}: proposition (B) was relocated but tests/{FG14_RELOCATION_TARGET} is missing"
+            )
+    return violations
+
+
 def collect_violations(repo_root: Path, baseline_rev: str) -> list[str]:
     """Every G2 violation for a given baseline revision, in one list.
 
@@ -319,6 +392,7 @@ def collect_violations(repo_root: Path, baseline_rev: str) -> list[str]:
         repo_root, baseline_rev
     )]
     violations += guard_removed_violations(repo_root)
+    violations += fg14_relocation_violations(repo_root, baseline_rev)
     # Token preservation must cover the policy-guard files as well, not just the
     # three parity files. The guard files are allowlist-authorised (the policy they
     # encode was adjudicated), so without this they would be the one place an

@@ -1,22 +1,26 @@
-"""FG-1 physics parity regression test.
+"""FG-1 physics parity regression test — **命题 (A)：内核逐位**。
 
-Guards the reconciliation result: ``wp/fg-reconcile`` must reproduce
-``origin/main``'s ODE physics *exactly* while carrying the path-level
-pipeline from ``ecz-dev``.
+本文件现在**只**守护一件事：``models/numba_kernels.py`` 的 ODE/噪声内核与
+``origin/main`` 逐位一致。容差为零，而且必须是零：内核是逐字节相同的，
+任何偏差都是回归而不是浮点噪声。
 
-The tolerance is zero. That is deliberate: ``models/numba_kernels.py`` is
-byte-identical to ``origin/main`` and the ported pipeline only orchestrates
-the same low-level ``_calc_span_noise_and_power`` calls, so any deviation is
-a regression rather than floating-point noise.
+FG-13 裁决 `evaluate_path` 的 ROADM 装配是缺陷（见
+``docs/fg13_evaluate_path_roadm.md``），但修复它会动到 ``roadm_hoop`` 的
+装配层输出。编排方（FG-14 brief §0）裁定那属于**出处**不变量而非物理不变量，
+于是原文件里揉在一起的两句话被拆开：
 
-Two properties are asserted per scenario:
+* **(A) 内核逐位** —— 就是本文件。**一格不动。**
+  由 ``run_reference`` 走 ``_calc_span_noise_and_power`` 逐位复现 main 金标准。
+* **(B) 装配按裁决** —— 移到 ``tests/test_fg14_assembly_provenance.py``。
+  装配遵循仓内权威定义 ``ROADMConfig.path_loss_db()``；它与 ``origin/main``
+  的**分歧被显式记录**在 ``results/fg14_assembly_divergence.json``，
+  并由一条"分歧不许悄悄扩大"的钉子看守。
 
-1. ``run_reference`` on this tree equals the recorded golden values from
-   ``origin/main`` -- the kernel was not altered.
-2. ``MultiBandISRSGN.evaluate_path`` equals the same reference -- the new
-   pipeline is physics-neutral and does not double-count or reorder spans.
+**关键**：``results/fg1_golden_main.json`` 声明 ``source_branch: "origin/main"``。
+本刀**不在其中写入任何 FG 树的数值** —— 那是伪造出处。分歧只记录在**另一个**
+文件里，由 (B) 那格负责。
 
-Regenerate the golden file from a pristine main checkout with::
+从 main 检出重新生成金标准（唯一的合法路径）::
 
     PYTHONPATH=<main-tree>/src python scripts/fg1_parity.py \\
         --emit-golden results/fg1_golden_main.json
@@ -114,32 +118,6 @@ def test_lowlevel_matches_origin_main(golden: dict, scenario_index: int) -> None
                 np.asarray(exp_span[key], dtype=float),
                 np.asarray(act_span[key], dtype=float),
             ), f"{scenario.name} span {exp_span['hop']}/{exp_span['span']} {key} deviates"
-
-
-@pytest.mark.parametrize("scenario_index", range(len(SCENARIOS)))
-def test_pipeline_matches_origin_main(golden: dict, scenario_index: int) -> None:
-    """evaluate_path reproduces origin/main bit for bit.
-
-    This is the load-bearing assertion: it shows the newly ported pipeline is
-    physics-neutral rather than a re-implementation.
-    """
-    scenario = SCENARIOS[scenario_index]
-    expected = golden["scenarios"][scenario.name]
-    result = _pipeline_result(scenario)
-
-    for key, actual in (
-        ("signal_power_w", result.signal_power_w),
-        ("spm_w", result.spm_noise_w),
-        ("xpm_w", result.xpm_noise_w),
-        ("ase_w", result.ase_noise_w),
-        ("snr_db", result.snr_db),
-    ):
-        assert np.array_equal(
-            np.asarray(expected[key], dtype=float),
-            np.asarray(actual, dtype=float),
-        ), f"{scenario.name}.evaluate_path().{key} deviates from origin/main"
-
-    assert result.span_count == len(expected["span_curve"])
 
 
 def test_scenarios_are_non_degenerate() -> None:
