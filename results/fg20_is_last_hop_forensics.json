@@ -1,0 +1,102 @@
+{
+  "question": "逐跨段层固定 is_last_hop=False(express) 在本仓可达面上是否给出与权威口径不同的读数",
+  "structural": {
+    "callsites": [
+      "src/network_nlo_eval/models/isrs_gn.py:750  _calc_span_noise_and_power  n_pos=3  keywords=['n_effective_spans']",
+      "src/network_nlo_eval/rwa/link_noise.py:72  _calc_span_noise_and_power  n_pos=4  keywords=['n_effective_spans']",
+      "src/network_nlo_eval/rwa/link_noise.py:85  _calc_span_noise_and_power  n_pos=3  keywords=['n_effective_spans']"
+    ],
+    "roadm_config_references": [
+      "src/network_nlo_eval/__main__.py:43: default_roadm_config=ROADMConfig(),",
+      "src/network_nlo_eval/models/isrs_gn.py:524: if roadm_config:",
+      "src/network_nlo_eval/models/isrs_gn.py:619: if roadm_config is not None:"
+    ],
+    "python": "/home/zsig/miniconda3/envs/rl/bin/python"
+  },
+  "constructive": {
+    "rows": [
+      {
+        "config": "defaults",
+        "add_drop_loss_db": 1.0,
+        "express_attenuation_db": 0.0,
+        "equalize": true,
+        "loss_db_express": 5.0,
+        "loss_db_drop": 6.0,
+        "loss_db_delta": 1.0,
+        "loss_ratio_drop_over_express": 1.258925411794167,
+        "snr_express_db_measured": 15.914968445103804,
+        "snr_drop_db_if_last_hop": 15.840956573073953,
+        "snr_delta_db_if_last_hop": -0.07401187202985149,
+        "measured_matches_express_fold": true
+      },
+      {
+        "config": "express_attenuation_2db",
+        "add_drop_loss_db": 1.0,
+        "express_attenuation_db": 2.0,
+        "equalize": true,
+        "loss_db_express": 7.0,
+        "loss_db_drop": 6.0,
+        "loss_db_delta": -1.0,
+        "loss_ratio_drop_over_express": 0.7943282347242816,
+        "snr_express_db_measured": 15.74953952797109,
+        "snr_drop_db_if_last_hop": 15.840956573073953,
+        "snr_delta_db_if_last_hop": 0.09141704510286353,
+        "measured_matches_express_fold": true
+      },
+      {
+        "config": "add_drop_loss_5db",
+        "add_drop_loss_db": 5.0,
+        "express_attenuation_db": 0.0,
+        "equalize": true,
+        "loss_db_express": 5.0,
+        "loss_db_drop": 10.0,
+        "loss_db_delta": 5.0,
+        "loss_ratio_drop_over_express": 3.162277660168379,
+        "snr_express_db_measured": 15.914968445103804,
+        "snr_drop_db_if_last_hop": 15.332471451995216,
+        "snr_delta_db_if_last_hop": -0.5824969931085882,
+        "measured_matches_express_fold": true
+      },
+      {
+        "config": "equalize_off",
+        "add_drop_loss_db": 1.0,
+        "express_attenuation_db": 0.0,
+        "equalize": false,
+        "loss_db_express": 5.0,
+        "loss_db_drop": 6.0,
+        "loss_db_delta": 1.0,
+        "loss_ratio_drop_over_express": 1.258925411794167,
+        "snr_express_db_measured": 16.116708427944815,
+        "snr_drop_db_if_last_hop": 16.116708427944815,
+        "snr_delta_db_if_last_hop": 0.0,
+        "measured_matches_express_fold": true
+      },
+      {
+        "config": "equalize_off_add_drop_5db",
+        "add_drop_loss_db": 5.0,
+        "express_attenuation_db": 0.0,
+        "equalize": false,
+        "loss_db_express": 5.0,
+        "loss_db_drop": 10.0,
+        "loss_db_delta": 5.0,
+        "loss_ratio_drop_over_express": 3.162277660168379,
+        "snr_express_db_measured": 16.116708427944815,
+        "snr_drop_db_if_last_hop": 16.11670842794482,
+        "snr_delta_db_if_last_hop": 3.552713678800501e-15,
+        "measured_matches_express_fold": true
+      }
+    ],
+    "n_configs": 5,
+    "n_with_nonzero_snr_delta": 3,
+    "all_measured_match_express_fold": true,
+    "delta_rule_holds": true,
+    "delta_rule": "loss_db_drop - loss_db_express == add_drop_loss_db - express_attenuation_db",
+    "default_snr_delta_db": -0.07401187202985149
+  },
+  "conclusion": {
+    "reachable_now": false,
+    "reachable_now_evidence": "本仓逐跨段入口的两个 roadm_config 施加点，唯一活调用方是 evaluate_path，而它 **不传** roadm_config（见 structural.callsites 的 keywords 列）",
+    "delta_if_connected_db": -0.07401187202985149,
+    "delta_mechanism": "只来自 add_drop_loss_db（默认 1.0 dB），与 express_attenuation_db 无关"
+  }
+}

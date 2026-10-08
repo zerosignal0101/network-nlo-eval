@@ -242,3 +242,15 @@ sg_execution_times.rst
 # per-scenario dBSNR table is measured against.
 !/results/fg14_assembly_divergence.json
 !/results/fg14_pre_fix_baseline.json
+
+# FG-20 artifacts. Same rationale as FG-13/FG-14 above: the adjudication in
+# `physics/qot_checker.py` and the per-hop entry points' behavioral contract
+# both rest on measurements that must be recomputable from a tracked product
+# rather than from prose in docs/. `fg20_mutation_test.json` is Gate 3 — it is
+# the evidence that the new behavior tests actually go RED (and that the
+# FG-18 AST guard does NOT), so it cannot be left untracked.
+!/results/fg20_mutation_test.json
+!/results/fg20_is_last_hop_forensics.json
+!/results/fg20_decision_compare.json
+!/results/fg20_rl_decision_trace.json
+!/results/fg20_rl_decision_trace_baseline.json

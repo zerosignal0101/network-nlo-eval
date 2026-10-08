@@ -13,12 +13,56 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
 from network_nlo_eval.models.numba_kernels import _calc_beta2_from_d, _calc_beta3_from_s_d, _w_to_dbm
+from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
 from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
 
 if TYPE_CHECKING:
     from network_nlo_eval.network.topology import NetworkTopology
+
+
+def _active_channel_mask(
+    launch_power_profile_w: NDArrayFloat,
+    roadm_configs: Sequence[ROADMConfig | None] | None,
+) -> NDArrayBool:
+    """由各跳 ROADM 的静态阻断声明给出逐信道活动掩码。
+
+    ``None`` 成员的语义（FG-20 §1 裁决）
+    ------------------------------------
+    列表里的 ``None`` 成员**视为"无 ROADM"并跳过**，与字段级
+    ``roadm_configs or []`` 的兜底**同义**。因此 ``[cfg, None]`` 与 ``[cfg]``
+    给出逐位相同的掩码，``[None, None]`` 与 ``[]`` 逐位相同。
+
+    这是 FG-18 取证（``docs/fg18_assembly_convergence.md`` §6）记录的崩溃裁决：
+    原实现直接写 ``roadm.blocked_channels``，``roadm_configs`` 含 ``None`` 成员时
+    抛 ``AttributeError: 'NoneType' object has no attribute 'blocked_channels'``。
+
+    ⚠️ **残余风险（本裁决明确接受的代价，不许淡化）**
+    ----------------------------------------------------
+    这样处理会**掩盖调用方的畸形输入**：``[None]`` 这样的列表本应被当成"这跳没有
+    ROADM 声明——是漏填还是笔误？"报出来，现在被**静默**当成"确实没有 ROADM"。
+    换句话说，本函数把"**不知道**有没有 ROADM"和"**确定没有** ROADM"折叠成同一件事，
+    而这两者在 SNR 语义上并不等价（少一段 WSS 滤波 + 插入损耗）。取值仍可能正确，
+    但**依据被丢掉了**，且没有任何日志或告警提示发生过这次折叠。
+
+    之所以仍选"跳过"而不是"报错"：生产路径
+    （``NetworkTopology.build_optical_path`` → ``get_roadm_config``）结构上只会产出
+    ``ROADMConfig``，含 ``None`` 的列表**只可能**来自仓外的畸形构造；为它把报错
+    抛进 ``evaluate_path`` 的正常控制流，会把一个潜伏的输入问题变成生产故障。
+    若将来要区分"漏填"与"确实没有"，正确做法是**在调用方入口校验**并给出明确的
+    字段级错误，而不是在这里猜——本函数不做猜测。
+
+    另注：``propagate_path`` 早就用 ``if roadm is None: continue`` 处理同样的成员
+    （它 ``or`` 之后仍可能含 ``None``），所以本函数的口径与它**一致**；FG-18 记录
+    的崩溃只发生在活动掩码这一处。
+    """
+    active = np.asarray(launch_power_profile_w) > 0
+    for roadm in roadm_configs or []:
+        if roadm is None:
+            continue
+        active[[index for index in roadm.blocked_channels if index < len(active)]] = False
+    return active
 
 
 def _load_physical_layer() -> dict[str, Any]:
@@ -315,9 +359,9 @@ class PyNLOQoTEvaluator:
         """生成波形并沿给定拓扑路径完成端到端 QoT 评估."""
         signal, bits = self.create_wdm_signal(launch_power_profile_w, num_symbols=num_symbols)
         received = self.propagate_path(signal, optical_path)
-        active = np.asarray(launch_power_profile_w) > 0
-        for roadm in optical_path.roadm_configs or []:
-            active[[index for index in roadm.blocked_channels if index < len(active)]] = False
+        # FG-20：活动掩码的口径（含 ``None`` 成员的处理与残余风险）集中在
+        # ``_active_channel_mask``，本方法不自己再抄一份阻断逻辑。
+        active = _active_channel_mask(launch_power_profile_w, optical_path.roadm_configs)
         return received, self._receiver_metrics(received, bits, optical_path, active)
 
     def evaluate_topology_path(
