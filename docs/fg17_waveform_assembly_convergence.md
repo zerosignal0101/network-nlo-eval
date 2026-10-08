@@ -271,7 +271,7 @@ layer1_all_within_null_floor: false   （6 个配置里 1 个超出当次 null �
 | 门 | 项 | 读数 |
 |---|---|---|
 | 门 1 | 物理仓全量 | `404 passed, 1 skipped in 38.86s`（基线 `25ed30d` 同口径，**0 新增失败**） |
-| 门 1 | RL 仓全量（分片 8 片） | 见 §6.1 |
+| 门 1 | RL 仓全量（分片 8 片） | `763 passed, 0 failed, 2 skipped`（基线 `21ee113` 同口径，**0 新增失败**；逐片读数见 §6.1） |
 | 门 2a | `fg4a_capture_golden --check` | `31/31 cases bit-identical, worst relative deviation 0.000e+00 (0 differing elements in total)` |
 | 门 2b | `fu4_capture_golden --check` | `OK: fidelity golden reproduces bit-exactly` |
 | 门 3 | grep 单一定义 | `add_drop_loss_db` / `express_attenuation_db` 在 `elements.py` 外**零命中**；`physics/qot_checker.py` 对 `path_loss_db` / `equalize_output_power` / `booster_noise_figure_db` **零直接读取**（见 §4） |
@@ -281,13 +281,31 @@ layer1_all_within_null_floor: false   （6 个配置里 1 个超出当次 null �
 
 ### 6.1 RL 仓全量（门 1 另一半）
 
-RL 全量按文件切成 8 片、每片独立进程（无 xdist / timeout，且不许新增依赖）。
-读数见 `wt/fg-rt-cv` 的 `scripts/fg17_rl_full.sh` 与 `/tmp/fg17_rl/shard_*.log`
-（每片自带 `shard_rc=`，据此区分"这片死了"与"还在跑"）。
+RL 全量按 `tests/test_*.py` 排序后切 8 片、每片独立进程（无 xdist / timeout，且不许新增依赖）。
+机器 20 核、loadavg 约 1.5-5.3，故最多 4 片并行（未触碰同机其它任务）。
+**合计 `763 passed / 0 failed / 2 skipped`，与基线 `21ee113` 逐项一致，0 新增失败。**
+
+| 分片 | rc | 读数 | 用时 |
+|---|---|---|---|
+| shard_00 | 0 | 85 passed, 1 skipped | 587 s |
+| shard_01 | 0 | 74 passed | 3317 s |
+| shard_02 | 0 | 122 passed | 9088 s |
+| shard_03 | 0 | 118 passed | 2344 s（取自并行目录 `/tmp/fg17_rl_b`） |
+| shard_04 | 0 | 98 passed | 9382 s |
+| shard_05 | 0 | 118 passed, 1 skipped | 1557 s |
+| shard_06 | 0 | 106 passed | 4855 s |
+| shard_07 | 0 | 42 passed | 3473 s |
+| **合计** | 全 0 | **763 passed, 2 skipped, 0 failed** | — |
+
+> 注：分片 3 被跑了两次（`scripts/fg17_rl_full.sh` 的父分组在 shard_02 结束后自动接续，
+> 而我为赶时间另行起了一个同分片进程）。**权威读数取自 `/tmp/fg17_rl_b/shard_03.log`
+> 的那次完整运行**（`shard_rc=0`，118 passed），主目录里那次重复运行不参与计数。
+> 两片每片都写自己的 `shard_rc=`，故能区分"这片死了"与"还在跑"——本刀 8 片全部 `rc=0`，
+> 没有出现 brief 警告的"无汇总行、日志停在进度点"的静默死亡。
 
 **RL 源码本刀一行未改**（只新增 `scripts/`），RL 侧的物理消费点
-（`scan.py:55-58` import 的 `fold_roadm_terms` / `accumulate_*_snr`）签名与语义均未变，
-故 RL 侧只可能通过门 4 的决策序列体现——已逐项相同。
+（`scan.py:55-58` import 的 `fold_roadm_terms` / `accumulate_*_snr`）只读属性、
+不经 `asdict` 序列化，新增字段对它零影响。RL 侧的行为体现已由门 4 逐项验证。
 
 ---
 
