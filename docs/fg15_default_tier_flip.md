@@ -384,3 +384,71 @@ PYTHONPATH=$RT/src:$TAB/src $PY -c 'import multiband_optical_rl as r; print(r.__
 | §2 配置面读回 | `cd $RT && PYTHONPATH=$RT/src:$TAB/src $PY -m pytest tests/test_fg15_raman_tier_surface.py -v` |
 | §5 档位计时 A/B | `cd $TAB && PYTHONPATH=$TAB/src $PY scripts/fg15_tier_speed_ab.py --out results/fg15_tier_speed_ab.json` |
 | §3 RL 决策基线重钉 | `cd $RT && PYTHONPATH=$RT/src:$TAB/src $PY -m tools.gen_env_channel_baseline` |
+
+## 8. 未闭合项（**显式列表**，不拿别的数字顶替）
+
+诚实优先：下面每一条都是本刀**没有测到**或**没有做完**的。宁可留白，
+不用"某档位的数字"顶替"未跑的档位"。
+
+### 8.1 RL 仓全量套件（门 2）—— 未跑完 / 基线未复测
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 门 2 全量复测 | **未跑完** | 本机同时有用户的另一条线在跑（实测 loadavg 7–15，另有约 19 个非本刀 python 进程）。无 pytest-xdist，且 brief 禁止新增依赖，故只能手工分片并行。串行单跑实测约 2 小时/次，而本刀需要**前后两次**，超出本 WP 预算。 |
+| 门 2 基线 757 passed / 0 failed / 2 skipped（759 collected） | **沿用，非本刀复测** | 该读数来自 FG-11 提交 `178d201`。本 WP **没有**独立复现它。 |
+| 分片口径 | **不是**规范口径 | 本 WP 的分片（8 worker、按测试文件轮转）只用于给出**同口径的前后对照**；规范口径是串行全量。编排方应重跑 `pytest -q` 复核。 |
+
+**本刀实际测到的 RL 范围**（可复算，前后同口径）：
+
+| 范围 | 换底前 | 换底后（重钉前） | 换底后（重钉后） |
+|---|---|---|---|
+| 10 个数值/决策测试文件 | 163 passed / 1 skipped / 0 failed（773 s） | 161 passed / **2 failed** / 1 skipped（817 s） | 同 10 文件 + 配置面测试 = **22 passed**（仅重钉那 2 条守卫 + 6 条新测试所在文件） |
+| 阶段 1 中立性（test_env / test_modulation / test_bands） | — | 40 passed / 1 skipped | — |
+
+### 8.2 分叉的 SNR 层因果 —— 未测量
+
+§3.4 给的是**决策层**分叉（9 个 step 的选道改变 + 分桶总数不变）。
+**没有**给出分叉 step 上候选信道的**逐信道 SNR 新旧对照**。
+
+原因：FG-7 的 `fg7_divergence_snr_ab.json` 用的是当时的私有接口
+（`_decision_context` / 候选枚举的内部结构），本刀没有等价物；重新搭一套
+SNR 探针超出本刀范围。已在 `evidence/fg15_tier_rebaseline.json` 的
+`unmeasured` 字段里**显式**标出，而不是留白让人误以为测过。
+
+**谁能补**：需要 env 层暴露一个"给定 step 返回各候选信道 SNR"的只读接口。
+建议作为**下一刀**的独立授权（会改 `env.py` 公共面，不属本刀授权范围）。
+
+### 8.3 S+C+L+U 端到端的保真度 —— 未重测
+
+本刀换底的**动机**来自 FG-U1 在 S/C 段的 −8.260 dB 保真误差。换底之后
+**真实改善了多少**，本刀**没有**重测 FG-U1 的证据脚本，也没有重跑
+`results/fg_u1_raman.json` / `fg_u2_scu.json`。
+
+理由：FG-U1 的证据脚本是**按档位逐个**跑的，它比较的是 legacy vs tabular 两条
+曲线（那正是它存在的意义），而本刀的判据是"默认档是什么"——两者不是同一个
+问题。换底不改变 FG-U1 的结论，只改变生产默认指向哪条。
+**建议**：由编排方安排一次独立的 FU-3 验收跑，重测 S+C+L+U 的保真误差曲线。
+
+### 8.4 其它未动但**可能**受影响的既有结果
+
+以下产物记录的是旧物理下的数值，本刀**没有**重跑它们（它们不是默认档的
+直接消费者，但用的是同一套物理）：
+
+- `results/fg1_physics_parity.json` —— 仍对 origin/main 逐位（钉 legacy，未动）。
+- `results/fg_u1_raman.json`、`results/fg_u2_scu.json` —— 见 8.3。
+- `results/fg13_roadm_probe.json`、`results/fg13_impact_probe.json` —— 探针已钉
+  legacy（见 §3.1 机制 A），故 `--check`/复现测试仍绿，但报告里的数值是
+  legacy 谱下的读数。
+- RL 仓 `results/` 下大量历史 `stage4_*` / `stage6_*` 产物 —— 这些是**实验记录**，
+  记录它们当时跑的物理即可，不应随换底重跑。
+
+### 8.5 本刀**没有**做的事（brief §6 的禁令，逐条确认）
+
+- **没有**改 ODE 内核 / `_calc_exact_power_profile_ode`。
+- **没有**动 `rwa/qot_checker.py` 的并集口径、**没有**动 FG-14 已裁定的
+  `evaluate_path` 端口化（FG-14 的守卫与 provenance.repins[] 出处链均仍成立）。
+- **没有**推 `origin`；**没有**改写 `origin/main` / `origin/ecz-dev`。
+- **没有**新增任何依赖（因此门 2 只能用分片而非 xdist，见 8.1）。
+- **没有**为了让套件变绿而放宽断言：门 1 是从 48 failed 一条条归因到 0 failed
+  的，没有一条断言被改松；唯一移动的既有期望值是 §3.1 机制 B 的那一处，且给了机制。
+- **没有**把新默认的数值写进任何声称 `source_branch: origin/main` 的文件。
