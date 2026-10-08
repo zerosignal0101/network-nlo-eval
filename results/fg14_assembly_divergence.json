@@ -167,52 +167,52 @@
     "roadm_hoop": {
       "outputs": {
         "ase_noise_w": {
-          "authorized_max_abs_dev": 0.0,
-          "authorized_max_rel_dev": 0.0,
-          "bit_exact": true,
+          "authorized_max_abs_dev": 1.3003685067638058e-07,
+          "authorized_max_rel_dev": 3.587236728846461,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 1.3003685067638058e-07,
+          "max_rel_dev": 3.587236728846461,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "signal_power_w": {
-          "authorized_max_abs_dev": 0.0,
-          "authorized_max_rel_dev": 0.0,
-          "bit_exact": true,
+          "authorized_max_abs_dev": 8.018698524237147e-06,
+          "authorized_max_rel_dev": 2.3113112148259116,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 8.018698524237147e-06,
+          "max_rel_dev": 2.3113112148259116,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "snr_db": {
-          "authorized_max_abs_dev": 0.0,
-          "authorized_max_rel_dev": 0.0,
-          "bit_exact": true,
+          "authorized_max_abs_dev": 0.9788093176398398,
+          "authorized_max_rel_dev": 0.055388623625377616,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 0.9788093176398398,
+          "max_rel_dev": 0.055388623625377616,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "spm_noise_w": {
-          "authorized_max_abs_dev": 0.0,
-          "authorized_max_rel_dev": 0.0,
-          "bit_exact": true,
+          "authorized_max_abs_dev": 2.540872026273584e-08,
+          "authorized_max_rel_dev": 2.4673685045253175,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 2.540872026273584e-08,
+          "max_rel_dev": 2.4673685045253175,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "xpm_noise_w": {
-          "authorized_max_abs_dev": 0.0,
-          "authorized_max_rel_dev": 0.0,
-          "bit_exact": true,
+          "authorized_max_abs_dev": 5.059477916401197e-08,
+          "authorized_max_rel_dev": 2.4673685045253175,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 5.059477916401197e-08,
+          "max_rel_dev": 2.4673685045253175,
           "n_points": 12,
           "non_finite_mismatch": 0
         }
@@ -349,52 +349,52 @@
       },
       "fg1/roadm_hoop": {
         "ase_noise_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 1.3003685067638058e-07,
+          "max_rel_dev": 3.587236728846461,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "signal_power_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 8.018698524237147e-06,
+          "max_rel_dev": 2.3113112148259116,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "snr_db": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 0.9788093176398398,
+          "max_rel_dev": 0.055388623625377616,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "spm_noise_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 2.540872026273584e-08,
+          "max_rel_dev": 2.4673685045253175,
           "n_points": 12,
           "non_finite_mismatch": 0
         },
         "xpm_noise_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 5.059477916401197e-08,
+          "max_rel_dev": 2.4673685045253175,
           "n_points": 12,
           "non_finite_mismatch": 0
         }
       },
       "fg4a/path_cplusl_roadm": {
         "ase_noise_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 1.0393227490386584e-08,
+          "max_rel_dev": 0.009262838496558958,
           "n_points": 230,
           "non_finite_mismatch": 0
         },
@@ -407,18 +407,18 @@
           "non_finite_mismatch": 0
         },
         "signal_power_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 4.159646109688468e-08,
+          "max_rel_dev": 2.3146228532547535,
           "n_points": 230,
           "non_finite_mismatch": 0
         },
         "snr_db": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 5.186963433453025,
+          "max_rel_dev": 0.28913656143103117,
           "n_points": 193,
           "non_finite_mismatch": 0
         },
@@ -431,18 +431,18 @@
           "non_finite_mismatch": 0
         },
         "spm_noise_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 1.6068791387539092e-10,
+          "max_rel_dev": 2.470894236970274,
           "n_points": 230,
           "non_finite_mismatch": 0
         },
         "xpm_noise_w": {
-          "bit_exact": true,
+          "bit_exact": false,
           "comparable": true,
-          "max_abs_dev": 0.0,
-          "max_rel_dev": 0.0,
+          "max_abs_dev": 6.095536499467452e-10,
+          "max_rel_dev": 2.4709022210313245,
           "n_points": 230,
           "non_finite_mismatch": 0
         }

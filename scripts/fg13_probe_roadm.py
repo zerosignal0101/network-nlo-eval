@@ -199,7 +199,11 @@ def probe() -> dict[str, Any]:
         "on_LAST_hop_only": {
             "bitwise_identical": bool(np.array_equal(last_hop_snr, last_hop_snr_bumped)),
             "max_abs_delta_db": _delta(last_hop_snr, last_hop_snr_bumped),
-            "note": "末跳损耗同时除信号与全部累积噪声，在 SNR 比值里代数抵消 ⇒ 预期逐位不变",
+            "note": (
+                "FG-14 修复前：末跳损耗同时除信号与全部累积噪声，在 SNR 比值里代数抵消；"
+                "FG-14 修复后：equalize_output_power 默认 True，booster 以 NF·h·ν·Rs·(loss−1) "
+                "在损耗之后**注入** ASE，这部分噪声不再被同一损耗约掉 ⇒ 末跳损耗重新可观测。"
+            ),
         },
         "on_NON_LAST_hop_only": {
             "bitwise_identical": bool(np.array_equal(express_snr, express_snr_bumped)),

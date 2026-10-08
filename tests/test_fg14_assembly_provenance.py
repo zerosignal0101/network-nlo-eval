@@ -62,11 +62,13 @@ def _sha256(path: Path) -> str:
 
 @pytest.fixture(scope="module")
 def probe() -> ModuleType:
+    """按路径加载分歧探针（``scripts/`` 不是包，不能直接 import）。"""
     return _load_script("fg14_divergence_probe")
 
 
 @pytest.fixture(scope="module")
 def record() -> dict:
+    """已提交的 (B) 分歧记录；缺失时给出可复制的重生成命令。"""
     if not RECORD_PATH.exists():
         pytest.fail(
             f"missing {RECORD_PATH}; regenerate it with "

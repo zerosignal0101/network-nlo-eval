@@ -666,8 +666,19 @@ class MultiBandISRSGN:
 
         本方法只做**编排**：每个跨段都调用与 `origin/main` 完全相同的
         `_calc_span_noise_and_power`（内部走 main 的 RK4 ODE 内核），并在本层
-        累积噪声。ROADM 衰减在此处按 main 的约定统一施加于信号与已累积噪声，
-        与 `rwa/qot_checker` 的链路切分规则一致。
+        累积噪声。**内核未被改动**，命题 (A) 的逐位保证不受本刀影响。
+
+        ROADM 装配遵循**仓内权威定义** `ROADMConfig.path_loss_db()`
+        （``network/elements.py``），由 ``rwa.qot_checker.fold_roadm_terms``
+        折叠出常量：按端口取损耗（末跳 ``drop``、其余 ``express``）、
+        ``equalize_output_power`` 为真时改以 booster ASE
+        ``NF·h·ν·Rs·(loss−1)`` 补偿、``filtering_penalty_db`` 作为**只乘噪声**
+        的独立乘子。这与同仓另外两处施加点（``physics/qot_checker`` 的波形级、
+        ``rwa/qot_checker`` 的解析级）同口径。
+
+        FG-14 记录：此处与 ``origin/main`` 的分歧是**被授权的出处**差异，
+        不是物理回归。幅度与机制见 ``results/fg14_assembly_divergence.json``，
+        裁决见 ``docs/fg14_assembly_provenance.md``。
         """
         power = np.asarray(power_in_w, dtype=np.float64).copy()
         if power.shape != (self.n_nodes,) or np.any(power < 0):
@@ -677,6 +688,11 @@ class MultiBandISRSGN:
         total_ase = np.zeros_like(power)
         span_count = 0
         roadm_configs = optical_path.roadm_configs or [None] * len(optical_path.fiber_configs)
+        n_hops = len(optical_path.fiber_configs)
+
+        # 惰性导入：``rwa.qot_checker`` 从本模块取 ``MultiBandISRSGN``，
+        # 模块级互相导入会成环。折叠逻辑仍然**只有这一处**（FG-11 的性质）。
+        from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
 
         for hop_index, (fiber, edfa, roadm) in enumerate(
             zip(optical_path.fiber_configs, optical_path.edfa_configs, roadm_configs, strict=True)
@@ -701,12 +717,25 @@ class MultiBandISRSGN:
 
             if roadm is None:
                 continue
-            # ROADM 损耗同时作用于信号与此前累积的噪声（纯线性，不引入新噪声）。
-            loss = 10 ** ((roadm.insertion_loss_db + roadm.filtering_penalty_db) / 10)
-            power /= loss
-            total_spm /= loss
-            total_xpm /= loss
-            total_ase /= loss
+            # ROADM 装配：权威口径（FG-14）。按端口取损耗，booster 恢复入纤功率时
+            # 改注入 ASE 而不衰减信号，滤波惩罚只作用在噪声上。
+            # 与 rwa.qot_checker.accumulate_service_snr / physics.qot_checker 同口径。
+            terms = fold_roadm_terms(roadm, is_last_hop=hop_index == n_hops - 1)
+            if terms.equalize:
+                total_ase += (
+                    terms.booster_base
+                    * np.asarray(self.f_abs_hz, dtype=np.float64)
+                    * np.asarray(self.symbol_rate_hz_channels, dtype=np.float64)
+                    * (terms.loss - 1.0)
+                )
+            else:
+                power /= terms.loss
+                total_spm /= terms.loss
+                total_xpm /= terms.loss
+                total_ase /= terms.loss
+            total_spm *= terms.filtering_penalty
+            total_xpm *= terms.filtering_penalty
+            total_ase *= terms.filtering_penalty
             blocked = self._resolve_blocked_node_indices(roadm)
             if blocked:
                 power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0

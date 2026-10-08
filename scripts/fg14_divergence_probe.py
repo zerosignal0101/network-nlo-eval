@@ -371,7 +371,10 @@ def build_record() -> dict[str, Any]:
             },
             "B_assembly": {
                 "claim": "设备装配遵循仓内权威定义 ROADMConfig.path_loss_db()，其与 origin/main 的分歧被授权并记录。",
-                "authoritative_definition": "ROADMConfig.path_loss_db() @ src/network_nlo_eval/network/elements.py:113-116",
+                "authoritative_definition": (
+                    "ROADMConfig.path_loss_db() @ "
+                    "src/network_nlo_eval/network/elements.py:113-116"
+                ),
                 "adjudicated_by": "FG-14 brief §0（编排方裁定）",
                 "golden_provenance_rule": (
                     "results/fg1_golden_main.json 声明 source_branch=origin/main，"
@@ -392,8 +395,8 @@ def build_record() -> dict[str, Any]:
     }
 
     # (B) 的钉子：授权幅度 = 实测幅度。"不许悄悄扩大"于是变成一条精确比较。
-    for name, entry in record["committed"].items():
-        for key, cmp in entry["outputs"].items():
+    for entry in record["committed"].values():
+        for cmp in entry["outputs"].values():
             cmp["authorized_max_abs_dev"] = cmp.get("max_abs_dev", 0.0)
             cmp["authorized_max_rel_dev"] = cmp.get("max_rel_dev", 0.0)
 
@@ -443,6 +446,7 @@ def violations(record: dict[str, Any], measured: dict[str, Any]) -> list[str]:
 
 
 def main() -> int:
+    """打印三档分歧表；按 ``--emit`` / ``--check`` / ``--mutation`` 固化或自证。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emit", type=Path, default=None, help="写出记录 JSON 的路径")
     parser.add_argument("--check", type=Path, default=None, help="重算并与既有记录逐条比对")
@@ -457,7 +461,7 @@ def main() -> int:
         type=float,
         default=None,
         metavar="EPS",
-        help=f"把分歧人为放大 EPS（默认 1e-6）后跑钉子，证明它不是真空断言",
+        help="把分歧人为放大 EPS（默认 1e-6）后跑钉子，证明它不是真空断言",
     )
     args = parser.parse_args()
 
@@ -500,7 +504,7 @@ def main() -> int:
         return 1
 
     record = build_record()
-    print(f"\n== 分歧幅度（与 origin/main 金标准逐位比较）==")
+    print("\n== 分歧幅度（与 origin/main 金标准逐位比较）==")
     print(f"{'tier'.ljust(26)}{'scenario':<20}{'max|Δ| SNR| (dB)':>18}{'rel':>14}")
     print("-" * 80)
     for tier in ("committed", "prospective_ports_only", "prospective_full_union"):

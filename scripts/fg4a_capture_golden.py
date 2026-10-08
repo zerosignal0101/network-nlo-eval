@@ -92,7 +92,37 @@ CAPTURE_MODE = "cached_g"
 CHECK_DEFAULT_MODE = CAPTURE_MODE
 
 
-def collect(ode_accel: str = CAPTURE_MODE, *, for_capture: bool = False) -> dict[str, Any]:
+def _repins(out_path: Path) -> list[dict[str, Any]]:
+    """The chain of authorised re-captures this golden has been through.
+
+    A golden that records only "which revision produced it" loses the *reason*
+    when it is re-pinned. FG-14 §2 authorised one: ``evaluate_path`` moved to
+    the in-repo authoritative ROADM assembly, which moves ``path_cplusl_roadm``.
+    Recording the adjudicator keeps the re-pin auditable instead of looking like
+    a silent rewrite of the reference.
+    """
+    if not out_path.exists():
+        return []
+    try:
+        previous = json.loads(out_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # pragma: no cover
+        return []
+    provenance = previous.get("provenance", {})
+    chain = list(provenance.get("repins", []))
+    original = provenance.get("original_capture_rev") or provenance.get("git_rev")
+    if original:
+        chain = [
+            {
+                "git_rev": original,
+                "captured_at_stage": provenance.get("captured_at_stage", "unknown"),
+                "adjudicator": provenance.get("repin_adjudicator", "FG-4a baseline capture"),
+            },
+            *chain,
+        ]
+    return chain
+
+
+def collect(ode_accel: str = CAPTURE_MODE, *, for_capture: bool = False, out_path: Path | None = None) -> dict[str, Any]:
     """Run every scenario and return the full golden payload.
 
     Args:
@@ -122,6 +152,11 @@ def collect(ode_accel: str = CAPTURE_MODE, *, for_capture: bool = False) -> dict
             "numpy": np.__version__,
             "captured_at_stage": "pre-FG-4a baseline",
             "ode_accel": effective,
+            **(
+                {"repins": chain}
+                if (chain := _repins(out_path or DEFAULT_OUT))
+                else {}
+            ),
         },
         "scenarios": {},
     }
@@ -221,6 +256,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="golden JSON path")
     parser.add_argument(
+        "--repinned-by",
+        default=None,
+        metavar="ADJUDICATOR",
+        help=(
+            "record who authorised re-capturing this golden, and why. Required in spirit "
+            "whenever the physics under the scenarios has changed: a re-pin without a named "
+            "adjudicator is indistinguishable from silently rewriting the reference."
+        ),
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="compare against the stored golden instead of overwriting it",
@@ -244,7 +289,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.check:
-        actual = collect(args.ode_accel)
+        actual = collect(args.ode_accel, out_path=args.out)
         if not args.out.exists():
             print(f"golden {args.out} does not exist", file=sys.stderr)
             return 2
@@ -266,7 +311,9 @@ def main() -> int:
         return 0
 
     # Writing always goes through the bit-exact capture mode.
-    actual = collect(CAPTURE_MODE, for_capture=True)
+    actual = collect(CAPTURE_MODE, for_capture=True, out_path=args.out)
+    if args.repinned_by:
+        actual["provenance"]["repin_adjudicator"] = args.repinned_by
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(actual, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

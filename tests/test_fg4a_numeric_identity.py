@@ -176,13 +176,29 @@ def test_f4a_1_golden_records_its_provenance() -> None:
     The repo is installed editable with a ``.pth`` resolving to the *main*
     checkout regardless of cwd, so a mis-scoped ``PYTHONPATH`` silently runs
     another tree's code. Asserting the recorded path catches that.
+
+    FG-14 §2 re-pinned this golden, because ``evaluate_path`` moved to the in-repo
+    authoritative ROADM assembly. A re-pin must not erase the chain: the golden
+    now carries ``repins``, and the **original** capture revision still has to be
+    the FG-4a baseline. Asserting only the newest ``git_rev`` would let any later
+    re-capture silently overwrite the reference.
     """
     provenance = GOLDEN.get("provenance", {})
-    assert provenance.get("git_rev", "").startswith(BASELINE_REV), (
-        f"golden was not captured at the baseline {BASELINE_REV}: {provenance.get('git_rev')}"
+    repins = provenance.get("repins", [])
+    root_rev = (repins[0]["git_rev"] if repins else provenance.get("git_rev", ""))
+    assert root_rev.startswith(BASELINE_REV), (
+        f"the original capture is no longer the FG-4a baseline {BASELINE_REV}: {root_rev}"
     )
     assert provenance.get("package_path"), "golden does not record which tree produced it"
     assert "network_nlo_eval" in provenance["package_path"]
+    if provenance.get("git_rev", "") != root_rev:
+        # The golden was re-captured; each hop must name who authorised it.
+        assert repins, (
+            "golden was re-captured but records no repins chain — a re-pin without a named "
+            "adjudicator is indistinguishable from silently rewriting the reference"
+        )
+        for hop in repins:
+            assert hop.get("git_rev") and hop.get("adjudicator"), f"unattributed re-pin hop: {hop}"
 
 
 def test_f4a_1_evaluated_package_is_this_worktree() -> None:
