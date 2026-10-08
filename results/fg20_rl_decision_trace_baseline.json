@@ -1,0 +1,251 @@
+{
+  "policy": "seeded_random",
+  "network_nlo_eval": "/tmp/fg20_base_9115da2/src/network_nlo_eval/__init__.py",
+  "multiband_optical_rl": "/home/zsig/Documents/gits/wt/fg-rt/src/multiband_optical_rl/__init__.py",
+  "seed": 0,
+  "num_requests": 30,
+  "steps": 30,
+  "n_allocated": 10,
+  "trace": [
+    {
+      "action": 8,
+      "channel": 20,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 6,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 5,
+      "channel": 142,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 2,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 3,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 0,
+      "channel": 0,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 0,
+      "channel": 0,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 0,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 1,
+      "channel": 143,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 8,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 6,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 9,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 5,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 6,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 9,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 7,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 6,
+      "channel": 82,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 5,
+      "channel": 150,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 5,
+      "channel": 142,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 9,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 2,
+      "channel": 14,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 8,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 6,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 0,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 3,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 8,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 5,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 0,
+      "channel": 0,
+      "allocated": true,
+      "reward": 1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 7,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": false
+    },
+    {
+      "action": 7,
+      "channel": null,
+      "allocated": false,
+      "reward": -1.0,
+      "terminated": false,
+      "truncated": true
+    }
+  ]
+}
