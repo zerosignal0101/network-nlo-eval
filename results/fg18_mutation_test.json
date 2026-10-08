@@ -33,7 +33,7 @@
         "turned_red": true,
         "verdict": "RED",
         "tail": [
-          "E        +  where [<ast.BinOp object at 0x791b6af19650>] = _lumped_assembly_nodes(<ast.Module object at 0x791b6b17a8d0>)",
+          "E        +  where [<ast.BinOp object at 0x72f3d7bfd6d0>] = _lumped_assembly_nodes(<ast.Module object at 0x72f3d7e059d0>)",
           "/home/zsig/Documents/gits/wt/fg-isrs/tests/test_fg18_lumped_assembly_tree_guard.py:157: AssertionError",
           "=========================== short test summary info ============================",
           "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_src_tree_has_lumped_roadm_assembly",
@@ -81,7 +81,7 @@
         "turned_red": true,
         "verdict": "RED",
         "tail": [
-          "E        +  where [<ast.BinOp object at 0x7df8877fbd90>] = _lumped_assembly_nodes(<ast.Module object at 0x7df8879d9710>)",
+          "E        +  where [<ast.BinOp object at 0x753674f7c510>] = _lumped_assembly_nodes(<ast.Module object at 0x753674d44f50>)",
           "/home/zsig/Documents/gits/wt/fg-isrs/tests/test_fg18_lumped_assembly_tree_guard.py:169: AssertionError",
           "=========================== short test summary info ============================",
           "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_src_tree_has_lumped_roadm_assembly",
@@ -107,8 +107,8 @@
         "turned_red": true,
         "verdict": "RED",
         "tail": [
-          "E        +  where <re.Match object; span=(25273, 25320), match='insertion_loss_db + config.filtering_penalty_db'> = <function search at 0x7baba7d211c0>('insertion_loss_db\\\\s*\\\\+\\\\s*\\\\w+\\\\.filtering_penalty_db', '\"\"\"\u4f20\u8f93\u8d28\u91cf (Quality of Transmission, QoT) \u9a8c\u8bc1\u5668\u3002\\n\\n\u8d1f\u8d23\u5728 RWA \u8fc7\u7a0b\u4e2d\u8bc4\u4f30\u94fe\u8def\u6216\u8def\u5f84\u7684 SNR\u3002\\n\"\"\"\\n\\nimport math\\nfrom collections.abc imp...\uff08\u65b9\u5411 B\uff09\u3002\u4e0d\u662f\u751f\u4ea7\u4ee3\u7801\u3002\"\"\"\\n    loss = 10 ** ((config.insertion_loss_db + config.filtering_penalty_db) / 10)\\n    return loss\\n')",
-          "E        +    where <function search at 0x7baba7d211c0> = re.search",
+          "E        +  where <re.Match object; span=(25273, 25320), match='insertion_loss_db + config.filtering_penalty_db'> = <function search at 0x7f897c3211c0>('insertion_loss_db\\\\s*\\\\+\\\\s*\\\\w+\\\\.filtering_penalty_db', '\"\"\"\u4f20\u8f93\u8d28\u91cf (Quality of Transmission, QoT) \u9a8c\u8bc1\u5668\u3002\\n\\n\u8d1f\u8d23\u5728 RWA \u8fc7\u7a0b\u4e2d\u8bc4\u4f30\u94fe\u8def\u6216\u8def\u5f84\u7684 SNR\u3002\\n\"\"\"\\n\\nimport math\\nfrom collections.abc imp...\uff08\u65b9\u5411 B\uff09\u3002\u4e0d\u662f\u751f\u4ea7\u4ee3\u7801\u3002\"\"\"\\n    loss = 10 ** ((config.insertion_loss_db + config.filtering_penalty_db) / 10)\\n    return loss\\n')",
+          "E        +    where <function search at 0x7f897c3211c0> = re.search",
           "/home/zsig/Documents/gits/wt/fg-isrs/tests/test_fu4_assembly_union.py:282: AssertionError",
           "=========================== short test summary info ============================",
           "FAILED tests/test_fu4_assembly_union.py::test_fu4_6_lumped_assembly_is_gone_from_the_source",
