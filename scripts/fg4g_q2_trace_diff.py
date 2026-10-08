@@ -192,6 +192,13 @@ def main() -> int:
         # env.py 用默认参数构造 evaluator（不传 ode_accel），因此这里改的是
         # 实例属性：下游 for_fiber 会把它透传给每个子 evaluator。
         env.evaluator.ode_accel = args.force_accel
+        if args.force_accel == "off":
+            # FG-15: ``off`` 是结构上只认 legacy 的冻结参照路径（在核内逐对重建
+            # legacy 折线），而 FG-15 起全局默认谱档是 ``tabular``。两者**必须**
+            # 一起改：for_fiber 会把 (ode_accel, raman_spectrum) 一起透传给子
+            # evaluator，只改前者会让子构造 ``tabular`` + ``off`` 而抛错。
+            # 构造期建好的 G 矩阵在这里用不到——``off`` 走的是核内 legacy 折线。
+            env.evaluator.raman_spectrum = "legacy"
         env.evaluator._fiber_evaluator_cache.clear()
 
     def purge() -> None:

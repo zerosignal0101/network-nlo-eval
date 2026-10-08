@@ -129,12 +129,29 @@ class Scenario:
 # ======================================================================
 # Single-span scenarios (driven through the stable evaluator API)
 # ======================================================================
+#: FG-15: the Raman spectrum tier these scenarios are pinned to.
+#:
+#: The FG-4a gate's proposition is "the ODE acceleration must not move a bit".
+#: The physics tier is **orthogonal** to that proposition, so leaving it to follow
+#: the global default would silently couple two independent gates: any future tier
+#: change would then masquerade as an acceleration regression and force a golden
+#: regeneration, destroying the gate's entire purpose (the module docstring says the
+#: scenarios are deliberately defined against the stable evaluator API *so that*
+#: legitimate refactors do not force regeneration).
+#:
+#: Therefore the tier is pinned **explicitly** to ``legacy``, the tier the golden was
+#: captured under (pre-FG-4a commit ``ea7ecb0``). ``legacy`` remains reachable, and
+#: ``tests/test_fg15_legacy_bitwise.py`` pins that it is unchanged bit-for-bit.
+RAMAN_SPECTRUM_PIN = "legacy"
+
+
 def _legacy_evaluator(
     *,
     length_km: float,
     max_span_length_km: float,
     phi_kurtosis: float,
     ode_accel: str,
+    raman_spectrum: str = RAMAN_SPECTRUM_PIN,
 ) -> MultiBandISRSGN:
     """Build the legacy 230x50 GHz fixed-grid evaluator."""
     grid = SpectrumGrid(
@@ -149,6 +166,7 @@ def _legacy_evaluator(
         symbol_rate_hz=SYMBOL_RATE_HZ,
         phi_kurtosis=phi_kurtosis,
         ode_accel=ode_accel,
+        raman_spectrum=raman_spectrum,
     )
 
 
@@ -163,6 +181,7 @@ def _span_scenario(
     n_effective_spans: int = 1,
     nf_db: float = EDFA_NF_DB,
     ode_accel: str,
+    raman_spectrum: str = RAMAN_SPECTRUM_PIN,
 ) -> Scenario:
     """Wrap one ``_calc_span_noise_and_power`` call as a scenario."""
     edfa = EDFAConfig(target_gain_db=None, noise_figure_db=nf_db)
@@ -173,6 +192,7 @@ def _span_scenario(
             max_span_length_km=100.0,
             phi_kurtosis=phi_kurtosis,
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         )
         p_out, s2_spm, s2_xpm, s2_ase = ev._calc_span_noise_and_power(
             power_in_w, span_length_m, edfa, None, n_effective_spans
@@ -207,7 +227,7 @@ def _partial_load_power() -> np.ndarray:
     return power
 
 
-def _flexgrid_evaluator(ode_accel: str) -> MultiBandISRSGN:
+def _flexgrid_evaluator(ode_accel: str, raman_spectrum: str = RAMAN_SPECTRUM_PIN) -> MultiBandISRSGN:
     """Build a non-uniform flexible-grid evaluator with per-connection rates.
 
     Deliberately mixes connection widths and symbol rates so the node
@@ -253,25 +273,33 @@ def _flexgrid_evaluator(ode_accel: str) -> MultiBandISRSGN:
         connections=connections,
         slots_per_channel=SLOTS_PER_CHANNEL,
         ode_accel=ode_accel,
+        raman_spectrum=raman_spectrum,
     )
 
 
 # ======================================================================
 # Scenario table
 # ======================================================================
-def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
+def build_scenarios(
+    ode_accel: str = ODE_ACCEL_DEFAULT,
+    raman_spectrum: str = RAMAN_SPECTRUM_PIN,
+) -> list[Scenario]:
     """Return every FG-4a scenario, in a stable order.
 
     Args:
         ode_accel: Which FG-4a acceleration path the evaluators should use.
             ``"off"`` and ``"cached_g"`` must reproduce the golden bit-for-bit;
             ``"matvec"`` is allowed a bounded float-reordering shift.
+        raman_spectrum: Which Raman spectrum tier to build evaluators with.
+            Defaults to :data:`RAMAN_SPECTRUM_PIN` (``"legacy"``) — **not** to the
+            global default — because this gate polices acceleration, not physics
+            choice. See the :data:`RAMAN_SPECTRUM_PIN` note above.
     """
     if ode_accel not in ODE_ACCEL_MODES:
         raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
 
     def flex_run() -> dict[str, Any]:
-        ev = _flexgrid_evaluator(ode_accel)
+        ev = _flexgrid_evaluator(ode_accel, raman_spectrum)
         flex_power = np.array([conn.launch_power_w for conn in ev.connections], dtype=np.float64)
         edfa = EDFAConfig(target_gain_db=None, noise_figure_db=EDFA_NF_DB)
         p_out, s2_spm, s2_xpm, s2_ase = ev._calc_span_noise_and_power(flex_power, 100e3, edfa, None, 1)
@@ -288,6 +316,7 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
             max_span_length_km=80.0,
             phi_kurtosis=PHI_KURTOSIS_GAUSSIAN,
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         )
         # 3 hops: two 80 km spans (one per fibre) plus a ROADM between them.
         # max_span_length_km=80 means the 160 km fibre is split into 2 spans,
@@ -332,6 +361,7 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
             span_length_m=100e3,
             power_in_w=_full_load_power(),
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         ),
         _span_scenario(
             "cl_partial_100km",
@@ -341,6 +371,7 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
             span_length_m=100e3,
             power_in_w=_partial_load_power(),
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         ),
         _span_scenario(
             "cl_full_64qam_80km",
@@ -351,6 +382,7 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
             power_in_w=_full_load_power(),
             nf_db=6.0,
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         ),
         _span_scenario(
             "cl_short_1km",
@@ -360,6 +392,7 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
             span_length_m=1e3,
             power_in_w=_full_load_power(),
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         ),
         _span_scenario(
             "cl_nspan10",
@@ -370,6 +403,7 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
             power_in_w=_partial_load_power(),
             n_effective_spans=10,
             ode_accel=ode_accel,
+            raman_spectrum=raman_spectrum,
         ),
         Scenario(
             name="flexgrid_mixed",
@@ -386,9 +420,13 @@ def build_scenarios(ode_accel: str = ODE_ACCEL_DEFAULT) -> list[Scenario]:
     ]
 
 
-def scenario_by_name(name: str, ode_accel: str = ODE_ACCEL_DEFAULT) -> Scenario:
+def scenario_by_name(
+    name: str,
+    ode_accel: str = ODE_ACCEL_DEFAULT,
+    raman_spectrum: str = RAMAN_SPECTRUM_PIN,
+) -> Scenario:
     """Look one scenario up by name."""
-    for scenario in build_scenarios(ode_accel):
+    for scenario in build_scenarios(ode_accel, raman_spectrum):
         if scenario.name == name:
             return scenario
     raise KeyError(f"unknown FG-4a scenario: {name!r}")

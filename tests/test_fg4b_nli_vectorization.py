@@ -544,6 +544,10 @@ def test_f4b_6_end_to_end_path_with_roadm_and_tilt() -> None:
             symbol_rate_hz=50e9,
             phi_kurtosis=0.0,
             ode_accel=ode_accel,
+            # FG-15: pin the tier to ``legacy``. ``ode_accel="off"`` is the frozen
+            # legacy-only reference path, and this test compares that reference
+            # against the accelerated path on the same spectrum.
+            raman_spectrum="legacy",
         )
         optical_path = MultiSpanOpticalPath(
             fiber_configs=[

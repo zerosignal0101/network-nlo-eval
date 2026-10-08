@@ -180,9 +180,18 @@ def _evaluator(raman_spectrum: str, ode_accel: str = "matvec") -> MultiBandISRSG
     )
 
 
-def test_default_tier_is_legacy() -> None:
-    """默认档必须是 legacy——既有调用方一行不改就还在原路径上。"""
-    assert MultiBandISRSGN.__init__.__defaults__[-1] == "legacy"
+def test_default_tier_is_tabular() -> None:
+    """默认档现在是 tabular（FG-15 换底），且 legacy 仍逐位可达。
+
+    **为什么这条期望值必须移动（逐条归因，不是只改数字）**：这条测试的命题
+    本身就是"**默认档是什么**"，所以换底必然让它移动——这是 FG-15 唯一
+    授权移动的既有期望值之一。机制是物理的：legacy 的两个截断（13.2 / 15.6 THz）
+    使相隔 >15.6 THz 的耦合被迫为零，而 S+C+L+U 跨约 27 THz。
+
+    下面两行仍在同一档上核对 G 矩阵，确保换底没有顺手改坏 legacy 的数值：
+    ``_evaluator("legacy")`` 是**显式**取 legacy，不是靠默认。
+    """
+    assert MultiBandISRSGN.__init__.__defaults__[-1] == "tabular"
     ev = _evaluator("legacy")
     assert ev.raman_spectrum == "legacy"
     assert np.allclose(ev._g_gain, nk.raman_g_pair_matrices(ev.f_abs_hz, ev.cr_w_m_hz)[0])

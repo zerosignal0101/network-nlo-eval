@@ -62,7 +62,15 @@ def _evaluators(ode_accel: str, **kw):
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     return MultiBandISRSGN(
         grid=grid, ref_fiber_config=fiber, symbol_rate_hz=SYMBOL_RATE_HZ,
-        ode_accel=ode_accel, **kw,
+        ode_accel=ode_accel,
+        # FG-15: pin the tier to ``legacy``. This test compares ``off`` against
+        # ``matvec`` **on the same spectrum** — the whole proposition is the
+        # float-reordering budget between two ODE paths. ``off`` is structurally
+        # legacy-only (it rebuilds the legacy polyline in-kernel), so letting it
+        # inherit the new ``tabular`` default would raise, and pinning only one
+        # side would compare two different physics instead of two ODE paths.
+        raman_spectrum="legacy",
+        **kw,
     )
 
 

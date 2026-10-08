@@ -122,6 +122,31 @@ FG14_RELOCATED_TESTS: tuple[str, ...] = (
 #: 以免"迁出"变成"删除"。
 FG14_RELOCATION_TARGET = "test_fg14_assembly_provenance.py"
 
+#: ---------------------------------------------------------------------------
+#: FG-15（编排方 brief §2/§4）的授权：给换底前的物理档补**显式钉子**。
+#:
+#: FG-15 把全局默认拉曼档从 ``legacy`` 翻成 ``tabular``。翻默认会让一批**既有**
+#: 期望值所依赖的构造点从"跟着默认走"变成"必须自己声明用哪一档"。本条授权允许
+#: 这些既有文件**只**引入一个新增字面量 ``raman_spectrum="legacy"``，即把原先
+#: 隐式继承的档位**写死成它原本实际取到的值**。
+#:
+#: 为什么这是授权而不是放宽：被钉住的值与这些文件**换底前实际生效的值完全相同**
+#: （换底前全局默认就是 ``legacy``），因此没有任何期望值发生移动 ——
+#: :func:`token_count_violations` 对同一批文件继续按行数守门，`assert` /
+#: ``array_equal`` / 容差 token 的个数一个都不能少。换句话说，本条授权把一条
+#: **隐式依赖**换成一条**显式依赖**，而命题与期望值原样不变。
+#:
+#: 逐条归因见 ``docs/fg15_default_tier_flip.md`` §3。
+#: ---------------------------------------------------------------------------
+
+#: FG-15 授权编辑、且**仅**授权引入拉曼档钉子的既有测试文件。
+FG15_AUTHORIZED_FILES: tuple[str, ...] = (
+    "fg1_scenarios.py",  # FG-1 (A) 的 origin/main 逐位参照侧
+)
+
+#: 本条授权唯一允许新增的代码字面量。
+FG15_PIN_LITERAL = 'raman_spectrum="legacy"'
+
 #: The G2 guard functions themselves. §1.2 adjudicated the *policy* they encode,
 #: so these files are authorised to change; :func:`guard_removed_violations`
 #: supplies the floor that keeps that from becoming a free pass.
@@ -210,7 +235,7 @@ def unauthorized_test_edits(repo_root: Path, baseline_rev: str) -> list[str]:
     """Names of modified pre-existing test files that no adjudication authorised."""
     authorized = {
         f"tests/{name}"
-        for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES + FG14_AUTHORIZED_FILES
+        for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES + FG14_AUTHORIZED_FILES + FG15_AUTHORIZED_FILES
     }
     return [path for path in modified_test_files(repo_root, baseline_rev) if path not in authorized]
 
@@ -300,6 +325,7 @@ def tier_pin_violations(repo_root: Path, baseline_rev: str, path: str) -> list[s
 
     removed_blob = "\n".join(removed)
     saw_pin = False
+    saw_fg15_pin = False
     for stripped in added:
         if not stripped or stripped.startswith("#"):
             continue
@@ -308,11 +334,20 @@ def tier_pin_violations(repo_root: Path, baseline_rev: str, path: str) -> list[s
                 violations.append(f"{path}: added line weakens an expectation: {stripped!r}")
         if TIER_PIN_LITERAL in stripped:
             saw_pin = True
+        elif FG15_PIN_LITERAL in stripped:
+            # FG-15 adjudication: pinning the Raman tier explicitly is authorised in
+            # the files listed in FG15_AUTHORIZED_FILES. The value pinned is the one
+            # these files already resolved to before the flip, so no expectation moves;
+            # token_count_violations still polices expectation strength file-wide.
+            saw_fg15_pin = True
         elif stripped not in removed_blob:
             violations.append(f"{path}: added line is neither the tier pin nor a re-wrap: {stripped!r}")
 
-    if not saw_pin:
-        violations.append(f"{path}: authorised for the §1.2 tier pin but adds no {TIER_PIN_LITERAL!r}")
+    if not (saw_pin or saw_fg15_pin):
+        violations.append(
+            f"{path}: authorised for the §1.2 / FG-15 tier pin but adds neither "
+            f"{TIER_PIN_LITERAL!r} nor {FG15_PIN_LITERAL!r}"
+        )
     return violations
 
 

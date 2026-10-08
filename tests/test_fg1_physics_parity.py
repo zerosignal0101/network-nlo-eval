@@ -65,6 +65,16 @@ def _pipeline_result(scenario):
         # ``off`` tier. Production default is ``matvec`` and is gated separately at
         # <=1e-12; the bit-equality assertion and its expectation are unchanged.
         ode_accel="off",
+        # FG-15: this test's proposition is "the ported pipeline reproduces
+        # origin/main", and ``results/fg1_golden_main.json`` declares
+        # ``source_branch: origin/main``. The tier is therefore pinned explicitly to
+        # ``legacy`` — the spectrum that golden was captured under. Two reasons, both
+        # structural rather than cosmetic:
+        #   1. ``ode_accel="off"`` is structurally legacy-only (it rebuilds the legacy
+        #      polyline inside the kernel), so ``tabular`` + ``off`` raises by design;
+        #   2. even if it did not raise, no tabular number may ever be written into a
+        #      file claiming ``origin/main`` provenance (FG-13's rule).
+        raman_spectrum="legacy",
     )
     fibers = [scenario.fiber(hop).model_copy(update={"max_span_length_km": hop.span_km}) for hop in scenario.hops]
     edfas = [scenario.edfa(hop) for hop in scenario.hops]

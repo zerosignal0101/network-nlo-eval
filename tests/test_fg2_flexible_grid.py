@@ -195,6 +195,10 @@ def test_f2_3_span_noise_bit_identical_to_golden(
         # tier. Production default is ``matvec`` (gated at <=1e-12 elsewhere); the
         # bit-equality assertions and the golden values are unchanged.
         ode_accel="off",
+        # FG-15: the Raman tier is pinned to ``legacy`` explicitly. ``off`` is the
+        # frozen legacy-only reference path, so this gate would otherwise raise
+        # (``tabular`` + ``off`` is rejected by design) instead of running.
+        raman_spectrum="legacy",
     )
     assert evaluator.n_nodes == NUM_CHANNELS
     # Node frequencies are the connection centres, and they match the legacy grid exactly.

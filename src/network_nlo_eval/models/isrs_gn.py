@@ -78,16 +78,23 @@ ODE_ACCEL_DEFAULT = "matvec"
 #:
 #: ``"legacy"``
 #:     合成折线（13.2 THz 线性爬升、15.6 THz 跌到零、之后恒零）。这是 FG-4a 的
-#:     数值金标准与下游全部既有期望值所依赖的那条曲线，**默认档，逐位不变**。
+#:     数值金标准与下游全部既有期望值所依赖的那条曲线。**FG-15 起不再是默认档，
+#:     但档必须留着**：旧结果的可复现性、以及 FG-1 的 (A) 出处断言，全都依赖它
+#:     仍可显式取到且结果逐位不变（见 `tests/test_fg15_legacy_bitwise.py`）。
 #: ``"tabular"``
 #:     有出处的宽波段熔融石英谱（Lin & Agrawal 2006 的响应函数经傅里叶变换得到的
 #:     闭式增益谱，见 `physics.raman_spectrum`）。它会**改变结果**——这是物理改进，
 #:     不是数值重排，因此走**自己的验收闸门**，不与速度线的 <=1e-12 同结果预算混用。
 #:
+#: **FG-15 起 ``"tabular"`` 是全局默认。** 理由是物理，不是偏好：legacy 的两个
+#: 截断（13.2 / 15.6 THz）使得**相隔 >15.6 THz 的耦合被迫为零**，而 S+C+L+U 跨
+#: 约 27 THz，FG-U1 实测保真误差也集中在 S/C 段（最差 −8.260 dB）。tabular 是这个
+#: 运行区间的正确模型。
+#:
 #: 两档都用 ``G = cr_w_m_hz * 13.2e12 * S(|df|)`` 的同一语义：``cr_w_m_hz`` 管幅度、
 #: ``S`` 管谱形，且在 13.2 THz 处**逐位相等**（legacy 的 ``S`` 就是那条折线）。
 RAMAN_SPECTRUM_MODES = ("legacy", "tabular")
-RAMAN_SPECTRUM_DEFAULT = "legacy"
+RAMAN_SPECTRUM_DEFAULT = "tabular"
 
 #: FG-4e 批量常量包的命中/未命中计数——证明 (N,N) 常量确实跨候选复用。
 _BATCH_CACHE_STATS = {"hits": 0, "misses": 0}
@@ -170,9 +177,9 @@ class MultiBandISRSGN:
                 ``"off"`` 保持 FG-2 冻结路径；``"cached_g"`` 与基线逐位相等；
                 ``"matvec"``（默认）用去分支两次 matvec，相对偏差 <= 1e-12。
             raman_spectrum: FG-U1 拉曼增益谱档位，见 :data:`RAMAN_SPECTRUM_MODES`。
-                ``"legacy"``（默认）= 合成折线，逐位不变；``"tabular"`` = 有出处的
-                宽波段熔融石英谱，**会改变结果**，需走自己的验收闸门。
-                ``"tabular"`` 与 ``ode_accel="off"`` 不兼容（见下）。
+                ``"tabular"``（默认，FG-15 起）= 有出处的宽波段熔融石英谱；
+                ``"legacy"`` = 合成折线，**结果逐位不变**，用于旧结果复现与
+                FG-1 的出处断言。``"tabular"`` 与 ``ode_accel="off"`` 不兼容（见下）。
         Raises:
             ValueError: 档位名非法，或 ``tabular`` 与 ``ode_accel="off"`` 的组合。
         """

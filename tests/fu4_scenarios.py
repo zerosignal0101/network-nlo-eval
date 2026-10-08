@@ -32,6 +32,11 @@ from network_nlo_eval.simulation.traffic import ServiceRequest
 
 LAUNCH_POWER_W = 1e-3
 SYMBOL_RATE_HZ = 32e9
+
+#: FG-15: the Raman spectrum tier the FU-4 fidelity golden was captured under.
+#: Pinned explicitly so the SNR-assembly gate cannot be disturbed by a physics-tier
+#: default change (see the note at the ``MultiBandISRSGN`` call site).
+FU4_RAMAN_SPECTRUM_PIN = "legacy"
 LINK_LENGTH_KM = 80.0
 MAX_SPAN_KM = 80.0
 EDFA_NF_DB = 5.5
@@ -244,6 +249,12 @@ def run_scenario(scenario: Scenario) -> dict[str, Any]:
         symbol_rate_hz=SYMBOL_RATE_HZ,
         connections=connections,
         slots_per_channel=scenario.slots_per_channel if connections is not None else None,
+        # FG-15: pin the Raman tier explicitly. ``results/fu4_fidelity_golden.json`` was
+        # captured under ``legacy``, and this fixture's proposition is the SNR *assembly*
+        # (the FU-4 union question), not the choice of spectrum. Following the global
+        # default would couple the assembly gate to the tier default and silently turn a
+        # physics-tier change into an "assembly regression".
+        raman_spectrum=FU4_RAMAN_SPECTRUM_PIN,
     )
     state = NetworkState(topology, state_grid)
     validator = QoTValidator(evaluator, topology, grid)

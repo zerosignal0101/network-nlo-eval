@@ -208,6 +208,12 @@ def run_reference(scenario: Scenario) -> dict[str, Any]:
         # acceleration tier production happens to default to. Production default is
         # ``matvec`` (gated separately at <=1e-12 by tests/test_fg4a_numeric_identity.py).
         ode_accel="off",
+        # FG-15: the Raman tier is pinned to ``legacy`` explicitly. This module is the
+        # reference side of FG-1's origin/main parity claim, so it must not inherit the
+        # global default. ``ode_accel="off"`` is structurally legacy-only (it rebuilds
+        # the legacy polyline in-kernel), so ``tabular`` here would raise rather than
+        # silently drift.
+        raman_spectrum="legacy",
     )
 
     power = scenario.launch_power()
@@ -227,6 +233,7 @@ def run_reference(scenario: Scenario) -> dict[str, Any]:
                 phi_kurtosis=scenario.phi_kurtosis,
                 # Same freeze-point rationale as the hop-0 evaluator above.
                 ode_accel="off",
+                raman_spectrum="legacy",
             )
         edfa = scenario.edfa(hop)
         roadm = scenario.roadm(hop)

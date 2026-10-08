@@ -434,7 +434,13 @@ def test_legacy_path_still_bit_identical_for_fiber():
     """修复不得影响 legacy：子评估器与父评估器在 legacy 下应当同档且逐位一致。"""
     grid = SpectrumGrid(num_channels=40, channel_spacing_hz=50e9, center_frequency_hz=190e12)
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
-    evaluator = MultiBandISRSGN(grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9)
+    evaluator = MultiBandISRSGN(
+        grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9,
+        # FG-15: 显式钉 ``legacy``。这条测试的命题是 "FU-2 补的 ``for_fiber``
+        # 透传"——子评估器必须与父评估器**同档**。若跟着全局默认走，命题会被
+        # 悄悄换成"默认档透传"，而测试名与文档都在说 legacy。
+        raman_spectrum="legacy",
+    )
     child = evaluator.for_fiber(fiber)
     assert child.raman_spectrum == "legacy"
     assert np.array_equal(child.f_abs_hz, evaluator.f_abs_hz)

@@ -91,6 +91,9 @@ def evaluate_two_hop(roadm_per_hop: tuple[ROADMConfig | None, ROADMConfig | None
         FiberSpanConfig(length_km=HOP_LENGTH_KM),
         symbol_rate_hz=SYMBOL_RATE_HZ,
         ode_accel="off",
+        # FG-15: 谱档显式钉死为 ``legacy``。本探针比较的是**装配规则**，谱档是
+        # 正交变量；``off`` 又是结构上只认 legacy 的冻结参照路径，继承新默认会抛错。
+        raman_spectrum="legacy",
     )
     del grid
     result = evaluator.evaluate_path(build_path(roadm_per_hop), np.full(NUM_CHANNELS, LAUNCH_POWER_W))
@@ -122,6 +125,9 @@ def evaluate_last_hop_only(roadm: ROADMConfig) -> np.ndarray:
         FiberSpanConfig(length_km=HOP_LENGTH_KM),
         symbol_rate_hz=SYMBOL_RATE_HZ,
         ode_accel="off",
+        # FG-15: 谱档显式钉死为 ``legacy``。本探针比较的是**装配规则**，谱档是
+        # 正交变量；``off`` 又是结构上只认 legacy 的冻结参照路径，继承新默认会抛错。
+        raman_spectrum="legacy",
     )
     path = build_path((None, roadm))
     return np.asarray(grid_evaluator.evaluate_path(path, np.full(NUM_CHANNELS, LAUNCH_POWER_W)).snr_db)
@@ -134,6 +140,9 @@ def evaluate_express_only(roadm: ROADMConfig) -> np.ndarray:
         FiberSpanConfig(length_km=HOP_LENGTH_KM),
         symbol_rate_hz=SYMBOL_RATE_HZ,
         ode_accel="off",
+        # FG-15: 谱档显式钉死为 ``legacy``。本探针比较的是**装配规则**，谱档是
+        # 正交变量；``off`` 又是结构上只认 legacy 的冻结参照路径，继承新默认会抛错。
+        raman_spectrum="legacy",
     )
     path = build_path((roadm, None))
     return np.asarray(grid_evaluator.evaluate_path(path, np.full(NUM_CHANNELS, LAUNCH_POWER_W)).snr_db)
