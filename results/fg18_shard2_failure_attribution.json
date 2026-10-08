@@ -1,0 +1,118 @@
+{
+  "question": "RL shard 2 的 test_scan_validator_table_does_not_leak 是否由本刀引起",
+  "nodeid": "tests/test_scan_fastpath.py::test_scan_validator_table_does_not_leak",
+  "import_probe": {
+    "new": {
+      "declared": "/home/zsig/Documents/gits/wt/fg-isrs/src",
+      "imported": "/home/zsig/Documents/gits/wt/fg-isrs/src/network_nlo_eval/__init__.py"
+    },
+    "baseline": {
+      "declared": "/tmp/fg17_baseline_1004458/src",
+      "imported": "/tmp/fg17_baseline_1004458/src/network_nlo_eval/__init__.py"
+    }
+  },
+  "rounds": 4,
+  "loadavg_at_end": "4.63",
+  "new_pass": "4/4",
+  "baseline_pass": "4/4",
+  "verdict": "两棵树读数相同 => 与本刀无关（既有问题或负载 flake）",
+  "rows": [
+    {
+      "phys": "/home/zsig/Documents/gits/wt/fg-isrs/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.91s"
+      ],
+      "round": 1,
+      "variant": "new"
+    },
+    {
+      "phys": "/tmp/fg17_baseline_1004458/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.91s"
+      ],
+      "round": 1,
+      "variant": "baseline"
+    },
+    {
+      "phys": "/tmp/fg17_baseline_1004458/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.3,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.91s"
+      ],
+      "round": 2,
+      "variant": "baseline"
+    },
+    {
+      "phys": "/home/zsig/Documents/gits/wt/fg-isrs/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.90s"
+      ],
+      "round": 2,
+      "variant": "new"
+    },
+    {
+      "phys": "/home/zsig/Documents/gits/wt/fg-isrs/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.91s"
+      ],
+      "round": 3,
+      "variant": "new"
+    },
+    {
+      "phys": "/tmp/fg17_baseline_1004458/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.90s"
+      ],
+      "round": 3,
+      "variant": "baseline"
+    },
+    {
+      "phys": "/tmp/fg17_baseline_1004458/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.92s"
+      ],
+      "round": 4,
+      "variant": "baseline"
+    },
+    {
+      "phys": "/home/zsig/Documents/gits/wt/fg-isrs/src",
+      "rc": 0,
+      "passed": true,
+      "seconds": 1.2,
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.91s"
+      ],
+      "round": 4,
+      "variant": "new"
+    }
+  ],
+  "mechanism_note": "该断言依赖 gc.collect() 后 WeakKeyDictionary 的条目数归零，属 GC 时机敏感；断言路径不经过 isrs_gn 的两个 roadm_config 施加点（§0 已证其 roadm_config 恒 None）。"
+}
