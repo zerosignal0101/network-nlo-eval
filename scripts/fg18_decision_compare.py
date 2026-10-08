@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 

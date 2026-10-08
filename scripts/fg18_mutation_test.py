@@ -152,11 +152,12 @@ def main() -> int:
             "old_guard": _run(tree, f"{OLD_GUARD}::{OLD_GUARD_TEST_NAME}"),
         }
 
+    old_guard_spec = f"{OLD_GUARD}::{OLD_GUARD_TEST_NAME}"
     scenarios = [
         _scenario("A: isrs_gn.py (FG-17 blind spot)", "models/isrs_gn.py", ISRS_GN_MUTATION, NEW_GUARD),
-        _scenario("A2: isrs_gn.py vs OLD guard", "models/isrs_gn.py", ISRS_GN_MUTATION, f"{OLD_GUARD}::{OLD_GUARD_TEST_NAME}"),
+        _scenario("A2: isrs_gn.py vs OLD guard", "models/isrs_gn.py", ISRS_GN_MUTATION, old_guard_spec),
         _scenario("B: rwa/qot_checker.py", "rwa/qot_checker.py", QOT_CHECKER_MUTATION, NEW_GUARD),
-        _scenario("B2: rwa/qot_checker.py vs OLD guard", "rwa/qot_checker.py", QOT_CHECKER_MUTATION, f"{OLD_GUARD}::{OLD_GUARD_TEST_NAME}"),
+        _scenario("B2: rwa/qot_checker.py vs OLD guard", "rwa/qot_checker.py", QOT_CHECKER_MUTATION, old_guard_spec),
     ]
 
     def _v(s: dict) -> str:

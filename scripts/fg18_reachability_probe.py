@@ -65,7 +65,7 @@ def main() -> int:
         c = e.get("counts")
         if not c:
             continue
-        for m, v in c.items():
+        for v in c.values():
             totals["calls"] += v["calls"]
             totals["roadm_not_none"] += v["roadm_not_none"]
 
