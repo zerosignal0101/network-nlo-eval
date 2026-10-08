@@ -220,3 +220,14 @@ sg_execution_times.rst
 # results. docs/fg5_integration_note.md is rendered from it and re-renderable via
 # `scripts/fg5_integration_evidence.py --check`, tracked for the same reason.
 !/results/fg5_integration.json
+
+# FG-13 adjudication artifacts, same rationale: every number in
+# docs/fg13_evaluate_path_roadm.md -- the field-liveness census (which ROADM
+# fields are inert on evaluate_path, and by how much), the last-hop vs non-last-hop
+# structural control, and the per-scenario dBSNR impact of switching to the
+# authoritative assembly -- must be recomputable from a tracked product rather
+# than from prose. `fg13_roadm_probe.json` is re-verifiable with
+# `scripts/fg13_probe_roadm.py --check`; `fg13_impact_probe.json` is regenerated
+# by `scripts/fg13_impact_probe.py`.
+!/results/fg13_roadm_probe.json
+!/results/fg13_impact_probe.json

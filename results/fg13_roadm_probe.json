@@ -1,0 +1,113 @@
+{
+  "baseline_snr_db": [
+    14.121151757577833,
+    13.994316160345706,
+    13.934120688408417,
+    13.89729911941398,
+    13.873166866840254,
+    13.857828391230214,
+    13.849877247945797,
+    13.849344662933207,
+    13.857709306455137,
+    13.878978203421005,
+    13.924071557763595,
+    14.037059228222112
+  ],
+  "field_sweep": [
+    {
+      "baseline_value": 5.0,
+      "evaluate_path_max_abs_delta_db": 2.5507350388219034,
+      "evaluate_path_snr_bitwise_identical": false,
+      "field": "insertion_loss_db",
+      "perturbed_value": 8.0,
+      "rwa_fold_drop_loss_delta": 3.9622106417078435,
+      "rwa_fold_express_loss_delta": 3.147295784633554
+    },
+    {
+      "baseline_value": 0.2,
+      "evaluate_path_max_abs_delta_db": 1.4994157059056317,
+      "evaluate_path_snr_bitwise_identical": false,
+      "field": "filtering_penalty_db",
+      "perturbed_value": 2.0,
+      "rwa_fold_drop_loss_delta": 0.0,
+      "rwa_fold_express_loss_delta": 0.0
+    },
+    {
+      "baseline_value": 0.0,
+      "evaluate_path_max_abs_delta_db": 0.0,
+      "evaluate_path_snr_bitwise_identical": true,
+      "field": "express_attenuation_db",
+      "perturbed_value": 2.0,
+      "rwa_fold_drop_loss_delta": 0.0,
+      "rwa_fold_express_loss_delta": 1.8495946761043425
+    },
+    {
+      "baseline_value": 1.0,
+      "evaluate_path_max_abs_delta_db": 0.0,
+      "evaluate_path_snr_bitwise_identical": true,
+      "field": "add_drop_loss_db",
+      "perturbed_value": 3.0,
+      "rwa_fold_drop_loss_delta": 2.328501739266961,
+      "rwa_fold_express_loss_delta": 0.0
+    },
+    {
+      "baseline_value": 5.0,
+      "evaluate_path_max_abs_delta_db": 0.0,
+      "evaluate_path_snr_bitwise_identical": true,
+      "field": "booster_noise_figure_db",
+      "perturbed_value": 8.0,
+      "rwa_fold_drop_loss_delta": 0.0,
+      "rwa_fold_express_loss_delta": 0.0
+    },
+    {
+      "baseline_value": true,
+      "evaluate_path_max_abs_delta_db": 0.0,
+      "evaluate_path_snr_bitwise_identical": true,
+      "field": "equalize_output_power",
+      "perturbed_value": false,
+      "rwa_fold_drop_loss_delta": 0.0,
+      "rwa_fold_express_loss_delta": 0.0
+    }
+  ],
+  "scenario": {
+    "center_frequency_hz": 193100000000000.0,
+    "channel_spacing_hz": 50000000000.0,
+    "hop_length_km": 60.0,
+    "hops": 2,
+    "launch_power_w": 0.001,
+    "num_channels": 12,
+    "ode_accel": "off",
+    "roadm_layout": "hop0=非末跳(express 语义), hop1=末跳(drop 语义)",
+    "symbol_rate_hz": 32000000000.0
+  },
+  "structural_demo": {
+    "on_LAST_hop_only": {
+      "bitwise_identical": false,
+      "max_abs_delta_db": 3.552713678800501e-15,
+      "note": "末跳损耗同时除信号与全部累积噪声，在 SNR 比值里代数抵消 ⇒ 预期逐位不变"
+    },
+    "on_NON_LAST_hop_only": {
+      "bitwise_identical": false,
+      "max_abs_delta_db": 2.5507350388219034,
+      "note": "非末跳损耗只作用于此前累积噪声，其后还要累加新噪声 ⇒ 预期可观测"
+    },
+    "probe_field": "insertion_loss_db (5.0 -> 8.0 dB，一个 evaluate_path 确实读取的字段)"
+  },
+  "summary": {
+    "inert_on_evaluate_path": [
+      "express_attenuation_db",
+      "add_drop_loss_db",
+      "booster_noise_figure_db",
+      "equalize_output_power"
+    ],
+    "live_on_evaluate_path": [
+      "insertion_loss_db",
+      "filtering_penalty_db"
+    ],
+    "rwa_live_fields": [
+      "insertion_loss_db",
+      "express_attenuation_db",
+      "add_drop_loss_db"
+    ]
+  }
+}
