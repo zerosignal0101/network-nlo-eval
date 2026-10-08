@@ -1,0 +1,150 @@
+{
+  "question": "roadm_config \u662f\u5426\u5728 isrs_gn \u7684\u4e24\u4e2a\u65bd\u52a0\u70b9\u88ab\u975e None \u8d70\u5230",
+  "python": "/home/zsig/miniconda3/envs/rl/bin/python",
+  "repo_pkg": "/home/zsig/Documents/gits/wt/fg-isrs/src/network_nlo_eval/__init__.py",
+  "per_suite": {
+    "tests/test_fg4e_cpu_batching.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 515,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 50,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        "....................                                                     [100%]",
+        "20 passed in 1.02s"
+      ]
+    },
+    "tests/test_fg4g_matvec_attribution.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 92,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        "............................................                             [100%]",
+        "44 passed in 18.94s"
+      ]
+    },
+    "tests/test_fg4b_nli_vectorization.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 22,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        ".......................                                                  [100%]",
+        "23 passed in 0.40s"
+      ]
+    },
+    "tests/test_fg1_physics_parity.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 16,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        ".........                                                                [100%]",
+        "9 passed in 0.16s"
+      ]
+    },
+    "tests/test_fu4_assembly_union.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 66,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        ".............                                                            [100%]",
+        "13 passed in 0.24s"
+      ]
+    },
+    "tests/test_topology_physical_integration.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 4,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        "....s                                                                    [100%]",
+        "4 passed, 1 skipped in 0.23s"
+      ]
+    },
+    "tests/test_fg2_flexible_grid.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 3,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        ".............................................                            [100%]",
+        "45 passed in 17.35s"
+      ]
+    },
+    "tests/test_fg13_evaluate_path_roadm.py": {
+      "returncode": 0,
+      "counts": {
+        "_calc_span_noise_and_power": {
+          "calls": 22,
+          "roadm_not_none": 0
+        },
+        "calc_span_noise_and_power_batch": {
+          "calls": 0,
+          "roadm_not_none": 0
+        }
+      },
+      "tail": [
+        ".........                                                                [100%]",
+        "9 passed in 1.46s"
+      ]
+    }
+  },
+  "totals": {
+    "calls": 790,
+    "roadm_not_none": 0
+  },
+  "probe_live": true,
+  "verdict": "\u672c\u4ed3\u9009\u5b9a\u6d4b\u8bd5\u9762\u5185 roadm_config \u6052\u4e3a None\uff08\u4e0d\u53ef\u8fbe\uff09",
+  "scope_caveat": "\u53ea\u8986\u76d6\u672c\u4ed3 tests/ \u9009\u5b9a\u5b50\u96c6\uff1b\u4e0d\u80fd\u8bc1\u660e\u5916\u90e8\u8c03\u7528\u65b9\u4e0d\u53ef\u8fbe"
+}

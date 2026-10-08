@@ -1,0 +1,65 @@
+{
+  "question": "physics/qot_checker.py::evaluate_path 在 roadm_configs 含 None 时是否抛错",
+  "file": "/home/zsig/Documents/gits/wt/fg-isrs/src/network_nlo_eval/physics/qot_checker.py",
+  "line": 319,
+  "findings": {
+    "q1_does_it_raise": {
+      "all_real": {
+        "raised": null,
+        "active": [
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "contains_None": {
+        "raised": "AttributeError: 'NoneType' object has no attribute 'blocked_channels'"
+      },
+      "all_None": {
+        "raised": "AttributeError: 'NoneType' object has no attribute 'blocked_channels'"
+      },
+      "roadm_configs_None": {
+        "raised": null,
+        "active": [
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "empty_list": {
+        "raised": null,
+        "active": [
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    },
+    "q3_build_optical_path": {
+      "roadm_configs_append_count": 1,
+      "appended_exprs": [
+        "self.get_roadm_config(v_idx)"
+      ],
+      "get_roadm_config_returns": "<class 'network_nlo_eval.network.elements.ROADMConfig'>"
+    },
+    "q2_callers": {
+      "note": "见文档 §5；grep 证据在 results/fg18_crash_probe.json 同目录的报告中",
+      "physics_evaluate_path_callers": [
+        "src/network_nlo_eval/physics/comparison.py:90 (QoTComparer.evaluate, run_waveform=True)",
+        "src/network_nlo_eval/physics/qot_checker.py:331 (evaluate_topology_path)",
+        "src/network_nlo_eval/physics/qot_checker.py:347 (evaluate_channel_evm_and_ber, 自建 path)"
+      ],
+      "build_optical_path_produces_None": false,
+      "live_callers_that_pass_None": []
+    }
+  },
+  "verdict": {
+    "raises_on_None": true,
+    "production_path_safe": true,
+    "fix_recommended": false,
+    "fix_decision": "交回编排方裁（本刀不改：改它会动 evaluation 契约）"
+  }
+}
