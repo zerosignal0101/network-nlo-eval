@@ -25,7 +25,6 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_fiber_attenuation_npm,
     _calc_nf_lin_jit,
     _calc_span_noise_and_power_jit,
-    _db_to_lin,
     g_cache_stats,
     nli_cache_stats,
     nli_tensors,
@@ -521,12 +520,37 @@ class MultiBandISRSGN:
             **self._nli_kernel_kwargs(n_effective_spans, span_length_m),
         )
 
-        # 3. 处理 ROADM 插入损耗 (可选，在 Python 层处理非线性外围逻辑)
+        # 3. 处理 ROADM 装配 (可选，在 Python 层处理非线性外围逻辑)
         if roadm_config:
-            # 若有 ROADM，出纤功率需要扣除插入损耗
-            # 损耗通常不增加线性噪声方差，但会降低后续跨段的入纤功率
-            loss_lin = _db_to_lin(roadm_config.insertion_loss_db + roadm_config.filtering_penalty_db)
-            p_out_fiber = p_out_fiber / loss_lin
+            # FG-18：走 rwa.qot_checker.fold_roadm_terms 这**同一份**折叠函数对象，
+            # 不再在本处合并 ``insertion_loss_db + filtering_penalty_db``。
+            # 折叠的懒导入与 evaluate_path 同一个理由：rwa.qot_checker 在模块级
+            # 反过来取本模块的 MultiBandISRSGN，模块级互相导入会成环。
+            #
+            # 口径差异（相对收敛前的合并式写法）：
+            #   * 损耗改为 ``path_loss_db("express")`` = ``insertion_loss_db +
+            #     express_attenuation_db``——**含**直通端口附加衰减；收敛前的
+            #     合并式只用 ``insertion_loss_db``，不含端口项。
+            #   * ``filtering_penalty_db`` **不再**并进光功率：它是噪声域乘子
+            #     （fold_roadm_terms 文档第 3 条），折进信号功率是 FG 树旧口径。
+            #   * ``equalize_output_power`` 为真时信号**不再**被 loss 衰减，改注入
+            #     booster ASE ``NF·h·ν·Rs·(loss−1)``——与 evaluate_path 同式。
+            #
+            # ``is_last_hop`` 取 False：逐跨段 API **不知道**自己是否末端跳（端口
+            # 选择依赖 hop 序号，见 evaluate_path 的
+            # ``is_last_hop=hop_index == n_hops - 1``），此处按 express 端口求值。
+            from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
+
+            terms = fold_roadm_terms(roadm_config, is_last_hop=False)
+            if terms.equalize:
+                s2_ase = s2_ase + terms.booster_base * np.asarray(
+                    self.f_abs_hz, dtype=np.float64
+                ) * np.asarray(self.symbol_rate_hz_channels, dtype=np.float64) * (terms.loss - 1.0)
+            else:
+                p_out_fiber = p_out_fiber / terms.loss
+                s2_spm = s2_spm / terms.loss
+                s2_xpm = s2_xpm / terms.loss
+                s2_ase = s2_ase / terms.loss
 
         return p_out_fiber, s2_spm, s2_xpm, s2_ase
 
@@ -593,8 +617,22 @@ class MultiBandISRSGN:
         )
 
         if roadm_config is not None:
-            loss_lin = _db_to_lin(roadm_config.insertion_loss_db + roadm_config.filtering_penalty_db)
-            p_out = p_out / loss_lin
+            # FG-18：与串行入口 :524 走**同一份** ``fold_roadm_terms``，
+            # 不再在本处合并 ``insertion_loss_db + filtering_penalty_db``。
+            # 口径与理由见串行入口的注释；``is_last_hop`` 同样取 False（逐跨段
+            # API 无从知道 hop 序号）。(B, N) 布局下 booster 项按 (N,) 广播。
+            from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
+
+            terms = fold_roadm_terms(roadm_config, is_last_hop=False)
+            if terms.equalize:
+                s2_ase = s2_ase + terms.booster_base * np.asarray(
+                    self.f_abs_hz, dtype=np.float64
+                ) * np.asarray(self.symbol_rate_hz_channels, dtype=np.float64) * (terms.loss - 1.0)
+            else:
+                p_out = p_out / terms.loss
+                s2_spm = s2_spm / terms.loss
+                s2_xpm = s2_xpm / terms.loss
+                s2_ase = s2_ase / terms.loss
 
         return p_out, s2_spm, s2_xpm, s2_ase
 
