@@ -1,0 +1,371 @@
+{
+  "wp": "O2",
+  "baseline_tree": "ode-dev",
+  "baseline_path": "/home/zsig/Documents/gits/wt/ode-dev",
+  "compared_tree": "wp/fg-uwb-fid",
+  "compared_path": "/home/zsig/Documents/gits/wt/fg-uwb-fid",
+  "protocol": "scripts_shared/cross_snr_compat.py + compat_run.py (unchanged)",
+  "scenarios": [
+    {
+      "scenario": "legacy_two_hop_equalize_on",
+      "kind": "legacy",
+      "ode_dev_snr_db": 25.265176304717638,
+      "other_snr_db": 26.0347304295729,
+      "delta_db": -0.7695541248552615,
+      "bit_identical": false,
+      "accepted_ode_dev": true,
+      "accepted_other": true,
+      "ode_dev_error": null,
+      "other_error": null
+    },
+    {
+      "scenario": "legacy_three_hop_equalize_on",
+      "kind": "legacy",
+      "ode_dev_snr_db": 23.391590837855194,
+      "other_snr_db": 24.152139265826385,
+      "delta_db": -0.7605484279711909,
+      "bit_identical": false,
+      "accepted_ode_dev": true,
+      "accepted_other": true,
+      "ode_dev_error": null,
+      "other_error": null
+    },
+    {
+      "scenario": "legacy_two_hop_equalize_off",
+      "kind": "legacy",
+      "ode_dev_snr_db": 22.239480441560254,
+      "other_snr_db": 23.0296997909201,
+      "delta_db": -0.7902193493598482,
+      "bit_identical": false,
+      "accepted_ode_dev": true,
+      "accepted_other": true,
+      "ode_dev_error": null,
+      "other_error": null
+    },
+    {
+      "scenario": "legacy_express_attenuation",
+      "kind": "legacy",
+      "ode_dev_snr_db": 25.227016934879526,
+      "other_snr_db": 25.989211917341827,
+      "delta_db": -0.7621949824623009,
+      "bit_identical": false,
+      "accepted_ode_dev": true,
+      "accepted_other": true,
+      "ode_dev_error": null,
+      "other_error": null
+    },
+    {
+      "scenario": "legacy_high_filtering",
+      "kind": "legacy",
+      "ode_dev_snr_db": 24.255573729782306,
+      "other_snr_db": 25.025781931578116,
+      "delta_db": -0.7702082017958105,
+      "bit_identical": false,
+      "accepted_ode_dev": true,
+      "accepted_other": true,
+      "ode_dev_error": null,
+      "other_error": null
+    },
+    {
+      "scenario": "legacy_blocked_channel",
+      "kind": "legacy",
+      "ode_dev_snr_db": null,
+      "other_snr_db": null,
+      "delta_db": null,
+      "bit_identical": true,
+      "accepted_ode_dev": false,
+      "accepted_other": false,
+      "ode_dev_error": null,
+      "other_error": null
+    }
+  ],
+  "summary": {
+    "n_scenarios": 6,
+    "n_bit_identical": 1,
+    "n_rejected_both": 1,
+    "n_errors": 0,
+    "max_abs_delta_db": 0.7902193493598482
+  },
+  "raw": {
+    "ode-dev": {
+      "path": "/home/zsig/Documents/gits/wt/ode-dev",
+      "results": [
+        {
+          "name": "legacy_two_hop_equalize_on",
+          "kind": "legacy",
+          "snr_db": 25.265176304717638,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_three_hop_equalize_on",
+          "kind": "legacy",
+          "snr_db": 23.391590837855194,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_two_hop_equalize_off",
+          "kind": "legacy",
+          "snr_db": 22.239480441560254,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_express_attenuation",
+          "kind": "legacy",
+          "snr_db": 25.227016934879526,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_high_filtering",
+          "kind": "legacy",
+          "snr_db": 24.255573729782306,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_blocked_channel",
+          "kind": "legacy",
+          "snr_db": null,
+          "accepted": false,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        }
+      ],
+      "fatal": null
+    },
+    "ecz-dev": {
+      "path": "/home/zsig/Documents/gits/network-nlo-eval",
+      "results": [
+        {
+          "name": "legacy_two_hop_equalize_on",
+          "kind": "legacy",
+          "snr_db": 25.265176304717638,
+          "accepted": true,
+          "init_params": [
+            "grid",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_three_hop_equalize_on",
+          "kind": "legacy",
+          "snr_db": 23.391590837855194,
+          "accepted": true,
+          "init_params": [
+            "grid",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_two_hop_equalize_off",
+          "kind": "legacy",
+          "snr_db": 22.239480441560254,
+          "accepted": true,
+          "init_params": [
+            "grid",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_express_attenuation",
+          "kind": "legacy",
+          "snr_db": 25.227016934879526,
+          "accepted": true,
+          "init_params": [
+            "grid",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_high_filtering",
+          "kind": "legacy",
+          "snr_db": 24.255573729782306,
+          "accepted": true,
+          "init_params": [
+            "grid",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_blocked_channel",
+          "kind": "legacy",
+          "snr_db": null,
+          "accepted": false,
+          "init_params": [
+            "grid",
+            "ref_fiber_config",
+            "self",
+            "symbol_rate_hz"
+          ]
+        }
+      ],
+      "fatal": null
+    },
+    "wp/fg-uwb-fid": {
+      "path": "/home/zsig/Documents/gits/wt/fg-uwb-fid",
+      "results": [
+        {
+          "name": "legacy_two_hop_equalize_on",
+          "kind": "legacy",
+          "snr_db": 26.0347304295729,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "phi_kurtosis",
+            "raman_spectrum",
+            "ref_fiber_config",
+            "self",
+            "slots_per_channel",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_three_hop_equalize_on",
+          "kind": "legacy",
+          "snr_db": 24.152139265826385,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "phi_kurtosis",
+            "raman_spectrum",
+            "ref_fiber_config",
+            "self",
+            "slots_per_channel",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_two_hop_equalize_off",
+          "kind": "legacy",
+          "snr_db": 23.0296997909201,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "phi_kurtosis",
+            "raman_spectrum",
+            "ref_fiber_config",
+            "self",
+            "slots_per_channel",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_express_attenuation",
+          "kind": "legacy",
+          "snr_db": 25.989211917341827,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "phi_kurtosis",
+            "raman_spectrum",
+            "ref_fiber_config",
+            "self",
+            "slots_per_channel",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_high_filtering",
+          "kind": "legacy",
+          "snr_db": 25.025781931578116,
+          "accepted": true,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "phi_kurtosis",
+            "raman_spectrum",
+            "ref_fiber_config",
+            "self",
+            "slots_per_channel",
+            "symbol_rate_hz"
+          ]
+        },
+        {
+          "name": "legacy_blocked_channel",
+          "kind": "legacy",
+          "snr_db": null,
+          "accepted": false,
+          "init_params": [
+            "connections",
+            "grid",
+            "ode_accel",
+            "phi_kurtosis",
+            "raman_spectrum",
+            "ref_fiber_config",
+            "self",
+            "slots_per_channel",
+            "symbol_rate_hz"
+          ]
+        }
+      ],
+      "fatal": null
+    }
+  },
+  "evidence_sha256": {
+    "compat_run.py": "e06ef1c0ce737618ec80ca199de4ffd28da5deace76f1c70b3dbc1280b1e7acd",
+    "cross_snr_compat.py": "74d4aa674ce325f26d47c056002a382aa978f6f4df2987a205c9063dd210057e"
+  }
+}

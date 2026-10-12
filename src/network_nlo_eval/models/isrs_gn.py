@@ -3,11 +3,13 @@
 ISRS-GN (Inter-channel Stimulated Raman Scattering - Generalized Noise)
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
+from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.numba_kernels import (
@@ -22,6 +24,21 @@ from network_nlo_eval.models.numba_kernels import (
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 
 _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
+
+#: ``ode_accel`` 档位（WP-O2 移植，只做**数值加速**，不改物理）。
+#:
+#: ``"off"``
+#:     每次调用都进一次 njit 核。这是 ``ecz-dev`` 的冻结参考路径，**默认档**。
+#: ``"cached"``
+#:     按 (入纤功率, 跨段长度, 跨段数, NF) 记忆化单跨段结果。纯 memoization：
+#:     命中时返回的是**同一个 ndarray 对象**，因此与 ``"off"`` 逐位相等。
+#:
+#: ⚠️ 这里**故意不做**浮点求和重排。`wp/fg-uwb-fid` 的 ``matvec`` / ``cached_g``
+#: 需要改写 ``numba_kernels.py`` 里被冻结的内核（且它那套 NLI 张量的公式出处是
+#: fu4 自己 docstring 里的 "Eq. 21"，P1/P2 均无此式）——按 WP-O2 §8 与 J1/J3
+#: 一律不移植，详见 ``docs/ode2_papers_and_diff.md``。
+ODE_ACCEL_MODES = ("off", "cached")
+ODE_ACCEL_DEFAULT = "off"
 
 
 @dataclass
@@ -67,17 +84,30 @@ class MultiBandISRSGN:
 
     def __init__(
         self,
-        grid: SpectrumGrid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
+        connections: Sequence[ConnectionSpec] | None = None,
+        ode_accel: str = ODE_ACCEL_DEFAULT,
     ):
         """初始化 ISRS-GN 评估器。
 
         Args:
-            grid: 频谱网格配置。
+            grid: 频谱网格配置（遗留 ``SpectrumGrid`` 或 ``FlexibleGrid``）。
             ref_fiber_config: 参考光纤配置，用于计算各种波长相关参数。
             symbol_rate_hz: 系统的符号速率 (Hz)。
+            connections: (可选) 灵活栅格连接列表。给定后进入**逐连接模式**：每条
+                连接 = 一个节点，节点频率取连接中心频率，频带边缘按实际占用带计算。
+                为 ``None`` 时保持遗留行为，数值**逐位不变**。
+            ode_accel: 加速档位，见 :data:`ODE_ACCEL_MODES`。
+
+        Raises:
+            ValueError: ``ode_accel`` 非法，或连接的符号速率不均匀
+                （冻结内核只接受标量 Rs，见下方说明）。
         """
+        if ode_accel not in ODE_ACCEL_MODES:
+            raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
+
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
         self.symbol_rate_hz = symbol_rate_hz
@@ -85,17 +115,50 @@ class MultiBandISRSGN:
         self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
+        self.ode_accel = ode_accel
 
+        self.connections = list(connections) if connections is not None else None
+        if self.connections is not None:
+            rates = {float(conn.symbol_rate_hz) for conn in self.connections}
+            if len(rates) > 1:
+                # 冻结的 njit 核 `_calc_span_noise_and_power_jit` 的 `symbol_rate_hz`
+                # 是**标量**类型（它要拿去算标量 f_m/f_M 并喂给逐标量的 SPM/XPM）。
+                # 逐连接异构 Rs 需要把它改成数组参数 = 改冻结内核，按 WP-O2 §8
+                # 必须先报告而不是自己动。故这里显式拒绝，不静默取代表值。
+                raise ValueError(
+                    "per-connection heterogeneous symbol rates are not supported: the frozen "
+                    "numba kernel takes a scalar symbol_rate_hz. Pass a uniform rate, or port "
+                    "the array-valued kernel separately (see docs/ode2_papers_and_diff.md)."
+                )
+
+        self._span_cache: dict[tuple, tuple] = {}
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
+
+    @property
+    def n_nodes(self) -> int:
+        """节点数：遗留模式 = 信道数；逐连接模式 = 活跃连接数。"""
+        return int(self.f_abs_hz.shape[0])
+
+    @property
+    def band_center_hz(self) -> float:
+        """``f_rel_hz`` 的参考原点。遗留网格用中心频率，灵活栅格用频段中心。"""
+        if isinstance(self.grid, FlexibleGrid):
+            return self.grid.band_center_hz
+        return self.grid.center_frequency_hz
 
     def _precompute_channel_dependent_properties(self) -> None:
         """预计算所有信道通用的波长依赖物理属性，如波长、有效模面积等。
 
         这些属性在整个仿真中通常不变。
         """
-        self.lambdas_m = self.grid.wavelengths  # (m)
-        self.f_abs_hz = self.grid.frequencies  # (Hz)
+        if self.connections is not None:
+            # 每连接一个节点，节点频率 = 连接中心频率。
+            self.f_abs_hz = np.array([conn.centre_hz for conn in self.connections], dtype=np.float64)
+            self.lambdas_m = C_LIGHT / self.f_abs_hz  # (m)
+        else:
+            self.lambdas_m = self.grid.wavelengths  # (m)
+            self.f_abs_hz = self.grid.frequencies  # (Hz)
 
         # 衰减系数 (Np/m)
         if self.ref_fiber_config.use_attenuation_polynomial:
@@ -108,7 +171,7 @@ class MultiBandISRSGN:
             )
         else:
             alpha = self.ref_fiber_config.attenuation_db_km_ref * np.log(10) / 10 / 1e3
-            self.alpha_power_npm_channels = np.full(self.grid.num_channels, alpha)
+            self.alpha_power_npm_channels = np.full(self.n_nodes, alpha)
 
         # 有效模面积 (m^2)
         self.a_eff_m2_channels = _calc_aeff_dynamic(
@@ -124,7 +187,7 @@ class MultiBandISRSGN:
         # beta2 和 beta3 (s^2/m, s^3/m)
         # 简化：在每个跨段的中心波长处计算 beta2 和 beta3，或使用参考波长
         # 这里使用参考波长处的 D 和 S 来计算
-        ref_lambda_m = C_LIGHT / self.grid.center_frequency_hz
+        ref_lambda_m = C_LIGHT / self.band_center_hz
         self.beta2_s2_m = _calc_beta2_from_d(self.ref_fiber_config.dispersion_parameter_d, ref_lambda_m)
         self.beta3_s3_m = _calc_beta3_from_s_d(
             self.ref_fiber_config.dispersion_slope_s,
@@ -133,9 +196,22 @@ class MultiBandISRSGN:
         )
 
         # 相对频率 (Hz)，用于 NLI/SRS 计算
-        self.f_rel_hz = self.f_abs_hz - self.grid.center_frequency_hz
-        self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
-        self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
+        self.f_rel_hz = self.f_abs_hz - self.band_center_hz
+        if self.connections is not None:
+            # 变宽连接下单条 Rs/2 不再是带边，必须按实际占用带计算。
+            low_edges = np.array(
+                [conn.centre_hz - conn.n_slots * conn.grid.slot_width_hz / 2 for conn in self.connections],
+                dtype=np.float64,
+            )
+            high_edges = np.array(
+                [conn.centre_hz + conn.n_slots * conn.grid.slot_width_hz / 2 for conn in self.connections],
+                dtype=np.float64,
+            )
+            self.f_m_hz = float(low_edges.min() - self.band_center_hz)
+            self.f_M_hz = float(high_edges.max() - self.band_center_hz)
+        else:
+            self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
+            self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
 
     def _calc_span_noise_and_power(
         self,
@@ -170,31 +246,47 @@ class MultiBandISRSGN:
                 if noise_figure_db.ndim == 0:
                     current_nf_lin = np.full_like(self.nf_lin_channels, 10 ** (float(noise_figure_db) / 10))
                 else:
-                    if noise_figure_db.shape != (self.grid.num_channels,):
+                    if noise_figure_db.shape != (self.n_nodes,):
                         raise ValueError("EDFA noise-figure array must contain one value per channel.")
                     current_nf_lin = 10 ** (noise_figure_db / 10)
         else:
             current_nf_lin = np.ones_like(self.nf_lin_channels)
 
         # 2. 调用 JIT 内核 (热路径)
-        p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
-            power_in_w=power_in_w,
-            span_length_m=span_length_m,
-            f_rel_hz=self.f_rel_hz,
-            f_abs_hz=self.f_abs_hz,
-            lambdas_m=self.lambdas_m,
-            alpha_power_npm=self.alpha_power_npm_channels,
-            a_eff_m2=self.a_eff_m2_channels,
-            beta2_s2_m=self.beta2_s2_m,
-            beta3_s3_m=self.beta3_s3_m,
-            n2_m2_w=self.n2_m2_w,
-            nf_lin_channels=current_nf_lin,
-            symbol_rate_hz=self.symbol_rate_hz,
-            n_effective_spans=n_effective_spans,
-            cr_w_m_hz=self.cr_w_m_hz,
-            k_bar=self.k_bar,
-            delta_f_co_hz=self.delta_f_co_hz,
-        )
+        cached = None
+        if self.ode_accel == "cached":
+            cache_key = (
+                power_in_w.tobytes(),
+                float(span_length_m),
+                int(n_effective_spans),
+                current_nf_lin.tobytes(),
+            )
+            cached = self._span_cache.get(cache_key)
+
+        if cached is not None:
+            # 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。
+            p_out_fiber, s2_spm, s2_xpm = cached
+        else:
+            p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
+                power_in_w=power_in_w,
+                span_length_m=span_length_m,
+                f_rel_hz=self.f_rel_hz,
+                f_abs_hz=self.f_abs_hz,
+                lambdas_m=self.lambdas_m,
+                alpha_power_npm=self.alpha_power_npm_channels,
+                a_eff_m2=self.a_eff_m2_channels,
+                beta2_s2_m=self.beta2_s2_m,
+                beta3_s3_m=self.beta3_s3_m,
+                n2_m2_w=self.n2_m2_w,
+                nf_lin_channels=current_nf_lin,
+                symbol_rate_hz=self.symbol_rate_hz,
+                n_effective_spans=n_effective_spans,
+                cr_w_m_hz=self.cr_w_m_hz,
+                k_bar=self.k_bar,
+                delta_f_co_hz=self.delta_f_co_hz,
+            )
+            if self.ode_accel == "cached":
+                self._span_cache[cache_key] = (p_out_fiber, s2_spm, s2_xpm)
 
         # 3. 显式应用 EDFA。旧实现返回未放大的出纤功率，且 edfa=None 仍产生 ASE。
         if edfa_config is None:
@@ -207,7 +299,7 @@ class MultiBandISRSGN:
                 gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))
             if edfa_config.gain_ripple_db is not None:
                 ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
-                if ripple.shape != (self.grid.num_channels,):
+                if ripple.shape != (self.n_nodes,):
                     raise ValueError("EDFA gain-ripple array must contain one value per channel.")
                 gain *= 10 ** (ripple / 10)
             p_out = p_out_fiber * gain
@@ -237,7 +329,7 @@ class MultiBandISRSGN:
     def evaluate_path(self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat) -> PathQoTResult:
         """按拓扑顺序评估光纤、跨段 EDFA、ROADM 和 booster."""
         power = np.asarray(power_in_w, dtype=np.float64).copy()
-        if power.shape != (self.grid.num_channels,) or np.any(power < 0):
+        if power.shape != (self.n_nodes,) or np.any(power < 0):
             raise ValueError("power_in_w must be a non-negative vector with one value per channel.")
         total_spm = np.zeros_like(power)
         total_xpm = np.zeros_like(power)
@@ -268,7 +360,7 @@ class MultiBandISRSGN:
 
             if roadm is None:
                 continue
-            blocked = [index for index in roadm.blocked_channels if index < self.grid.num_channels]
+            blocked = [index for index in roadm.blocked_channels if index < self.n_nodes]
             operation = "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
             loss_db = roadm.path_loss_db(operation)
             loss = 10 ** (loss_db / 10)
