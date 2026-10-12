@@ -44,6 +44,41 @@ class QoTValidator:
     # 公开接口
     # ------------------------------------------------------------------
 
+    @property
+    def num_nodes(self) -> int:
+        """ODE 节点数（= 活跃连接数），噪声数组按此长度分配。
+
+        遗留模式下等于 `spectrum_grid.num_channels`；逐连接模式下等于连接数
+        （设计 §2.4：一条连接一个节点，与槽数无关）。
+        """
+        return self.gn_evaluator.n_nodes
+
+    def _is_blocked(self, roadm, node_index: int) -> bool:
+        """判断某节点（连接）是否被该 ROADM 阻断。
+
+        灵活栅格下按**槽区间重叠**判定；遗留模式按信道索引（逐位不变）。
+        解析顺序集中实现在 `MultiBandISRSGN.roadm_blocks_node`，与波形模型侧
+        (`physics/qot_checker.py`) 共用同一份语义，避免三处各写一遍。
+        """
+        return self.gn_evaluator.roadm_blocks_node(roadm, node_index)
+
+    def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:
+        """返回该节点（连接）的 ``(中心频率 Hz, 符号率 Hz)``。
+
+        必须走 ``gn_evaluator`` 的**逐节点**数组，不能用
+        ``spectrum_grid.frequencies``：灵活栅格下 ``channel_idx`` 索引的是
+        连接（ODE 节点），与固定栅格的信道索引不是同一个索引空间。
+
+        遗留模式下 ``f_abs_hz is spectrum_grid.frequencies`` 且
+        ``symbol_rate_hz_channels`` 全等于标量 ``symbol_rate_hz``，故这条路
+        在 legacy 下逐位等价。
+        """
+        evaluator = self.gn_evaluator
+        return (
+            float(evaluator.f_abs_hz[channel_idx]),
+            float(evaluator.symbol_rate_hz_channels[channel_idx]),
+        )
+
     def verify_allocation(
         self,
         service_request: ServiceRequest,
@@ -165,9 +200,9 @@ class QoTValidator:
         num_full_spans = int(link_total_length_m // span_length_m)
         remainder_length_m = link_total_length_m % span_length_m
 
-        total_spm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_xpm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_ase = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_spm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_ase = np.zeros(self.num_nodes, dtype=np.float64)
         total_spans = 0
 
         if num_full_spans > 0:
@@ -258,18 +293,13 @@ class QoTValidator:
             total_spans += cache.span_count
 
             roadm = self.network_topology.get_roadm_config(v)
-            if channel_idx in roadm.blocked_channels:
+            if self._is_blocked(roadm, channel_idx):
                 return float("-inf")
             loss = 10 ** (roadm.path_loss_db("drop" if i == len(path) - 2 else "express") / 10)
             if roadm.equalize_output_power:
                 nf = 10 ** (roadm.booster_noise_figure_db / 10)
-                total_ase += (
-                    nf
-                    * 6.62607015e-34
-                    * self.spectrum_grid.frequencies[channel_idx]
-                    * self.gn_evaluator.symbol_rate_hz
-                    * (loss - 1)
-                )
+                frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)
+                total_ase += nf * 6.62607015e-34 * frequency_hz * symbol_rate_hz * (loss - 1)
             else:
                 signal_power /= loss
                 total_spm /= loss
@@ -302,7 +332,7 @@ class QoTValidator:
             u, v = path[i], path[i + 1]
             link_state = network_state.get_link_state(u, v)
 
-            for ch_idx in range(self.spectrum_grid.num_channels):
+            for ch_idx in range(self.num_nodes):
                 if ch_idx == channel_idx:
                     continue
                 if not link_state.occupied_channels[ch_idx]:
@@ -326,9 +356,9 @@ class QoTValidator:
         fixed_span_length_km: float | None,
     ) -> NDArrayFloat:
         """构建新业务路径上各信道的 SNR (dB) 数组，用于返回值。"""
-        total_spm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_xpm = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
-        total_ase = np.zeros(self.spectrum_grid.num_channels, dtype=np.float64)
+        total_spm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
+        total_ase = np.zeros(self.num_nodes, dtype=np.float64)
         total_spans = 0
         u0, v0 = path[0], path[1]
         link_key0 = _normalize(u0, v0)
@@ -359,7 +389,11 @@ class QoTValidator:
             if roadm.equalize_output_power:
                 nf = 10 ** (roadm.booster_noise_figure_db / 10)
                 booster_ase = (
-                    nf * 6.62607015e-34 * self.spectrum_grid.frequencies * self.gn_evaluator.symbol_rate_hz * (loss - 1)
+                    nf
+                    * 6.62607015e-34
+                    * self.gn_evaluator.f_abs_hz
+                    * self.gn_evaluator.symbol_rate_hz_channels
+                    * (loss - 1)
                 )
                 booster_ase[signal_power <= 0] = 0
                 total_ase += booster_ase
@@ -372,15 +406,15 @@ class QoTValidator:
             total_spm *= penalty
             total_xpm *= penalty
             total_ase *= penalty
-            blocked = [index for index in roadm.blocked_channels if index < self.spectrum_grid.num_channels]
+            blocked = [index for index in range(self.num_nodes) if self._is_blocked(roadm, index)]
             if blocked:
                 signal_power[blocked] = 0
 
         penalty = total_spans**0.05 if total_spans > 0 else 1.0
         total_noise = total_spm * penalty + total_xpm + total_ase
 
-        snrs_db = np.full(self.spectrum_grid.num_channels, -np.inf, dtype=np.float64)
-        for ch_idx in range(self.spectrum_grid.num_channels):
+        snrs_db = np.full(self.num_nodes, -np.inf, dtype=np.float64)
+        for ch_idx in range(self.num_nodes):
             if total_noise[ch_idx] <= 0:
                 continue
             if signal_power[ch_idx] > 0:

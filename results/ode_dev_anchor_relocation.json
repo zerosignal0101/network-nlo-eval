@@ -1,0 +1,129 @@
+{
+  "wp": "O3",
+  "purpose": "WP-O3 插入 flexgrid 接线导致 isrs_gn.py 物理行行号下移；只重排行号，不改 contains。",
+  "target": "tools/ode_formula_map.py",
+  "n_relocated": 17,
+  "n_unfixable": 0,
+  "relocations": [
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(",
+      "old_line": 165,
+      "new_line": 220,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)",
+      "old_line": 115,
+      "new_line": 123,
+      "delta": 8
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "total_noise = total_spm + total_xpm + total_ase",
+      "old_line": 388,
+      "new_line": 456,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])",
+      "old_line": 391,
+      "new_line": 459,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))",
+      "old_line": 299,
+      "new_line": 354,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain *= 10 ** (ripple / 10)",
+      "old_line": 304,
+      "new_line": 359,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * np.maximum(gain - 1, 0)",
+      "old_line": 306,
+      "new_line": 361,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(",
+      "old_line": 270,
+      "new_line": 325,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)",
+      "old_line": 297,
+      "new_line": 352,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "np.maximum(gain - 1, 0)",
+      "old_line": 306,
+      "new_line": 361,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "total_noise = total_spm + total_xpm + total_ase",
+      "old_line": 388,
+      "new_line": 456,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "total_spm *= transfer",
+      "old_line": 352,
+      "new_line": 420,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)",
+      "old_line": 378,
+      "new_line": 446,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "total_spm *= penalty",
+      "old_line": 382,
+      "new_line": 450,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "s2_ase = np.zeros_like(power_in_w)",
+      "old_line": 294,
+      "new_line": 349,
+      "delta": 55
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0",
+      "old_line": 386,
+      "new_line": 454,
+      "delta": 68
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "self.delta_f_co_hz = 15e12",
+      "old_line": 116,
+      "new_line": 124,
+      "delta": 8
+    }
+  ],
+  "unfixable": []
+}

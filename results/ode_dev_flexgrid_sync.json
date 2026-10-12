@@ -1,0 +1,433 @@
+{
+  "wp": "O3",
+  "judgment": "J7",
+  "wp_base_commit": "46923a9",
+  "fu4_ref": "wp/fg-uwb-fid@a233002",
+  "summary": {
+    "n_segments": 37,
+    "n_engineering": 34,
+    "n_physics": 3,
+    "n_physics_applied": 0,
+    "n_ported_or_applied": 25,
+    "n_not_ported": 12,
+    "files_touched": [
+      "src/network_nlo_eval/core/bands.py",
+      "src/network_nlo_eval/models/isrs_gn.py",
+      "src/network_nlo_eval/network/elements.py",
+      "src/network_nlo_eval/physics/qot_checker.py",
+      "src/network_nlo_eval/rwa/qot_checker.py"
+    ]
+  },
+  "j5_frozen_kernel": {
+    "file": "src/network_nlo_eval/models/numba_kernels.py",
+    "diff_vs_wp_base_empty": true
+  },
+  "segments": [
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "nm_to_hz",
+      "fu4_lines": "108-124",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "单位换算。BandSpec.low_hz/high_hz 的最小闭包依赖，无公式。",
+      "verify": "def nm_to_hz(wavelength_nm: float) -> float:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandSpec",
+      "fu4_lines": "181-294",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "frozen dataclass + 边界校验。from_connections 的第二参数类型，属最小闭包。不含任何波段取值。",
+      "verify": "class BandSpec:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.__init__",
+      "fu4_lines": "347-410",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "频段归属的索引簿记 + 覆盖/重叠校验。纯数据结构。",
+      "verify": "def __init__(self, frequencies_hz: NDArrayFloat, specs: Sequence[BandSpec]) -> None:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.from_connections",
+      "fu4_lines": "427-451",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "★ J8 接入点 1：按连接中心频率归段。逐字移植。",
+      "verify": "def from_connections(cls, connections: Sequence[ConnectionSpec], specs: Sequence[BandSpec]) -> BandPlan:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.assert_connections_single_band",
+      "fu4_lines": "573-598",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "★ J8 接入点 2：拒绝横跨频段边界的宽连接。逐字移植。",
+      "verify": "def assert_connections_single_band(self, connections: Sequence[ConnectionSpec]) -> None:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.apply_launch_power",
+      "fu4_lines": "600-632",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "★ J8 接入点 3：ConnectionSpec 是 frozen，故返回 replace 后的新列表。逐字移植。",
+      "verify": "def apply_launch_power(",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan 查询属性 (num_bands/num_elements/band_names/band_element_indices/band_of/element_count)",
+      "fu4_lines": "454-523",
+      "kind": "engineering",
+      "action": "ported",
+      "rationale": "归属查询。证据 JSON 需要 band_of/band_names，故保留。",
+      "verify": "def band_of(self, element_idx: int) -> int:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandSpec / BandPlan 的 as_dict",
+      "fu4_lines": "282-294, 665-677",
+      "kind": "engineering",
+      "action": "ported_adapted",
+      "rationale": "服务本 WP 证据落盘。BandPlan.as_dict 去掉 guards 键（其依赖未移植的 guard_report），其余逐字。",
+      "verify": "\"band_order_low_to_high_frequency\": self.band_names,",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandSpec 波长/频率 docstring",
+      "fu4_lines": "185-193, 222-235, 242-250",
+      "kind": "engineering",
+      "action": "ported_adapted",
+      "rationale": "★ fu4 的 docstring 与代码相反（自称 low_nm 是长波长，但不变式强制 low_nm < high_nm 即短波长）。只改注释不改行为——该错误表述在写场景时会导致 波段边界整体算反。",
+      "verify": "SHORTER wavelength, hence the HIGHER frequency",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "hz_to_nm",
+      "fu4_lines": "127-143",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "只被未移植的 guard_report / sclu_span_report 使用；搬进来即死代码。",
+      "verify_absent": "def hz_to_nm(",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "ITU-T G.694.1 波长常数 + U_BAND_ASSUMPTIONS",
+      "fu4_lines": "146-178",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "FU-2 的 S/C/L/U 波段表资产；含 4 条**假设**（U 波段 1660-1770 nm 无ITU 出处、U 段 NF 6.5 dB 无出处）。与 flexgrid 接线无关。",
+      "verify_absent": "U_BAND_ASSUMPTIONS: tuple[str, ...] = (",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "_u_spec / CL_BAND_SPECS / CLS_BAND_SPECS / CLU_BAND_SPECS / SCLU_BAND_SPECS",
+      "fu4_lines": "297-328",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "同上，FU-2 预置波段表。本仓场景自带频段规格，故不需要预置表。",
+      "verify_absent": "SCLU_BAND_SPECS: tuple[BandSpec, ...]",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.from_channels",
+      "fu4_lines": "413-425",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "遗留 SpectrumGrid 粒度入口，非 flexgrid 接线所需。",
+      "verify_absent": "def from_channels(",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.noise_figure_db_per_element / launch_power_profile_w / per_band_launch_power_w",
+      "fu4_lines": "526-571",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "逐**信道**口径入口。J8 链路走逐连接口径（apply_launch_power）。noise_figure_db_per_element 还会把 BandSpec.amplifier 拉进评估口径。",
+      "verify_absent": "def noise_figure_db_per_element(",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/core/bands.py",
+      "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
+      "symbol": "BandPlan.guard_report / sclu_span_report",
+      "fu4_lines": "635-663, 680-728",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "FU-2 的保护间隔与 S+C+L+U 跨距口径报告，属该分支自有结论。",
+      "verify_absent": "def guard_report(",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "origin": "wp/fg-uwb-fid@a233002 models/isrs_gn.py",
+      "symbol": "MultiBandISRSGN.__init__(slots_per_channel=...)",
+      "fu4_lines": "136, 183-185",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "J5 允许的索引空间适配。仅用于把 blocked_channels 展开成 blocked_slots；遗留模式下不参与任何数值。",
+      "verify": "if slots_per_channel is not None and slots_per_channel < 1:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "origin": "wp/fg-uwb-fid@a233002 models/isrs_gn.py",
+      "symbol": "MultiBandISRSGN.symbol_rate_hz_channels",
+      "fu4_lines": "216",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "★ 索引空间适配：np.full(n_nodes, 标量 Rs)。遗留下与标量逐位等价（WP-O1 已证 isrs_gn.py:215-216）。**不是**逐连接异构 Rs——那需改冻结内核。",
+      "verify": "return np.full(self.n_nodes, float(self.symbol_rate_hz), dtype=np.float64)",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "origin": "wp/fg-uwb-fid@a233002 models/isrs_gn.py",
+      "symbol": "MultiBandISRSGN.roadm_blocks_node",
+      "fu4_lines": "485-509 (rwa 侧同语义)",
+      "kind": "engineering",
+      "action": "applied_new",
+      "rationale": "★ fu4 把同一套 blocked_slots 解析逻辑在 rwa / physics / isrs_gn 三处各写一遍（其中 physics 侧靠私有属性 _slots_per_channel_hint 传参）。本 WP 收敛成一个方法，三处共用，保证语义不会漂移。legacy 分支逐字等价。",
+      "verify": "def roadm_blocks_node(self, roadm: ROADMConfig, node_index: int) -> bool:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "origin": "WP-O3 自行发现（fu4 无对应差异）",
+      "symbol": "MultiBandISRSGN.for_fiber 透传 connections/ode_accel/slots_per_channel",
+      "fu4_lines": "n/a",
+      "kind": "engineering",
+      "action": "applied_new",
+      "rationale": "★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。",
+      "verify": "self.slots_per_channel,\n            )",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "origin": "wp/fg-uwb-fid@a233002 models/isrs_gn.py",
+      "symbol": "逐连接异构 symbol_rate_hz 数组参数",
+      "fu4_lines": "1306, 1328-1330 (numba_kernels.py)",
+      "kind": "physics",
+      "action": "not_ported",
+      "rationale": "★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓冻结核只吃标量。改它 = 改 numba_kernels.py = 违反 J5。O2 已显式拒绝，本 WP 沿用该裁定（probes.heterogeneous_rs 证明确实被拒）。",
+      "verify_absent": "symbol_rate_hz: NDArrayFloat",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "origin": "wp/fg-uwb-fid@a233002 models/isrs_gn.py",
+      "symbol": "用连接占用带覆写 f_m_hz / f_M_hz 并真正传给内核",
+      "fu4_lines": "n/a（fu4 用真 ODE，无此参数）",
+      "kind": "physics",
+      "action": "not_ported",
+      "rationale": "★ 物理片段。O2 已在 Python 侧按连接占用带算出 f_m_hz/f_M_hz，但冻结内核在核内用标量 Rs 重算二者，故该修正在本仓是**死代码**。让它生效需给内核加参数 = J5。见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。",
+      "verify_absent": null
+    },
+    {
+      "file": "src/network_nlo_eval/network/elements.py",
+      "origin": "wp/fg-uwb-fid@a233002 network/elements.py",
+      "symbol": "ROADMConfig.blocked_slots",
+      "fu4_lines": "84-87",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "灵活栅格下的权威阻断字段（12.5 GHz 粒度）。默认空列表，遗留行为不变。",
+      "verify": "blocked_slots: list[int] = Field(",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/network/elements.py",
+      "origin": "wp/fg-uwb-fid@a233002 network/elements.py",
+      "symbol": "validate_blocked_channels 扩展到槽",
+      "fu4_lines": "96-99",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "槽索引的非负/唯一校验，与既有信道校验同构。",
+      "verify": "ROADM blocked slot indices must be unique.",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/network/elements.py",
+      "origin": "wp/fg-uwb-fid@a233002 network/elements.py",
+      "symbol": "ROADMConfig.blocked_slot_set()",
+      "fu4_lines": "102-111",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "实测本仓 src/ tests/ tools/ 中**零调用方**（死代码）。语义已由 isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。",
+      "verify_absent": "def blocked_slot_set(",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "QoTValidator.num_nodes",
+      "fu4_lines": "53-59",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "J5 明确允许的 num_channels -> n_nodes 索引空间适配。遗留下 n_nodes == spectrum_grid.num_channels。",
+      "verify": "def num_nodes(self) -> int:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "QoTValidator._is_blocked",
+      "fu4_lines": "61-78",
+      "kind": "engineering",
+      "action": "applied_adapted",
+      "rationale": "委托给 evaluator.roadm_blocks_node（单一实现）。legacy 分支返回 node_index in roadm.blocked_channels，与移植前逐字等价。",
+      "verify": "return self.gn_evaluator.roadm_blocks_node(roadm, node_index)",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "QoTValidator._node_frequency_and_rate",
+      "fu4_lines": "106-122",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "★ 索引空间适配：booster ASE 的频率/符号率真源必须是逐节点数组，不能用 spectrum_grid.frequencies。WP-O1 §0 已证 legacy 下二者逐位等价。",
+      "verify": "def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "spectrum_grid.num_channels -> self.num_nodes（6 处数组/循环定长）",
+      "fu4_lines": "241-243, 397, 417-418",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "索引空间适配，遗留下取值完全相同。",
+      "verify": "total_spm = np.zeros(self.num_nodes, dtype=np.float64)",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "booster ASE 标量分支 -> _node_frequency_and_rate",
+      "fu4_lines": "334-350",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "只换取值来源，公式 NF*h*f*Rs*(loss-1) 一字未动。",
+      "verify": "frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "booster ASE 向量分支 -> f_abs_hz + symbol_rate_hz_channels",
+      "fu4_lines": "426-441",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "同上。symbol_rate_hz_channels[i] 恒等于标量 Rs，故 legacy 逐位等价（IEEE 双精度逐元素乘法与标量乘法同结果）。",
+      "verify": "* self.gn_evaluator.symbol_rate_hz_channels",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "QoTValidator._roadm_terms",
+      "fu4_lines": "80-105",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "纯重构：把既有 inline 逻辑抽成函数（PLAN §0 已断语义为零）。对 flexgrid 零价值。**故意不搬**，使 legacy 的装配算式保持逐字不变——J6 由构造即可证明，不必只靠测试反证。",
+      "verify_absent": "def _roadm_terms(",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/rwa/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
+      "symbol": "_H_PLANCK 常量提取",
+      "fu4_lines": "17-19",
+      "kind": "engineering",
+      "action": "not_ported",
+      "rationale": "纯命名提取，数值同（6.62607015e-34）。零 flexgrid 价值。",
+      "verify_absent": "_H_PLANCK",
+      "verified_absent": true
+    },
+    {
+      "file": "src/network_nlo_eval/physics/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 physics/qot_checker.py",
+      "symbol": "PyNLOQoTEvaluator(connections=..., slots_per_channel=...)",
+      "fu4_lines": "78, 92, 104-131",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "逐连接模式：每连接一个波形，频率取连接中心。",
+      "verify": "self.connections = list(connections) if connections is not None else None",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/physics/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 physics/qot_checker.py",
+      "symbol": "_default_passband_hz（最宽连接的占用带宽）",
+      "fu4_lines": "118-131, 247",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "WSS 兜底通带。遗留分支恒等于 spectrum_grid.channel_spacing_hz，与移植前表达式逐字相同；灵活栅格下必须取最宽连接，否则宽连接被滤波掉。",
+      "verify": "self._default_passband_hz = max(c.occupied_bandwidth_hz for c in self.connections)",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/physics/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 physics/qot_checker.py",
+      "symbol": "PyNLOQoTEvaluator._is_blocked",
+      "fu4_lines": "135-147",
+      "kind": "engineering",
+      "action": "applied_adapted",
+      "rationale": "槽区间重叠语义；**改掉** fu4 靠私有属性 roadm._slots_per_channel_hint 传参的做法，改为显式构造参数。legacy 分支逐字等价。",
+      "verify": "def _is_blocked(self, roadm, node_index: int) -> bool:",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/physics/qot_checker.py",
+      "origin": "wp/fg-uwb-fid@a233002 physics/qot_checker.py",
+      "symbol": "occupied_width 按连接集合带边缘计算",
+      "fu4_lines": "118-124",
+      "kind": "engineering",
+      "action": "applied",
+      "rationale": "遗留分支仍为 (num_channels-1)*spacing，逐字不变；仅决定 _mux_target_sr。",
+      "verify": "occupied_width = high - low",
+      "verified": true
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "origin": "wp/fg-uwb-fid@a233002 models/numba_kernels.py",
+      "symbol": "整个文件（fu4 用 RK4 _calc_exact_power_profile_ode 真 ODE 传播；本仓用 ECZ 闭式 _calc_span_out_power_jit）",
+      "fu4_lines": "1-1480",
+      "kind": "physics",
+      "action": "not_ported",
+      "rationale": "★ J5 禁改文件。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。逐行 diff 见 本 WP 的复核记录。diff 必须为空。",
+      "verify_absent": null
+    }
+  ],
+  "errors": []
+}

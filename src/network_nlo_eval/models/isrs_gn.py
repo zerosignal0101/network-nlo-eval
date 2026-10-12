@@ -22,6 +22,7 @@ from network_nlo_eval.models.numba_kernels import (
     _db_to_lin,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
+from network_nlo_eval.network.slots import connection_overlaps_slots
 
 _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
 
@@ -89,6 +90,7 @@ class MultiBandISRSGN:
         symbol_rate_hz: float = 50e9,
         connections: Sequence[ConnectionSpec] | None = None,
         ode_accel: str = ODE_ACCEL_DEFAULT,
+        slots_per_channel: int | None = None,
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -100,6 +102,10 @@ class MultiBandISRSGN:
                 连接 = 一个节点，节点频率取连接中心频率，频带边缘按实际占用带计算。
                 为 ``None`` 时保持遗留行为，数值**逐位不变**。
             ode_accel: 加速档位，见 :data:`ODE_ACCEL_MODES`。
+            slots_per_channel: (可选) 每**遗留信道**占用的槽数，仅用于把 ROADM 的
+                ``blocked_channels`` 展开成 ``blocked_slots``（见
+                :meth:`roadm_blocks_node`）。逐连接模式下若需该展开，必须显式传入
+                ——不做取整猜测，避免静默误判。遗留模式下不影响任何数值。
 
         Raises:
             ValueError: ``ode_accel`` 非法，或连接的符号速率不均匀
@@ -107,6 +113,8 @@ class MultiBandISRSGN:
         """
         if ode_accel not in ODE_ACCEL_MODES:
             raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
+        if slots_per_channel is not None and slots_per_channel < 1:
+            raise ValueError(f"slots_per_channel must be >= 1, got {slots_per_channel}.")
 
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
@@ -116,6 +124,7 @@ class MultiBandISRSGN:
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
         self.ode_accel = ode_accel
+        self.slots_per_channel = slots_per_channel
 
         self.connections = list(connections) if connections is not None else None
         if self.connections is not None:
@@ -139,6 +148,52 @@ class MultiBandISRSGN:
     def n_nodes(self) -> int:
         """节点数：遗留模式 = 信道数；逐连接模式 = 活跃连接数。"""
         return int(self.f_abs_hz.shape[0])
+
+    @property
+    def symbol_rate_hz_channels(self) -> NDArrayFloat:
+        """逐节点符号率数组 (Hz)，长度 = :attr:`n_nodes`。
+
+        这是 `wp/fg-uwb-fid` 的 `isrs_gn.py:215-216` 同一份索引空间适配：
+        遗留模式下 ``f_abs_hz is spectrum_grid.frequencies``，且本属性恒等于
+        ``np.full(n_nodes, symbol_rate_hz)``，故走它取值的代码在 legacy 下
+        **逐位等价**于走标量 ``symbol_rate_hz``。
+
+        ⚠️ 之所以是常量填充而非逐连接真值：冻结的 njit 核
+        ``_calc_span_noise_and_power_jit`` 的 ``symbol_rate_hz`` 是**标量**类型
+        （它要拿去算标量 f_m/f_M 并喂给逐标量的 SPM/XPM）。逐连接异构 Rs 需要
+        把它改成数组参数 = 改冻结内核，按 WP-O3 §5 必须报告而不是自己动，
+        故 :func:`__init__` 对异构 Rs 显式抛错，不静默取代表值。
+        """
+        return np.full(self.n_nodes, float(self.symbol_rate_hz), dtype=np.float64)
+
+    def roadm_blocks_node(self, roadm: ROADMConfig, node_index: int) -> bool:
+        """判断某节点（连接）是否被该 ROADM 阻断。
+
+        灵活栅格下按**槽区间重叠**判定（切片语义）：连接与任一 ``blocked_slots``
+        重叠即不可用。遗留模式保持按信道索引判定的既有行为（逐位不变）。
+
+        冻结解析顺序：有 ``blocked_slots`` 用之；否则把 ``blocked_channels`` 按
+        ``slots_per_channel`` 展开。逐连接模式下若给了 ``blocked_channels`` 但没给
+        ``slots_per_channel``，则不做取整猜测——直接抛错，避免静默误判。
+        """
+        if self.connections is not None:
+            if node_index >= len(self.connections):
+                return False
+            blocked_slots = set(roadm.blocked_slots)
+            if roadm.blocked_channels:
+                if not self.slots_per_channel:
+                    raise ValueError(
+                        "Per-connection mode needs slots_per_channel "
+                        "(channel_spacing_hz / slot_width_hz) to expand ROADM "
+                        "blocked_channels into slots. Construct the evaluator with "
+                        "slots_per_channel=..., or use blocked_slots."
+                    )
+                per_channel = self.slots_per_channel
+                for channel_index in roadm.blocked_channels:
+                    blocked_slots.update(range(channel_index * per_channel, (channel_index + 1) * per_channel))
+            conn = self.connections[node_index]
+            return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
+        return node_index in roadm.blocked_channels
 
     @property
     def band_center_hz(self) -> float:
@@ -317,10 +372,23 @@ class MultiBandISRSGN:
         return p_out, s2_spm, s2_xpm, s2_ase
 
     def for_fiber(self, fiber_config: FiberSpanConfig) -> "MultiBandISRSGN":
-        """返回匹配链路光纤参数的缓存评估器."""
+        """返回匹配链路光纤参数的缓存评估器.
+
+        ⚠️ WP-O3 接线修正：逐连接模式下必须把 ``connections`` 一并传下去。
+        否则子评估器会退回遗留分支并读 ``FlexibleGrid.wavelengths``（不存在），
+        直接 AttributeError。遗留模式下 ``connections is None``，
+        ``ode_accel`` 默认 ``"off"``，行为与本 WP 之前**逐位不变**。
+        """
         key = fiber_config.model_dump_json()
         if key not in self._fiber_evaluator_cache:
-            self._fiber_evaluator_cache[key] = MultiBandISRSGN(self.grid, fiber_config, self.symbol_rate_hz)
+            self._fiber_evaluator_cache[key] = MultiBandISRSGN(
+                self.grid,
+                fiber_config,
+                self.symbol_rate_hz,
+                self.connections,
+                self.ode_accel,
+                self.slots_per_channel,
+            )
         return self._fiber_evaluator_cache[key]
 
     # Backward-compatible internal alias for pre-integration callers.
@@ -360,7 +428,7 @@ class MultiBandISRSGN:
 
             if roadm is None:
                 continue
-            blocked = [index for index in roadm.blocked_channels if index < self.n_nodes]
+            blocked = [index for index in range(self.n_nodes) if self.roadm_blocks_node(roadm, index)]
             operation = "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
             loss_db = roadm.path_loss_db(operation)
             loss = 10 ** (loss_db / 10)

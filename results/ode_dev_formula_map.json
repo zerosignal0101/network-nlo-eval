@@ -54,7 +54,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 165,
+          "line": 220,
           "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("
         }
       ],
@@ -153,7 +153,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 115,
+          "line": 123,
           "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"
         },
         {
@@ -343,12 +343,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 388,
+          "line": 456,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 391,
+          "line": 459,
           "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"
         }
       ],
@@ -371,17 +371,17 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 299,
+          "line": 354,
           "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 304,
+          "line": 359,
           "contains": "gain *= 10 ** (ripple / 10)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 306,
+          "line": 361,
           "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * np.maximum(gain - 1, 0)"
         }
       ],
@@ -414,7 +414,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 270,
+          "line": 325,
           "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("
         }
       ],
@@ -503,12 +503,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 297,
+          "line": 352,
           "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 306,
+          "line": 361,
           "contains": "np.maximum(gain - 1, 0)"
         }
       ],
@@ -531,7 +531,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 388,
+          "line": 456,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         }
       ],
@@ -582,7 +582,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 352,
+          "line": 420,
           "contains": "total_spm *= transfer"
         }
       ],
@@ -596,7 +596,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 378,
+          "line": 446,
           "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)"
         }
       ],
@@ -610,7 +610,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 382,
+          "line": 450,
           "contains": "total_spm *= penalty"
         }
       ],
@@ -662,7 +662,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 294,
+          "line": 349,
           "contains": "s2_ase = np.zeros_like(power_in_w)"
         }
       ],
@@ -676,7 +676,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 386,
+          "line": 454,
           "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"
         }
       ],
@@ -690,7 +690,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 116,
+          "line": 124,
           "contains": "self.delta_f_co_hz = 15e12"
         }
       ],
