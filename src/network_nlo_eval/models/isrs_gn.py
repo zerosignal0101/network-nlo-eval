@@ -41,6 +41,39 @@ _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)]
 ODE_ACCEL_MODES = ("off", "cached")
 ODE_ACCEL_DEFAULT = "off"
 
+#: 逐信道带宽 ``B_i`` 的取值口径（P1 (23)/(29)/(30)/(34) 里的 ``B_i``）。
+#:
+#: ``"symbol_rate"``
+#:     ``B_i`` = 连接自己声明的 :attr:`ConnectionSpec.symbol_rate_hz`。这是**默认档**：
+#:     它与 WP-Q1 之前内核拿到的那个全局标量在均匀速率下是同一个 float64，故 legacy
+#:     **逐位不变**，且既有逐连接场景（统一 50 GHz 声明速率、n_slots 各异）也逐位不变。
+#:
+#: ``"occupied"``
+#:     ``B_i`` = :attr:`ConnectionSpec.occupied_bandwidth_hz`（= ``n_slots`` × 槽宽）。
+#:     这一档才让**多槽宽度真正进入 QoT**（本 WP 的目标）。P1 (23) 称 ``B_i`` 为
+#:     "the channel bandwidth"，P2 称 ``B_k`` 为 "bandwidth of the channel k"——
+#:     两者都没说清是符号率还是占用带，故本仓**显式暴露**该选择，不替读者隐含。
+#:
+#: ⚠️ 两档都只是"用哪个既有字段当 ``B_i``"，**不引入任何新物理**：取值分别来自
+#: ``ConnectionSpec`` 已有的两个字段，未改动任何公式系数。
+CHANNEL_BANDWIDTH_SOURCES = ("symbol_rate", "occupied")
+CHANNEL_BANDWIDTH_DEFAULT = "symbol_rate"
+
+#: ``P_i`` 与 ``B_i`` 的归一化口径（WP-Q1 §3.4：必须显式，不许隐含）。
+#:
+#: ``"fixed_power"``
+#:     每条连接的 ``P_i`` 就是它自己的入纤总功率，**与 ``B_i`` 无关**。这是**默认档**，
+#:     也是本仓 ``ConnectionSpec.launch_power_w`` 既有语义（"单连接入纤总功率"）。
+#:     ⇒ 宽连接 = 同样功率摊到更宽的谱上 ⇒ PSD 更低、噪声更大。
+#:
+#: ``"fixed_psd"``
+#:     恒定功率谱密度：``P_i`` 按 ``B_i`` 成比例放大，锚点是构造参数 ``symbol_rate_hz``，
+#:     即 ``P_i_eff = P_i × B_i / symbol_rate_hz``。⇒ 宽连接功率同比增长，PSD 不变。
+#:
+#: ⚠️ ``B_i`` 均匀时该缩放因子恒为 1.0，与 ``1.0`` 相乘逐位不变 ⇒ legacy 安全。
+POWER_WIDTH_MODES = ("fixed_power", "fixed_psd")
+POWER_WIDTH_DEFAULT = "fixed_power"
+
 
 @dataclass
 class MultiSpanOpticalPath:
@@ -91,6 +124,8 @@ class MultiBandISRSGN:
         connections: Sequence[ConnectionSpec] | None = None,
         ode_accel: str = ODE_ACCEL_DEFAULT,
         slots_per_channel: int | None = None,
+        channel_bandwidth_source: str = CHANNEL_BANDWIDTH_DEFAULT,
+        power_width_mode: str = POWER_WIDTH_DEFAULT,
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -106,15 +141,26 @@ class MultiBandISRSGN:
                 ``blocked_channels`` 展开成 ``blocked_slots``（见
                 :meth:`roadm_blocks_node`）。逐连接模式下若需该展开，必须显式传入
                 ——不做取整猜测，避免静默误判。遗留模式下不影响任何数值。
+            channel_bandwidth_source: 逐信道 ``B_i`` 的取值口径，见
+                :data:`CHANNEL_BANDWIDTH_SOURCES`。默认 ``"symbol_rate"``（legacy 逐位不变）。
+            power_width_mode: ``P_i`` / ``B_i`` 归一化口径，见 :data:`POWER_WIDTH_MODES`。
+                默认 ``"fixed_power"``。
 
         Raises:
-            ValueError: ``ode_accel`` 非法，或连接的符号速率不均匀
-                （冻结内核只接受标量 Rs，见下方说明）。
+            ValueError: ``ode_accel`` / ``channel_bandwidth_source`` / ``power_width_mode``
+                取值非法，或逐连接带宽 ``B_i`` 非正 / 非有限。
         """
         if ode_accel not in ODE_ACCEL_MODES:
             raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
         if slots_per_channel is not None and slots_per_channel < 1:
             raise ValueError(f"slots_per_channel must be >= 1, got {slots_per_channel}.")
+        if channel_bandwidth_source not in CHANNEL_BANDWIDTH_SOURCES:
+            raise ValueError(
+                f"channel_bandwidth_source must be one of {CHANNEL_BANDWIDTH_SOURCES}, "
+                f"got {channel_bandwidth_source!r}."
+            )
+        if power_width_mode not in POWER_WIDTH_MODES:
+            raise ValueError(f"power_width_mode must be one of {POWER_WIDTH_MODES}, got {power_width_mode!r}.")
 
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
@@ -125,20 +171,10 @@ class MultiBandISRSGN:
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
         self.ode_accel = ode_accel
         self.slots_per_channel = slots_per_channel
+        self.channel_bandwidth_source = channel_bandwidth_source
+        self.power_width_mode = power_width_mode
 
         self.connections = list(connections) if connections is not None else None
-        if self.connections is not None:
-            rates = {float(conn.symbol_rate_hz) for conn in self.connections}
-            if len(rates) > 1:
-                # 冻结的 njit 核 `_calc_span_noise_and_power_jit` 的 `symbol_rate_hz`
-                # 是**标量**类型（它要拿去算标量 f_m/f_M 并喂给逐标量的 SPM/XPM）。
-                # 逐连接异构 Rs 需要把它改成数组参数 = 改冻结内核，按 WP-O2 §8
-                # 必须先报告而不是自己动。故这里显式拒绝，不静默取代表值。
-                raise ValueError(
-                    "per-connection heterogeneous symbol rates are not supported: the frozen "
-                    "numba kernel takes a scalar symbol_rate_hz. Pass a uniform rate, or port "
-                    "the array-valued kernel separately (see docs/ode2_papers_and_diff.md)."
-                )
 
         self._span_cache: dict[tuple, tuple] = {}
         self._precompute_channel_dependent_properties()
@@ -151,20 +187,64 @@ class MultiBandISRSGN:
 
     @property
     def symbol_rate_hz_channels(self) -> NDArrayFloat:
-        """逐节点符号率数组 (Hz)，长度 = :attr:`n_nodes`。
+        """逐节点**声明符号率**数组 (Hz)，长度 = :attr:`n_nodes`。
 
         这是 `wp/fg-uwb-fid` 的 `isrs_gn.py:215-216` 同一份索引空间适配：
         遗留模式下 ``f_abs_hz is spectrum_grid.frequencies``，且本属性恒等于
         ``np.full(n_nodes, symbol_rate_hz)``，故走它取值的代码在 legacy 下
         **逐位等价**于走标量 ``symbol_rate_hz``。
 
-        ⚠️ 之所以是常量填充而非逐连接真值：冻结的 njit 核
-        ``_calc_span_noise_and_power_jit`` 的 ``symbol_rate_hz`` 是**标量**类型
-        （它要拿去算标量 f_m/f_M 并喂给逐标量的 SPM/XPM）。逐连接异构 Rs 需要
-        把它改成数组参数 = 改冻结内核，按 WP-O3 §5 必须报告而不是自己动，
-        故 :func:`__init__` 对异构 Rs 显式抛错，不静默取代表值。
+        ⚠️ WP-Q1 之后**不要**再用它当 P1 的 ``B_i``：本属性是"声明的符号率"，
+        而 P1 (29)/(30)/(34) 里的 ``B_i`` 是"信道带宽"，两者在
+        ``channel_bandwidth_source="occupied"`` 下并不相等。取 ``B_i`` 请走
+        :attr:`channel_bandwidth_hz_channels`。
         """
+        if self.connections is not None:
+            return np.array([float(conn.symbol_rate_hz) for conn in self.connections], dtype=np.float64)
         return np.full(self.n_nodes, float(self.symbol_rate_hz), dtype=np.float64)
+
+    @property
+    def channel_bandwidth_hz_channels(self) -> NDArrayFloat:
+        """逐节点**信道带宽** ``B_i`` 数组 (Hz)，长度 = :attr:`n_nodes`。
+
+        这是 P1 §III (23)/(29)/(30)/(34) 四个公式里那个 ``B_i`` / ``B_ℓ`` 的
+        **唯一**取值源：SPM 的 ``P_i³/B_i²`` 与 ``asinh(φ_i B_i²/πα)``、XPM 的
+        ``P_ℓ²/B_ℓ`` 与 ``atan(φ_{i,ℓ} B_i/α_ℓ)``、ASE 的 ``B_i`` 全部读它。
+
+        遗留模式（``connections is None``）：恒为 ``np.full(n_nodes, symbol_rate_hz)``，
+        与 WP-Q1 之前内核拿到的那个全局标量是**同一个 float64** ⇒ legacy 逐位不变
+        （Q-J1 的"均匀 50 GHz ⇒ ``B_i`` 退化标量"就是这个恒等式）。
+
+        逐连接模式：按 :attr:`channel_bandwidth_source` 从 ``ConnectionSpec`` 已有的
+        字段取（``symbol_rate_hz`` 或 ``occupied_bandwidth_hz``），逐连接异构带宽因此
+        受支持——WP-Q1 §3.3 解除了原先那条 ``ValueError``。
+
+        Raises:
+            ValueError: 取到的带宽非正或非有限（构造期由 :func:`__init__` 校验）。
+        """
+        if self.connections is None:
+            return np.full(self.n_nodes, float(self.symbol_rate_hz), dtype=np.float64)
+        if self.channel_bandwidth_source == "occupied":
+            values = np.array([float(conn.occupied_bandwidth_hz) for conn in self.connections], dtype=np.float64)
+        else:
+            values = np.array([float(conn.symbol_rate_hz) for conn in self.connections], dtype=np.float64)
+        if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+            raise ValueError(
+                f"per-channel bandwidth B_i (source={self.channel_bandwidth_source!r}) must be "
+                f"finite and positive; got {values.tolist()}."
+            )
+        return values
+
+    def _power_width_scale(self) -> NDArrayFloat:
+        """``fixed_psd`` 口径下的逐节点功率缩放因子 (无量纲)。
+
+        恒定功率谱密度 ⇒ ``P_i_eff = P_i × B_i / symbol_rate_hz``，锚点是构造参数
+        ``symbol_rate_hz``（名义速率）。``B_i`` 均匀时因子恒为 1.0，与 1.0 相乘逐位
+        不变 ⇒ legacy 安全。``fixed_power`` 口径恒返回全 1（逐位 no-op）。
+        """
+        if self.power_width_mode == "fixed_power":
+            return np.ones(self.n_nodes, dtype=np.float64)
+        return self.channel_bandwidth_hz_channels / float(self.symbol_rate_hz)
 
     def roadm_blocks_node(self, roadm: ROADMConfig, node_index: int) -> bool:
         """判断某节点（连接）是否被该 ROADM 阻断。
@@ -335,6 +415,7 @@ class MultiBandISRSGN:
                 n2_m2_w=self.n2_m2_w,
                 nf_lin_channels=current_nf_lin,
                 symbol_rate_hz=self.symbol_rate_hz,
+                b_hz_channels=self.channel_bandwidth_hz_channels,
                 n_effective_spans=n_effective_spans,
                 cr_w_m_hz=self.cr_w_m_hz,
                 k_bar=self.k_bar,
@@ -358,7 +439,11 @@ class MultiBandISRSGN:
                     raise ValueError("EDFA gain-ripple array must contain one value per channel.")
                 gain *= 10 ** (ripple / 10)
             p_out = p_out_fiber * gain
-            s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * np.maximum(gain - 1, 0)
+            # P1 (34) 的 B_i 走逐信道数组（WP-Q1）。legacy 下该数组恒等于标量
+            # symbol_rate_hz ⇒ 与 WP-Q1 之前的算式逐位相同。
+            s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum(
+                gain - 1, 0
+            )
             s2_ase[power_in_w <= 0] = 0
 
         # 4. ROADM 损耗同等衰减信号和已生成噪声。
@@ -388,6 +473,8 @@ class MultiBandISRSGN:
                 self.connections,
                 self.ode_accel,
                 self.slots_per_channel,
+                self.channel_bandwidth_source,
+                self.power_width_mode,
             )
         return self._fiber_evaluator_cache[key]
 
@@ -399,6 +486,9 @@ class MultiBandISRSGN:
         power = np.asarray(power_in_w, dtype=np.float64).copy()
         if power.shape != (self.n_nodes,) or np.any(power < 0):
             raise ValueError("power_in_w must be a non-negative vector with one value per channel.")
+        # WP-Q1 §3.4：功率-宽度归一化口径**显式**生效处。fixed_power（全 1，逐位 no-op）
+        # 与均匀 B_i 下的 fixed_psd（因子恒 1.0）都不改动 legacy 数字。
+        power = power * self._power_width_scale()
         total_spm = np.zeros_like(power)
         total_xpm = np.zeros_like(power)
         total_ase = np.zeros_like(power)

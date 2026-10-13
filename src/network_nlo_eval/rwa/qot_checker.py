@@ -62,22 +62,29 @@ class QoTValidator:
         """
         return self.gn_evaluator.roadm_blocks_node(roadm, node_index)
 
-    def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:
-        """返回该节点（连接）的 ``(中心频率 Hz, 符号率 Hz)``。
+    def _node_frequency_and_bandwidth(self, channel_idx: int) -> tuple[float, float]:
+        """返回该节点（连接）的 ``(中心频率 Hz, 信道带宽 B_i Hz)``。
 
         必须走 ``gn_evaluator`` 的**逐节点**数组，不能用
         ``spectrum_grid.frequencies``：灵活栅格下 ``channel_idx`` 索引的是
         连接（ODE 节点），与固定栅格的信道索引不是同一个索引空间。
 
         遗留模式下 ``f_abs_hz is spectrum_grid.frequencies`` 且
-        ``symbol_rate_hz_channels`` 全等于标量 ``symbol_rate_hz``，故这条路
+        ``channel_bandwidth_hz_channels`` 全等于标量 ``symbol_rate_hz``，故这条路
         在 legacy 下逐位等价。
+
+        ⚠️ WP-Q1：第二返回值是 P1 (34) 里的 ``B_i``（"bandwidth of the COI"），
+        故读 :attr:`channel_bandwidth_hz_channels` 而非 ``symbol_rate_hz_channels``。
+        两者在 ``channel_bandwidth_source="occupied"`` 下不同。
         """
         evaluator = self.gn_evaluator
         return (
             float(evaluator.f_abs_hz[channel_idx]),
-            float(evaluator.symbol_rate_hz_channels[channel_idx]),
+            float(evaluator.channel_bandwidth_hz_channels[channel_idx]),
         )
+
+    # 旧名保留为别名：调用方（含外部插件）可能仍按 "rate" 命名引用它。
+    _node_frequency_and_rate = _node_frequency_and_bandwidth
 
     def verify_allocation(
         self,
@@ -298,8 +305,8 @@ class QoTValidator:
             loss = 10 ** (roadm.path_loss_db("drop" if i == len(path) - 2 else "express") / 10)
             if roadm.equalize_output_power:
                 nf = 10 ** (roadm.booster_noise_figure_db / 10)
-                frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)
-                total_ase += nf * 6.62607015e-34 * frequency_hz * symbol_rate_hz * (loss - 1)
+                frequency_hz, channel_bandwidth_hz = self._node_frequency_and_bandwidth(channel_idx)
+                total_ase += nf * 6.62607015e-34 * frequency_hz * channel_bandwidth_hz * (loss - 1)
             else:
                 signal_power /= loss
                 total_spm /= loss
@@ -392,7 +399,7 @@ class QoTValidator:
                     nf
                     * 6.62607015e-34
                     * self.gn_evaluator.f_abs_hz
-                    * self.gn_evaluator.symbol_rate_hz_channels
+                    * self.gn_evaluator.channel_bandwidth_hz_channels
                     * (loss - 1)
                 )
                 booster_ase[signal_power <= 0] = 0

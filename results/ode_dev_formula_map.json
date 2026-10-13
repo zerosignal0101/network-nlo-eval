@@ -54,7 +54,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 220,
+          "line": 300,
           "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("
         }
       ],
@@ -153,7 +153,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 123,
+          "line": 169,
           "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"
         },
         {
@@ -181,48 +181,53 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 313,
+          "line": 319,
           "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 320,
+          "line": 326,
           "contains": "(4 / 9)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 321,
-          "contains": "(p_i_w**3 / rs_hz**2)"
+          "line": 327,
+          "contains": "(p_i_w**3 / b_i_hz**2)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 323,
+          "line": 329,
           "contains": "(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 327,
-          "contains": "asinh_1 = np.arcsinh((phi_i * rs_hz**2) / (PI * alpha_i_npm))"
+          "line": 333,
+          "contains": "asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 328,
-          "contains": "asinh_2 = np.arcsinh((phi_i * rs_hz**2) / (2 * PI * alpha_i_npm))"
+          "line": 334,
+          "contains": "asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 330,
+          "line": 336,
           "contains": "term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 443,
+          "line": 455,
           "contains": "phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)"
+        },
+        {
+          "file": "src/network_nlo_eval/models/numba_kernels.py",
+          "line": 459,
+          "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"
         }
       ],
       "conforms": true,
       "verdict": "keep_ecz",
-      "notes": "4/9 前因子、P^3/B^2、N^{1+eps}、gamma^2 pi/(phi 3 alpha^2)、exp(2 C_r k_bar L_eff r)、两个 asinh 的自变量与系数 (T_i−alpha^2)/alpha 与 (4alpha^2−T_i)/(2alpha) **逐项对应**。phi_i 取 P1 §III 的 phi_i=(3/2)pi^2(beta2+2pi f_i beta3)。"
+      "notes": "4/9 前因子、P^3/B^2、N^{1+eps}、gamma^2 pi/(phi 3 alpha^2)、exp(2 C_r k_bar L_eff r)、两个 asinh 的自变量与系数 (T_i−alpha^2)/alpha 与 (4alpha^2−T_i)/(2alpha) **逐项对应**。phi_i 取 P1 §III 的 phi_i=(3/2)pi^2(beta2+2pi f_i beta3)。WP-Q1：B_i 由全局标量 rs_hz 改为逐信道 b_i_hz（调用点 b_hz_channels[i]），均匀取值下与旧的标量是同一个 float64 ⇒ legacy 逐位不变。"
     },
     {
       "id": "p1_eq30_xpm",
@@ -239,48 +244,58 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 369,
+          "line": 381,
           "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 375,
-          "contains": "pre_factor = (p_l_w**2 / rs_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp"
+          "line": 387,
+          "contains": "pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 377,
-          "contains": "atan_1 = np.arctan((phi_il * rs_i_hz) / alpha_l_npm)"
+          "line": 389,
+          "contains": "atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 378,
-          "contains": "atan_2 = np.arctan((phi_il * rs_i_hz) / (2 * alpha_l_npm))"
+          "line": 390,
+          "contains": "atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 380,
+          "line": 392,
           "contains": "term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 493,
+          "line": 504,
           "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 471,
+          "line": 482,
           "contains": "phi_il = ("
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 475,
+          "line": 486,
           "contains": "(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))"
+        },
+        {
+          "file": "src/network_nlo_eval/models/numba_kernels.py",
+          "line": 491,
+          "contains": "b_hz_channels[l_idx],  # P1 (30) 的 B_ℓ = 干扰信道自己的带宽"
+        },
+        {
+          "file": "src/network_nlo_eval/models/numba_kernels.py",
+          "line": 492,
+          "contains": "b_hz_channels[i],  # P1 (30) 的 B_i = COI 的带宽（atan 参数）"
         }
       ],
       "conforms": true,
       "verdict": "keep_ecz",
-      "notes": "(32/27) P_i N 的外层因子在 :493，逐对项在 :375-385；phi_il 取 P1 的 2 pi^2 (f_l−f_i)[beta2 + pi beta3 (f_l+f_i)]（:471-476）。"
+      "notes": "(32/27) P_i N 的外层因子、逐对项求和与 phi_il 取值均逐项对应 P1 (30)。WP-Q1：B_ℓ 与 B_i **分开**取——求和项 (P_ℓ²/B_ℓ) 用干扰信道 ℓ 自己的带宽，atan(φ_{i,ℓ} B_i/α_ℓ) 用 COI 的带宽。WP-Q1 之前二者是同一个全局标量（rs_hz 同时传给 rs_l_hz 与 rs_i_hz），故多槽宽连接进不了 QoT。"
     },
     {
       "id": "p1_eq31_t_factor",
@@ -297,7 +312,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 612,
+          "line": 641,
           "contains": "t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2"
         }
       ],
@@ -343,12 +358,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 456,
+          "line": 546,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 459,
+          "line": 549,
           "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"
         }
       ],
@@ -371,23 +386,28 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 354,
+          "line": 435,
           "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 359,
+          "line": 440,
           "contains": "gain *= 10 ** (ripple / 10)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 361,
-          "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * np.maximum(gain - 1, 0)"
+          "line": 444,
+          "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum("
+        },
+        {
+          "file": "src/network_nlo_eval/models/isrs_gn.py",
+          "line": 445,
+          "contains": "gain - 1, 0"
         }
       ],
       "conforms": true,
       "verdict": "keep_ecz",
-      "notes": "**G = EDFA 配置增益**（target_gain_db × gain_ripple_db），F = NF，B = 符号速率，逐跨段在 evaluate_path 里累加（N）。符合 (34) 原文「line amplifier + DGE 的增益」。这就是 J4 禁止移植的那一项：ecz 侧合规。"
+      "notes": "**G = EDFA 配置增益**（target_gain_db × gain_ripple_db），F = NF，B = 逐信道带宽 B_i，逐跨段在 evaluate_path 里累加（N）。符合 (34) 原文「line amplifier + DGE 的增益」。WP-Q1：B 由标量 symbol_rate_hz 改为逐信道 channel_bandwidth_hz_channels（P2 称 B_i 为 \"bandwidth of the COI\"）；均匀取值下与旧标量是同一个 float64 ⇒ legacy 逐位不变。这就是 J4 禁止移植的那一项：ecz 侧合规。"
     },
     {
       "id": "p1_eq34_ase_dead_kernel",
@@ -404,23 +424,23 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 554,
+          "line": 575,
           "contains": "G_i = p_in_w[i] / p_out_w[i]"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 556,
-          "contains": "total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * rs_hz"
+          "line": 578,
+          "contains": "n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * b_hz_channels[i]"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 325,
+          "line": 405,
           "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("
         }
       ],
       "conforms": false,
       "verdict": "dead_code_violates_eq34",
-      "notes": "**若被启用即违反 P1 (34)**：G_i 取的是跨段入/出功率比（损耗补偿比），不是「线路放大器增益」。当前 isrs_gn.py:180 用 `_` 丢弃该返回值，真正生效的是 p1_eq34_ase。**故本分支数值合规**。wp/fg-uwb-fid 恰恰把它接上了（那边 isrs_gn 收下 s2_ase 并删掉 EDFA 增益块），这就是 WP-O1 差异①。按 J4 不得移植。"
+      "notes": "**若被启用即违反 P1 (34)**：G_i 取的是跨段入/出功率比（损耗补偿比），不是「线路放大器增益」。当前 isrs_gn.py:180 用 `_` 丢弃该返回值，真正生效的是 p1_eq34_ase。**故本分支数值合规**。wp/fg-uwb-fid 恰恰把它接上了（那边 isrs_gn 收下 s2_ase 并删掉 EDFA 增益块），这就是 WP-O1 差异①。按 J4 不得移植。WP-Q1 只把这里的 B_i 参数化为逐信道数组；G_i 的口径**未改动**（不在 WP-Q1 范围）。"
     },
     {
       "id": "p1_nf_per_band",
@@ -437,22 +457,22 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 517,
+          "line": 528,
           "contains": "if wavel_nm < 1460:  # E-band"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 518,
+          "line": 529,
           "contains": "nf_lin[i] = _db_to_lin(6.0)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 520,
+          "line": 531,
           "contains": "nf_lin[i] = _db_to_lin(7.0)"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 522,
+          "line": 533,
           "contains": "nf_lin[i] = _db_to_lin(5.5)"
         }
       ],
@@ -475,7 +495,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 322,
+          "line": 328,
           "contains": "* (n_span ** (1 + epsilon_n_span))"
         },
         {
@@ -503,13 +523,13 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 352,
+          "line": 433,
           "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 361,
-          "contains": "np.maximum(gain - 1, 0)"
+          "line": 445,
+          "contains": "gain - 1, 0"
         }
       ],
       "conforms": true,
@@ -531,7 +551,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 456,
+          "line": 546,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         }
       ],
@@ -582,7 +602,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 420,
+          "line": 510,
           "contains": "total_spm *= transfer"
         }
       ],
@@ -596,7 +616,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 446,
+          "line": 536,
           "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)"
         }
       ],
@@ -610,7 +630,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 450,
+          "line": 540,
           "contains": "total_spm *= penalty"
         }
       ],
@@ -624,7 +644,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 517,
+          "line": 528,
           "contains": "wavel_nm < 1460"
         }
       ],
@@ -652,17 +672,17 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 316,
+          "line": 322,
           "contains": "if abs(phi_i) < _EPSILON:"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
-          "line": 335,
+          "line": 341,
           "contains": "return max(result, 0.0)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 349,
+          "line": 430,
           "contains": "s2_ase = np.zeros_like(power_in_w)"
         }
       ],
@@ -676,7 +696,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 454,
+          "line": 544,
           "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"
         }
       ],
@@ -690,7 +710,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 124,
+          "line": 170,
           "contains": "self.delta_f_co_hz = 15e12"
         }
       ],
