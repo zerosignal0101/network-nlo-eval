@@ -1,0 +1,289 @@
+{
+  "wp": "M1",
+  "judgment": "M-J10",
+  "scenario": "degenerate_slots_per_channel_4_all_single_slot",
+  "conditions": {
+    "slots_per_channel": 4,
+    "all_requests_n_slots": 1,
+    "seed": "N/A — 业务序列由 ServicePlan 显式给出，不依赖随机流（确定性更强）",
+    "n_requests": 12
+  },
+  "protocol": "两套分配器各自跑一遍同构的独立 NetworkState，逐请求比较 (path, wavelength)；不由本工具推理正确性，直接比结果。",
+  "comparison": [
+    {
+      "service_id": 0,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 0,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 0,
+      "flex_first_slot": 0,
+      "identical": true
+    },
+    {
+      "service_id": 1,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 1,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 1,
+      "flex_first_slot": 4,
+      "identical": true
+    },
+    {
+      "service_id": 2,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 2,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 2,
+      "flex_first_slot": 8,
+      "identical": true
+    },
+    {
+      "service_id": 3,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 3,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 3,
+      "flex_first_slot": 12,
+      "identical": true
+    },
+    {
+      "service_id": 4,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 1,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 1,
+      "flex_first_slot": 4,
+      "identical": true
+    },
+    {
+      "service_id": 5,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 4,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 4,
+      "flex_first_slot": 16,
+      "identical": true
+    },
+    {
+      "service_id": 6,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 2,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 2,
+      "flex_first_slot": 8,
+      "identical": true
+    },
+    {
+      "service_id": 7,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 0,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 0,
+      "flex_first_slot": 0,
+      "identical": true
+    },
+    {
+      "service_id": 8,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 1,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 1,
+      "flex_first_slot": 4,
+      "identical": true
+    },
+    {
+      "service_id": 9,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 4,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 4,
+      "flex_first_slot": 16,
+      "identical": true
+    },
+    {
+      "service_id": 10,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 3,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 3,
+      "flex_first_slot": 12,
+      "identical": true
+    },
+    {
+      "service_id": 11,
+      "n_slots": 1,
+      "legacy_allocated": true,
+      "flex_allocated": true,
+      "legacy_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "legacy_wavelength": 0,
+      "flex_path": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "flex_wavelength": 0,
+      "flex_first_slot": 0,
+      "identical": true
+    }
+  ],
+  "summary": {
+    "n_compared": 12,
+    "n_identical": 12,
+    "n_allocated_legacy": 12,
+    "n_allocated_flex": 12,
+    "all_identical": true
+  },
+  "self_check": {
+    "degenerate_conditions_hold": true,
+    "flex_first_slot_is_channel_aligned": true
+  }
+}
