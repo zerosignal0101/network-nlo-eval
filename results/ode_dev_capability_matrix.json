@@ -58,9 +58,9 @@
       "status": "both",
       "involves_physics": false,
       "evidence": "O2 已接入；O3 补齐 for_fiber 透传（否则逐连接模式下 AttributeError）。",
-      "ode_dev_lines": 463,
+      "ode_dev_lines": 553,
       "fu4_lines": 577,
-      "ode_dev_sha256": "757fe32c44ecd4740fbb0690abf010954180211243d1b59de5eaba3df6791a84"
+      "ode_dev_sha256": "8c19956922ba1c0b3c0f1eac525f147f9ae532aff1b4a7ed13588ecd3ec45cef"
     },
     {
       "capability": "ROADMConfig.blocked_slots（12.5 GHz 粒度权威阻断）",
@@ -78,9 +78,9 @@
       "status": "ode_dev_better",
       "involves_physics": false,
       "evidence": "fu4 在 rwa/physics/isrs_gn 三处各写一遍（physics 侧还靠私有属性 _slots_per_channel_hint）；O3 收敛为 evaluator.roadm_blocks_node 一处。",
-      "ode_dev_lines": 463,
+      "ode_dev_lines": 553,
       "fu4_lines": 577,
-      "ode_dev_sha256": "757fe32c44ecd4740fbb0690abf010954180211243d1b59de5eaba3df6791a84"
+      "ode_dev_sha256": "8c19956922ba1c0b3c0f1eac525f147f9ae532aff1b4a7ed13588ecd3ec45cef"
     },
     {
       "capability": "QoTValidator 逐连接 SNR 装配",
@@ -88,9 +88,9 @@
       "status": "both",
       "involves_physics": false,
       "evidence": "O3 应用 num_nodes / _is_blocked / _node_frequency_and_rate；booster ASE 公式一字未动。",
-      "ode_dev_lines": 438,
+      "ode_dev_lines": 445,
       "fu4_lines": 482,
-      "ode_dev_sha256": "23d9006323d13cd5c84cbcd4380e6060a8d341f07bf68da9af22370f8fcc20b2"
+      "ode_dev_sha256": "6c46fca6128bf77e620e7d5ee4c933ae7372b6cf94f55e29102cd7ee64c21449"
     },
     {
       "capability": "PyNLO 波形模型逐连接频率 + 最宽连接 WSS 通带",
@@ -148,9 +148,9 @@
       "status": "fu4_only",
       "involves_physics": false,
       "evidence": "纯重构（PLAN §0 已证语义为零）。故意不搬，使 legacy 装配算式保持逐字不变。",
-      "ode_dev_lines": 438,
+      "ode_dev_lines": 445,
       "fu4_lines": 482,
-      "ode_dev_sha256": "23d9006323d13cd5c84cbcd4380e6060a8d341f07bf68da9af22370f8fcc20b2"
+      "ode_dev_sha256": "6c46fca6128bf77e620e7d5ee4c933ae7372b6cf94f55e29102cd7ee64c21449"
     },
     {
       "capability": "逐连接异构符号率（symbol_rate_hz 数组参数）",
@@ -158,9 +158,9 @@
       "status": "fu4_only",
       "involves_physics": true,
       "evidence": "★ 物理缺口。fu4 核接受 (N,) Rs 并据此算 ASE；本仓冻结核只吃标量。改它 = 改 numba_kernels.py = 违反 J5。O2 已显式拒绝，O3 沿用。证据：e2e.probes.heterogeneous_rs。",
-      "ode_dev_lines": 638,
+      "ode_dev_lines": 667,
       "fu4_lines": 1480,
-      "ode_dev_sha256": "67a074375c658e7c97dae86ccd3f11630ff74d4733c60045ea0bc3e652e0978a"
+      "ode_dev_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     },
     {
       "capability": "SRS 频带边界按真实连接占用带（f_m_hz/f_M_hz）",
@@ -168,9 +168,9 @@
       "status": "fu4_only",
       "involves_physics": true,
       "evidence": "★ 物理缺口。本仓 Python 侧已按占用带算出 f_m_hz/f_M_hz，但冻结核在核内用标量 Rs 重算，故该修正是死代码。让它生效需给内核加参数 = J5。证据：e2e.known_limitations.srs_band_edges_still_scalar_rs。",
-      "ode_dev_lines": 638,
+      "ode_dev_lines": 667,
       "fu4_lines": 1480,
-      "ode_dev_sha256": "67a074375c658e7c97dae86ccd3f11630ff74d4733c60045ea0bc3e652e0978a"
+      "ode_dev_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     },
     {
       "capability": "ode_accel: matvec / cached_g 加速档",
@@ -178,9 +178,9 @@
       "status": "fu4_only",
       "involves_physics": true,
       "evidence": "★ 物理缺口（求和次序改变 ⇒ 非逐位相等）。需改冻结内核，WP-O3 §8 明确列为不做。fu4 侧 NLI 张量公式出处是其 docstring 的 'Eq. 21'，P1/P2 均无此式，O2 已按 J1/J3 拒绝。",
-      "ode_dev_lines": 638,
+      "ode_dev_lines": 667,
       "fu4_lines": 1480,
-      "ode_dev_sha256": "67a074375c658e7c97dae86ccd3f11630ff74d4733c60045ea0bc3e652e0978a"
+      "ode_dev_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     },
     {
       "capability": "phi_kurtosis（64QAM 峰度进入 XPM）",
@@ -188,9 +188,9 @@
       "status": "fu4_only",
       "involves_physics": true,
       "evidence": "本仓闭式 ECZ 模型无此参数；引入它等于改变 NLI 模型，按 J1 需 P1/P2 公式号支撑，O2 未取得，故不移植。",
-      "ode_dev_lines": 638,
+      "ode_dev_lines": 667,
       "fu4_lines": 1480,
-      "ode_dev_sha256": "67a074375c658e7c97dae86ccd3f11630ff74d4733c60045ea0bc3e652e0978a"
+      "ode_dev_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     },
     {
       "capability": "numba 缺失时的 njit 降级垫片",
@@ -198,9 +198,9 @@
       "status": "ode_dev_only",
       "involves_physics": false,
       "evidence": "本仓独有：ImportError 时 njit 退化为恒等装饰器，让无 JIT 的最小环境也能跑统计模型。O2 已带（ecz-dev 既有）。",
-      "ode_dev_lines": 638,
+      "ode_dev_lines": 667,
       "fu4_lines": 1480,
-      "ode_dev_sha256": "67a074375c658e7c97dae86ccd3f11630ff74d4733c60045ea0bc3e652e0978a"
+      "ode_dev_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     },
     {
       "capability": "闭式 ECZ GN 模型（按 P1 公式号逐条可 grep）",
@@ -208,9 +208,9 @@
       "status": "ode_dev_only",
       "involves_physics": true,
       "evidence": "本仓物理底：P1 §II.B 扩展 CZ / §III 闭式 GN。fu4 走的是 RK4 真 ODE 传播。两棵树内核**不是同一个物理模型**，故 numba_kernels.py 的 diff 恒非空——J5 要求的是本 WP 相对自身起点的 diff 为空。",
-      "ode_dev_lines": 638,
+      "ode_dev_lines": 667,
       "fu4_lines": 1480,
-      "ode_dev_sha256": "67a074375c658e7c97dae86ccd3f11630ff74d4733c60045ea0bc3e652e0978a"
+      "ode_dev_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     }
   ],
   "errors": []

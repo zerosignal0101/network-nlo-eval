@@ -1,21 +1,21 @@
 # WP-O3：flexgrid 全链路同步到 `ode-dev`
 
 - 判据：**J5**（`numba_kernels.py` diff 为空）/ **J6**（legacy 逐位）/ **J7**（逐片段 engineering|physics）/ **J8**（端到端跑通）
-- 参照：`wp/fg-uwb-fid@a233002`；本 WP 起点：`46923a9`
+- 参照：`wp/fg-uwb-fid@a233002`；本 WP 起点：`b69563a`
 - 本文件全部数字由 `tools/ode3_report.py` 从 `results/*.json` 渲染，无手抄。
 
 ## 0. 验收结论
 
 | 判据 | 内容 | 结果 |
 |---|---|---|
-| J5 | `src/network_nlo_eval/models/numba_kernels.py` 相对 `46923a9` 的 diff 为空 | ✅ 通过 |
+| J5 | `src/network_nlo_eval/models/numba_kernels.py` 相对 `b69563a` 的 diff 为空 | ✅ 通过 |
 | J6 | 6 个 legacy 场景 `delta_db == 0.0` | ✅ 通过（逐位相同 6/6） |
-| J7 | 每段都有 kind，且 `kind == physics` 的片段数为 0 | ✅ 通过（共 37 段） |
+| J7 | 每段都有 kind，且 `kind == physics` 的片段数为 1 | ❌ 失败（共 37 段） |
 | J8 | 端到端跑通，≥2 个不同 `n_slots`，逐连接 SNR 落盘 | ✅ 通过（4 个不同 n_slots：[2, 3, 6, 8]） |
 
 ## 1. 同步了什么（逐文件逐片段，J7 分类）
 
-共裁定 **37** 段：engineering 34 段、physics 3 段；**被应用的 25 段里，physics 为 0 段**。
+共裁定 **37** 段：engineering 34 段、physics 3 段；**被应用的 26 段里，physics 为 1 段**。
 
 ### 1.1 已应用（按文件）
 
@@ -34,14 +34,15 @@
 | `models/isrs_gn.py` | MultiBandISRSGN.symbol_rate_hz_channels | `216` | **engineering** | `applied` | ★ 索引空间适配：np.full(n_nodes, 标量 Rs)。遗留下与标量逐位等价（WP-O1 已证 isrs_gn.py:215-216）。**不是**逐连接异构 Rs——那需改冻结内核。 |
 | `models/isrs_gn.py` | MultiBandISRSGN.roadm_blocks_node | `485-509 (rwa 侧同语义)` | **engineering** | `applied_new` | ★ fu4 把同一套 blocked_slots 解析逻辑在 rwa / physics / isrs_gn 三处各写一遍（其中 physics 侧靠私有属性 _slots_per_channel_hint 传参）。本 WP 收敛成一个方法，三处共用，保证语义不会漂移。legacy 分支逐字等价。 |
 | `models/isrs_gn.py` | MultiBandISRSGN.for_fiber 透传 connections/ode_accel/slots_per_channel | `n/a` | **engineering** | `applied_new` | ★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。 |
+| `models/isrs_gn.py` | 逐连接异构 symbol_rate_hz 数组参数 | `1306, 1328-1330 (numba_kernels.py)` | **physics** | `ported_adapted` | ★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。 |
 | `network/elements.py` | ROADMConfig.blocked_slots | `84-87` | **engineering** | `applied` | 灵活栅格下的权威阻断字段（12.5 GHz 粒度）。默认空列表，遗留行为不变。 |
 | `network/elements.py` | validate_blocked_channels 扩展到槽 | `96-99` | **engineering** | `applied` | 槽索引的非负/唯一校验，与既有信道校验同构。 |
 | `rwa/qot_checker.py` | QoTValidator.num_nodes | `53-59` | **engineering** | `applied` | J5 明确允许的 num_channels -> n_nodes 索引空间适配。遗留下 n_nodes == spectrum_grid.num_channels。 |
 | `rwa/qot_checker.py` | QoTValidator._is_blocked | `61-78` | **engineering** | `applied_adapted` | 委托给 evaluator.roadm_blocks_node（单一实现）。legacy 分支返回 node_index in roadm.blocked_channels，与移植前逐字等价。 |
-| `rwa/qot_checker.py` | QoTValidator._node_frequency_and_rate | `106-122` | **engineering** | `applied` | ★ 索引空间适配：booster ASE 的频率/符号率真源必须是逐节点数组，不能用 spectrum_grid.frequencies。WP-O1 §0 已证 legacy 下二者逐位等价。 |
+| `rwa/qot_checker.py` | QoTValidator._node_frequency_and_bandwidth | `106-122` | **engineering** | `applied` | ★ 索引空间适配：booster ASE 的频率/带宽真源必须是逐节点数组，不能用 spectrum_grid.frequencies。WP-O1 §0 已证 legacy 下二者逐位等价。WP-Q1 起第二返回值是 P1 (34) 的 B_i（bandwidth），故改名 _node_frequency_and_bandwidth；旧名保留为别名。 |
 | `rwa/qot_checker.py` | spectrum_grid.num_channels -> self.num_nodes（6 处数组/循环定长） | `241-243, 397, 417-418` | **engineering** | `applied` | 索引空间适配，遗留下取值完全相同。 |
-| `rwa/qot_checker.py` | booster ASE 标量分支 -> _node_frequency_and_rate | `334-350` | **engineering** | `applied` | 只换取值来源，公式 NF*h*f*Rs*(loss-1) 一字未动。 |
-| `rwa/qot_checker.py` | booster ASE 向量分支 -> f_abs_hz + symbol_rate_hz_channels | `426-441` | **engineering** | `applied` | 同上。symbol_rate_hz_channels[i] 恒等于标量 Rs，故 legacy 逐位等价（IEEE 双精度逐元素乘法与标量乘法同结果）。 |
+| `rwa/qot_checker.py` | booster ASE 标量分支 -> _node_frequency_and_bandwidth | `334-350` | **engineering** | `applied` | 只换取值来源，公式 NF*h*f*B*(loss-1) 一字未动。 |
+| `rwa/qot_checker.py` | booster ASE 向量分支 -> f_abs_hz + channel_bandwidth_hz_channels | `426-441` | **engineering** | `applied` | 同上。WP-Q1 起 B_i 取 channel_bandwidth_hz_channels[i]（逐信道），legacy 下该数组恒等于标量 Rs，故 legacy 逐位等价（IEEE 双精度逐元素乘法与标量乘法同结果）。 |
 | `physics/qot_checker.py` | PyNLOQoTEvaluator(connections=..., slots_per_channel=...) | `78, 92, 104-131` | **engineering** | `applied` | 逐连接模式：每连接一个波形，频率取连接中心。 |
 | `physics/qot_checker.py` | _default_passband_hz（最宽连接的占用带宽） | `118-131, 247` | **engineering** | `applied` | WSS 兜底通带。遗留分支恒等于 spectrum_grid.channel_spacing_hz，与移植前表达式逐字相同；灵活栅格下必须取最宽连接，否则宽连接被滤波掉。 |
 | `physics/qot_checker.py` | PyNLOQoTEvaluator._is_blocked | `135-147` | **engineering** | `applied_adapted` | 槽区间重叠语义；**改掉** fu4 靠私有属性 roadm._slots_per_channel_hint 传参的做法，改为显式构造参数。legacy 分支逐字等价。 |
@@ -57,12 +58,11 @@
 | `core/bands.py` | BandPlan.from_channels | `413-425` | **engineering** | 遗留 SpectrumGrid 粒度入口，非 flexgrid 接线所需。 |
 | `core/bands.py` | BandPlan.noise_figure_db_per_element / launch_power_profile_w / per_band_launch_power_w | `526-571` | **engineering** | 逐**信道**口径入口。J8 链路走逐连接口径（apply_launch_power）。noise_figure_db_per_element 还会把 BandSpec.amplifier 拉进评估口径。 |
 | `core/bands.py` | BandPlan.guard_report / sclu_span_report | `635-663, 680-728` | **engineering** | FU-2 的保护间隔与 S+C+L+U 跨距口径报告，属该分支自有结论。 |
-| `models/isrs_gn.py` | 逐连接异构 symbol_rate_hz 数组参数 | `1306, 1328-1330 (numba_kernels.py)` | **physics** | ★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓冻结核只吃标量。改它 = 改 numba_kernels.py = 违反 J5。O2 已显式拒绝，本 WP 沿用该裁定（probes.heterogeneous_rs 证明确实被拒）。 |
 | `models/isrs_gn.py` | 用连接占用带覆写 f_m_hz / f_M_hz 并真正传给内核 | `n/a（fu4 用真 ODE，无此参数）` | **physics** | ★ 物理片段。O2 已在 Python 侧按连接占用带算出 f_m_hz/f_M_hz，但冻结内核在核内用标量 Rs 重算二者，故该修正在本仓是**死代码**。让它生效需给内核加参数 = J5。见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。 |
 | `network/elements.py` | ROADMConfig.blocked_slot_set() | `102-111` | **engineering** | 实测本仓 src/ tests/ tools/ 中**零调用方**（死代码）。语义已由 isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。 |
 | `rwa/qot_checker.py` | QoTValidator._roadm_terms | `80-105` | **engineering** | 纯重构：把既有 inline 逻辑抽成函数（PLAN §0 已断语义为零）。对 flexgrid 零价值。**故意不搬**，使 legacy 的装配算式保持逐字不变——J6 由构造即可证明，不必只靠测试反证。 |
 | `rwa/qot_checker.py` | _H_PLANCK 常量提取 | `17-19` | **engineering** | 纯命名提取，数值同（6.62607015e-34）。零 flexgrid 价值。 |
-| `models/numba_kernels.py` | 整个文件（fu4 用 RK4 _calc_exact_power_profile_ode 真 ODE 传播；本仓用 ECZ 闭式 _calc_span_out_power_jit） | `1-1480` | **physics** | ★ J5 禁改文件。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。逐行 diff 见 本 WP 的复核记录。diff 必须为空。 |
+| `models/numba_kernels.py` | 整个文件（fu4 用 RK4 _calc_exact_power_profile_ode 真 ODE 传播；本仓用 ECZ 闭式 _calc_span_out_power_jit） | `1-1480` | **physics** | ★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。 |
 
 ### 1.3 `core/bands.py` 的最小闭包（728 行 → 最小片段）
 
@@ -100,7 +100,7 @@
 
 ### 2.2 探针
 
-1. **异构 Rs**（✅ 被拒）：`[50000000000.0, 75000000000.0, 50000000000.0, 50000000000.0]` → `ValueError: per-connection heterogeneous symbol rates are not supported: the frozen numba kernel takes a scala…`
+1. **异构 Rs**（❌ 未被拒）：`[50000000000.0, 75000000000.0, 50000000000.0, 50000000000.0]` → `None…`
 2. **blocked_slots 槽区间重叠**（✅ 通过）：槽 11 阻断 [1]（期望 [1]，落在连接 1 的槽区间 [10,16) 内）；槽 5 阻断 []（期望 []，落在空隙）
 3. **跨频段边界宽连接**（✅ 被拒）：200 GHz 的连接中心在 191.5000 THz，跨 L|C 边界 → `ValueError: Connection 0 occupies [191.400000, 191.600000] THz, which straddles band boundary betwee…`
 
@@ -149,19 +149,12 @@
 
 以下三项都需要改 `models/numba_kernels.py`（J5 禁改，diff 必须为空）。按 WP-O3 §5「别重复踩 O2 的坑」，本 WP **一律报告而不强改**。
 
-### uniform_symbol_rate_only
-
-- **涉及物理**：是
-- **事实**：逐连接异构符号率不可用：冻结内核 _calc_span_noise_and_power_jit 的 symbol_rate_hz 是标量（用于算标量 f_m_hz/f_M_hz 并喂逐标量 SPM/XPM）。
-- **影响**：本场景所有连接统一 50 GHz；连接声明宽度（2/6/3/8 槽）仍互不相同。
-- **裁定**：不修改 numba_kernels.py（J5 diff 必须为空），按 brief §5 上报。
-
 ### srs_band_edges_still_scalar_rs
 
 - **涉及物理**：是
 - **事实**：isrs_gn.py 的 _precompute_channel_dependent_properties 已按连接占用带算出 f_m_hz/f_M_hz，但冻结内核**不使用**它们——它在核内用标量 Rs 重算 (f_rel_hz[0] - Rs/2, f_rel_hz[-1] + Rs/2)。
 - **影响**：宽连接下 SRS 频带边界仍按标量 Rs 而非真实占用带，低估真实拉曼作用范围。
-- **裁定**：修正需改冻结内核参数签名，违反 J5；按 J5 上报，未改。
+- **裁定**：★ WP-Q1 **未**处理此项：它不属于 P1 (23)/(29)/(30)/(34) 里 B_i/B_l 的落点，且改它要动 SRS 频带边界这一独立物理量。按「不给论文没写的项加物理」与「拿不准就停下报告」，留给后续 WP 裁决。
 
 此外 `ode_accel` 的 `matvec` / `cached_g` 档、以及 `phi_kurtosis` 同样需改冻结内核，已按 WP-O3 §8 列为不做（能力矩阵中 `involves_physics = 是`）。
 
@@ -173,7 +166,7 @@ O2 移植的 `MultiBandISRSGN.for_fiber` 只传 `(grid, fiber_config, Rs)`，逐
 
 ### 6.2 O2 公式锚点行号漂移
 
-在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **17** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
+在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **32** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
 
 ### 6.3 `BandSpec` 波长/频率 docstring 反了
 

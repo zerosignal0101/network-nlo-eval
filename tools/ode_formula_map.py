@@ -139,6 +139,34 @@ FORMULAS: list[dict] = [
         "notes": "(22) 只说缩放系数是 (1−k_bar)，未规定 k_bar 如何由泵浦功率得到；"
                  "ecz 取 min(sum(P_pump), 1) 是**论文未提及**的工程取值 -> engineering 备注见 k_bar 映射。",
     },
+    # ---- P1 (23)：NLI 总方差（逐信道 B_i 的总纲）--------------------------
+    {
+        "id": "p1_eq23_nli_total",
+        "quantity": "NLI 总方差 sigma^2_NLI(f_i) 的前因子 B_i（(23) 总纲式）",
+        "class": "physics",
+        "paper": {
+            "id": "P1",
+            "locator": "Eq. (23)",
+            "section": "§III CLOSED-FORM GN MODEL",
+            "anchor": "with $B_{i}$ the channel bandwidth",
+            "file": P1,
+        },
+        "paper_formula": "sigma^2_NLI(f_i) = (16/27) B_i int int gamma^2 |eta|^2 "
+                         "G(0,f_i+f_1) G(0,f_i+f_1+f_2) G(0,f_i+f_2) df_1 df_2, "
+                         "with B_i the channel bandwidth",
+        "code": [
+            {"file": G, "line": 418, "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,"},
+            {"file": K, "line": 459, "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"},
+            {"file": K, "line": 504, "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"},
+        ],
+        "conforms": True,
+        "verdict": "keep_ecz",
+        "notes": "(23) 是**积分**总纲；本仓按 P1 §III 用它的闭式解 (29)/(30) 求值，"
+                 "故 B_i 没有单独一行代码，而是经 (29) 的 b_i_hz 与 (30) 的 b_l_hz / b_i_hz "
+                 "进入。原文明确『with B_i the channel bandwidth』⇒ B_i 是**逐信道**量。"
+                 "WP-Q1 据此把此前全局标量的 B 逐信道化；这是 J2『论文提及且与本仓不一致 "
+                 "⇒ 改成论文』的直接授权点。",
+    },
     # ---- P1 (29)：SPM 闭式 ------------------------------------------------
     {
         "id": "p1_eq29_spm",
