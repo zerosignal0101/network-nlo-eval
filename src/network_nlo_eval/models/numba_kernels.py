@@ -278,7 +278,7 @@ _EPSILON = 1e-35
 @njit(cache=True)
 def _calc_spm_variance_jit(
     p_i_w: float,  # COI 入纤功率 (W)
-    rs_hz: float,  # 符号速率 (Hz)
+    b_i_hz: float,  # COI 信道带宽 B_i (Hz) —— P1 (29) 的 B_i
     n_span: int,  # 跨段数量
     gamma_ii: float,  # COI 的非线性系数 Gamma (1/(W*m))
     phi_i: float,  # COI 的有效非线性相位 (rad/m)
@@ -294,9 +294,15 @@ def _calc_spm_variance_jit(
 
     模型来自 Ref. [2] (Modeling and mitigation of fiber nonlinearity in wideband optical signal transmission)
     Eq (5) 及其相关项。
+
+    对应 P1 §III **(29)**：``b_i_hz`` 就是式中的 ``B_i``（"the channel bandwidth"）。
+    WP-Q1 前该参数名叫 ``rs_hz`` 且是**全局标量**，故 ``B_i`` 对所有连接恒等；
+    现改为由调用方按信道传入（见 `_compute_nli_variances`）。均匀 ``B_i`` 下
+    数值逐位不变（同一个 float64，只换了来源）。
+
     Args:
         p_i_w: COI 入纤功率 (W)。
-        rs_hz: 符号速率 (Hz)。
+        b_i_hz: COI 信道带宽 ``B_i`` (Hz)。
         n_span: 跨段数量。
         gamma_ii: COI 的非线性系数 Gamma。
         phi_i: COI 的有效非线性相位。
@@ -318,14 +324,14 @@ def _calc_spm_variance_jit(
 
     pre_factor = (
         (4 / 9)
-        * (p_i_w**3 / rs_hz**2)
+        * (p_i_w**3 / b_i_hz**2)
         * (n_span ** (1 + epsilon_n_span))
         * ((gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2))
         * term_exp
     )
 
-    asinh_1 = np.arcsinh((phi_i * rs_hz**2) / (PI * alpha_i_npm))
-    asinh_2 = np.arcsinh((phi_i * rs_hz**2) / (2 * PI * alpha_i_npm))
+    asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))
+    asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))
 
     term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1 + (
         (4 * alpha_i_npm**2 - t_i) / (2 * alpha_i_npm)
@@ -338,8 +344,8 @@ def _calc_spm_variance_jit(
 @njit(cache=True)
 def _calc_xpm_variance_term_jit(
     p_l_w: float,  # 干扰信道 (INT) 入纤功率 (W)
-    rs_l_hz: float,  # INT 符号速率 (Hz)
-    rs_i_hz: float,  # COI 符号速率 (Hz)
+    b_l_hz: float,  # INT 信道带宽 B_ℓ (Hz) —— P1 (30) 的 B_ℓ
+    b_i_hz: float,  # COI 信道带宽 B_i (Hz) —— P1 (30) 的 B_i (atan 参数)
     gamma_il: float,  # COI-INT 间的非线性系数 Gamma (1/(W*m))
     phi_il: float,  # COI-INT 间的有效非线性相位 (rad/m)
     alpha_l_npm: float,  # INT 的功率衰减系数 (Np/m)
@@ -351,10 +357,16 @@ def _calc_xpm_variance_term_jit(
 ) -> float:
     """计算交叉相位调制 (XPM) 产生的噪声方差项。
 
+    对应 P1 §III **(30)**：求和项 ``(P_ℓ²/B_ℓ)`` 用的是**干扰信道 ℓ 自己的**带宽
+    ``b_l_hz``；而 ``atan(φ_{i,ℓ} B_i/α_ℓ)`` 里的是 **COI 的**带宽 ``b_i_hz``。
+    WP-Q1 前这两个参数是同一个全局标量（`_compute_nli_variances` 把 ``rs_hz``
+    同时传给 ``rs_l_hz`` 和 ``rs_i_hz``），故 ``B_ℓ`` 与 ``B_i`` 恒等——这正是
+    多槽宽连接进不了 QoT 的根因。现在二者按 P1 (30) 各取各的。
+
     Args:
         p_l_w: 干扰信道 (INT) 入纤功率 (W)。
-        rs_l_hz: INT 符号速率 (Hz)。
-        rs_i_hz: COI 符号速率 (Hz)。
+        b_l_hz: 干扰信道 (INT) 的信道带宽 ``B_ℓ`` (Hz)。
+        b_i_hz: COI 的信道带宽 ``B_i`` (Hz)。
         gamma_il: COI-INT 间的非线性系数 Gamma。
         phi_il: COI-INT 间的有效非线性相位。
         alpha_l_npm: INT 的功率衰减系数。
@@ -372,10 +384,10 @@ def _calc_xpm_variance_term_jit(
     if abs(phi_il) < _EPSILON:
         phi_il = _EPSILON if phi_il >= 0 else -_EPSILON
 
-    pre_factor = (p_l_w**2 / rs_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp
+    pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp
 
-    atan_1 = np.arctan((phi_il * rs_i_hz) / alpha_l_npm)
-    atan_2 = np.arctan((phi_il * rs_i_hz) / (2 * alpha_l_npm))
+    atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)
+    atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))
 
     term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1 + (
         (4 * alpha_l_npm**2 - t_l) / (2 * alpha_l_npm)
@@ -389,7 +401,7 @@ def _calc_xpm_variance_term_jit(
 def _compute_nli_variances(
     n_ch: int,  # 信道总数
     n_span: int,  # 跨段数量
-    rs_hz: float,  # 符号速率 (Hz)
+    b_hz_channels: NDArrayFloat,  # 各信道带宽 B_i (Hz)
     p_in_w: NDArrayFloat,  # 各信道入纤功率 (W)
     f_rel_hz: NDArrayFloat,  # 各信道相对频率 (Hz)
     lambdas_m: NDArrayFloat,  # 各信道波长 (m)
@@ -409,7 +421,7 @@ def _compute_nli_variances(
     Args:
         n_ch: 信道总数。
         n_span: 跨段数量。
-        rs_hz: 符号速率 (Hz)。
+        b_hz_channels: 各信道带宽 ``B_i`` (Hz)，长度 = ``n_ch``。WP-Q1 起为逐信道量。
         p_in_w: 各信道入纤功率 (W)。
         f_rel_hz: 各信道相对频率 (Hz)。
         lambdas_m: 各信道波长 (m)。
@@ -444,7 +456,7 @@ def _compute_nli_variances(
 
         sigma_spm_2[i] = _calc_spm_variance_jit(
             p_in_w[i],
-            rs_hz,
+            b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽
             n_span,
             gamma_ii,
             phi_i,
@@ -467,7 +479,6 @@ def _compute_nli_variances(
             # phi_il = 2 * PI**2 * (f_rel_hz[l] - f_rel_hz[i])
             # * (beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l] + f_rel_hz[i]))
             # 原始公式: 2*pi^2*Δf*(beta2 + pi*beta3*(f_l+f_i)).
-            # 确保符号速率统一
             phi_il = (
                 2
                 * PI**2
@@ -477,10 +488,10 @@ def _compute_nli_variances(
 
             xpm_sum_term += _calc_xpm_variance_term_jit(
                 p_in_w[l_idx],
-                rs_hz,
-                rs_hz,
+                b_hz_channels[l_idx],  # P1 (30) 的 B_ℓ = 干扰信道自己的带宽
+                b_hz_channels[i],  # P1 (30) 的 B_i = COI 的带宽（atan 参数）
                 gamma_il,
-                phi_il,  # XPM 的符号速率通常用 COI 和 INT 的符号速率
+                phi_il,
                 alpha_power_npm[l_idx],
                 t_factors[l_idx],
                 r_f_values[l_idx],
@@ -531,18 +542,28 @@ def _calculate_ase_noise_variance(
     p_out_w: NDArrayFloat,  # 各信道出纤功率 (W)
     f_abs_hz: NDArrayFloat,  # 各信道绝对频率 (Hz)
     nf_lin: NDArrayFloat,  # 各信道线性噪声系数
-    rs_hz: float,  # 符号速率 (Hz)
+    b_hz_channels: NDArrayFloat,  # 各信道带宽 B_i (Hz) —— P1 (34) 的 B_i
     n_span: int,  # 跨段数量
 ) -> NDArrayFloat:
     """计算所有跨段累积的 ASE 噪声方差。
 
     假设每个跨段后有一个 EDFA 进行放大和噪声引入。
+
+    对应 P1 §III **(34)**：``b_hz_channels[i]`` 就是式中的 ``B_i``（P2 表述为
+    "bandwidth of the COI"），WP-Q1 起为逐信道量而非全局标量。
+
+    ⚠️ **本函数当前是死代码**：`_calc_span_noise_and_power_jit` 的返回值在
+    ``models/isrs_gn.py`` 里被 ``_`` 丢弃，实际生效的 ASE 在该文件里按同一形状
+    (34) 的算式在 Python 侧算出。本 WP 只把 ``B_i`` 参数化为逐信道量；此处
+    ``G_i = p_in_w / p_out_w`` 与 P1 (34) 的 ``G(f_i)`` 不符，属**既有**差异
+    （见 ``docs/ode2_papers_and_diff.md``），不在本 WP 范围内，故不动。
+
     Args:
         p_in_w: 各信道入纤功率 (W)。
         p_out_w: 各信道出纤功率 (W)。
         f_abs_hz: 各信道绝对频率 (Hz)。
         nf_lin: 各信道线性噪声系数。
-        rs_hz: 符号速率 (Hz)。
+        b_hz_channels: 各信道带宽 ``B_i`` (Hz)。
         n_span: 跨段数量。
     Returns:
         NDArrayFloat: 每个信道的 ASE 噪声方差 (W)。
@@ -553,7 +574,9 @@ def _calculate_ase_noise_variance(
             # 计算单跨段增益 (假设 EDFA 补偿损耗)
             G_i = p_in_w[i] / p_out_w[i]
 
-            total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * rs_hz
+            total_ase_variance[i] = (
+                n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * b_hz_channels[i]
+            )
             # print(f"{G_i}, {p_in_w[i]}/{p_out_w[i]}", end=", ")
             # print(f"Channel {i} ASE variance: {total_ase_variance[i]:.2e}")
 
@@ -577,7 +600,8 @@ def _calc_span_noise_and_power_jit(
     n2_m2_w: float,  # 非线性折射率
     # --- 系统与放大器参数 ---
     nf_lin_channels: NDArrayFloat,  # 放大器线性噪声系数 (数组)
-    symbol_rate_hz: float,  # 符号速率 (Hz)
+    symbol_rate_hz: float,  # 符号速率 (Hz) —— ⚠️ 仅用于 SRS 频带边界 f_m/f_M，不是 B_i
+    b_hz_channels: NDArrayFloat,  # 逐信道带宽 B_i (Hz) —— P1 (23)/(29)/(30)/(34)
     n_effective_spans: int,  # 有效累积跨段数 (NLI计算用)
     # --- 物理常数 ---
     cr_w_m_hz: float,  # SRS 增益系数 Cr
@@ -589,6 +613,11 @@ def _calc_span_noise_and_power_jit(
     封装了损耗、SRS、SPM、XPM 和 ASE 的全套计算。
     """
     num_channels = len(power_in_w)
+
+    # WP-Q1：逐信道带宽必须与 num_channels 等长，否则 SPM/XPM 的 B_i 会索引越界或
+    # 静默错位。放在核内校验，使"漏接参数"立刻失败而不是悄悄算错。
+    if len(b_hz_channels) != num_channels:
+        raise ValueError("b_hz_channels must have one bandwidth per channel.")
 
     # 1. 预计算中间量
     total_p_in_w = np.sum(power_in_w)
@@ -614,7 +643,7 @@ def _calc_span_noise_and_power_jit(
     sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances(
         num_channels,
         n_effective_spans,
-        symbol_rate_hz,
+        b_hz_channels,
         power_in_w,
         f_rel_hz,
         lambdas_m,
@@ -632,7 +661,7 @@ def _calc_span_noise_and_power_jit(
 
     # 5. 计算 ASE 噪声方差
     sigma2_ase_w = _calculate_ase_noise_variance(
-        power_in_w, p_out_after_fiber, f_abs_hz, nf_lin_channels, symbol_rate_hz, n_effective_spans
+        power_in_w, p_out_after_fiber, f_abs_hz, nf_lin_channels, b_hz_channels, n_effective_spans
     )
 
     return p_out_after_fiber, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w

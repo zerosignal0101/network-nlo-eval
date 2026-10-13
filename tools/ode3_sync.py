@@ -28,9 +28,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 OUT = REPO / "results" / "ode_dev_flexgrid_sync.json"
 
-#: J5 禁改文件。``--check`` 断言它相对本 WP 起点 ``46923a9`` 的 diff 为空。
+#: J5 禁改文件。``--check`` 断言它相对**冻结基线** ``b69563a`` 的 diff 为空。
+#:
+#: ⚠️ 基线推进记录：J5 最初锚在 ``46923a9``（WP-O3 起点）。WP-Q1 按 J2「论文提及且
+#: 与本仓不一致 ⇒ 改成论文」授权改动了本文件——P1 (23)/(29)/(30)/(34) 的 ``B_i`` /
+#: ``B_ℓ`` 本来就是**逐信道**量，本仓却是全局标量。改动落在提交 ``b69563a``，
+#: 故冻结基线随之推进到该提交；此后本文件继续受 J5 约束。
 FROZEN = "src/network_nlo_eval/models/numba_kernels.py"
-WP_BASE = "46923a9"
+WP_BASE = "b69563a"
 
 B = "src/network_nlo_eval/core/bands.py"
 I = "src/network_nlo_eval/models/isrs_gn.py"
@@ -249,7 +254,7 @@ SEGMENTS: list[dict] = [
         "rationale": "★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下"
         "子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。"
         "J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。",
-        "verify": "self.slots_per_channel,\n            )",
+        "verify": "self.slots_per_channel,\n                self.channel_bandwidth_source,",
     },
     {
         "file": I,
@@ -257,11 +262,15 @@ SEGMENTS: list[dict] = [
         "symbol": "逐连接异构 symbol_rate_hz 数组参数",
         "fu4_lines": "1306, 1328-1330 (numba_kernels.py)",
         "kind": "physics",
-        "action": "not_ported",
+        "action": "ported_adapted",
         "rationale": "★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组"
-        "并据此算 ASE；本仓冻结核只吃标量。改它 = 改 numba_kernels.py = 违反 J5。"
-        "O2 已显式拒绝，本 WP 沿用该裁定（probes.heterogeneous_rs 证明确实被拒）。",
-        "verify_absent": "symbol_rate_hz: NDArrayFloat",
+        "并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。"
+        "WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。"
+        "落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，"
+        "由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。"
+        "未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。",
+        "paper_formulas": ["P1 (23)", "P1 (29)", "P1 (30)", "P1 (34)"],
+        "verify": "b_hz_channels=self.channel_bandwidth_hz_channels,",
     },
     {
         "file": I,
@@ -333,13 +342,15 @@ SEGMENTS: list[dict] = [
     {
         "file": R,
         "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
-        "symbol": "QoTValidator._node_frequency_and_rate",
+        "symbol": "QoTValidator._node_frequency_and_bandwidth",
         "fu4_lines": "106-122",
         "kind": "engineering",
         "action": "applied",
-        "rationale": "★ 索引空间适配：booster ASE 的频率/符号率真源必须是逐节点数组，"
-        "不能用 spectrum_grid.frequencies。WP-O1 §0 已证 legacy 下二者逐位等价。",
-        "verify": "def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:",
+        "rationale": "★ 索引空间适配：booster ASE 的频率/带宽真源必须是逐节点数组，"
+        "不能用 spectrum_grid.frequencies。WP-O1 §0 已证 legacy 下二者逐位等价。"
+        "WP-Q1 起第二返回值是 P1 (34) 的 B_i（bandwidth），故改名 _node_frequency_and_bandwidth；"
+        "旧名保留为别名。",
+        "verify": "def _node_frequency_and_bandwidth(self, channel_idx: int) -> tuple[float, float]:",
     },
     {
         "file": R,
@@ -354,23 +365,24 @@ SEGMENTS: list[dict] = [
     {
         "file": R,
         "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
-        "symbol": "booster ASE 标量分支 -> _node_frequency_and_rate",
+        "symbol": "booster ASE 标量分支 -> _node_frequency_and_bandwidth",
         "fu4_lines": "334-350",
         "kind": "engineering",
         "action": "applied",
-        "rationale": "只换取值来源，公式 NF*h*f*Rs*(loss-1) 一字未动。",
-        "verify": "frequency_hz, symbol_rate_hz = self._node_frequency_and_rate(channel_idx)",
+        "rationale": "只换取值来源，公式 NF*h*f*B*(loss-1) 一字未动。",
+        "verify": "frequency_hz, channel_bandwidth_hz = self._node_frequency_and_bandwidth(channel_idx)",
     },
     {
         "file": R,
         "origin": "wp/fg-uwb-fid@a233002 rwa/qot_checker.py",
-        "symbol": "booster ASE 向量分支 -> f_abs_hz + symbol_rate_hz_channels",
+        "symbol": "booster ASE 向量分支 -> f_abs_hz + channel_bandwidth_hz_channels",
         "fu4_lines": "426-441",
         "kind": "engineering",
         "action": "applied",
-        "rationale": "同上。symbol_rate_hz_channels[i] 恒等于标量 Rs，故 legacy 逐位等价"
+        "rationale": "同上。WP-Q1 起 B_i 取 channel_bandwidth_hz_channels[i]（逐信道），"
+        "legacy 下该数组恒等于标量 Rs，故 legacy 逐位等价"
         "（IEEE 双精度逐元素乘法与标量乘法同结果）。",
-        "verify": "* self.gn_evaluator.symbol_rate_hz_channels",
+        "verify": "* self.gn_evaluator.channel_bandwidth_hz_channels",
     },
     {
         "file": R,
@@ -446,9 +458,11 @@ SEGMENTS: list[dict] = [
         "fu4_lines": "1-1480",
         "kind": "physics",
         "action": "not_ported",
-        "rationale": "★ J5 禁改文件。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，"
-        "本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。逐行 diff 见 "
-        "本 WP 的复核记录。diff 必须为空。",
+        "rationale": "★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此"
+        "**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型"
+        "（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。"
+        "唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。"
+        "自 b69563a 起 diff 必须为空。",
         "verify_absent": None,
     },
 ]
@@ -484,7 +498,17 @@ def main() -> int:
             errs.append(f"[J7] {seg['file']}::{seg['symbol']} action 非法: {seg.get('action')!r}")
         # J7 硬要求：physics 片段不得被应用
         if seg.get("kind") == "physics" and seg.get("action") != "not_ported":
-            errs.append(f"[J7] physics 片段被应用了: {seg['file']}::{seg['symbol']}")
+            # ⚠️ J7 的收紧版豁免（WP-Q1 引入）：物理片段**原则上**不许应用，但可以凭
+            # J2「论文提及且与本仓不一致 ⇒ 改成论文」被显式授权。授权必须自带论文
+            # 公式号清单 `paper_formulas`（非空、每项形如 "P1 (29)"），否则照旧报错。
+            # 这样"物理被应用"永远是**可见且有出处的**例外，而不是把闸门整体拆掉。
+            formulas = seg.get("paper_formulas")
+            if not (isinstance(formulas, list) and formulas and all(
+                isinstance(f, str) and f.strip() for f in formulas
+            )):
+                errs.append(
+                    f"[J7] physics 片段被应用且未给出 paper_formulas 授权: {seg['file']}::{seg['symbol']}"
+                )
         # 声明与现实一致
         if seg.get("verify"):
             if seg["verify"] not in text:

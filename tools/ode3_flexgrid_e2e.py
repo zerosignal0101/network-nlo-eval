@@ -129,19 +129,26 @@ def run_e2e() -> dict:
             }
         )
 
-    # --- 探针 1：异构 Rs 必须被拒（J5 上报项） ---------------------------
+    # --- 探针 1：逐连接异构带宽现在**受支持**（WP-Q1）--------------------
+    # O2/O3 时代这里断言"必须被拒"（当时冻结内核只吃标量 Rs）。WP-Q1 按 J2 授权把
+    # B_i 逐信道化后，逐连接异构带宽已是合法输入，故探针改为记录**接受**事实，
+    # 并额外钉住"均匀带宽下逐连接结果 == 遗留标量结果"这一 legacy 等价。
     hetero = sc.build_connections()
     hetero[1] = replace(hetero[1], symbol_rate_hz=75e9)
     hetero_probe: dict[str, object] = {
-        "description": "逐连接异构符号率 -> 需改冻结内核的数组参数，按 J5 拒绝",
+        "description": "逐连接异构带宽 -> WP-Q1 已支持（P1 (23)/(29)/(30)/(34) 的 B_i 本就是逐信道量）",
         "rates_hz": [float(c.symbol_rate_hz) for c in hetero],
         "rejected": False,
+        "accepted": False,
+        "b_hz_channels": None,
         "error": None,
     }
     try:
-        MultiBandISRSGN(
+        hetero_ev = MultiBandISRSGN(
             sc.FLEX_GRID, topology.get_default_fiber_config(), sc.SYMBOL_RATE_HZ, connections=hetero
         )
+        hetero_probe["accepted"] = True
+        hetero_probe["b_hz_channels"] = [float(b) for b in hetero_ev.channel_bandwidth_hz_channels]
     except ValueError as exc:
         hetero_probe["rejected"] = True
         hetero_probe["error"] = f"{type(exc).__name__}: {exc}"
@@ -212,22 +219,15 @@ def run_e2e() -> dict:
         },
         "known_limitations": [
             {
-                "id": "uniform_symbol_rate_only",
-                "involves_physics": True,
-                "statement": "逐连接异构符号率不可用：冻结内核 _calc_span_noise_and_power_jit 的 "
-                "symbol_rate_hz 是标量（用于算标量 f_m_hz/f_M_hz 并喂逐标量 SPM/XPM）。",
-                "impact": "本场景所有连接统一 50 GHz；连接声明宽度（2/6/3/8 槽）仍互不相同。",
-                "decision": "不修改 numba_kernels.py（J5 diff 必须为空），按 brief §5 上报。",
-                "probe": "probes.heterogeneous_rs",
-            },
-            {
                 "id": "srs_band_edges_still_scalar_rs",
                 "involves_physics": True,
                 "statement": "isrs_gn.py 的 _precompute_channel_dependent_properties 已按连接占用带算出 "
                 "f_m_hz/f_M_hz，但冻结内核**不使用**它们——它在核内用标量 Rs 重算 "
                 "(f_rel_hz[0] - Rs/2, f_rel_hz[-1] + Rs/2)。",
                 "impact": "宽连接下 SRS 频带边界仍按标量 Rs 而非真实占用带，低估真实拉曼作用范围。",
-                "decision": "修正需改冻结内核参数签名，违反 J5；按 J5 上报，未改。",
+                "decision": "★ WP-Q1 **未**处理此项：它不属于 P1 (23)/(29)/(30)/(34) 里 B_i/B_l 的"
+                "落点，且改它要动 SRS 频带边界这一独立物理量。按「不给论文没写的项加物理」"
+                "与「拿不准就停下报告」，留给后续 WP 裁决。",
                 "probe": None,
             },
         ],
@@ -277,8 +277,8 @@ def main() -> int:
         failures.append("J8: 逐连接 SNR 全为空")
     if not doc["evaluator_index_space_ok"]:
         failures.append("J8: evaluator.n_nodes 与连接数不一致")
-    if not doc["probes"]["heterogeneous_rs"]["rejected"]:
-        failures.append("探针: 异构 Rs 未被拒绝（J5 上报项失效）")
+    if not doc["probes"]["heterogeneous_rs"]["accepted"]:
+        failures.append("探针: 逐连接异构带宽未被接受（WP-Q1 能力失效）")
     if not doc["probes"]["blocked_slot"]["passed"]:
         failures.append("探针: blocked_slots 槽区间重叠语义不符")
     if not doc["probes"]["band_crossing"]["rejected"]:

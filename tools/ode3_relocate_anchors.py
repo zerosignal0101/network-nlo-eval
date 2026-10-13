@@ -159,15 +159,58 @@ def main() -> int:
         new_text, changes = apply_relocations(text, items)
         TARGET.write_text(new_text, encoding="utf-8")
         OUT.parent.mkdir(parents=True, exist_ok=True)
+
+        # ⚠️ 证据必须**累计**而不是被最后一次运行覆盖。本工具是幂等的：第二次
+        # ``--write`` 会重定位 0 条。若每次都覆盖落盘，守卫 8（"应当有锚点被重定位"）
+        # 就会因为一次无关的重复运行而假失败。WP-Q1 因此改为：保留历史条目，
+        # 并按当前源码把每条的 ``new_line`` 刷新成真值。
+        history: dict[tuple[str, str], dict] = {}
+        if OUT.is_file():
+            try:
+                prior = json.loads(OUT.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                prior = {}
+            for item in prior.get("relocations", []):
+                history[(item["file"], item["contains"])] = item
+        for item in changes:
+            history[(item["file"], item["contains"])] = item
+
+        # 刷新每条历史锚点当前真实所在的行号（防止源码再次漂移后证据说谎）。
+        # 若 ``contains`` 已不在源码里（= 有人**刻意改写**了那一行，而不是挪了它），
+        # 它就不再是"同一条锚点的重定位"，移入 superseded 透明留档，而不是留一条
+        # new_line=None 的坏记录把守卫 8 打挂。
+        merged: list[dict] = []
+        superseded: list[dict] = []
+        for (file_rel, contains), item in history.items():
+            path = REPO / file_rel
+            if not path.is_file():
+                superseded.append({**item, "reason": "target file missing"})
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+            hits = [i + 1 for i, line in enumerate(lines) if contains in line]
+            if len(hits) != 1:
+                superseded.append({
+                    **item,
+                    "reason": (
+                        "contains 串已不在源码中（锚点内容被刻意改写）"
+                        if not hits else f"contains 在目标文件里出现 {len(hits)} 次，不再唯一"
+                    ),
+                })
+                continue
+            merged.append({**item, "new_line": hits[0]})
+
         OUT.write_text(
             json.dumps(
                 {
-                    "wp": "O3",
-                    "purpose": "WP-O3 插入 flexgrid 接线导致 isrs_gn.py 物理行行号下移；只重排行号，不改 contains。",
+                    "wp": "O3+Q1",
+                    "purpose": "接线插入导致物理行行号下移；只重排行号，不改 contains。"
+                    "证据为累计口径（幂等重跑不会把它抹成 0）。",
                     "target": str(TARGET.relative_to(REPO)),
-                    "n_relocated": len(changes),
+                    "n_relocated": len(merged),
+                    "n_relocated_this_run": len(changes),
                     "n_unfixable": len(unfixable),
-                    "relocations": changes,
+                    "relocations": merged,
+                    "superseded": superseded,
                     "unfixable": unfixable,
                 },
                 indent=2,

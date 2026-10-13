@@ -1,128 +1,238 @@
 {
-  "wp": "O3",
-  "purpose": "WP-O3 插入 flexgrid 接线导致 isrs_gn.py 物理行行号下移；只重排行号，不改 contains。",
+  "wp": "O3+Q1",
+  "purpose": "接线插入导致物理行行号下移；只重排行号，不改 contains。证据为累计口径（幂等重跑不会把它抹成 0）。",
   "target": "tools/ode_formula_map.py",
-  "n_relocated": 17,
+  "n_relocated": 31,
+  "n_relocated_this_run": 0,
   "n_unfixable": 0,
   "relocations": [
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(",
-      "old_line": 165,
-      "new_line": 220,
-      "delta": 55
+      "old_line": 220,
+      "new_line": 300,
+      "delta": 80
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)",
-      "old_line": 115,
-      "new_line": 123,
-      "delta": 8
+      "old_line": 123,
+      "new_line": 169,
+      "delta": 46
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)",
+      "old_line": 313,
+      "new_line": 319,
+      "delta": 6
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "(4 / 9)",
+      "old_line": 320,
+      "new_line": 326,
+      "delta": 6
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)",
+      "old_line": 323,
+      "new_line": 329,
+      "delta": 6
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1",
+      "old_line": 330,
+      "new_line": 336,
+      "delta": 6
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)",
+      "old_line": 443,
+      "new_line": 455,
+      "delta": 12
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)",
+      "old_line": 369,
+      "new_line": 381,
+      "delta": 12
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1",
+      "old_line": 380,
+      "new_line": 392,
+      "delta": 12
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term",
+      "old_line": 493,
+      "new_line": 504,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "phi_il = (",
+      "old_line": 471,
+      "new_line": 482,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))",
+      "old_line": 475,
+      "new_line": 486,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2",
+      "old_line": 612,
+      "new_line": 641,
+      "delta": 29
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_noise = total_spm + total_xpm + total_ase",
-      "old_line": 388,
-      "new_line": 456,
-      "delta": 68
+      "old_line": 456,
+      "new_line": 546,
+      "delta": 90
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])",
-      "old_line": 391,
-      "new_line": 459,
-      "delta": 68
+      "old_line": 459,
+      "new_line": 549,
+      "delta": 90
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))",
-      "old_line": 299,
-      "new_line": 354,
-      "delta": 55
+      "old_line": 354,
+      "new_line": 435,
+      "delta": 81
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain *= 10 ** (ripple / 10)",
-      "old_line": 304,
-      "new_line": 359,
-      "delta": 55
+      "old_line": 359,
+      "new_line": 440,
+      "delta": 81
     },
     {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * np.maximum(gain - 1, 0)",
-      "old_line": 306,
-      "new_line": 361,
-      "delta": 55
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "G_i = p_in_w[i] / p_out_w[i]",
+      "old_line": 554,
+      "new_line": 575,
+      "delta": 21
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(",
-      "old_line": 270,
-      "new_line": 325,
-      "delta": 55
+      "old_line": 325,
+      "new_line": 405,
+      "delta": 80
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "if wavel_nm < 1460:  # E-band",
+      "old_line": 517,
+      "new_line": 528,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "nf_lin[i] = _db_to_lin(7.0)",
+      "old_line": 520,
+      "new_line": 531,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "nf_lin[i] = _db_to_lin(5.5)",
+      "old_line": 522,
+      "new_line": 533,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "* (n_span ** (1 + epsilon_n_span))",
+      "old_line": 322,
+      "new_line": 328,
+      "delta": 6
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)",
-      "old_line": 297,
-      "new_line": 352,
-      "delta": 55
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "np.maximum(gain - 1, 0)",
-      "old_line": 306,
-      "new_line": 361,
-      "delta": 55
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "total_noise = total_spm + total_xpm + total_ase",
-      "old_line": 388,
-      "new_line": 456,
-      "delta": 68
+      "old_line": 352,
+      "new_line": 433,
+      "delta": 81
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= transfer",
-      "old_line": 352,
-      "new_line": 420,
-      "delta": 68
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)",
-      "old_line": 378,
-      "new_line": 446,
-      "delta": 68
+      "old_line": 420,
+      "new_line": 510,
+      "delta": 90
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= penalty",
-      "old_line": 382,
-      "new_line": 450,
-      "delta": 68
+      "old_line": 450,
+      "new_line": 540,
+      "delta": 90
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "wavel_nm < 1460",
+      "old_line": 517,
+      "new_line": 528,
+      "delta": 11
+    },
+    {
+      "file": "src/network_nlo_eval/models/numba_kernels.py",
+      "contains": "if abs(phi_i) < _EPSILON:",
+      "old_line": 316,
+      "new_line": 322,
+      "delta": 6
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "s2_ase = np.zeros_like(power_in_w)",
-      "old_line": 294,
-      "new_line": 349,
-      "delta": 55
+      "old_line": 349,
+      "new_line": 430,
+      "delta": 81
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0",
-      "old_line": 386,
-      "new_line": 454,
-      "delta": 68
+      "old_line": 454,
+      "new_line": 544,
+      "delta": 90
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.delta_f_co_hz = 15e12",
-      "old_line": 116,
-      "new_line": 124,
-      "delta": 8
+      "old_line": 124,
+      "new_line": 170,
+      "delta": 46
+    }
+  ],
+  "superseded": [
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)",
+      "old_line": 446,
+      "new_line": null,
+      "delta": 90,
+      "error": "contains 命中 0 次",
+      "reason": "contains 串已不在源码中（锚点内容被刻意改写）"
     }
   ],
   "unfixable": []

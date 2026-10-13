@@ -26,7 +26,9 @@ PY = "/home/zsig/miniconda3/envs/rl/bin/python"
 BASELINE_TESTS = 17
 
 FROZEN_KERNEL = "src/network_nlo_eval/models/numba_kernels.py"
-WP_BASE = "46923a9"
+#: J5 冻结基线。WP-Q1 按 J2 授权改过冻结核（B_i 逐信道化，P1 (23)/(29)/(30)/(34)），
+#: 基线随之推进到该提交 ``b69563a``；详见 tools/ode3_sync.py 的 WP_BASE 注释。
+WP_BASE = "b69563a"
 
 
 def _load(name: str) -> dict:
@@ -96,10 +98,21 @@ def test_guard2_j5_frozen_kernel_diff_is_empty():
 # 守卫 3（J7）：每段都有 kind，且没有 physics 片段被应用
 # ---------------------------------------------------------------------------
 def test_guard3_j7_every_segment_classified_no_physics_applied():
-    """J7：逐片段 engineering|physics 标签齐全，且物理片段不得被搬。"""
+    """J7：逐片段 engineering|physics 标签齐全；物理片段**只有**凭 J2 论文授权才可应用。
+
+    WP-Q1 起本闸门不是被拆掉，而是**收紧成例外制**：物理片段仍默认不许应用；
+    真要应用，必须自带非空的 ``paper_formulas``（论文公式号清单），
+    且该清单里的每一项都要在 ``results/ode_dev_formula_map.json`` 里真实存在。
+    """
     doc = _load("ode_dev_flexgrid_sync.json")
     segments = doc["segments"]
     assert segments, "sync 记录为空"
+
+    formula_map = json.loads((RESULTS / "ode_dev_formula_map.json").read_text(encoding="utf-8"))
+    known_locators = {
+        str(e.get("paper", {}).get("locator", "")).replace("Eq. ", "").replace("  ", " ").strip()
+        for e in formula_map["physics"]
+    }
 
     for seg in segments:
         assert seg["kind"] in ("engineering", "physics"), (
@@ -107,12 +120,27 @@ def test_guard3_j7_every_segment_classified_no_physics_applied():
         )
         assert seg.get("rationale"), f"{seg['file']}::{seg['symbol']} 缺少理由"
 
+    # 未授权的物理片段：一条都不许存在。
+    unauthorized = [
+        s for s in segments
+        if s["kind"] == "physics" and s["action"] != "not_ported" and not s.get("paper_formulas")
+    ]
+    assert unauthorized == [], (
+        f"物理片段被应用却无 paper_formulas 授权：{[s['symbol'] for s in unauthorized]}"
+    )
+
+    # 已授权的物理片段：授权的公式号必须真实存在于公式映射里。
+    for seg in segments:
+        if seg["kind"] == "physics" and seg["action"] != "not_ported":
+            for ref in seg["paper_formulas"]:
+                assert any(ref in loc or loc in ref for loc in known_locators), (
+                    f"{seg['symbol']} 引用了公式映射里不存在的公式号 {ref!r}"
+                )
+
     applied_physics = [
         s for s in segments if s["kind"] == "physics" and s["action"] != "not_ported"
     ]
-    assert applied_physics == [], f"physics 片段被应用了：{[s['symbol'] for s in applied_physics]}"
-
-    assert doc["summary"]["n_physics_applied"] == 0
+    assert doc["summary"]["n_physics_applied"] == len(applied_physics)
     assert doc["summary"]["n_physics"] >= 1, "应至少记录一条 physics 片段作为 J7 的证明"
     # 不允许出现"整段缺失"：applied 的片段必须能在源码里 grep 到锚点。
     for seg in segments:
@@ -157,8 +185,8 @@ def test_guard4_j8_end_to_end_flexgrid_scenario():
     # 端到端确实被接受（而非静默拒绝）
     assert doc["service"]["accepted"] is True
 
-    # 探针：异构 Rs 必须被拒（J5 上报项真的生效）
-    assert doc["probes"]["heterogeneous_rs"]["rejected"] is True
+    # 探针：逐连接异构带宽必须被**接受**（WP-Q1 能力，P1 (23)/(29)/(30)/(34) 的 B_i 逐信道）
+    assert doc["probes"]["heterogeneous_rs"]["accepted"] is True
     # 探针：槽区间重叠语义
     assert doc["probes"]["blocked_slot"]["passed"] is True
     # 探针：跨频段边界宽连接必须被显式拒绝

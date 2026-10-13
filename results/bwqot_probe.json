@@ -1,0 +1,486 @@
+{
+  "wp": "Q1",
+  "judgment": "Q-J2+Q-J6",
+  "rel_tol": 1e-09,
+  "sweep_b_ghz": [
+    12.5,
+    25.0,
+    50.0,
+    100.0
+  ],
+  "power_width_modes": [
+    "fixed_power",
+    "fixed_psd"
+  ],
+  "channel_bandwidth_source": "occupied",
+  "reference": {
+    "source": "照 P1 (29)/(30)/(34) 原文独立重写的标量参考实现（tools/bwqot_probe.py::reference_terms）",
+    "not_a_copy_of": "models/numba_kernels.py 的三个 njit 噪声函数",
+    "shared_inputs": "alpha / a_eff / beta2 / beta3 / n2 / Cr / k_bar 取自评估器公开属性；r(f) 取自 _calc_raman_profile_jit（P1 (18)，属 O1/O2 线已覆盖的量，不是本探针的验证对象）。**B 的进入方式在参考实现与被测实现之间相互独立**。"
+  },
+  "scenario": {
+    "span_km": 80.0,
+    "n_span": 1,
+    "edfa_gain_db": 17.0,
+    "edfa_nf_db": 5.5,
+    "launch_power_w": 0.001,
+    "n_interferers": 3,
+    "interferer_slots": 4
+  },
+  "rows": [
+    {
+      "power_width_mode": "fixed_power",
+      "n_slots": 1,
+      "b_i_hz": 12500000000.0,
+      "f_i_hz": 192981250000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.001,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.001259191265199424,
+      "measured": {
+        "spm_noise_w": 3.5368222500224887e-07,
+        "xpm_noise_w": 8.783456521291191e-08,
+        "ase_noise_w": 2.785660770245157e-07,
+        "snr_db": 32.42709224418227
+      },
+      "reference_p1": {
+        "spm_noise_w": 3.5368222500224887e-07,
+        "xpm_noise_w": 8.783456521291191e-08,
+        "ase_noise_w": 2.785660770245157e-07,
+        "snr_db": 32.42709224418227
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "n_slots": 2,
+      "b_i_hz": 25000000000.0,
+      "f_i_hz": 192987500000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.001,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.0012591772717491837,
+      "measured": {
+        "spm_noise_w": 2.933384741006461e-07,
+        "xpm_noise_w": 9.709566888231862e-08,
+        "ase_noise_w": 5.571501976463383e-07,
+        "snr_db": 31.23469000889014
+      },
+      "reference_p1": {
+        "spm_noise_w": 2.933384741006461e-07,
+        "xpm_noise_w": 9.709566888231862e-08,
+        "ase_noise_w": 5.571501976463383e-07,
+        "snr_db": 31.23469000889014
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "n_slots": 4,
+      "b_i_hz": 50000000000.0,
+      "f_i_hz": 193000000000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.001,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.0012591492851596825,
+      "measured": {
+        "spm_noise_w": 1.563652385031701e-07,
+        "xpm_noise_w": 1.1620754418880452e-07,
+        "ase_noise_w": 1.1143725696819051e-06,
+        "snr_db": 29.58017873671187
+      },
+      "reference_p1": {
+        "spm_noise_w": 1.563652385031701e-07,
+        "xpm_noise_w": 1.1620754418880452e-07,
+        "ase_noise_w": 1.1143725696819051e-06,
+        "snr_db": 29.58017873671187
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "n_slots": 8,
+      "b_i_hz": 100000000000.0,
+      "f_i_hz": 193025000000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.001,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.0012590933132246096,
+      "measured": {
+        "spm_noise_w": 6.14230052884788e-08,
+        "xpm_noise_w": 1.944716038773246e-07,
+        "ase_noise_w": 2.2290338369207224e-06,
+        "snr_db": 27.04744029822056
+      },
+      "reference_p1": {
+        "spm_noise_w": 6.14230052884788e-08,
+        "xpm_noise_w": 1.944716038773246e-07,
+        "ase_noise_w": 2.2290338369207224e-06,
+        "snr_db": 27.04744029822056
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "n_slots": 1,
+      "b_i_hz": 12500000000.0,
+      "f_i_hz": 192981250000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.00025,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.00031479781826184876,
+      "measured": {
+        "spm_noise_w": 5.525987011069748e-09,
+        "xpm_noise_w": 2.1958536075904203e-08,
+        "ase_noise_w": 2.785660770245157e-07,
+        "snr_db": 30.12238478364314
+      },
+      "reference_p1": {
+        "spm_noise_w": 5.525987011069748e-09,
+        "xpm_noise_w": 2.1958536075904203e-08,
+        "ase_noise_w": 2.785660770245157e-07,
+        "snr_db": 30.12238478364314
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "n_slots": 2,
+      "b_i_hz": 25000000000.0,
+      "f_i_hz": 192987500000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.0005,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.0006295886382507495,
+      "measured": {
+        "spm_noise_w": 3.6666116694446734e-08,
+        "xpm_noise_w": 4.854767359738106e-08,
+        "ase_noise_w": 5.571501976463383e-07,
+        "snr_db": 29.91275696374658
+      },
+      "reference_p1": {
+        "spm_noise_w": 3.6666116694446734e-08,
+        "xpm_noise_w": 4.854767359738106e-08,
+        "ase_noise_w": 5.571501976463383e-07,
+        "snr_db": 29.91275696374658
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "n_slots": 4,
+      "b_i_hz": 50000000000.0,
+      "f_i_hz": 193000000000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.001,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.0012591492851596825,
+      "measured": {
+        "spm_noise_w": 1.563652385031701e-07,
+        "xpm_noise_w": 1.1620754418880452e-07,
+        "ase_noise_w": 1.1143725696819051e-06,
+        "snr_db": 29.58017873671187
+      },
+      "reference_p1": {
+        "spm_noise_w": 1.563652385031701e-07,
+        "xpm_noise_w": 1.1620754418880452e-07,
+        "ase_noise_w": 1.1143725696819051e-06,
+        "snr_db": 29.58017873671187
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "n_slots": 8,
+      "b_i_hz": 100000000000.0,
+      "f_i_hz": 193025000000000.0,
+      "b_l_hz": [
+        50000000000.0,
+        50000000000.0,
+        50000000000.0
+      ],
+      "p_i_w": 0.002,
+      "p_i_w_nominal": 0.001,
+      "signal_power_out_w": 0.00251818661677296,
+      "measured": {
+        "spm_noise_w": 4.914016994101863e-07,
+        "xpm_noise_w": 3.889474010244171e-07,
+        "ase_noise_w": 2.2290338369207224e-06,
+        "snr_db": 29.084137004318812
+      },
+      "reference_p1": {
+        "spm_noise_w": 4.914016994101863e-07,
+        "xpm_noise_w": 3.889474010244171e-07,
+        "ase_noise_w": 2.2290338369207224e-06,
+        "snr_db": 29.084137004318812
+      },
+      "rel_err": {
+        "spm": 0.0,
+        "xpm": 0.0,
+        "ase": 0.0,
+        "snr_db": 0.0
+      }
+    }
+  ],
+  "term_scaling_vs_p1": [
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 1.0,
+      "spm_measured_ratio": 1.0,
+      "spm_formula_ratio": 1.0,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 1.0,
+      "xpm_formula_ratio": 1.0,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 1.0,
+      "ase_formula_ratio": 1.0,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 2.0,
+      "spm_measured_ratio": 0.8293842702973862,
+      "spm_formula_ratio": 0.8293842702973862,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 1.1054380316787324,
+      "xpm_formula_ratio": 1.1054380316787324,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 2.000064773132104,
+      "ase_formula_ratio": 2.000064773132104,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 4.0,
+      "spm_measured_ratio": 0.4421065788708377,
+      "spm_formula_ratio": 0.4421065788708377,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 1.3230274881775326,
+      "xpm_formula_ratio": 1.3230274881775326,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 4.0003886387926295,
+      "ase_formula_ratio": 4.0003886387926295,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 8.0,
+      "spm_measured_ratio": 0.17366721012934208,
+      "spm_formula_ratio": 0.17366721012934208,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 2.214066904138745,
+      "xpm_formula_ratio": 2.214066904138745,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 8.001813647698935,
+      "ase_formula_ratio": 8.001813647698935,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 1.0,
+      "spm_measured_ratio": 1.0,
+      "spm_formula_ratio": 1.0,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 1.0,
+      "xpm_formula_ratio": 1.0,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 1.0,
+      "ase_formula_ratio": 1.0,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 2.0,
+      "spm_measured_ratio": 6.635215866594794,
+      "spm_formula_ratio": 6.635215866594794,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 2.2108793331926146,
+      "xpm_formula_ratio": 2.2108793331926146,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 2.000064773132104,
+      "ase_formula_ratio": 2.000064773132104,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 4.0,
+      "spm_measured_ratio": 28.296345646476674,
+      "spm_formula_ratio": 28.296345646476674,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 5.292135312987588,
+      "xpm_formula_ratio": 5.292135312987588,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 4.0003886387926295,
+      "ase_formula_ratio": 4.0003886387926295,
+      "ase_rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 8.0,
+      "spm_measured_ratio": 88.92559798381761,
+      "spm_formula_ratio": 88.92559798381761,
+      "spm_rel_err": 0.0,
+      "xpm_measured_ratio": 17.712811076291256,
+      "xpm_formula_ratio": 17.712811076291256,
+      "xpm_rel_err": 0.0,
+      "ase_measured_ratio": 8.001813647698935,
+      "ase_formula_ratio": 8.001813647698935,
+      "ase_rel_err": 0.0
+    }
+  ],
+  "ase_linearity_eq34": [
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 1.0,
+      "f_ratio": 1.0,
+      "measured_ase_ratio": 1.0,
+      "predicted_ase_ratio_eq34": 1.0,
+      "rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 2.0,
+      "f_ratio": 1.0000323865660523,
+      "measured_ase_ratio": 2.000064773132104,
+      "predicted_ase_ratio_eq34": 2.0000647731321046,
+      "rel_err": 2.2203741389566009e-16
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 4.0,
+      "f_ratio": 1.0000971596981572,
+      "measured_ase_ratio": 4.0003886387926295,
+      "predicted_ase_ratio_eq34": 4.000388638792629,
+      "rel_err": 2.220230332341383e-16
+    },
+    {
+      "power_width_mode": "fixed_power",
+      "b_ratio": 8.0,
+      "f_ratio": 1.0002267059623668,
+      "measured_ase_ratio": 8.001813647698935,
+      "predicted_ase_ratio_eq34": 8.001813647698935,
+      "rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 1.0,
+      "f_ratio": 1.0,
+      "measured_ase_ratio": 1.0,
+      "predicted_ase_ratio_eq34": 1.0,
+      "rel_err": 0.0
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 2.0,
+      "f_ratio": 1.0000323865660523,
+      "measured_ase_ratio": 2.000064773132104,
+      "predicted_ase_ratio_eq34": 2.0000647731321046,
+      "rel_err": 2.2203741389566009e-16
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 4.0,
+      "f_ratio": 1.0000971596981572,
+      "measured_ase_ratio": 4.0003886387926295,
+      "predicted_ase_ratio_eq34": 4.000388638792629,
+      "rel_err": 2.220230332341383e-16
+    },
+    {
+      "power_width_mode": "fixed_psd",
+      "b_ratio": 8.0,
+      "f_ratio": 1.0002267059623668,
+      "measured_ase_ratio": 8.001813647698935,
+      "predicted_ase_ratio_eq34": 8.001813647698935,
+      "rel_err": 0.0
+    }
+  ],
+  "snr_vs_bandwidth": {
+    "fixed_power": {
+      "snr_db_by_b": {
+        "12500000000.0": 32.42709224418227,
+        "25000000000.0": 31.23469000889014,
+        "50000000000.0": 29.58017873671187,
+        "100000000000.0": 27.04744029822056
+      },
+      "spread_db": 5.379651945961708,
+      "strictly_varies": true
+    },
+    "fixed_psd": {
+      "snr_db_by_b": {
+        "12500000000.0": 30.12238478364314,
+        "25000000000.0": 29.91275696374658,
+        "50000000000.0": 29.58017873671187,
+        "100000000000.0": 29.084137004318812
+      },
+      "spread_db": 1.0382477793243297,
+      "strictly_varies": true
+    }
+  },
+  "max_rel_err": 0.0,
+  "max_scaling_rel_err": 0.0,
+  "failures": [],
+  "verdict": "PASS"
+}

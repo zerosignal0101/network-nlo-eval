@@ -59,7 +59,7 @@ FORMULAS: list[dict] = [
             {"file": E, "line": 29, "contains": "reference_wavelength_nm: float = Field(1550.0"},
             {"file": K, "line": 91, "contains": "alpha_dbkm = alpha_2 * (lambda_nm - lambda_ref_nm) ** 2"},
             {"file": K, "line": 92, "contains": "return alpha_dbkm / (NP_TO_DB * 1000)"},
-            {"file": G, "line": 220, "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("},
+            {"file": G, "line": 300, "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -131,13 +131,41 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "C_r L_eff(L) r(f) -> (1 − k_bar) C_r L_eff(L) r(f)",
         "code": [
-            {"file": G, "line": 123, "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"},
+            {"file": G, "line": 169, "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"},
             {"file": K, "line": 259, "contains": "np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f)"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
         "notes": "(22) 只说缩放系数是 (1−k_bar)，未规定 k_bar 如何由泵浦功率得到；"
                  "ecz 取 min(sum(P_pump), 1) 是**论文未提及**的工程取值 -> engineering 备注见 k_bar 映射。",
+    },
+    # ---- P1 (23)：NLI 总方差（逐信道 B_i 的总纲）--------------------------
+    {
+        "id": "p1_eq23_nli_total",
+        "quantity": "NLI 总方差 sigma^2_NLI(f_i) 的前因子 B_i（(23) 总纲式）",
+        "class": "physics",
+        "paper": {
+            "id": "P1",
+            "locator": "Eq. (23)",
+            "section": "§III CLOSED-FORM GN MODEL",
+            "anchor": "with $B_{i}$ the channel bandwidth",
+            "file": P1,
+        },
+        "paper_formula": "sigma^2_NLI(f_i) = (16/27) B_i int int gamma^2 |eta|^2 "
+                         "G(0,f_i+f_1) G(0,f_i+f_1+f_2) G(0,f_i+f_2) df_1 df_2, "
+                         "with B_i the channel bandwidth",
+        "code": [
+            {"file": G, "line": 418, "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,"},
+            {"file": K, "line": 459, "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"},
+            {"file": K, "line": 504, "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"},
+        ],
+        "conforms": True,
+        "verdict": "keep_ecz",
+        "notes": "(23) 是**积分**总纲；本仓按 P1 §III 用它的闭式解 (29)/(30) 求值，"
+                 "故 B_i 没有单独一行代码，而是经 (29) 的 b_i_hz 与 (30) 的 b_l_hz / b_i_hz "
+                 "进入。原文明确『with B_i the channel bandwidth』⇒ B_i 是**逐信道**量。"
+                 "WP-Q1 据此把此前全局标量的 B 逐信道化；这是 J2『论文提及且与本仓不一致 "
+                 "⇒ 改成论文』的直接授权点。",
     },
     # ---- P1 (29)：SPM 闭式 ------------------------------------------------
     {
@@ -155,20 +183,23 @@ FORMULAS: list[dict] = [
                          "e^{2 C_r k_bar L_eff(L) r(f_i)} * [(T_i−alpha_i^2)/alpha_i asinh(phi_i B_i^2/(pi alpha_i)) "
                          "+ (4 alpha_i^2−T_i)/(2 alpha_i) asinh(phi_i B_i^2/(2 pi alpha_i))]",
         "code": [
-            {"file": K, "line": 313, "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)"},
-            {"file": K, "line": 320, "contains": "(4 / 9)"},
-            {"file": K, "line": 321, "contains": "(p_i_w**3 / rs_hz**2)"},
-            {"file": K, "line": 323, "contains": "(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)"},
-            {"file": K, "line": 327, "contains": "asinh_1 = np.arcsinh((phi_i * rs_hz**2) / (PI * alpha_i_npm))"},
-            {"file": K, "line": 328, "contains": "asinh_2 = np.arcsinh((phi_i * rs_hz**2) / (2 * PI * alpha_i_npm))"},
-            {"file": K, "line": 330, "contains": "term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1"},
-            {"file": K, "line": 443, "contains": "phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)"},
+            {"file": K, "line": 319, "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)"},
+            {"file": K, "line": 326, "contains": "(4 / 9)"},
+            {"file": K, "line": 327, "contains": "(p_i_w**3 / b_i_hz**2)"},
+            {"file": K, "line": 329, "contains": "(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)"},
+            {"file": K, "line": 333, "contains": "asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))"},
+            {"file": K, "line": 334, "contains": "asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))"},
+            {"file": K, "line": 336, "contains": "term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1"},
+            {"file": K, "line": 455, "contains": "phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)"},
+            {"file": K, "line": 459, "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
         "notes": "4/9 前因子、P^3/B^2、N^{1+eps}、gamma^2 pi/(phi 3 alpha^2)、exp(2 C_r k_bar L_eff r)、"
                  "两个 asinh 的自变量与系数 (T_i−alpha^2)/alpha 与 (4alpha^2−T_i)/(2alpha) **逐项对应**。"
-                 "phi_i 取 P1 §III 的 phi_i=(3/2)pi^2(beta2+2pi f_i beta3)。",
+                 "phi_i 取 P1 §III 的 phi_i=(3/2)pi^2(beta2+2pi f_i beta3)。"
+                 "WP-Q1：B_i 由全局标量 rs_hz 改为逐信道 b_i_hz（调用点 b_hz_channels[i]），"
+                 "均匀取值下与旧的标量是同一个 float64 ⇒ legacy 逐位不变。",
     },
     # ---- P1 (30)：XPM 闭式 ------------------------------------------------
     {
@@ -185,19 +216,23 @@ FORMULAS: list[dict] = [
         "paper_formula": "(32/27) P_i N sum_l (P_l^2/B_l)(gamma_il^2/(phi_il 3 alpha_l^2)) e^{2 C_r k_bar L_eff(L) r(f_l)} "
                          "* [(T_l−alpha_l^2)/alpha_l atan(phi_il B_i/alpha_l) + (4alpha_l^2−T_l)/(2alpha_l) atan(phi_il B_i/(2 alpha_l))]",
         "code": [
-            {"file": K, "line": 369, "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)"},
-            {"file": K, "line": 375, "contains": "pre_factor = (p_l_w**2 / rs_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp"},
-            {"file": K, "line": 377, "contains": "atan_1 = np.arctan((phi_il * rs_i_hz) / alpha_l_npm)"},
-            {"file": K, "line": 378, "contains": "atan_2 = np.arctan((phi_il * rs_i_hz) / (2 * alpha_l_npm))"},
-            {"file": K, "line": 380, "contains": "term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1"},
-            {"file": K, "line": 493, "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"},
-            {"file": K, "line": 471, "contains": "phi_il = ("},
-            {"file": K, "line": 475, "contains": "(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))"},
+            {"file": K, "line": 381, "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)"},
+            {"file": K, "line": 387, "contains": "pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp"},
+            {"file": K, "line": 389, "contains": "atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)"},
+            {"file": K, "line": 390, "contains": "atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))"},
+            {"file": K, "line": 392, "contains": "term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1"},
+            {"file": K, "line": 504, "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"},
+            {"file": K, "line": 482, "contains": "phi_il = ("},
+            {"file": K, "line": 486, "contains": "(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))"},
+            {"file": K, "line": 491, "contains": "b_hz_channels[l_idx],  # P1 (30) 的 B_ℓ = 干扰信道自己的带宽"},
+            {"file": K, "line": 492, "contains": "b_hz_channels[i],  # P1 (30) 的 B_i = COI 的带宽（atan 参数）"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
-        "notes": "(32/27) P_i N 的外层因子在 :493，逐对项在 :375-385；phi_il 取 P1 的 "
-                 "2 pi^2 (f_l−f_i)[beta2 + pi beta3 (f_l+f_i)]（:471-476）。",
+        "notes": "(32/27) P_i N 的外层因子、逐对项求和与 phi_il 取值均逐项对应 P1 (30)。"
+                 "WP-Q1：B_ℓ 与 B_i **分开**取——求和项 (P_ℓ²/B_ℓ) 用干扰信道 ℓ 自己的带宽，"
+                 "atan(φ_{i,ℓ} B_i/α_ℓ) 用 COI 的带宽。WP-Q1 之前二者是同一个全局标量"
+                 "（rs_hz 同时传给 rs_l_hz 与 rs_i_hz），故多槽宽连接进不了 QoT。",
     },
     # ---- P1 (31)：T_i -----------------------------------------------------
     {
@@ -213,7 +248,7 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "T_i = (2 alpha_i − C_r r(f_i))^2",
         "code": [
-            {"file": K, "line": 612, "contains": "t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2"},
+            {"file": K, "line": 641, "contains": "t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -253,8 +288,8 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "SNR(f_i) = P / (sigma^2_ASE(f_i) + sigma^2_NLI(f_i))",
         "code": [
-            {"file": G, "line": 456, "contains": "total_noise = total_spm + total_xpm + total_ase"},
-            {"file": G, "line": 459, "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"},
+            {"file": G, "line": 546, "contains": "total_noise = total_spm + total_xpm + total_ase"},
+            {"file": G, "line": 549, "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -275,14 +310,17 @@ FORMULAS: list[dict] = [
         "paper_formula": "sigma^2_ASE(f_i) = h f_i F(f_i) B_i G(f_i) N, "
                          "G(f_i),F(f_i) = gain & NF of **each line amplifier + DGE**",
         "code": [
-            {"file": G, "line": 354, "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"},
-            {"file": G, "line": 359, "contains": "gain *= 10 ** (ripple / 10)"},
-            {"file": G, "line": 361, "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * np.maximum(gain - 1, 0)"},
+            {"file": G, "line": 435, "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"},
+            {"file": G, "line": 440, "contains": "gain *= 10 ** (ripple / 10)"},
+            {"file": G, "line": 444, "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum("},
+            {"file": G, "line": 445, "contains": "gain - 1, 0"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
-        "notes": "**G = EDFA 配置增益**（target_gain_db × gain_ripple_db），F = NF，B = 符号速率，"
+        "notes": "**G = EDFA 配置增益**（target_gain_db × gain_ripple_db），F = NF，B = 逐信道带宽 B_i，"
                  "逐跨段在 evaluate_path 里累加（N）。符合 (34) 原文「line amplifier + DGE 的增益」。"
+                 "WP-Q1：B 由标量 symbol_rate_hz 改为逐信道 channel_bandwidth_hz_channels"
+                 "（P2 称 B_i 为 \"bandwidth of the COI\"）；均匀取值下与旧标量是同一个 float64 ⇒ legacy 逐位不变。"
                  "这就是 J4 禁止移植的那一项：ecz 侧合规。",
     },
     {
@@ -298,9 +336,9 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "sigma^2_ASE(f_i) = h f_i F(f_i) B_i G(f_i) N",
         "code": [
-            {"file": K, "line": 554, "contains": "G_i = p_in_w[i] / p_out_w[i]"},
-            {"file": K, "line": 556, "contains": "total_ase_variance[i] = n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * rs_hz"},
-            {"file": G, "line": 325, "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("},
+            {"file": K, "line": 575, "contains": "G_i = p_in_w[i] / p_out_w[i]"},
+            {"file": K, "line": 578, "contains": "n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * b_hz_channels[i]"},
+            {"file": G, "line": 405, "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("},
         ],
         "conforms": False,
         "verdict": "dead_code_violates_eq34",
@@ -308,7 +346,8 @@ FORMULAS: list[dict] = [
                  "不是「线路放大器增益」。当前 isrs_gn.py:180 用 `_` 丢弃该返回值，"
                  "真正生效的是 p1_eq34_ase。**故本分支数值合规**。"
                  "wp/fg-uwb-fid 恰恰把它接上了（那边 isrs_gn 收下 s2_ase 并删掉 EDFA 增益块），"
-                 "这就是 WP-O1 差异①。按 J4 不得移植。",
+                 "这就是 WP-O1 差异①。按 J4 不得移植。"
+                 "WP-Q1 只把这里的 B_i 参数化为逐信道数组；G_i 的口径**未改动**（不在 WP-Q1 范围）。",
     },
     # ---- P1 §IV：分频段 NF ------------------------------------------------
     {
@@ -324,10 +363,10 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "per-band noise figure = 6 dB (E), 7 dB (S), 5.5 dB (C), 6 dB (L)",
         "code": [
-            {"file": K, "line": 517, "contains": "if wavel_nm < 1460:  # E-band"},
-            {"file": K, "line": 518, "contains": "nf_lin[i] = _db_to_lin(6.0)"},
-            {"file": K, "line": 520, "contains": "nf_lin[i] = _db_to_lin(7.0)"},
-            {"file": K, "line": 522, "contains": "nf_lin[i] = _db_to_lin(5.5)"},
+            {"file": K, "line": 528, "contains": "if wavel_nm < 1460:  # E-band"},
+            {"file": K, "line": 529, "contains": "nf_lin[i] = _db_to_lin(6.0)"},
+            {"file": K, "line": 531, "contains": "nf_lin[i] = _db_to_lin(7.0)"},
+            {"file": K, "line": 533, "contains": "nf_lin[i] = _db_to_lin(5.5)"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -348,7 +387,7 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "N^{1+eps}，eps 刻画 SPM 沿跨段的**相干**累积（XPM 为非相干，故用 N）",
         "code": [
-            {"file": K, "line": 322, "contains": "* (n_span ** (1 + epsilon_n_span))"},
+            {"file": K, "line": 328, "contains": "* (n_span ** (1 + epsilon_n_span))"},
             {"file": K, "line": 291, "contains": "epsilon_n_span: float = 0.05"},
         ],
         "conforms": True,
@@ -371,8 +410,8 @@ FORMULAS: list[dict] = [
         "paper_formula": "P'_ASE,i = 2(G_i − 1) n_sp,i h f_i B_i, n_sp,i ≈ (G_i NF − 1)/(2(G_i−1)), "
                          "G_i = P_i(L)/P_i(0) 为**放大器**在信道 i 上的增益",
         "code": [
-            {"file": G, "line": 352, "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"},
-            {"file": G, "line": 361, "contains": "np.maximum(gain - 1, 0)"},
+            {"file": G, "line": 433, "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"},
+            {"file": G, "line": 445, "contains": "gain - 1, 0"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -397,7 +436,7 @@ FORMULAS: list[dict] = [
         "paper_formula": "SNR_i^-1 ≈ SNR_TRX,i^-1 + SNR_ASE,i^-1 + SNR_NLI,i^-1 "
                          "= (P_i / (kappa_i P_i + P_ASE,i'' + eta_n(f_i) P_i^3))^-1",
         "code": [
-            {"file": G, "line": 456, "contains": "total_noise = total_spm + total_xpm + total_ase"},
+            {"file": G, "line": 546, "contains": "total_noise = total_spm + total_xpm + total_ase"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -452,7 +491,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_span_noise_accumulation",
         "quantity": "逐跨段噪声累积（按信号传递比缩放已有噪声 + 累加本跨段噪声）",
         "class": "engineering",
-        "code": [{"file": G, "line": 420, "contains": "total_spm *= transfer"}],
+        "code": [{"file": G, "line": 510, "contains": "total_spm *= transfer"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 用 (24) 的跨段求和与 (34) 的 ×N 表达多跨段；(29)(30) 用 N^{1+eps} / N。"
                       "「已有噪声按信号传递比缩放」这一递推写法是 P1 未规定的实现细节，"
@@ -462,7 +501,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_booster_ase",
         "quantity": "ROADM 均衡 booster 引入的 ASE",
         "class": "engineering",
-        "code": [{"file": G, "line": 446, "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)"}],
+        "code": [{"file": G, "line": 536, "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 (34) 的 G/F 是「每级线路放大器 + DGE」，ROADM booster 属线路放大器，"
                       "故沿用同一 (34) 形式是合理的；论文未单独给出 booster 的 NF/增益口径，"
@@ -472,7 +511,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_filtering_penalty",
         "quantity": "级联滤波统计模型 SNR 惩罚（只乘噪声）",
         "class": "engineering",
-        "code": [{"file": G, "line": 450, "contains": "total_spm *= penalty"}],
+        "code": [{"file": G, "line": 540, "contains": "total_spm *= penalty"}],
         "verdict": "keep_ecz",
         "paper_note": "P2 (1) 允许把实现代价作为独立可加项（SNR_TRX 项）；P1 没有这一项。"
                       "论文未提及具体口径，保留 ecz 实现。",
@@ -481,7 +520,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_nf_band_edges",
         "quantity": "NF 分档波长阈值 1460/1530/1565 nm",
         "class": "engineering",
-        "code": [{"file": K, "line": 517, "contains": "wavel_nm < 1460"}],
+        "code": [{"file": K, "line": 528, "contains": "wavel_nm < 1460"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 §IV 只给了四个频段的 NF **值**（6/7/5.5/6 dB），没有给分档波长。"
                       "阈值属工程取值，保留 ecz 实现。",
@@ -499,9 +538,9 @@ ENGINEERING: list[dict] = [
         "quantity": "phi 钳位到 ±EPSILON、方差 max(·,0)、edfa=None 时 ASE 置零",
         "class": "engineering",
         "code": [
-            {"file": K, "line": 316, "contains": "if abs(phi_i) < _EPSILON:"},
-            {"file": K, "line": 335, "contains": "return max(result, 0.0)"},
-            {"file": G, "line": 349, "contains": "s2_ase = np.zeros_like(power_in_w)"},
+            {"file": K, "line": 322, "contains": "if abs(phi_i) < _EPSILON:"},
+            {"file": K, "line": 341, "contains": "return max(result, 0.0)"},
+            {"file": G, "line": 430, "contains": "s2_ase = np.zeros_like(power_in_w)"},
         ],
         "verdict": "keep_ecz",
         "paper_note": "纯数值防护，论文无对应式。",
@@ -510,7 +549,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_blocked_channels",
         "quantity": "被阻断信道清零",
         "class": "engineering",
-        "code": [{"file": G, "line": 454, "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"}],
+        "code": [{"file": G, "line": 544, "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"}],
         "verdict": "keep_ecz",
         "paper_note": "网络层语义，论文无对应式。",
     },
@@ -518,7 +557,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_delta_f_co_value",
         "quantity": "三角近似的截断频率 df_co = 15 THz",
         "class": "engineering",
-        "code": [{"file": G, "line": 124, "contains": "self.delta_f_co_hz = 15e12"}],
+        "code": [{"file": G, "line": 170, "contains": "self.delta_f_co_hz = 15e12"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 §II-B 引入 df_co 作为拟合参数但**未给数值**；§II-B 正文只说"
                       "「约 15 THz 之外拉曼增益迅速归零」。保留 ecz 取值。",
