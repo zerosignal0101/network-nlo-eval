@@ -114,7 +114,9 @@ class AllocatedService(ServiceRequest):
 
     def __post_init__(self) -> None:
         """强制槽区间不变式，并校验 wavelength 与 first_slot 的自洽性。"""
-        super().__post_init__()
+        # 注意：本类是 slots=True 的 dataclass，零参 super() 在其中不可用
+        # （__class__ 闭包缺失），必须显式点名基类。
+        ServiceRequest.__post_init__(self)
         if isinstance(self.first_slot, bool) or not isinstance(self.first_slot, int) or self.first_slot < 0:
             raise ValueError(f"first_slot must be a non-negative integer, got {self.first_slot!r}.")
         if self.slots_per_channel is not None:
