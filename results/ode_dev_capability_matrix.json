@@ -60,7 +60,7 @@
       "evidence": "O2 已接入；O3 补齐 for_fiber 透传（否则逐连接模式下 AttributeError）。",
       "ode_dev_lines": 553,
       "fu4_lines": 577,
-      "ode_dev_sha256": "8c19956922ba1c0b3c0f1eac525f147f9ae532aff1b4a7ed13588ecd3ec45cef"
+      "ode_dev_sha256": "276a689d19a3bcbdd60a937369a55aa5a8064a54192d2c9a5d8b17bcbfcace5a"
     },
     {
       "capability": "ROADMConfig.blocked_slots（12.5 GHz 粒度权威阻断）",
@@ -80,7 +80,7 @@
       "evidence": "fu4 在 rwa/physics/isrs_gn 三处各写一遍（physics 侧还靠私有属性 _slots_per_channel_hint）；O3 收敛为 evaluator.roadm_blocks_node 一处。",
       "ode_dev_lines": 553,
       "fu4_lines": 577,
-      "ode_dev_sha256": "8c19956922ba1c0b3c0f1eac525f147f9ae532aff1b4a7ed13588ecd3ec45cef"
+      "ode_dev_sha256": "276a689d19a3bcbdd60a937369a55aa5a8064a54192d2c9a5d8b17bcbfcace5a"
     },
     {
       "capability": "QoTValidator 逐连接 SNR 装配",

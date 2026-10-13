@@ -650,7 +650,7 @@
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
           "line": 536,
-          "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)"
+          "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"
         }
       ],
       "verdict": "keep_ecz",

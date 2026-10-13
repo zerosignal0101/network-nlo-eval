@@ -501,7 +501,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_booster_ase",
         "quantity": "ROADM 均衡 booster 引入的 ASE",
         "class": "engineering",
-        "code": [{"file": G, "line": 536, "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)"}],
+        "code": [{"file": G, "line": 536, "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 (34) 的 G/F 是「每级线路放大器 + DGE」，ROADM booster 属线路放大器，"
                       "故沿用同一 (34) 形式是合理的；论文未单独给出 booster 的 NF/增益口径，"

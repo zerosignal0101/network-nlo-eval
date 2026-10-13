@@ -176,16 +176,26 @@ def main() -> int:
             history[(item["file"], item["contains"])] = item
 
         # 刷新每条历史锚点当前真实所在的行号（防止源码再次漂移后证据说谎）。
+        # 若 ``contains`` 已不在源码里（= 有人**刻意改写**了那一行，而不是挪了它），
+        # 它就不再是"同一条锚点的重定位"，移入 superseded 透明留档，而不是留一条
+        # new_line=None 的坏记录把守卫 8 打挂。
         merged: list[dict] = []
+        superseded: list[dict] = []
         for (file_rel, contains), item in history.items():
             path = REPO / file_rel
             if not path.is_file():
+                superseded.append({**item, "reason": "target file missing"})
                 continue
             lines = path.read_text(encoding="utf-8").splitlines()
             hits = [i + 1 for i, line in enumerate(lines) if contains in line]
             if len(hits) != 1:
-                # 内容已不在（或不再唯一），如实标出来而不是悄悄保留旧行号。
-                merged.append({**item, "new_line": None, "error": f"contains 命中 {len(hits)} 次"})
+                superseded.append({
+                    **item,
+                    "reason": (
+                        "contains 串已不在源码中（锚点内容被刻意改写）"
+                        if not hits else f"contains 在目标文件里出现 {len(hits)} 次，不再唯一"
+                    ),
+                })
                 continue
             merged.append({**item, "new_line": hits[0]})
 
@@ -200,6 +210,7 @@ def main() -> int:
                     "n_relocated_this_run": len(changes),
                     "n_unfixable": len(unfixable),
                     "relocations": merged,
+                    "superseded": superseded,
                     "unfixable": unfixable,
                 },
                 indent=2,

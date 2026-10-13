@@ -166,7 +166,7 @@ O2 移植的 `MultiBandISRSGN.for_fiber` 只传 `(grid, fiber_config, Rs)`，逐
 
 ### 6.2 O2 公式锚点行号漂移
 
-在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **32** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
+在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **31** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
 
 ### 6.3 `BandSpec` 波长/频率 docstring 反了
 

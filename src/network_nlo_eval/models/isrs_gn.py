@@ -533,7 +533,7 @@ class MultiBandISRSGN:
                 total_xpm *= gain
                 total_ase *= gain
                 nf = 10 ** (roadm.booster_noise_figure_db / 10)
-                booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)
+                booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)
                 booster_ase[power <= 0] = 0
                 total_ase += booster_ase
             penalty = 10 ** (roadm.filtering_penalty_db / 10)

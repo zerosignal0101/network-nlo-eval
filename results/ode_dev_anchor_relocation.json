@@ -2,7 +2,7 @@
   "wp": "O3+Q1",
   "purpose": "接线插入导致物理行行号下移；只重排行号，不改 contains。证据为累计口径（幂等重跑不会把它抹成 0）。",
   "target": "tools/ode_formula_map.py",
-  "n_relocated": 32,
+  "n_relocated": 31,
   "n_relocated_this_run": 0,
   "n_unfixable": 0,
   "relocations": [
@@ -183,13 +183,6 @@
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)",
-      "old_line": 446,
-      "new_line": 536,
-      "delta": 90
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= penalty",
       "old_line": 450,
       "new_line": 540,
@@ -229,6 +222,17 @@
       "old_line": 124,
       "new_line": 170,
       "delta": 46
+    }
+  ],
+  "superseded": [
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.symbol_rate_hz * (gain - 1)",
+      "old_line": 446,
+      "new_line": null,
+      "delta": 90,
+      "error": "contains 命中 0 次",
+      "reason": "contains 串已不在源码中（锚点内容被刻意改写）"
     }
   ],
   "unfixable": []
