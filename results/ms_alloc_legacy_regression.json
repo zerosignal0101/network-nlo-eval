@@ -1,0 +1,99 @@
+{
+  "wp": "M1",
+  "judgment": "M-J6",
+  "baseline_tree": "ecz-dev",
+  "baseline_path": "/home/zsig/Documents/gits/network-nlo-eval",
+  "candidate_tree": "wp/ms-alloc",
+  "protocol": "与 tools/ode3_legacy_regression.py 同口径：直接调用 tools/ode_compare.py 的 run_all()/build_diff()，共用 scripts_shared/compat_run.py + cross_snr_compat.py。",
+  "tolerance": 0.0,
+  "why_rerun": "WP-M1 改了 traffic.py / allocators.py / network/state.py 三处装配代码，J6 守的正是物理与 legacy 装配算式逐位不变，故本 WP 重新独立证明一次。",
+  "scenarios": [
+    {
+      "scenario": "legacy_two_hop_equalize_on",
+      "wp_ms_alloc_snr_db": 25.265176304717638,
+      "ecz_dev_snr_db": 25.265176304717638,
+      "delta_db": 0.0,
+      "bit_identical": true,
+      "accepted_wp_ms_alloc": true,
+      "accepted_ecz_dev": true,
+      "both_rejected": false,
+      "wp_ms_alloc_error": null,
+      "ecz_dev_error": null,
+      "verdict": "pass"
+    },
+    {
+      "scenario": "legacy_three_hop_equalize_on",
+      "wp_ms_alloc_snr_db": 23.391590837855194,
+      "ecz_dev_snr_db": 23.391590837855194,
+      "delta_db": 0.0,
+      "bit_identical": true,
+      "accepted_wp_ms_alloc": true,
+      "accepted_ecz_dev": true,
+      "both_rejected": false,
+      "wp_ms_alloc_error": null,
+      "ecz_dev_error": null,
+      "verdict": "pass"
+    },
+    {
+      "scenario": "legacy_two_hop_equalize_off",
+      "wp_ms_alloc_snr_db": 22.239480441560254,
+      "ecz_dev_snr_db": 22.239480441560254,
+      "delta_db": 0.0,
+      "bit_identical": true,
+      "accepted_wp_ms_alloc": true,
+      "accepted_ecz_dev": true,
+      "both_rejected": false,
+      "wp_ms_alloc_error": null,
+      "ecz_dev_error": null,
+      "verdict": "pass"
+    },
+    {
+      "scenario": "legacy_express_attenuation",
+      "wp_ms_alloc_snr_db": 25.227016934879526,
+      "ecz_dev_snr_db": 25.227016934879526,
+      "delta_db": 0.0,
+      "bit_identical": true,
+      "accepted_wp_ms_alloc": true,
+      "accepted_ecz_dev": true,
+      "both_rejected": false,
+      "wp_ms_alloc_error": null,
+      "ecz_dev_error": null,
+      "verdict": "pass"
+    },
+    {
+      "scenario": "legacy_high_filtering",
+      "wp_ms_alloc_snr_db": 24.255573729782306,
+      "ecz_dev_snr_db": 24.255573729782306,
+      "delta_db": 0.0,
+      "bit_identical": true,
+      "accepted_wp_ms_alloc": true,
+      "accepted_ecz_dev": true,
+      "both_rejected": false,
+      "wp_ms_alloc_error": null,
+      "ecz_dev_error": null,
+      "verdict": "pass"
+    },
+    {
+      "scenario": "legacy_blocked_channel",
+      "wp_ms_alloc_snr_db": null,
+      "ecz_dev_snr_db": null,
+      "delta_db": null,
+      "bit_identical": true,
+      "accepted_wp_ms_alloc": false,
+      "accepted_ecz_dev": false,
+      "both_rejected": true,
+      "wp_ms_alloc_error": null,
+      "ecz_dev_error": null,
+      "verdict": "pass"
+    }
+  ],
+  "summary": {
+    "n_scenarios": 6,
+    "n_comparable": 5,
+    "n_bit_identical": 6,
+    "n_both_rejected": 1,
+    "max_abs_delta_db": 0.0,
+    "all_delta_exactly_zero": true,
+    "j6_passed": true
+  }
+}
