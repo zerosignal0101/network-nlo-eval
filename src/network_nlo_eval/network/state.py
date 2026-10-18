@@ -1,6 +1,7 @@
 """管理网络的动态资源状态，如波长占用和链路功率谱。"""
 
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 
@@ -54,7 +55,7 @@ class LinkState:
     occupied_slots: NDArrayBool | None = None
     allocated_service_ids_slots: NDArrayInt | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """确保数组在初始化时是副本，防止外部修改。"""
         self.occupied_channels = self.occupied_channels.copy()
         self.launch_power_profile_w = self.launch_power_profile_w.copy()
@@ -70,6 +71,20 @@ class LinkState:
             self.allocated_service_ids_slots = np.full(len(self.occupied_slots), -1, dtype=np.int_)
         else:
             self.allocated_service_ids_slots = self.allocated_service_ids_slots.copy()
+
+    @property
+    def slot_occupancy(self) -> NDArrayBool:
+        """槽占用数组。``__post_init__`` 保证构造后可用。"""
+        if self.occupied_slots is None:  # pragma: no cover - 仅防御构造异常
+            raise RuntimeError("occupied_slots is not initialised.")
+        return self.occupied_slots
+
+    @property
+    def slot_service_ids(self) -> NDArrayInt:
+        """槽级服务 ID 数组。``__post_init__`` 保证构造后可用。"""
+        if self.allocated_service_ids_slots is None:  # pragma: no cover - 仅防御构造异常
+            raise RuntimeError("allocated_service_ids_slots is not initialised.")
+        return self.allocated_service_ids_slots
 
     @property
     def noise_cache(self) -> LinkNoiseCache | None:
@@ -141,27 +156,29 @@ class LinkState:
         if n_slots < 1:
             raise ValueError(f"n_slots must be >= 1, got {n_slots}.")
         per_channel = self.slots_per_channel
-        num_slots = len(self.occupied_slots)
+        occupied_slots = self.slot_occupancy
+        service_ids = self.slot_service_ids
+        num_slots = len(occupied_slots)
         if first_slot < 0 or first_slot + n_slots > num_slots:
             raise ValueError(
                 f"Slot range [{first_slot}, {first_slot + n_slots}) out of bounds for "
                 f"{num_slots} slots on link {self.link_key}."
             )
         window = slice(first_slot, first_slot + n_slots)
-        if self.occupied_slots[window].any():
+        if occupied_slots[window].any():
             raise ValueError(
                 f"Slot range [{first_slot}, {first_slot + n_slots}) on link {self.link_key} is already occupied."
             )
 
-        self.occupied_slots[window] = True
-        self.allocated_service_ids_slots[window] = service_id
+        occupied_slots[window] = True
+        service_ids[window] = service_id
 
         # 信道对齐展开：首尾相交信道的全部子槽一并占用。
         first_channel = first_slot // per_channel
         last_channel = (first_slot + n_slots - 1) // per_channel
         aligned = slice(first_channel * per_channel, (last_channel + 1) * per_channel)
-        self.occupied_slots[aligned] = True
-        self.allocated_service_ids_slots[aligned] = service_id
+        occupied_slots[aligned] = True
+        service_ids[aligned] = service_id
 
         # 物理面：只有锚信道注入功率（与 QoT 验证所用信道一致）。
         self.occupied_channels[first_channel] = True
@@ -181,7 +198,9 @@ class LinkState:
         if n_slots < 1:
             return  # 静默处理非法/重复释放
         per_channel = self.slots_per_channel
-        num_slots = len(self.occupied_slots)
+        occupied_slots = self.slot_occupancy
+        service_ids = self.slot_service_ids
+        num_slots = len(occupied_slots)
         if first_slot < 0 or first_slot + n_slots > num_slots:
             return  # 静默处理越界的重复释放
 
@@ -192,13 +211,13 @@ class LinkState:
         hi = max(first_slot + n_slots, (last_channel + 1) * per_channel)
         window = slice(lo, hi)
 
-        self.occupied_slots[window] = False
-        self.allocated_service_ids_slots[window] = -1
+        occupied_slots[window] = False
+        service_ids[window] = -1
 
         # 物理面：窗口覆盖到的信道，若其全部子槽都已空闲则一并归零。
         for channel_idx in range(first_channel, last_channel + 1):
             span = slice(channel_idx * per_channel, (channel_idx + 1) * per_channel)
-            if not self.occupied_slots[span].any():
+            if not occupied_slots[span].any():
                 self.occupied_channels[channel_idx] = False
                 self.launch_power_profile_w[channel_idx] = 0.0
                 self.allocated_service_ids[channel_idx] = -1
@@ -314,5 +333,5 @@ class NetworkState:
         """
         if len(path) < 2:
             raise ValueError(f"Path must have at least two nodes, got {path!r}.")
-        arrays = [self.get_link_state(path[i], path[i + 1]).occupied_slots for i in range(len(path) - 1)]
-        return np.logical_or.reduce(arrays)
+        arrays = [self.get_link_state(path[i], path[i + 1]).slot_occupancy for i in range(len(path) - 1)]
+        return cast(NDArrayBool, np.logical_or.reduce(arrays))

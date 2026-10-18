@@ -17,6 +17,7 @@ from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
 
 if TYPE_CHECKING:
+    from network_nlo_eval.network.elements import ROADMConfig
     from network_nlo_eval.network.topology import NetworkTopology
 
 
@@ -133,7 +134,7 @@ class PyNLOQoTEvaluator:
             self._default_passband_hz = spectrum_grid.channel_spacing_hz
         self._mux_target_sr = max(symbol_rate_hz * sps, 1.25 * (occupied_width + symbol_rate_hz * (1 + rrc_roll_off)))
 
-    def _is_blocked(self, roadm, node_index: int) -> bool:
+    def _is_blocked(self, roadm: ROADMConfig, node_index: int) -> bool:
         """灵活栅格下按槽区间重叠判定阻断；遗留模式按信道索引。
 
         解析顺序与 :meth:`MultiBandISRSGN.roadm_blocks_node` 相同：

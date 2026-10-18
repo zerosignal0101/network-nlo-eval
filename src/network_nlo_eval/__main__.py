@@ -14,9 +14,9 @@ from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADM
 from network_nlo_eval.network.state import NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.physics.comparison import TopologyQoTComparator
-from network_nlo_eval.rwa.allocators import BaseRWAAllocator, KSPFirstFitAllocator, KSPFirstFitFlexAllocator
+from network_nlo_eval.rwa.allocators import KSPFirstFitAllocator, KSPFirstFitFlexAllocator
 from network_nlo_eval.rwa.path_computation import PathCache
-from network_nlo_eval.rwa.qot_checker import QoTValidator
+from network_nlo_eval.rwa.qot_checker import BaseRWAAllocator, QoTValidator
 
 # 导入核心模拟器
 from network_nlo_eval.simulation.engine import SimulatorEngine

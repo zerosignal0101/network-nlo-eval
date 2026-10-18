@@ -10,6 +10,7 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
@@ -53,7 +54,7 @@ class QoTValidator:
         """
         return self.gn_evaluator.n_nodes
 
-    def _is_blocked(self, roadm, node_index: int) -> bool:
+    def _is_blocked(self, roadm: ROADMConfig, node_index: int) -> bool:
         """判断某节点（连接）是否被该 ROADM 阻断。
 
         语义集中在 :meth:`MultiBandISRSGN.roadm_blocks_node`，与波形模型侧共用。

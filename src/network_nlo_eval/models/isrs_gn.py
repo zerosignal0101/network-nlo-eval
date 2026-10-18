@@ -160,7 +160,7 @@ class MultiBandISRSGN:
 
         self.connections = list(connections) if connections is not None else None
 
-        self._span_cache: dict[tuple, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        self._span_cache: dict[tuple[bytes, float, int, bytes], tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
 
@@ -248,9 +248,11 @@ class MultiBandISRSGN:
             # 每连接一个节点，节点频率 = 连接中心频率。
             self.f_abs_hz = np.array([conn.centre_hz for conn in self.connections], dtype=np.float64)
             self.lambdas_m = C_LIGHT / self.f_abs_hz  # (m)
-        else:
+        elif isinstance(self.grid, SpectrumGrid):
             self.lambdas_m = self.grid.wavelengths  # (m)
             self.f_abs_hz = self.grid.frequencies  # (Hz)
+        else:
+            raise TypeError("Legacy mode requires a SpectrumGrid; pass connections= for a FlexibleGrid.")
 
         # 衰减系数 (Np/m)
         if self.ref_fiber_config.use_attenuation_polynomial:
