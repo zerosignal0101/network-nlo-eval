@@ -14,7 +14,7 @@ from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADM
 from network_nlo_eval.network.state import NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.physics.comparison import TopologyQoTComparator
-from network_nlo_eval.rwa.allocators import KSPFirstFitAllocator
+from network_nlo_eval.rwa.allocators import BaseRWAAllocator, KSPFirstFitAllocator, KSPFirstFitFlexAllocator
 from network_nlo_eval.rwa.path_computation import PathCache
 from network_nlo_eval.rwa.qot_checker import QoTValidator
 
@@ -87,6 +87,12 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
     default=5,
     help="Maximum number of KSP paths to precompute.",
 )
+@click.option(
+    "--slot-width-ghz",
+    type=float,
+    default=None,
+    help="Enable flexible-grid slot allocation with this slot width (e.g. 12.5).",
+)
 def simulate(
     topology_file: Path,
     service_num: int,
@@ -97,6 +103,7 @@ def simulate(
     channel_spacing_ghz: float,
     center_freq_thz: float,
     max_ksp_paths: int,
+    slot_width_ghz: float | None,
 ) -> None:
     """Run a dynamic RWA simulation."""
     click.echo(f"Starting simulation with topology: {topology_file}")
@@ -136,17 +143,43 @@ def simulate(
     # 路径计算缓存
     path_cache = PathCache(network_topology, max_ksp_paths)
 
+    # 灵活栅格（可选）：槽宽须能整除信道间隔，折算率由两者之比决定。
+    slot_width_hz: float | None = None
+    slots_per_channel = 1
+    if slot_width_ghz is not None:
+        if slot_width_ghz <= 0 or slot_width_ghz > channel_spacing_ghz:
+            raise click.ClickException("--slot-width-ghz must be positive and no wider than the channel spacing.")
+        ratio = channel_spacing_ghz / slot_width_ghz
+        if not np.isclose(ratio, round(ratio)):
+            raise click.ClickException("--channel-spacing-ghz must be an integer multiple of --slot-width-ghz.")
+        slots_per_channel = int(round(ratio))
+        slot_width_hz = slot_width_ghz * 1e9
+
     # RWA 分配器
-    allocator = KSPFirstFitAllocator(
-        path_cache=path_cache,
-        qot_validator=qot_validator,
-        spectrum_grid=spectrum_grid,
-    )
+    if slot_width_hz is None:
+        allocator: BaseRWAAllocator = KSPFirstFitAllocator(
+            path_cache=path_cache,
+            qot_validator=qot_validator,
+            spectrum_grid=spectrum_grid,
+        )
+    else:
+        allocator = KSPFirstFitFlexAllocator(
+            path_cache=path_cache,
+            qot_validator=qot_validator,
+            spectrum_grid=spectrum_grid,
+            network_topology=network_topology,
+            slots_per_channel=slots_per_channel,
+        )
+        click.echo(
+            f"Flexible grid enabled: {slot_width_ghz} GHz slots, "
+            f"{slots_per_channel} slots per {channel_spacing_ghz} GHz channel."
+        )
 
     # 网络动态状态
     network_state = NetworkState(
         network_topology=network_topology,
         spectrum_grid=spectrum_grid,
+        slots_per_channel=slots_per_channel,
     )
 
     # 流量生成器
@@ -155,6 +188,7 @@ def simulate(
         service_num=service_num,
         avg_arrival_interval=avg_arrival_interval,
         avg_holding_time=avg_holding_time,
+        slot_width_hz=slot_width_hz,
     )
     click.echo(f"Generated {len(services)} services.")
 
