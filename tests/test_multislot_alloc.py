@@ -6,6 +6,7 @@ import networkx as nx
 import numpy as np
 import pytest
 
+from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
@@ -290,3 +291,58 @@ def test_blocked_channel_expands_to_slot_interval() -> None:
     success, service = allocator.allocate(_request(n_slots=4), state)
     assert success and service is not None
     assert service.first_slot == 4
+
+
+def test_qot_validator_indexes_connections_in_per_connection_mode() -> None:
+    """逐连接模式下节点数是连接数，频率与带宽按连接取，而非按固定栅格信道。"""
+    grid = FlexibleGrid.from_legacy_grid(4, 50e9, 193.1e12, slots_per_channel=SLOTS_PER_CHANNEL)
+    connections = [
+        ConnectionSpec(
+            grid=grid,
+            connection_id=index,
+            first_slot=index * SLOTS_PER_CHANNEL,
+            n_slots=SLOTS_PER_CHANNEL,
+            bit_rate_bps=100e9,
+            modulation="QPSK",
+            symbol_rate_hz=32e9,
+            roll_off=0.0,
+            launch_power_w=1e-3,
+        )
+        for index in range(4)
+    ]
+    fiber = FiberSpanConfig(length_km=80.0, max_span_length_km=80.0)
+    evaluator = MultiBandISRSGN(grid, fiber, 32e9, connections=connections)
+    topology, _, _, _, _ = _stack()
+    validator = QoTValidator(evaluator, topology, SpectrumGrid(4, 50e9, 193.1e12))
+
+    assert validator.num_nodes == len(connections)
+    for index, connection in enumerate(connections):
+        frequency_hz, bandwidth_hz = validator._node_frequency_and_bandwidth(index)
+        assert frequency_hz == connection.centre_hz
+        assert bandwidth_hz == connection.symbol_rate_hz
+
+
+def test_qot_validator_blocks_by_slot_overlap_in_per_connection_mode() -> None:
+    """逐连接模式按槽区间重叠判定阻断。"""
+    grid = FlexibleGrid.from_legacy_grid(2, 50e9, 193.1e12, slots_per_channel=SLOTS_PER_CHANNEL)
+    connections = [
+        ConnectionSpec(
+            grid=grid,
+            connection_id=index,
+            first_slot=index * SLOTS_PER_CHANNEL,
+            n_slots=SLOTS_PER_CHANNEL,
+            bit_rate_bps=100e9,
+            modulation="QPSK",
+            symbol_rate_hz=32e9,
+            roll_off=0.0,
+            launch_power_w=1e-3,
+        )
+        for index in range(2)
+    ]
+    fiber = FiberSpanConfig(length_km=80.0, max_span_length_km=80.0)
+    evaluator = MultiBandISRSGN(grid, fiber, 32e9, connections=connections, slots_per_channel=SLOTS_PER_CHANNEL)
+    topology, _, _, _, _ = _stack()
+    validator = QoTValidator(evaluator, topology, SpectrumGrid(2, 50e9, 193.1e12))
+
+    assert validator._is_blocked(ROADMConfig(blocked_slots=[0]), 0)
+    assert not validator._is_blocked(ROADMConfig(blocked_slots=[0]), 1)
