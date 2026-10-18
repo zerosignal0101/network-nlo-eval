@@ -48,11 +48,28 @@ class LinkState:
     # 噪声缓存：惰性计算，功率谱改变时失效
     _noise_cache: LinkNoiseCache | None = field(default=None, init=False, repr=False)
 
+    # 槽粒度占用，仅槽区间分配路径使用（遗留 allocate()/release() 不更新它们）。
+    # 长度 = num_channels * slots_per_channel。
+    slots_per_channel: int = 1
+    occupied_slots: NDArrayBool | None = None
+    allocated_service_ids_slots: NDArrayInt | None = None
+
     def __post_init__(self):
         """确保数组在初始化时是副本，防止外部修改。"""
         self.occupied_channels = self.occupied_channels.copy()
         self.launch_power_profile_w = self.launch_power_profile_w.copy()
         self.allocated_service_ids = self.allocated_service_ids.copy()
+
+        if isinstance(self.slots_per_channel, bool) or self.slots_per_channel < 1:
+            raise ValueError(f"slots_per_channel must be a positive integer, got {self.slots_per_channel!r}.")
+        if self.occupied_slots is None:
+            self.occupied_slots = np.zeros(len(self.occupied_channels) * self.slots_per_channel, dtype=bool)
+        else:
+            self.occupied_slots = self.occupied_slots.copy()
+        if self.allocated_service_ids_slots is None:
+            self.allocated_service_ids_slots = np.full(len(self.occupied_slots), -1, dtype=np.int_)
+        else:
+            self.allocated_service_ids_slots = self.allocated_service_ids_slots.copy()
 
     @property
     def noise_cache(self) -> LinkNoiseCache | None:
@@ -98,6 +115,95 @@ class LinkState:
         self.allocated_service_ids[channel_idx] = -1  # 标记为未分配
         self.invalidate_noise_cache()
 
+    # ------------------------------------------------------------------
+    # 槽区间分配 / 释放
+    # ------------------------------------------------------------------
+    def allocate_slot_range(self, first_slot: int, n_slots: int, launch_power_w: float, service_id: int) -> None:
+        """在连续槽区间 ``[first_slot, first_slot + n_slots)`` 上分配资源。
+
+        物理面仍按信道注入功率（内核吃的是每信道标量功率向量），所以功率只写到
+        锚信道 ``first_slot // slots_per_channel``，与 QoT 验证使用的信道索引一致。
+
+        槽占用按信道对齐展开：与窗口相交的每个信道，其全部子槽一并占用。否则
+        ``slots_per_channel=4`` 且 ``n_slots=1`` 时，后续单槽请求会落进同一信道的
+        另一个子槽，而信道级占用标记已置位，两套语义互相冲突。
+
+        Args:
+            first_slot: 起始槽 (0-based, 闭)。
+            n_slots: 槽数，>= 1。
+            launch_power_w: 发射功率 (W)，写入锚信道。
+            service_id: 占用该区间的服务 ID。
+
+        Raises
+        ------
+            ValueError: ``n_slots < 1``、槽区间越界，或区间内已有槽被占用。
+        """
+        if n_slots < 1:
+            raise ValueError(f"n_slots must be >= 1, got {n_slots}.")
+        per_channel = self.slots_per_channel
+        num_slots = len(self.occupied_slots)
+        if first_slot < 0 or first_slot + n_slots > num_slots:
+            raise ValueError(
+                f"Slot range [{first_slot}, {first_slot + n_slots}) out of bounds for "
+                f"{num_slots} slots on link {self.link_key}."
+            )
+        window = slice(first_slot, first_slot + n_slots)
+        if self.occupied_slots[window].any():
+            raise ValueError(
+                f"Slot range [{first_slot}, {first_slot + n_slots}) on link {self.link_key} is already occupied."
+            )
+
+        self.occupied_slots[window] = True
+        self.allocated_service_ids_slots[window] = service_id
+
+        # 信道对齐展开：首尾相交信道的全部子槽一并占用。
+        first_channel = first_slot // per_channel
+        last_channel = (first_slot + n_slots - 1) // per_channel
+        aligned = slice(first_channel * per_channel, (last_channel + 1) * per_channel)
+        self.occupied_slots[aligned] = True
+        self.allocated_service_ids_slots[aligned] = service_id
+
+        # 物理面：只有锚信道注入功率（与 QoT 验证所用信道一致）。
+        self.occupied_channels[first_channel] = True
+        self.launch_power_profile_w[first_channel] = launch_power_w
+        self.allocated_service_ids[first_channel] = service_id
+        self.invalidate_noise_cache()
+
+    def release_slot_range(self, first_slot: int, n_slots: int) -> None:
+        """释放连续槽区间 ``[first_slot, first_slot + n_slots)``。
+
+        越界或非法请求静默返回，便于重复释放。
+
+        Args:
+            first_slot: 起始槽 (0-based, 闭)。
+            n_slots: 槽数，>= 1。
+        """
+        if n_slots < 1:
+            return  # 静默处理非法/重复释放
+        per_channel = self.slots_per_channel
+        num_slots = len(self.occupied_slots)
+        if first_slot < 0 or first_slot + n_slots > num_slots:
+            return  # 静默处理越界的重复释放
+
+        # 信道对齐展开的区间与业务自己占用的区间取并集后一起清。
+        first_channel = first_slot // per_channel
+        last_channel = (first_slot + n_slots - 1) // per_channel
+        lo = min(first_slot, first_channel * per_channel)
+        hi = max(first_slot + n_slots, (last_channel + 1) * per_channel)
+        window = slice(lo, hi)
+
+        self.occupied_slots[window] = False
+        self.allocated_service_ids_slots[window] = -1
+
+        # 物理面：窗口覆盖到的信道，若其全部子槽都已空闲则一并归零。
+        for channel_idx in range(first_channel, last_channel + 1):
+            span = slice(channel_idx * per_channel, (channel_idx + 1) * per_channel)
+            if not self.occupied_slots[span].any():
+                self.occupied_channels[channel_idx] = False
+                self.launch_power_profile_w[channel_idx] = 0.0
+                self.allocated_service_ids[channel_idx] = -1
+        self.invalidate_noise_cache()
+
 
 class NetworkState:
     """管理整个网络的动态运行状态。
@@ -105,9 +211,18 @@ class NetworkState:
     包含所有链路的当前占用情况和功率谱，以及所有已分配的业务详情。
     """
 
-    def __init__(self, network_topology: NetworkTopology, spectrum_grid: SpectrumGrid):
+    def __init__(
+        self,
+        network_topology: NetworkTopology,
+        spectrum_grid: SpectrumGrid,
+        slots_per_channel: int = 1,
+    ):
         self.network_topology = network_topology
         self.spectrum_grid = spectrum_grid
+        # 槽粒度折算率。默认 1 = 遗留纯信道语义。
+        if isinstance(slots_per_channel, bool) or slots_per_channel < 1:
+            raise ValueError(f"slots_per_channel must be a positive integer, got {slots_per_channel!r}.")
+        self.slots_per_channel = slots_per_channel
         self._link_states: dict[LinkKey, LinkState] = {}
         self._allocated_services: dict[int, AllocatedService] = {}  # service_id -> AllocatedService
 
@@ -121,6 +236,7 @@ class NetworkState:
                 occupied_channels=np.zeros(spectrum_grid.num_channels, dtype=bool),
                 launch_power_profile_w=np.zeros(spectrum_grid.num_channels, dtype=np.float64),
                 allocated_service_ids=np.full(spectrum_grid.num_channels, -1, dtype=np.int_),
+                slots_per_channel=slots_per_channel,
             )
 
     def get_link_state(self, u_idx: NodeID, v_idx: NodeID) -> LinkState:
@@ -143,7 +259,8 @@ class NetworkState:
     def allocate_service(self, service: AllocatedService) -> None:
         """在网络状态中正式分配一个服务。
 
-        假定 QoT 验证和波长/路径选择已完成。
+        假定 QoT 验证和波长/路径选择已完成。``service.slots_per_channel is None``
+        表示遗留单信道对象，走原信道分支；否则按槽区间分配。
         """
         # 确保服务ID是唯一的
         if service.service_id in self._allocated_services:
@@ -153,11 +270,19 @@ class NetworkState:
         for i in range(len(service.path) - 1):
             u, v = service.path[i], service.path[i + 1]
             link_state = self.get_link_state(u, v)
-            link_state.allocate(service.wavelength, service.launch_power_w, service.service_id)
+            if service.slots_per_channel is None:
+                link_state.allocate(service.wavelength, service.launch_power_w, service.service_id)
+            else:
+                link_state.allocate_slot_range(
+                    service.first_slot,
+                    service.n_slots,
+                    service.launch_power_w,
+                    service.service_id,
+                )
         self._allocated_services[service.service_id] = service
 
     def release_service(self, service: AllocatedService) -> None:
-        """从网络状态中释放一个服务。"""
+        """从网络状态中释放一个服务，与 allocate_service 对称。"""
         if service.service_id not in self._allocated_services:
             # warnings.warn(f"Service {service.service_id} not found for release.")
             return  # 静默处理重复释放或未分配服务
@@ -165,5 +290,29 @@ class NetworkState:
         for i in range(len(service.path) - 1):
             u, v = service.path[i], service.path[i + 1]
             link_state = self.get_link_state(u, v)
-            link_state.release(service.wavelength)
+            if service.slots_per_channel is None:
+                link_state.release(service.wavelength)
+            else:
+                link_state.release_slot_range(service.first_slot, service.n_slots)
         del self._allocated_services[service.service_id]
+
+    def occupied_slots_on_path(self, path: list[NodeID]) -> NDArrayBool:
+        """返回路径上各链路占用状态的逐槽 OR（True = 至少一跳被占）。
+
+        这是多槽分配器做连续窗口搜索的输入。
+
+        Args:
+            path: 节点路径，至少两跳。
+
+        Returns
+        -------
+            长度 = ``num_channels * slots_per_channel`` 的布尔数组。
+
+        Raises
+        ------
+            ValueError: 路径少于两个节点。
+        """
+        if len(path) < 2:
+            raise ValueError(f"Path must have at least two nodes, got {path!r}.")
+        arrays = [self.get_link_state(path[i], path[i + 1]).occupied_slots for i in range(len(path) - 1)]
+        return np.logical_or.reduce(arrays)
