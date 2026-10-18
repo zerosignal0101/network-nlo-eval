@@ -1,12 +1,46 @@
 """业务请求生成器与数据模型."""
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from network_nlo_eval.core.flexgrid import bits_per_symbol, slots_for_rate
 from network_nlo_eval.core.types import NodeID
 from network_nlo_eval.rwa.path_computation import PathCache
+
+#: 由比特率推导槽数时使用的默认调制格式。
+DEFAULT_MODULATION = "QPSK"
+
+
+def slots_for_bit_rate(
+    bit_rate_gbps: float,
+    *,
+    slot_width_hz: float,
+    modulation: str = DEFAULT_MODULATION,
+    roll_off: float = 0.0,
+) -> int:
+    """由比特率推导所需槽数。
+
+    只是 :func:`~network_nlo_eval.core.flexgrid.slots_for_rate` 的单位换算外壳：
+    Gbps -> bit/s，调制名 -> 每符号比特数。取整语义与参数校验都在后者。
+
+    Args:
+        bit_rate_gbps: 业务比特率 (Gbps)，> 0。
+        slot_width_hz: 槽宽 (Hz)，> 0。
+        modulation: 调制格式名，须在 ``MODULATION_FORMATS`` 内。
+        roll_off: RRC 滚降系数，0 <= roll_off < 1。
+
+    Returns
+    -------
+        槽数 (int)，>= 1。
+    """
+    return slots_for_rate(
+        bit_rate_gbps * 1e9,
+        bits_per_symbol(modulation),
+        roll_off,
+        slot_width_hz,
+    )
 
 
 @dataclass(slots=True)
@@ -27,19 +61,64 @@ class ServiceRequest:
     # 业务的发射功率 (W)，通常由 RWA 决定，这里作为默认值或起点
     launch_power_w: float  # Field(0.001, description="业务发射功率 (W)，约 0 dBm")  # 默认 0 dBm
 
+    # 槽需求：占据连续槽区间 [first_slot, first_slot + n_slots)。默认 1 = 遗留
+    # 单信道语义，旧分配器不读该字段。与 bit_rate_gbps 的关系由调用方用
+    # slots_for_bit_rate 保证，本类不知道槽宽。
+    n_slots: int = 1
+
+    def __post_init__(self) -> None:
+        """强制槽需求不变式：正整数、非 bool。"""
+        if isinstance(self.n_slots, bool) or not isinstance(self.n_slots, int) or self.n_slots < 1:
+            raise ValueError(f"n_slots must be a positive integer, got {self.n_slots!r}.")
+
 
 @dataclass(slots=True)
 class AllocatedService(ServiceRequest):
     """已分配业务的数据模型，继承自 ServiceRequest，
 
-    并增加分配结果 (路径、波长) 信息。
+    并增加分配结果 (路径、槽区间) 信息。
     """
 
-    path: list[NodeID]  # Field(..., description="业务分配的路由路径 (内部节点ID列表)")
-    wavelength: int  # Field(..., description="业务分配的波长索引")
+    # 以下字段必须带默认值：n_slots 已带默认值，dataclass 不允许无默认值字段排在
+    # 其后。既有构造点全部使用关键字传参。
+    path: list[NodeID] = field(default_factory=list)
+    wavelength: int = 0  # 锚信道索引（遗留兼容字段）
+
+    first_slot: int = 0  # 槽区间起点
+
+    # None = 遗留信道粒度（只占 wavelength 这一个信道）；正整数 = 灵活栅格槽区间
+    # 语义。NetworkState 靠这个二分区分新旧两条写入/释放路径。
+    slots_per_channel: int | None = None
 
     class Config:
         frozen = True  # 分配后业务信息通常不应改变
+
+    @property
+    def slot_interval(self) -> tuple[int, int]:
+        """占据的半开槽区间 ``(first_slot, first_slot + n_slots)``。"""
+        return self.first_slot, self.first_slot + self.n_slots
+
+    def __post_init__(self) -> None:
+        """强制槽区间不变式，并校验 wavelength 与 first_slot 的自洽性。"""
+        # 本类是 slots=True 的 dataclass，零参 super() 不可用，必须显式点名基类。
+        ServiceRequest.__post_init__(self)
+        if isinstance(self.first_slot, bool) or not isinstance(self.first_slot, int) or self.first_slot < 0:
+            raise ValueError(f"first_slot must be a non-negative integer, got {self.first_slot!r}.")
+        if self.slots_per_channel is not None:
+            if (
+                isinstance(self.slots_per_channel, bool)
+                or not isinstance(self.slots_per_channel, int)
+                or self.slots_per_channel < 1
+            ):
+                raise ValueError(
+                    f"slots_per_channel must be a positive integer or None, got {self.slots_per_channel!r}."
+                )
+            expected = self.first_slot // self.slots_per_channel
+            if self.wavelength != expected:
+                raise ValueError(
+                    f"AllocatedService wavelength={self.wavelength} is inconsistent with "
+                    f"first_slot={self.first_slot} // slots_per_channel={self.slots_per_channel} = {expected}."
+                )
 
 
 def generate_services(
@@ -48,6 +127,9 @@ def generate_services(
     avg_arrival_interval: float,
     avg_holding_time: float,
     seed: int | None = None,
+    slot_width_hz: float | None = None,
+    modulation: str = DEFAULT_MODULATION,
+    roll_off: float = 0.0,
 ) -> list[ServiceRequest]:
     """生成一系列模拟网络业务请求。
 
@@ -57,6 +139,11 @@ def generate_services(
         avg_arrival_interval: 业务到达时间的平均间隔 (泊松过程)。
         avg_holding_time: 业务持续时间的平均值 (指数分布)。
         seed: 随机数种子，用于可重现的仿真。
+        slot_width_hz: 槽宽 (Hz)。为 ``None`` 时每个业务的 ``n_slots`` 保持 1；
+            给定后按 :func:`slots_for_bit_rate` 由比特率推导。只影响 n_slots，
+            不消耗随机数，故到达时间与比特率序列不变。
+        modulation: 推导槽需求时使用的调制格式名。
+        roll_off: 推导槽需求时使用的 RRC 滚降系数。
 
     Returns
     -------
@@ -115,6 +202,18 @@ def generate_services(
         # 转换为 dBm，这里为了简化，所有服务初始功率相同，实际中可根据业务类型调整
         launch_power_w = 1e-3  # 0 dBm
 
+        # 未给槽宽时保持 n_slots=1；该分支不消耗随机数。
+        n_slots = (
+            1
+            if slot_width_hz is None
+            else slots_for_bit_rate(
+                bit_rate_gbps,
+                slot_width_hz=slot_width_hz,
+                modulation=modulation,
+                roll_off=roll_off,
+            )
+        )
+
         service = ServiceRequest(
             service_id=service_id,
             source_id=source_id,
@@ -124,6 +223,7 @@ def generate_services(
             bit_rate_gbps=bit_rate_gbps,
             snr_requirement_db=snr_requirement_db,
             launch_power_w=launch_power_w,
+            n_slots=n_slots,
         )
         services.append(service)
 
