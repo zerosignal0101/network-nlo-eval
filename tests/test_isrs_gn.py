@@ -175,3 +175,44 @@ def test_blocked_connection_is_zeroed_by_roadm() -> None:
     result = evaluator.evaluate_path(path, np.array([1e-3]))
     assert result.signal_power_w[0] == 0.0
     assert result.snr_db[0] == -np.inf
+
+
+def test_cached_tier_matches_uncached_bitwise() -> None:
+    """Cached 档只做记忆化，结果与 off 档逐位相同。"""
+    grid = SpectrumGrid(4, CHANNEL_SPACING_HZ, 193.1e12)
+    path = MultiSpanOpticalPath(
+        [_fiber()],
+        [EDFAConfig(target_gain_db=17.0, noise_figure_db=5.5)],
+        roadm_configs=[ROADMConfig()],
+    )
+    off = MultiBandISRSGN(grid, _fiber(), 50e9, ode_accel="off")
+    cached = MultiBandISRSGN(grid, _fiber(), 50e9, ode_accel="cached")
+    baseline = off.evaluate_path(path, np.full(4, 1e-3))
+    for _ in range(3):
+        got = cached.evaluate_path(path, np.full(4, 1e-3))
+        for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+            assert np.array_equal(getattr(baseline, name).view(np.int64), getattr(got, name).view(np.int64)), (
+                f"{name} 与 off 档不同"
+            )
+
+
+def test_cached_tier_returns_independent_arrays() -> None:
+    """缓存命中返回的数组必须是副本，调用方原地改动不得污染后续计算。"""
+    grid = SpectrumGrid(4, CHANNEL_SPACING_HZ, 193.1e12)
+    evaluator = MultiBandISRSGN(grid, _fiber(), 50e9, ode_accel="cached")
+    power = np.full(4, 1e-3)
+
+    reference = MultiBandISRSGN(grid, _fiber(), 50e9, ode_accel="off")._calc_span_noise_and_power(power, 80e3, None)
+    evaluator._calc_span_noise_and_power(power, 80e3, None)  # 首次计算，填充缓存
+    hit = evaluator._calc_span_noise_and_power(power, 80e3, None)  # 命中缓存
+    for array in hit:
+        array[:] = -1.0  # 模拟调用方原地改写命中结果
+    third = evaluator._calc_span_noise_and_power(power, 80e3, None)
+    for expected, got in zip(reference, third, strict=True):
+        assert np.array_equal(expected, got), "缓存被调用方的原地改动污染"
+
+
+def test_unknown_accel_mode_is_rejected() -> None:
+    """未知加速档位显式报错。"""
+    with pytest.raises(ValueError, match="ode_accel"):
+        MultiBandISRSGN(SpectrumGrid(4, CHANNEL_SPACING_HZ, 193.1e12), _fiber(), 50e9, ode_accel="fast")

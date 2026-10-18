@@ -50,6 +50,16 @@ CHANNEL_BANDWIDTH_DEFAULT = "symbol_rate"
 POWER_WIDTH_MODES = ("fixed_power", "fixed_psd")
 POWER_WIDTH_DEFAULT = "fixed_power"
 
+#: 单跨段计算的加速档位，只影响数值路径，不改物理。
+#:
+#: ``"off"``
+#:     每次调用都进 njit 核。默认档。
+#: ``"cached"``
+#:     按 (入纤功率, 跨段长度, 跨段数, NF) 记忆化单跨段结果，结果与 ``"off"``
+#:     逐位相同。
+ODE_ACCEL_MODES = ("off", "cached")
+ODE_ACCEL_DEFAULT = "off"
+
 
 @dataclass
 class MultiSpanOpticalPath:
@@ -98,6 +108,7 @@ class MultiBandISRSGN:
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         connections: Sequence[ConnectionSpec] | None = None,
+        ode_accel: str = ODE_ACCEL_DEFAULT,
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = CHANNEL_BANDWIDTH_DEFAULT,
         power_width_mode: str = POWER_WIDTH_DEFAULT,
@@ -111,6 +122,7 @@ class MultiBandISRSGN:
             connections: 灵活栅格连接列表。给定后进入逐连接模式：每条连接一个
                 节点，频率取连接中心，带边缘按实际占用带计算。为 ``None`` 时
                 保持遗留行为。
+            ode_accel: 加速档位，见 :data:`ODE_ACCEL_MODES`。
             slots_per_channel: 每遗留信道占用的槽数，仅用于把 ROADM 的
                 ``blocked_channels`` 展开为槽（见 :meth:`roadm_blocks_node`）。
                 逐连接模式下需要该展开时必须显式传入，不做取整猜测。
@@ -122,6 +134,8 @@ class MultiBandISRSGN:
         ------
             ValueError: 口径取值非法。
         """
+        if ode_accel not in ODE_ACCEL_MODES:
+            raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
         if slots_per_channel is not None and slots_per_channel < 1:
             raise ValueError(f"slots_per_channel must be >= 1, got {slots_per_channel}.")
         if channel_bandwidth_source not in CHANNEL_BANDWIDTH_SOURCES:
@@ -139,12 +153,14 @@ class MultiBandISRSGN:
         self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
+        self.ode_accel = ode_accel
         self.slots_per_channel = slots_per_channel
         self.channel_bandwidth_source = channel_bandwidth_source
         self.power_width_mode = power_width_mode
 
         self.connections = list(connections) if connections is not None else None
 
+        self._span_cache: dict[tuple, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
 
@@ -328,26 +344,42 @@ class MultiBandISRSGN:
         else:
             current_nf_lin = np.ones_like(self.nf_lin_channels)
 
-        # 2. 调用 JIT 内核 (热路径)
-        p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
-            power_in_w=power_in_w,
-            span_length_m=span_length_m,
-            f_rel_hz=self.f_rel_hz,
-            f_abs_hz=self.f_abs_hz,
-            lambdas_m=self.lambdas_m,
-            alpha_power_npm=self.alpha_power_npm_channels,
-            a_eff_m2=self.a_eff_m2_channels,
-            beta2_s2_m=self.beta2_s2_m,
-            beta3_s3_m=self.beta3_s3_m,
-            n2_m2_w=self.n2_m2_w,
-            nf_lin_channels=current_nf_lin,
-            symbol_rate_hz=self.symbol_rate_hz,
-            b_hz_channels=self.channel_bandwidth_hz_channels,
-            n_effective_spans=n_effective_spans,
-            cr_w_m_hz=self.cr_w_m_hz,
-            k_bar=self.k_bar,
-            delta_f_co_hz=self.delta_f_co_hz,
-        )
+        # 2. 调用 JIT 内核 (热路径)；cached 档按输入记忆化单跨段结果。
+        cached = None
+        if self.ode_accel == "cached":
+            cache_key = (
+                power_in_w.tobytes(),
+                float(span_length_m),
+                int(n_effective_spans),
+                current_nf_lin.tobytes(),
+            )
+            cached = self._span_cache.get(cache_key)
+
+        if cached is not None:
+            # 必须返回副本：调用方会原地改动出纤功率数组，交出去会污染缓存。
+            p_out_fiber, s2_spm, s2_xpm = (array.copy() for array in cached)
+        else:
+            p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
+                power_in_w=power_in_w,
+                span_length_m=span_length_m,
+                f_rel_hz=self.f_rel_hz,
+                f_abs_hz=self.f_abs_hz,
+                lambdas_m=self.lambdas_m,
+                alpha_power_npm=self.alpha_power_npm_channels,
+                a_eff_m2=self.a_eff_m2_channels,
+                beta2_s2_m=self.beta2_s2_m,
+                beta3_s3_m=self.beta3_s3_m,
+                n2_m2_w=self.n2_m2_w,
+                nf_lin_channels=current_nf_lin,
+                symbol_rate_hz=self.symbol_rate_hz,
+                b_hz_channels=self.channel_bandwidth_hz_channels,
+                n_effective_spans=n_effective_spans,
+                cr_w_m_hz=self.cr_w_m_hz,
+                k_bar=self.k_bar,
+                delta_f_co_hz=self.delta_f_co_hz,
+            )
+            if self.ode_accel == "cached":
+                self._span_cache[cache_key] = (p_out_fiber.copy(), s2_spm.copy(), s2_xpm.copy())
 
         # 3. 显式应用 EDFA；edfa_config 为 None 时不产生 ASE。
         if edfa_config is None:
@@ -397,6 +429,7 @@ class MultiBandISRSGN:
                 fiber_config,
                 self.symbol_rate_hz,
                 connections=self.connections,
+                ode_accel=self.ode_accel,
                 slots_per_channel=self.slots_per_channel,
                 channel_bandwidth_source=self.channel_bandwidth_source,
                 power_width_mode=self.power_width_mode,
