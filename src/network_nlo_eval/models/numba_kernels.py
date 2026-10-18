@@ -569,8 +569,6 @@ def _calculate_ase_noise_variance(
             total_ase_variance[i] = (
                 n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * b_hz_channels[i]
             )
-            # print(f"{G_i}, {p_in_w[i]}/{p_out_w[i]}", end=", ")
-            # print(f"Channel {i} ASE variance: {total_ase_variance[i]:.2e}")
 
     return total_ase_variance  # 返回方差 (W)
 
