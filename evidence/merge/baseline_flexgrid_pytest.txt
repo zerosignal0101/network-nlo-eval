@@ -1,0 +1,70 @@
+....................F...........................F....s...............    [100%]
+=================================== FAILURES ===================================
+______ test_q_evidence_tools_check_reproduces[bwqot_legacy_regression.py] ______
+
+script = 'bwqot_legacy_regression.py'
+
+    @pytest.mark.parametrize(
+        "script", ["bwqot_probe.py", "bwqot_legacy_regression.py", "bwqot_cost.py"]
+    )
+    def test_q_evidence_tools_check_reproduces(script: str):
+        """证据工具的 --check 必须能独立复算出同样的 PASS。"""
+        proc = _run_check(script)
+>       assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+E       AssertionError: verdict=FAIL  max_abs_delta_db=None
+E           FAIL: Q-J1: 场景数 0 != 6
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...ion.py', '--check'], returncode=1, stdout='verdict=FAIL  max_abs_delta_db=None\n  FAIL: Q-J1: 场景数 0 != 6\n', stderr='').returncode
+
+tests/test_bwqot_bandwidth.py:425: AssertionError
+_________________ test_tools_check_reproduces[ode_compare.py] __________________
+
+script = 'ode_compare.py'
+
+    @pytest.mark.parametrize(
+        "script", ["ode_formula_map.py", "ode_verdicts.py", "ode_compare.py"]
+    )
+    def test_tools_check_reproduces(script):
+        proc = subprocess.run(
+            [PY, str(REPO / "tools" / script), "--check"],
+            capture_output=True, text=True, cwd=str(REPO),
+            env={"PYTHONPATH": str(REPO / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin"},
+            timeout=3600,
+        )
+>       assert proc.returncode == 0, f"{script} --check 失败:\n{proc.stdout}\n{proc.stderr}"
+E       AssertionError: ode_compare.py --check 失败:
+E         FAIL ode_dev_diff_vs_ecz.json: 复算结果与落盘不一致
+E         FAIL ode_dev_diff_vs_fu4.json: 复算结果与落盘不一致
+E         
+E           FATAL ode-dev: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E           FATAL ecz-dev: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E           FATAL wp/fg-uwb-fid: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...in <module>\n    import fu4_scenarios_legacy as fs\nModuleNotFoundError: No module named \'fu4_scenarios_legacy\'\n\n').returncode
+
+tests/test_ode_dev.py:247: AssertionError
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_topology_physical_integration.py:82: could not import 'physics_nlo_eval': No module named 'physics_nlo_eval'
+2 failed, 66 passed, 1 skipped in 3.38s
+
+real	0m3.624s
+user	0m10.153s
+sys	0m0.435s

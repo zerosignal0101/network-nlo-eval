@@ -1,0 +1,136 @@
+{
+  "question": "\u628a\u5408\u5e76\u5f0f\u88c5\u914d\u585e\u56de src/ \u540e\uff0c\u5b88\u536b\u662f\u5426\u53d8\u7ea2\uff08\u4e24\u5411\uff09",
+  "baseline": {
+    "new_guard": {
+      "returncode": 0,
+      "valid": true,
+      "turned_red": false,
+      "verdict": "GREEN",
+      "tail": [
+        ".................                                                        [100%]",
+        "17 passed in 0.05s"
+      ]
+    },
+    "old_guard": {
+      "returncode": 0,
+      "valid": true,
+      "turned_red": false,
+      "verdict": "GREEN",
+      "tail": [
+        ".                                                                        [100%]",
+        "1 passed in 0.29s"
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "scenario": "A: isrs_gn.py (FG-17 blind spot)",
+      "injected_into": "src/network_nlo_eval/models/isrs_gn.py",
+      "guard": "tests/test_fg18_lumped_assembly_tree_guard.py",
+      "mutated": {
+        "returncode": 1,
+        "valid": true,
+        "turned_red": true,
+        "verdict": "RED",
+        "tail": [
+          "E        +  where [<ast.BinOp object at 0x72f3d7bfd6d0>] = _lumped_assembly_nodes(<ast.Module object at 0x72f3d7e059d0>)",
+          "/home/zsig/Documents/gits/wt/fg-isrs/tests/test_fg18_lumped_assembly_tree_guard.py:157: AssertionError",
+          "=========================== short test summary info ============================",
+          "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_src_tree_has_lumped_roadm_assembly",
+          "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_guard_covers_the_fg17_blind_spot_file",
+          "2 failed, 15 passed in 0.06s"
+        ]
+      },
+      "sanity_non_red": {
+        "returncode": 0,
+        "tail": [
+          ".......                                                                  [100%]",
+          "7 passed in 0.01s"
+        ]
+      }
+    },
+    {
+      "scenario": "A2: isrs_gn.py vs OLD guard",
+      "injected_into": "src/network_nlo_eval/models/isrs_gn.py",
+      "guard": "tests/test_fu4_assembly_union.py::test_fu4_6_lumped_assembly_is_gone_from_the_source",
+      "mutated": {
+        "returncode": 0,
+        "valid": true,
+        "turned_red": false,
+        "verdict": "GREEN",
+        "tail": [
+          ".                                                                        [100%]",
+          "1 passed in 0.29s"
+        ]
+      },
+      "sanity_non_red": {
+        "returncode": 0,
+        "tail": [
+          ".......                                                                  [100%]",
+          "7 passed in 0.01s"
+        ]
+      }
+    },
+    {
+      "scenario": "B: rwa/qot_checker.py",
+      "injected_into": "src/network_nlo_eval/rwa/qot_checker.py",
+      "guard": "tests/test_fg18_lumped_assembly_tree_guard.py",
+      "mutated": {
+        "returncode": 1,
+        "valid": true,
+        "turned_red": true,
+        "verdict": "RED",
+        "tail": [
+          "E        +  where [<ast.BinOp object at 0x753674f7c510>] = _lumped_assembly_nodes(<ast.Module object at 0x753674d44f50>)",
+          "/home/zsig/Documents/gits/wt/fg-isrs/tests/test_fg18_lumped_assembly_tree_guard.py:169: AssertionError",
+          "=========================== short test summary info ============================",
+          "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_src_tree_has_lumped_roadm_assembly",
+          "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_original_single_file_guard_still_applies",
+          "2 failed, 15 passed in 0.06s"
+        ]
+      },
+      "sanity_non_red": {
+        "returncode": 0,
+        "tail": [
+          ".......                                                                  [100%]",
+          "7 passed in 0.01s"
+        ]
+      }
+    },
+    {
+      "scenario": "B2: rwa/qot_checker.py vs OLD guard",
+      "injected_into": "src/network_nlo_eval/rwa/qot_checker.py",
+      "guard": "tests/test_fu4_assembly_union.py::test_fu4_6_lumped_assembly_is_gone_from_the_source",
+      "mutated": {
+        "returncode": 1,
+        "valid": true,
+        "turned_red": true,
+        "verdict": "RED",
+        "tail": [
+          "E        +  where <re.Match object; span=(25273, 25320), match='insertion_loss_db + config.filtering_penalty_db'> = <function search at 0x7f897c3211c0>('insertion_loss_db\\\\s*\\\\+\\\\s*\\\\w+\\\\.filtering_penalty_db', '\"\"\"\u4f20\u8f93\u8d28\u91cf (Quality of Transmission, QoT) \u9a8c\u8bc1\u5668\u3002\\n\\n\u8d1f\u8d23\u5728 RWA \u8fc7\u7a0b\u4e2d\u8bc4\u4f30\u94fe\u8def\u6216\u8def\u5f84\u7684 SNR\u3002\\n\"\"\"\\n\\nimport math\\nfrom collections.abc imp...\uff08\u65b9\u5411 B\uff09\u3002\u4e0d\u662f\u751f\u4ea7\u4ee3\u7801\u3002\"\"\"\\n    loss = 10 ** ((config.insertion_loss_db + config.filtering_penalty_db) / 10)\\n    return loss\\n')",
+          "E        +    where <function search at 0x7f897c3211c0> = re.search",
+          "/home/zsig/Documents/gits/wt/fg-isrs/tests/test_fu4_assembly_union.py:282: AssertionError",
+          "=========================== short test summary info ============================",
+          "FAILED tests/test_fu4_assembly_union.py::test_fu4_6_lumped_assembly_is_gone_from_the_source",
+          "1 failed in 0.31s"
+        ]
+      },
+      "sanity_non_red": {
+        "returncode": 0,
+        "tail": [
+          ".......                                                                  [100%]",
+          "7 passed in 0.01s"
+        ]
+      }
+    }
+  ],
+  "verdict": {
+    "A_new_guard": "RED",
+    "B_new_guard": "RED",
+    "A_old_guard": "GREEN",
+    "B_old_guard": "RED",
+    "baseline_new_guard_green": "GREEN",
+    "baseline_old_guard_green": "GREEN",
+    "all_valid": true
+  }
+}

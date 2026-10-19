@@ -237,22 +237,42 @@ def test_guard6_baseline_tests_not_lost():
 
 
 # ---------------------------------------------------------------------------
-# 守卫 7：bands.py 的最小闭包（不搬 FU-2 资产）+ 三个接入点可达
+# 守卫 7：三个接入点可达 + FU-2 资产**存在、只定义一次、可达**
+#
+# ⚠️ 本守卫在 WP-MERGE-FG-FLEX 里被**翻成正向不变量**。它原本是 flexgrid-dev 的
+# **相位守卫**（docstring 写着"不搬 FU-2 资产"），把"当时决定不移植"编码成了永久
+# 不变量；本次合并的目的正是移植它们，前提已消失。按通例翻法：存在 + 只定义一次 +
+# 可达。旧文本 → 新文本见 docs/wp_merge_fg_into_flex.md 的 V5 节。
 # ---------------------------------------------------------------------------
 def test_guard7_bands_minimal_closure_has_three_access_points():
-    """brief §0 定位的三个 flexgrid 接入点必须可达，且 FU-2 资产不在。"""
-    from network_nlo_eval.core.bands import BandPlan, BandSpec
+    """brief §0 定位的三个 flexgrid 接入点必须可达，且 FU-2 资产已被移植并各只定义一次。"""
+    from network_nlo_eval.core.bands import (
+        U_BAND_ASSUMPTIONS,
+        SCLU_BAND_SPECS,
+        BandPlan,
+        BandSpec,
+        hz_to_nm,
+        sclu_span_report,
+    )
     from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 
+    # 三个接入点仍必须可达（这条断言原样保留）
     assert hasattr(BandPlan, "from_connections")
     assert hasattr(BandPlan, "assert_connections_single_band")
     assert hasattr(BandPlan, "apply_launch_power")
 
-    # FU-2 资产确实没被搬进来
+    # 五个 FU-2 符号**存在且可达**（原来断言它们"不在"，现已翻转为正向不变量）
+    assert callable(hz_to_nm)
+    assert callable(sclu_span_report)
+    assert callable(BandPlan.guard_report)  # guard_report 是 BandPlan 的方法，非模块级函数
+    assert isinstance(U_BAND_ASSUMPTIONS, tuple) and U_BAND_ASSUMPTIONS
+    assert isinstance(SCLU_BAND_SPECS, tuple) and SCLU_BAND_SPECS
+    assert {spec.name for spec in SCLU_BAND_SPECS} >= {"S", "C", "L", "U"}
+
+    # 防止合并出两份实现：`BandSpec` / `BandPlan` 在 bands.py 里各自只定义一次
     text = (REPO / "src/network_nlo_eval/core/bands.py").read_text(encoding="utf-8")
-    for absent in ("SCLU_BAND_SPECS: tuple[BandSpec, ...]", "def sclu_span_report(",
-                   "def guard_report(", "def hz_to_nm(", "U_BAND_ASSUMPTIONS: tuple[str, ...] = ("):
-        assert absent not in text, f"bands.py 竟含未移植的 FU-2 资产 {absent!r}"
+    assert len(re.findall(r"^class BandSpec\b", text, re.M)) == 1, "BandSpec 被定义了多次"
+    assert len(re.findall(r"^class BandPlan\b", text, re.M)) == 1, "BandPlan 被定义了多次"
 
     # 三个接入点真能跑（2 槽 + 3 槽，跨两个频段）
     grid = FlexibleGrid(slot_width_hz=12.5e9, num_slots=240, band_low_edge_hz=191.0e12)
@@ -277,6 +297,10 @@ def test_guard7_bands_minimal_closure_has_three_access_points():
     # frozen dataclass => 返回新对象，原列表不变
     assert all(c.launch_power_w == 0.0 for c in conns)
     assert [c.launch_power_w for c in powered] == [1.0e-3, 0.5e-3]
+
+    # FU-2 资产**可达**（不是只有文本，方法真能调用）
+    assert set(plan.guard_report()) >= set(spec.name for spec in specs)
+    assert "bands" in sclu_span_report()
 
 
 # ---------------------------------------------------------------------------

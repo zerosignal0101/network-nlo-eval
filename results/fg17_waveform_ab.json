@@ -1,0 +1,413 @@
+{
+  "package": "/home/zsig/Documents/gits/wt/fg-converge/src/network_nlo_eval/__init__.py",
+  "grid": {
+    "num_channels": 6,
+    "spacing_hz": 50000000000.0,
+    "center_hz": 193100000000000.0
+  },
+  "seed": 42,
+  "num_symbols": 512,
+  "summary": {
+    "n_cases": 6,
+    "all_bit_exact": true,
+    "cases_not_bit_exact": []
+  },
+  "cases": [
+    {
+      "case": "express_roadm_3hop",
+      "all_bit_exact": true,
+      "metrics": {
+        "ber": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ],
+          "after": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ]
+        },
+        "evm": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.1939285578863192,
+            null,
+            0.17225344081965951,
+            0.1701864554793989,
+            null
+          ],
+          "after": [
+            null,
+            0.1939285578863192,
+            null,
+            0.17225344081965951,
+            0.1701864554793989,
+            null
+          ]
+        },
+        "snr": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            14.247164641612997,
+            null,
+            15.276641883145032,
+            15.381500135866071,
+            null
+          ],
+          "after": [
+            null,
+            14.247164641612997,
+            null,
+            15.276641883145032,
+            15.381500135866071,
+            null
+          ]
+        }
+      }
+    },
+    {
+      "case": "drop_roadm_last_hop",
+      "all_bit_exact": true,
+      "metrics": {
+        "ber": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ],
+          "after": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ]
+        },
+        "evm": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.14756387210610233,
+            null,
+            0.1481765327704025,
+            0.1491885379202883,
+            null
+          ],
+          "after": [
+            null,
+            0.14756387210610233,
+            null,
+            0.1481765327704025,
+            0.1491885379202883,
+            null
+          ]
+        },
+        "snr": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            16.620399146398558,
+            null,
+            16.584411432575592,
+            16.525290844128996,
+            null
+          ],
+          "after": [
+            null,
+            16.620399146398558,
+            null,
+            16.584411432575592,
+            16.525290844128996,
+            null
+          ]
+        }
+      }
+    },
+    {
+      "case": "single_span_last_hop",
+      "all_bit_exact": true,
+      "metrics": {
+        "ber": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ],
+          "after": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ]
+        },
+        "evm": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.09251833492772697,
+            null,
+            0.12755444986046657,
+            0.1291284439992716,
+            null
+          ],
+          "after": [
+            null,
+            0.09251833492772697,
+            null,
+            0.12755444986046657,
+            0.1291284439992716,
+            null
+          ]
+        },
+        "snr": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            20.675443838436337,
+            null,
+            17.886087720129524,
+            17.77956164401637,
+            null
+          ],
+          "after": [
+            null,
+            20.675443838436337,
+            null,
+            17.886087720129524,
+            17.77956164401637,
+            null
+          ]
+        }
+      }
+    },
+    {
+      "case": "equalize_off_express",
+      "all_bit_exact": true,
+      "metrics": {
+        "ber": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ],
+          "after": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ]
+        },
+        "evm": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.14956320480709154,
+            null,
+            0.15000403279929853,
+            0.14931024394227374,
+            null
+          ],
+          "after": [
+            null,
+            0.14956320480709154,
+            null,
+            0.15000403279929853,
+            0.14931024394227374,
+            null
+          ]
+        },
+        "snr": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            16.503504749050744,
+            null,
+            16.477941299027894,
+            16.51820789975491,
+            null
+          ],
+          "after": [
+            null,
+            16.503504749050744,
+            null,
+            16.477941299027894,
+            16.51820789975491,
+            null
+          ]
+        }
+      }
+    },
+    {
+      "case": "express_attenuated_blocked",
+      "all_bit_exact": true,
+      "metrics": {
+        "ber": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.0,
+            null,
+            null,
+            0.00048828125,
+            null
+          ],
+          "after": [
+            null,
+            0.0,
+            null,
+            null,
+            0.00048828125,
+            null
+          ]
+        },
+        "evm": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.1435728573946359,
+            null,
+            null,
+            0.14121034035283067,
+            null
+          ],
+          "after": [
+            null,
+            0.1435728573946359,
+            null,
+            null,
+            0.14121034035283067,
+            null
+          ]
+        },
+        "snr": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            16.85855312359025,
+            null,
+            null,
+            17.002670004246653,
+            null
+          ],
+          "after": [
+            null,
+            16.85855312359025,
+            null,
+            null,
+            17.002670004246653,
+            null
+          ]
+        }
+      }
+    },
+    {
+      "case": "odd_nf_and_loss",
+      "all_bit_exact": true,
+      "metrics": {
+        "ber": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ],
+          "after": [
+            null,
+            0.0,
+            null,
+            0.0,
+            0.00048828125,
+            null
+          ]
+        },
+        "evm": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            0.14327445495076654,
+            null,
+            0.14440850342481926,
+            0.1433947229099692,
+            null
+          ],
+          "after": [
+            null,
+            0.14327445495076654,
+            null,
+            0.14440850342481926,
+            0.1433947229099692,
+            null
+          ]
+        },
+        "snr": {
+          "bit_exact": true,
+          "max_abs_delta": 0.0,
+          "before": [
+            null,
+            16.876624700478725,
+            null,
+            16.80814465586164,
+            16.869336618169257,
+            null
+          ],
+          "after": [
+            null,
+            16.876624700478725,
+            null,
+            16.80814465586164,
+            16.869336618169257,
+            null
+          ]
+        }
+      }
+    }
+  ]
+}

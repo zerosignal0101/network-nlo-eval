@@ -1,0 +1,179 @@
+{
+  "meta": {
+    "git_rev": "34f1e2e2fb1f500eff7fb766bd7f0bfc6add2ac5",
+    "git_branch": "wp/fg-nlo-impl",
+    "python": "3.12.14",
+    "numpy": "2.5.3",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+    "loadavg": "5.36 8.71 10.23 4/1686 2066456",
+    "golden_git_rev": "0c2546f3059ad2140121c67c8e9e6f0cbaf66ec0"
+  },
+  "parameters": {
+    "num_channels": 230,
+    "channel_spacing_hz": 50000000000.0,
+    "slot_width_hz": 12500000000.0,
+    "center_frequency_hz": 190212700000000.0,
+    "num_slots": 920,
+    "span_length_m": 100000.0,
+    "launch_power_w": 0.001
+  },
+  "F2-1_frequency_bit_identity": {
+    "raw_equality_all": true,
+    "n_mismatched_elements": 0,
+    "max_abs_diff_hz": 0.0,
+    "band_center_equals_legacy_center": true,
+    "note": "raw float64 ==, not allclose"
+  },
+  "F2-2_half_slot_trap": {
+    "wrong_formula_offset_ghz": 6.25,
+    "wrong_formula_reproduces_legacy": false,
+    "correct_formula_reproduces_legacy": true
+  },
+  "F2-3_qot_bit_identity": {
+    "n_nodes": 230,
+    "f_abs_array_equal_golden": true,
+    "f_rel_array_equal_golden": true,
+    "symbol_rate_is_array": true,
+    "p_out_w": {
+      "array_equal": true,
+      "max_abs_diff_w": 0.0
+    },
+    "sigma2_spm_w": {
+      "array_equal": true,
+      "max_abs_diff_w": 0.0
+    },
+    "sigma2_xpm_w": {
+      "array_equal": true,
+      "max_abs_diff_w": 0.0
+    },
+    "sigma2_ase_w": {
+      "array_equal": true,
+      "max_abs_diff_w": 0.0
+    }
+  },
+  "F2-4_slots_for_rate": {
+    "cases": [
+      {
+        "bit_rate_gbps": 100.0,
+        "modulation": "QPSK",
+        "roll_off": 0.0,
+        "n_slots": 4,
+        "occupied_ghz": 50.0
+      },
+      {
+        "bit_rate_gbps": 400.0,
+        "modulation": "16QAM",
+        "roll_off": 0.0,
+        "n_slots": 8,
+        "occupied_ghz": 100.0
+      },
+      {
+        "bit_rate_gbps": 200.0,
+        "modulation": "64QAM",
+        "roll_off": 0.0,
+        "n_slots": 3,
+        "occupied_ghz": 37.5
+      },
+      {
+        "bit_rate_gbps": 100.0,
+        "modulation": "QPSK",
+        "roll_off": 0.1,
+        "n_slots": 5,
+        "occupied_ghz": 62.5
+      }
+    ],
+    "result": [
+      4,
+      8,
+      3,
+      5
+    ],
+    "expected": [
+      4,
+      8,
+      3,
+      5
+    ],
+    "matches": true
+  },
+  "F2-5_shape_contract": {
+    "power_in_w": {
+      "message": "power_in_w must have shape (230,), got (229,).",
+      "mentions_expected_shape": true,
+      "mentions_actual_shape": true
+    },
+    "nf_lin_channels": {
+      "message": "nf_lin_channels must have shape (230,), got (235,).",
+      "mentions_expected_shape": true,
+      "mentions_actual_shape": true
+    }
+  },
+  "F2-6_srs_centre_sampling_cplusl": {
+    "band_span_thz": 11.45,
+    "max_relative_error_by_width_ghz": {
+      "50": 2.6622373292838316e-16,
+      "100": 2.432854395188054e-16,
+      "200": 2.609760795867751e-16,
+      "400": 2.3726266976257416e-16,
+      "800": 2.397280815692101e-16,
+      "1600": 2.897270163136983e-16
+    },
+    "threshold": 1e-12,
+    "all_below_threshold": true,
+    "worst_overall": 2.897270163136983e-16
+  },
+  "F2-7_ode_unchanged": {
+    "ode_line_span_in_current_file": [
+      173,
+      214
+    ],
+    "first_added_line_vs_origin_main": 349,
+    "any_added_line_inside_ode_span": false,
+    "kernels_file_sha256": "e76847ca3c6fc24934368baac3fbf679f885293d890a84cfcf6fb12f16a1ae81",
+    "note": "call-site f_abs_hz now carries connection centres; ODE body untouched"
+  },
+  "ode_coupling_transcription_check": [
+    {
+      "df_thz": 1.0,
+      "g_ode": 2.7999998097882894e-05,
+      "cr_times_df": 2.8e-05,
+      "rel": 6.793275375646588e-08
+    },
+    {
+      "df_thz": 6.0,
+      "g_ode": 0.00016800000190997366,
+      "cr_times_df": 0.000168,
+      "rel": 1.1368890899951639e-08
+    },
+    {
+      "df_thz": 11.45,
+      "g_ode": 0.0003206000029898348,
+      "cr_times_df": 0.0003206,
+      "rel": 9.325748077679412e-09
+    }
+  ],
+  "F2-8_no_test_expectation_changes": {
+    "baseline_commit": "8f55e14",
+    "modified_or_deleted_test_files": [],
+    "zero_expectation_edits": true
+  },
+  "migration_blocked_slots": {
+    "first_pass": {
+      "nodes_migrated": 2,
+      "nodes_skipped": 0,
+      "slots_written": 12,
+      "legacy_channels_read": 3
+    },
+    "second_pass": {
+      "nodes_migrated": 0,
+      "nodes_skipped": 2,
+      "slots_written": 0,
+      "legacy_channels_read": 0
+    },
+    "idempotent": true,
+    "four_slots_per_channel_all_nodes": true,
+    "out_of_bounds_raises": true,
+    "legacy_field_preserved": true,
+    "input_graph_not_mutated": true
+  }
+}

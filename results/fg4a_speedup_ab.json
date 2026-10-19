@@ -1,0 +1,57 @@
+{
+  "loadavg_after": [
+    4.59,
+    16.67,
+    20.6
+  ],
+  "loadavg_before": [
+    4.82,
+    16.92,
+    20.7
+  ],
+  "loadavg_delta_1min": -0.23000000000000043,
+  "method": "baseline kernels imported from the baseline commit into the same process; targets interleaved sample-by-sample with the order flipped each round; speedup is the ratio of min samples",
+  "numeric_check": {
+    "cached_g_bit_identical_to_baseline": true,
+    "matvec_within_1e-12": true,
+    "matvec_worst_relative_deviation": 1.0929162488717042e-15
+  },
+  "provenance": {
+    "baseline_rev": "ea7ecb0",
+    "git_rev": "ea7ecb0dd01d701060cef3b4efa7dddb171ddc86",
+    "numpy": "2.5.3",
+    "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14"
+  },
+  "schema_version": 1,
+  "span_kernel_speedups": {
+    "g_cache_only": {
+      "a_median_s": 0.0047546259593218565,
+      "a_min_s": 0.0046963130589574575,
+      "a_spread_ratio": 1.0415594081875268,
+      "b_median_s": 0.004678315948694944,
+      "b_min_s": 0.004565395065583289,
+      "b_spread_ratio": 1.0722850834643476,
+      "median_speedup_a_over_b": 1.0163114273306402,
+      "samples": 120,
+      "speedup_a_over_b": 1.0286761586880198
+    },
+    "g_cache_plus_branchless_matvec": {
+      "a_median_s": 0.004682810977101326,
+      "a_min_s": 0.004594505997374654,
+      "a_spread_ratio": 1.078784957553628,
+      "b_median_s": 0.00251626200042665,
+      "b_min_s": 0.002449723891913891,
+      "b_spread_ratio": 1.1128270498724324,
+      "median_speedup_a_over_b": 1.8610188352036958,
+      "samples": 120,
+      "speedup_a_over_b": 1.8755199361610966
+    }
+  },
+  "workload": {
+    "n_loaded_channels": 202,
+    "n_steps": 20,
+    "num_channels": 230,
+    "span_length_m": 80000.0
+  }
+}

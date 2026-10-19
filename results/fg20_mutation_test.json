@@ -1,0 +1,174 @@
+{
+  "question": "FG-20 行为测试能否抓住两处施加点的语义回归（源码守卫抓不住的那些）",
+  "baseline": {
+    "behavior": {
+      "returncode": 0,
+      "verdict": "GREEN",
+      "tail": [
+        ".............................................                            [100%]",
+        "45 passed in 0.42s"
+      ],
+      "valid": true
+    },
+    "ast_guard": {
+      "returncode": 0,
+      "verdict": "GREEN",
+      "tail": [
+        ".................                                                        [100%]",
+        "17 passed in 0.05s"
+      ],
+      "valid": true
+    }
+  },
+  "scenarios": [
+    {
+      "scenario": "M1_serial_booster_deleted",
+      "target": "src/network_nlo_eval/models/isrs_gn.py",
+      "injection_valid": true,
+      "behavior": {
+        "returncode": 1,
+        "verdict": "RED",
+        "tail": [
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[filtering_penalty_zero]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[insertion_loss_3db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_ode_kernel_is_untouched_by_roadm",
+          "19 failed, 26 passed, 1 warning in 0.57s"
+        ],
+        "valid": true
+      },
+      "ast_guard": {
+        "returncode": 0,
+        "verdict": "GREEN",
+        "tail": [
+          ".................                                                        [100%]",
+          "17 passed in 0.05s"
+        ],
+        "valid": true
+      },
+      "behavior_catches": true,
+      "ast_guard_catches": false
+    },
+    {
+      "scenario": "M2_batch_booster_deleted",
+      "target": "src/network_nlo_eval/models/isrs_gn.py",
+      "injection_valid": true,
+      "behavior": {
+        "returncode": 1,
+        "verdict": "RED",
+        "tail": [
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[express_attenuation_2db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[filtering_penalty_zero]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[insertion_loss_3db]",
+          "14 failed, 31 passed in 0.53s"
+        ],
+        "valid": true
+      },
+      "ast_guard": {
+        "returncode": 0,
+        "verdict": "GREEN",
+        "tail": [
+          ".................                                                        [100%]",
+          "17 passed in 0.05s"
+        ],
+        "valid": true
+      },
+      "behavior_catches": true,
+      "ast_guard_catches": false
+    },
+    {
+      "scenario": "M3_equalize_still_attenuates_signal",
+      "target": "src/network_nlo_eval/models/isrs_gn.py",
+      "injection_valid": true,
+      "behavior": {
+        "returncode": 1,
+        "verdict": "RED",
+        "tail": [
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[express_attenuation_2db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[filtering_penalty_zero]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[insertion_loss_3db]",
+          "16 failed, 29 passed in 0.53s"
+        ],
+        "valid": true
+      },
+      "ast_guard": {
+        "returncode": 0,
+        "verdict": "GREEN",
+        "tail": [
+          ".................                                                        [100%]",
+          "17 passed in 0.05s"
+        ],
+        "valid": true
+      },
+      "behavior_catches": true,
+      "ast_guard_catches": false
+    },
+    {
+      "scenario": "M4_filtering_penalty_folded_into_power",
+      "target": "src/network_nlo_eval/models/isrs_gn.py",
+      "injection_valid": true,
+      "behavior": {
+        "returncode": 1,
+        "verdict": "RED",
+        "tail": [
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[equalize_off_nf_7db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[express_attenuation_2db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[insertion_loss_3db]",
+          "21 failed, 24 passed in 0.55s"
+        ],
+        "valid": true
+      },
+      "ast_guard": {
+        "returncode": 0,
+        "verdict": "GREEN",
+        "tail": [
+          ".................                                                        [100%]",
+          "17 passed in 0.05s"
+        ],
+        "valid": true
+      },
+      "behavior_catches": true,
+      "ast_guard_catches": false
+    },
+    {
+      "scenario": "M5_lumped_assembly_restored",
+      "target": "src/network_nlo_eval/models/isrs_gn.py",
+      "injection_valid": true,
+      "behavior": {
+        "returncode": 1,
+        "verdict": "RED",
+        "tail": [
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[equalize_off_nf_7db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[express_attenuation_2db]",
+          "FAILED tests/test_fg20_roadm_injection_behavior.py::test_batch_matches_serial_candidate_by_candidate[insertion_loss_3db]",
+          "16 failed, 29 passed in 0.54s"
+        ],
+        "valid": true
+      },
+      "ast_guard": {
+        "returncode": 1,
+        "verdict": "RED",
+        "tail": [
+          "=========================== short test summary info ============================",
+          "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_src_tree_has_lumped_roadm_assembly",
+          "FAILED tests/test_fg18_lumped_assembly_tree_guard.py::test_guard_covers_the_fg17_blind_spot_file",
+          "2 failed, 15 passed in 0.06s"
+        ],
+        "valid": true
+      },
+      "behavior_catches": true,
+      "ast_guard_catches": true
+    }
+  ],
+  "verdict": {
+    "baseline_behavior_green": true,
+    "baseline_ast_guard_green": true,
+    "all_injections_valid": true,
+    "behavior_catches_all_semantic": true,
+    "ast_guard_catches_only_m5": [
+      "M5_lumped_assembly_restored"
+    ],
+    "n_scenarios": 5,
+    "n_behavior_red": 5,
+    "all_valid": true
+  }
+}

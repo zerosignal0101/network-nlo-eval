@@ -166,6 +166,92 @@ cython_debug/
 /.claude/
 docs/_examples
 sg_execution_times.rst
-results/
+/results/*
+!/results/fg1_golden_main.json
+!/results/fg1_physics_parity.json
 *.npz
 *.ipynb
+
+# FG-2 acceptance artifacts are committed so every F2-1..F2-8 number can be
+# recomputed from a tracked product (cross-WP rule 2). Placed after *.npz so the
+# negation takes effect.
+!/results/fg2_evidence.json
+!/results/fg2_golden_cplusl_230x50.npz
+
+# FG-4a acceptance artifacts are committed for the same reason: the golden is
+# the gate every later optimisation must pass, and the timings are the only
+# source for the speedup numbers, so both must be recomputable from a tracked
+# product rather than from prose.
+!/results/fg4a_golden.json
+!/results/fg4a_bench_baseline.json
+!/results/fg4a_bench_fg4a.json
+!/results/fg4a_bench_fg4a_vs_baseline.json
+!/results/fg4a_speedup_ab.json
+!/results/fg4b_speedup_ab.json
+
+# FG-U1 acceptance artifact, same rationale: every legacy-vs-tabular number in
+# docs/fg-u1_raman_spectrum.md (tilt, per-channel SNR deltas, interpolation
+# error, asymmetry magnitudes) must be recomputable from a tracked product
+# rather than from prose.
+!/results/fg_u1_raman.json
+
+# FU-2 acceptance artifact, same rationale: every number in
+# docs/fu2_scu_evaluation.md (band edges, guards, span report, N / bandwidth /
+# occupancy, per-band launch power, per-channel SNR, Raman tilt, legacy-vs-tabular
+# deltas, and the U/L gap ablation) must be recomputable from a tracked product
+# rather than from prose. Regenerate with
+# scripts/fu2_scu_evidence.py; verify with the same script's --check.
+!/results/fg_u2_scu.json
+
+# FG-4e acceptance artifacts: the batch-vs-serial speedup curve and the
+# per-candidate numeric check are the only source for the B=68 speedup, so they
+# are committed twice on purpose -- the two runs are independent samples and the
+# run-to-run spread is part of the reported result (see docs/fg4e_cpu_batching.md §4.2).
+!/results/fg4e_speedup_ab.json
+!/results/fg4e_speedup_ab_run2.json
+
+# FG-4g attribution artifact: the verdict that the 0.314 dB scan-vs-gate split
+# is a baseline skew and NOT an ode_accel effect rests entirely on the tier
+# invariance recorded here. docs/fg4g_matvec_attribution.md is rendered from it
+# and re-renderable via `scripts/fg4g_render_doc.py --check`, so the JSON has to
+# be tracked for the document to be verifiable rather than merely assertable.
+!/results/fg4g_attribution.json
+
+# FG-5 integration artifact: the post-merge ΔSNR table and the four re-run gate
+# results. docs/fg5_integration_note.md is rendered from it and re-renderable via
+# `scripts/fg5_integration_evidence.py --check`, tracked for the same reason.
+!/results/fg5_integration.json
+
+# FG-13 adjudication artifacts, same rationale: every number in
+# docs/fg13_evaluate_path_roadm.md -- the field-liveness census (which ROADM
+# fields are inert on evaluate_path, and by how much), the last-hop vs non-last-hop
+# structural control, and the per-scenario dBSNR impact of switching to the
+# authoritative assembly -- must be recomputable from a tracked product rather
+# than from prose. `fg13_roadm_probe.json` is re-verifiable with
+# `scripts/fg13_probe_roadm.py --check`; `fg13_impact_probe.json` is regenerated
+# by `scripts/fg13_impact_probe.py`.
+!/results/fg13_roadm_probe.json
+!/results/fg13_impact_probe.json
+
+# FG-14 provenance-divergence artifacts, same rationale as FG-13 above: (B) says
+# the assembly follows the in-repo authoritative definition and that its
+# divergence from origin/main is authorized, so the magnitude, mechanism and
+# authorization source must be recomputable from a tracked product rather than
+# prose. `fg14_assembly_divergence.json` also carries the "divergence must not
+# silently grow" ceiling that tests/test_fg14_assembly_provenance.py pins;
+# `fg14_pre_fix_baseline.json` is the frozen pre-fix reading that Gate 2's
+# per-scenario dBSNR table is measured against.
+!/results/fg14_assembly_divergence.json
+!/results/fg14_pre_fix_baseline.json
+
+# FG-20 artifacts. Same rationale as FG-13/FG-14 above: the adjudication in
+# `physics/qot_checker.py` and the per-hop entry points' behavioral contract
+# both rest on measurements that must be recomputable from a tracked product
+# rather than from prose in docs/. `fg20_mutation_test.json` is Gate 3 — it is
+# the evidence that the new behavior tests actually go RED (and that the
+# FG-18 AST guard does NOT), so it cannot be left untracked.
+!/results/fg20_mutation_test.json
+!/results/fg20_is_last_hop_forensics.json
+!/results/fg20_decision_compare.json
+!/results/fg20_rl_decision_trace.json
+!/results/fg20_rl_decision_trace_baseline.json

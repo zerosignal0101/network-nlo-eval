@@ -31,6 +31,16 @@ LEGACY_SCENARIOS = {
     "legacy_blocked_channel",
 }
 
+#: ``ode_accel`` 里**只能**跑 legacy 拉曼谱的档位：``"off"`` 在核内逐对重建 legacy
+#: 折线，``"cached"`` 只是把它记忆化，两者结构上都无法换谱。FG-15 定的口径是
+#: "显式拒绝而非静默回退"，因此这些档位必须由调用方显式配 ``raman_spectrum``。
+LEGACY_ONLY_ACCEL = ("off", "cached")
+
+
+def _raman_tier_for(ode_accel: str) -> str:
+    """返回该 ``ode_accel`` 档位可用的 Raman 谱档位（legacy-only 档显式配 legacy）。"""
+    return "legacy" if ode_accel in LEGACY_ONLY_ACCEL else "tabular"
+
 
 def _load(name: str) -> dict:
     path = RESULTS / name
@@ -119,7 +129,13 @@ def test_guard4_capabilities_reachable():
     grid = SpectrumGrid(8, 50e9, 193.1e12)
     power = np.full(8, 1e-3)
     for mode in ODE_ACCEL_MODES:
-        ev = MultiBandISRSGN(grid, fiber, 32e9, ode_accel=mode)
+        # WP-MERGE-FG-FLEX（已声明的测试改动，见 docs/wp_merge_fg_into_flex.md V5）：
+        # 合并后 ``ode_accel`` 是两侧并集，``"off"`` / ``"cached"`` 是 legacy-only
+        # 的冻结路径，**必须**显式配 ``raman_spectrum="legacy"``（FG-15 的口径是
+        # "显式拒绝而非静默回退"）。此前这里不传该参数，是因为 Raman 档位当时还不存在。
+        ev = MultiBandISRSGN(
+            grid, fiber, 32e9, ode_accel=mode, raman_spectrum=_raman_tier_for(mode)
+        )
         out = ev._calc_span_noise_and_power(power, 80e3, EDFAConfig(target_gain_db=17.0))
         assert np.all(np.isfinite(out[3]))
     with pytest.raises(ValueError):
@@ -164,8 +180,8 @@ def test_guard4b_cached_tier_is_bit_identical_to_off():
     power = np.full(8, 1e-3)
     edfa = EDFAConfig(target_gain_db=17.0, noise_figure_db=5.0)
 
-    off = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="off")
-    cached = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="cached")
+    off = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="off", raman_spectrum="legacy")
+    cached = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="cached", raman_spectrum="legacy")
     a = off._calc_span_noise_and_power(power, 80e3, edfa)
     b = cached._calc_span_noise_and_power(power, 80e3, edfa)
     c = cached._calc_span_noise_and_power(power, 80e3, edfa)  # 命中缓存

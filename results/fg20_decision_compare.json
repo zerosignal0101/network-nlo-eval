@@ -1,0 +1,14 @@
+{
+  "question": "固定 seed 的 RL 决策序列是否逐项相同 (FG-20 vs 9115da2)",
+  "new_phys": "/home/zsig/Documents/gits/wt/fg-guard/src/network_nlo_eval/__init__.py",
+  "baseline_phys": "/tmp/fg20_base_9115da2/src/network_nlo_eval/__init__.py",
+  "rl_source": "/home/zsig/Documents/gits/wt/fg-rt/src/multiband_optical_rl/__init__.py",
+  "meta_equal": true,
+  "steps_new": 30,
+  "steps_baseline": 30,
+  "n_mismatches": 0,
+  "mismatches": [],
+  "n_allocated_new": 10,
+  "n_allocated_base": 10,
+  "identical": true
+}

@@ -1,0 +1,242 @@
+{
+  "derived": {
+    "dp_dz_calls_per_span_nsteps20": 80,
+    "dp_dz_total_share_of_span_kernel": 0.555293189909086,
+    "g_build_njit_est_s": 4.841212648898363e-05,
+    "g_build_njit_est_share_of_span_kernel": 0.00951972191754487,
+    "note": "g_build_njit_est_s is derived by subtraction from min-of-reps timings, not measured directly; it can be negative when the true G-build cost sits below this machine's timing noise floor.",
+    "ode_slope_s_per_step": 0.00013953188777362046
+  },
+  "features": {
+    "has_branchless_dp_dz": true,
+    "has_g_cache_api": true,
+    "has_memoised_g": true
+  },
+  "label": "fg4a-optimized",
+  "loadavg_at_start": [
+    10.6,
+    21.42,
+    22.37
+  ],
+  "measurements": {
+    "calc_dp_dz_matvec": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 3.411993384361267e-05,
+      "median_s": 8.499016985297203e-06,
+      "min_s": 8.260947652161121e-06,
+      "reps": 15,
+      "spread_ratio": 4.130268739166585
+    },
+    "calc_dp_dz_single": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 4.1839899495244026e-05,
+      "median_s": 3.545195795595646e-05,
+      "min_s": 3.529898822307587e-05,
+      "reps": 15,
+      "spread_ratio": 1.1853002480080206
+    },
+    "calc_exact_power_profile_ode": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.0028998350026085973,
+      "median_s": 0.002844266942702234,
+      "min_s": 0.0028407139470800757,
+      "reps": 15,
+      "spread_ratio": 1.0208120411382113
+    },
+    "calc_exact_power_profile_ode_nsteps1": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.00019837298896163702,
+      "median_s": 0.00018992309924215078,
+      "min_s": 0.0001896080793812871,
+      "reps": 15,
+      "spread_ratio": 1.046226456219328
+    },
+    "calc_span_noise_and_power_jit": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.005277778021991253,
+      "median_s": 0.005183650064282119,
+      "min_s": 0.0050854559522122145,
+      "reps": 15,
+      "spread_ratio": 1.0378180583189156
+    },
+    "calc_span_noise_and_power_jit_cached_g": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.0050117369974032044,
+      "median_s": 0.004959697020240128,
+      "min_s": 0.004928245907649398,
+      "reps": 15,
+      "spread_ratio": 1.0169413400464078
+    },
+    "calc_span_noise_and_power_jit_matvec": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.002854685066267848,
+      "median_s": 0.002828989992849529,
+      "min_s": 0.002812188002280891,
+      "reps": 15,
+      "spread_ratio": 1.0151117435791948
+    },
+    "calculate_ase_noise_variance": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 4.724948666989803e-06,
+      "median_s": 9.570503607392311e-07,
+      "min_s": 8.950009942054749e-07,
+      "reps": 15,
+      "spread_ratio": 5.2792663891779394
+    },
+    "compute_nli_variances": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.0024664129596203566,
+      "median_s": 0.0022803290048614144,
+      "min_s": 0.0022684999275952578,
+      "reps": 15,
+      "spread_ratio": 1.0872440107304293
+    },
+    "evaluate_path_2_span": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.010326227988116443,
+      "median_s": 0.009953662985935807,
+      "min_s": 0.009875236079096794,
+      "reps": 15,
+      "spread_ratio": 1.0456689749396753
+    },
+    "g_matrix_python_loop": {
+      "loadavg_after": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "loadavg_before": [
+        10.6,
+        21.42,
+        22.37
+      ],
+      "max_s": 0.013278195983730257,
+      "median_s": 0.012780272983945906,
+      "min_s": 0.012746291002258658,
+      "reps": 15,
+      "spread_ratio": 1.0417301771454412
+    }
+  },
+  "provenance": {
+    "cpu_model": "12th Gen Intel(R) Core(TM) i7-12700K",
+    "git_rev": "ea7ecb0dd01d701060cef3b4efa7dddb171ddc86",
+    "numba_cache_dir": "/tmp/fg-fast-nb",
+    "numpy": "2.5.3",
+    "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14"
+  },
+  "schema_version": 1,
+  "share_of_span_kernel": {
+    "calc_dp_dz_matvec": 0.0016244261536799945,
+    "calc_dp_dz_single": 0.006941164873863576,
+    "calc_exact_power_profile_ode": 0.5585957235249166,
+    "calc_exact_power_profile_ode_nsteps1": 0.037284381412999175,
+    "calc_span_noise_and_power_jit": 1.0,
+    "calc_span_noise_and_power_jit_cached_g": 0.9690863422984858,
+    "calc_span_noise_and_power_jit_matvec": 0.5529864045047065,
+    "calculate_ase_noise_variance": 0.00017599228124592095,
+    "compute_nli_variances": 0.446076015388245,
+    "evaluate_path_2_span": 1.941858541671369,
+    "g_matrix_python_loop": 2.506420490519423
+  },
+  "workload": {
+    "center_frequency_hz": 190212700000000.0,
+    "channel_spacing_hz": 50000000000.0,
+    "cr_w_m_hz": 2.8e-17,
+    "launch_power_w": 0.0001,
+    "n_loaded_channels": 202,
+    "n_steps": 20,
+    "num_channels": 230,
+    "span_length_m": 80000.0
+  }
+}

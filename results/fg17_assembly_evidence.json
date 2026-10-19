@@ -1,0 +1,1204 @@
+{
+  "package": "/home/zsig/Documents/gits/wt/fg-converge/src/network_nlo_eval/__init__.py",
+  "h_planck": 6.62607015e-34,
+  "formulas": {
+    "rwa/qot_checker.py::fold_roadm_terms": {
+      "loss": "10 ** (config.path_loss_db(operation) / 10)   [LINEAR]",
+      "operation": "\"drop\" if is_last_hop else \"express\"",
+      "filtering_penalty": "10 ** (config.filtering_penalty_db / 10)   [LINEAR, noise-only]",
+      "equalize": "config.equalize_output_power",
+      "booster_nf": "10 ** (config.booster_noise_figure_db / 10) if equalize else None",
+      "booster_base": "10 ** (config.booster_noise_figure_db / 10) * h",
+      "booster_ase_term": "booster_base * f * Rs * (loss - 1.0)   [statistical ASE, W]",
+      "signal_when_equalize": "NOT attenuated by loss",
+      "signal_when_not_equalize": "signal /= loss"
+    },
+    "physics/qot_checker.py::propagate_path": {
+      "insertion_loss_db": "roadm.path_loss_db(\"drop\" if hop_index == len(fiber_configs)-1 else \"express\")  [dB]",
+      "equalize": "roadm.equalize_output_power",
+      "booster": "physical EDFA(gain_db=same loss dB, nf_db=roadm.booster_noise_figure_db)",
+      "signal_when_equalize": "ROADM attenuates by loss, then a real EDFA adds gain_db=loss back",
+      "signal_when_not_equalize": "ROADM attenuates by loss, no EDFA",
+      "filtering_penalty_db": "NOT READ — filtering is done by the physical WSS (filter_order/passband_hz)",
+      "add_drop_loss_db / express_attenuation_db": "NOT READ directly — only via path_loss_db(operation)"
+    }
+  },
+  "summary": {
+    "n_scenarios": 25,
+    "equalize_mismatches": 0,
+    "booster_presence_mismatches": 0,
+    "loss_roundtrip_non_exact": 0,
+    "loss_roundtrip_non_exact_scenarios": [],
+    "max_loss_roundtrip_abs_err_db": 0.0,
+    "max_nf_roundtrip_abs_err_db": 0.0
+  },
+  "rows": [
+    {
+      "scenario": "fg4a:path_cplusl_roadm/hop0(express)",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": [
+          40,
+          41,
+          42,
+          43
+        ]
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_two_hop_equalize_on/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_two_hop_equalize_on/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_three_hop_equalize_on/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_three_hop_equalize_on/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_two_hop_equalize_off/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": false,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": false,
+        "booster_gain_db": null,
+        "booster_nf_db": null
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": false,
+        "booster_nf_lin": null,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": null
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": null,
+        "nf_roundtrip_abs_err_db": null
+      }
+    },
+    {
+      "scenario": "fu4:legacy_two_hop_equalize_off/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": false,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": false,
+        "booster_gain_db": null,
+        "booster_nf_db": null
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": false,
+        "booster_nf_lin": null,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": null
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": null,
+        "nf_roundtrip_abs_err_db": null
+      }
+    },
+    {
+      "scenario": "fu4:legacy_express_attenuation/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 2.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 7.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 7.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 5.011872336272722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 7.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 7.0,
+        "loss_db_reconstructed_from_linear": 7.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_express_attenuation/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 2.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_high_filtering/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 2.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.5848931924611136,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_high_filtering/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 2.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.5848931924611136,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_blocked_channel/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [
+          3
+        ],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [
+          3
+        ],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:legacy_blocked_channel/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [
+          3
+        ],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [
+          3
+        ],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:flex_two_hop_equalize_on/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:flex_two_hop_equalize_on/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:flex_three_hop_equalize_on/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:flex_three_hop_equalize_on/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:flex_two_hop_equalize_off/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": false,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": false,
+        "booster_gain_db": null,
+        "booster_nf_db": null
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": false,
+        "booster_nf_lin": null,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": null
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": null,
+        "nf_roundtrip_abs_err_db": null
+      }
+    },
+    {
+      "scenario": "fu4:flex_two_hop_equalize_off/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": false,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": false,
+        "booster_gain_db": null,
+        "booster_nf_db": null
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": false,
+        "booster_nf_lin": null,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": null
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": null,
+        "nf_roundtrip_abs_err_db": null
+      }
+    },
+    {
+      "scenario": "fu4:flex_blocked_slots/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": [
+          13
+        ]
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fu4:flex_blocked_slots/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": [
+          13
+        ]
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "single_span:hop0_is_last(drop)",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 1,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "single_span_express_lookalike",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 1,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fg4a:flexgrid_mixed/express",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": false,
+      "n_fibers": 2,
+      "hop_index": 0,
+      "physics_side": {
+        "insertion_loss_db": 5.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 5.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.1622776601683795,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 5.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 5.0,
+        "loss_db_reconstructed_from_linear": 5.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    },
+    {
+      "scenario": "fg4a:flexgrid_mixed/drop",
+      "roadm_config": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2,
+        "passband_hz": null,
+        "filter_order": 4,
+        "express_attenuation_db": 0.0,
+        "add_drop_loss_db": 1.0,
+        "booster_noise_figure_db": 5.0,
+        "equalize_output_power": true,
+        "blocked_channels": [],
+        "blocked_slots": []
+      },
+      "is_last_hop": true,
+      "n_fibers": 2,
+      "hop_index": 1,
+      "physics_side": {
+        "insertion_loss_db": 6.0,
+        "passband_hz": null,
+        "filter_order": 4,
+        "equalize": true,
+        "booster_gain_db": 6.0,
+        "booster_nf_db": 5.0
+      },
+      "rwa_side": {
+        "loss_lin": 3.9810717055349722,
+        "filtering_penalty": 1.0471285480508996,
+        "equalize": true,
+        "booster_nf_lin": 3.1622776601683795,
+        "booster_base": 2.0953473610053544e-33,
+        "blocked": [],
+        "loss_db_reconstructed": 6.0,
+        "booster_nf_db_reconstructed": 5.0
+      },
+      "verdict": {
+        "equalize_match": true,
+        "booster_presence_match": true,
+        "loss_db_direct": 6.0,
+        "loss_db_reconstructed_from_linear": 6.0,
+        "loss_roundtrip_bit_exact": true,
+        "loss_roundtrip_abs_err_db": 0.0,
+        "nf_roundtrip_bit_exact": true,
+        "nf_roundtrip_abs_err_db": 0.0
+      }
+    }
+  ]
+}

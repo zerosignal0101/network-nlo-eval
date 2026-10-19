@@ -1,0 +1,70 @@
+{
+  "loadavg_after": [
+    4.33,
+    10.72,
+    14.93
+  ],
+  "loadavg_before": [
+    4.48,
+    10.97,
+    15.05
+  ],
+  "loadavg_delta_1min": -0.15000000000000036,
+  "method": "same-process interleaved A/B (order flipped each round), min-sample ratio; both arms share the bit-exact FG-4a G cache so only the NLI evaluation differs",
+  "nli_speedup_vs_ceiling": {
+    "attainable_ceiling": 4.121923536360391,
+    "fraction_of_attainable_ceiling": 0.5604676614060868,
+    "fraction_of_nominal_ceiling": 0.44427016248434914,
+    "measured": 2.3102048449186157,
+    "nli_cost_after_ms": 0.48157095443457365,
+    "nli_cost_before_ms": 1.9170889863744378,
+    "nominal_ceiling": 5.2,
+    "ode_floor_ms": 0.6140730110928416,
+    "residual_nli_fraction_of_before": 0.1902568681563808
+  },
+  "numeric_check": {
+    "nli_within_1e-12": true,
+    "nli_worst_relative_deviation": 4.1089642659639744e-16,
+    "ode_output_bit_identical_between_arms": true
+  },
+  "provenance": {
+    "baseline_rev": "ea7ecb0",
+    "git_rev": "a0375324e06eda48750985e570f435f8af76619e",
+    "numpy": "2.5.3",
+    "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14"
+  },
+  "schema_version": 1,
+  "speedups": {
+    "cumulative_vs_pre_fg4a_baseline": {
+      "a_median_s": 0.004748634062707424,
+      "a_min_s": 0.004620654974132776,
+      "a_spread_ratio": 1.077895450882167,
+      "b_median_s": 0.0011959309922531247,
+      "b_min_s": 0.0011396550107747316,
+      "b_spread_ratio": 1.2695183911190306,
+      "median_speedup_a_over_b": 3.970658920512658,
+      "samples": 450,
+      "speedup_a_over_b": 4.05443307882416
+    },
+    "nli_vectorisation_only": {
+      "a_median_s": 0.0025521490024402738,
+      "a_min_s": 0.0025311619974672794,
+      "a_spread_ratio": 1.0850735949786123,
+      "b_median_s": 0.0011210909578949213,
+      "b_min_s": 0.0010956439655274153,
+      "b_spread_ratio": 1.3076501007808523,
+      "median_speedup_a_over_b": 2.2764870097895162,
+      "samples": 450,
+      "speedup_a_over_b": 2.3102048449186157
+    }
+  },
+  "theoretical_ceiling": 5.2,
+  "workload": {
+    "n_effective_spans": 1,
+    "n_loaded_channels": 202,
+    "n_steps": 20,
+    "num_channels": 230,
+    "span_length_m": 100000.0
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "derived": {
+    "dp_dz_calls_per_span_nsteps20": 80,
+    "dp_dz_total_share_of_span_kernel": 0.538152043086071,
+    "g_build_njit_est_s": 4.413304850459099e-05,
+    "g_build_njit_est_share_of_span_kernel": 0.005645799235706816,
+    "note": "g_build_njit_est_s is derived by subtraction from min-of-reps timings, not measured directly; it can be negative when the true G-build cost sits below this machine's timing noise floor.",
+    "ode_slope_s_per_step": 0.0003676547387026642
+  },
+  "features": {
+    "has_branchless_dp_dz": false,
+    "has_g_cache_api": false,
+    "has_memoised_g": false
+  },
+  "label": "baseline-fg4a",
+  "loadavg_at_start": [
+    42.13,
+    37.42,
+    24.62
+  ],
+  "measurements": {
+    "calc_dp_dz_single": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 7.554399780929089e-05,
+      "median_s": 5.6039891205728054e-05,
+      "min_s": 5.258398596197367e-05,
+      "reps": 15,
+      "spread_ratio": 1.4366350596533486
+    },
+    "calc_exact_power_profile_ode": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 0.01693872211035341,
+      "median_s": 0.01027931203134358,
+      "min_s": 0.007239909027703106,
+      "reps": 15,
+      "spread_ratio": 2.339631899453203
+    },
+    "calc_exact_power_profile_ode_nsteps1": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 0.0033265689853578806,
+      "median_s": 0.0002628170186653733,
+      "min_s": 0.00025446899235248566,
+      "reps": 15,
+      "spread_ratio": 13.072590709794536
+    },
+    "calc_span_noise_and_power_jit": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 0.009314476046711206,
+      "median_s": 0.007872879039496183,
+      "min_s": 0.007816970930434763,
+      "reps": 15,
+      "spread_ratio": 1.1915710227917087
+    },
+    "calculate_ase_noise_variance": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 7.494003511965275e-06,
+      "median_s": 1.5129335224628448e-06,
+      "min_s": 1.3599637895822525e-06,
+      "reps": 15,
+      "spread_ratio": 5.510443417223078
+    },
+    "compute_nli_variances": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 0.01115787390153855,
+      "median_s": 0.006478289025835693,
+      "min_s": 0.0034563629887998104,
+      "reps": 15,
+      "spread_ratio": 3.228212412207613
+    },
+    "evaluate_path_2_span": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 0.018054528045468032,
+      "median_s": 0.016087424010038376,
+      "min_s": 0.01556779199745506,
+      "reps": 15,
+      "spread_ratio": 1.1597359502503304
+    },
+    "g_matrix_python_loop": {
+      "loadavg_after": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "loadavg_before": [
+        42.13,
+        37.42,
+        24.62
+      ],
+      "max_s": 0.07762598304543644,
+      "median_s": 0.024812637944705784,
+      "min_s": 0.023212390020489693,
+      "reps": 15,
+      "spread_ratio": 3.3441615868471795
+    }
+  },
+  "provenance": {
+    "cpu_model": "12th Gen Intel(R) Core(TM) i7-12700K",
+    "git_rev": "ea7ecb0dd01d701060cef3b4efa7dddb171ddc86",
+    "numba_cache_dir": "/tmp/fg-fast-nb",
+    "numpy": "2.5.3",
+    "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14"
+  },
+  "schema_version": 1,
+  "share_of_span_kernel": {
+    "calc_dp_dz_single": 0.006726900538575888,
+    "calc_exact_power_profile_ode": 0.9261783230528705,
+    "calc_exact_power_profile_ode_nsteps1": 0.03255340139001037,
+    "calc_span_noise_and_power_jit": 1.0,
+    "calculate_ase_noise_variance": 0.00017397580235169356,
+    "compute_nli_variances": 0.442161422827189,
+    "evaluate_path_2_span": 1.9915376603030572,
+    "g_matrix_python_loop": 2.9694865475467065
+  },
+  "workload": {
+    "center_frequency_hz": 190212700000000.0,
+    "channel_spacing_hz": 50000000000.0,
+    "cr_w_m_hz": 2.8e-17,
+    "launch_power_w": 0.0001,
+    "n_loaded_channels": 202,
+    "n_steps": 20,
+    "num_channels": 230,
+    "span_length_m": 80000.0
+  }
+}

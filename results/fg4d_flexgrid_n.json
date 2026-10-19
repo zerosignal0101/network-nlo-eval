@@ -1,0 +1,338 @@
+{
+  "slot_width_hz": 12500000000.0,
+  "band_edges_thz": {
+    "L": [
+      184.4877,
+      191.5607
+    ],
+    "C": [
+      191.5607,
+      195.9428
+    ],
+    "S": [
+      195.9428,
+      205.3373
+    ],
+    "U": [
+      169.37427005649718,
+      180.59786626506025
+    ]
+  },
+  "u_band_source": "ITU-T U 波段 1660–1770 nm（按 c 精确换算）；本仓与 RL 仓均无 U 段定义",
+  "realistic_demands_gbps_modulation": [
+    [
+      100.0,
+      "QPSK"
+    ],
+    [
+      200.0,
+      "QPSK"
+    ],
+    [
+      300.0,
+      "16QAM"
+    ],
+    [
+      400.0,
+      "64QAM"
+    ]
+  ],
+  "rows": [
+    {
+      "tier": "C+L",
+      "bands": [
+        "L",
+        "C"
+      ],
+      "load_fraction": 0.25,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 916,
+      "bandwidth_thz": 11.45,
+      "channels_at_50ghz": 229,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 38,
+      "slots_used": 226,
+      "mean_slots_per_connection": 5.947368421052632
+    },
+    {
+      "tier": "C+L",
+      "bands": [
+        "L",
+        "C"
+      ],
+      "load_fraction": 0.5,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 916,
+      "bandwidth_thz": 11.45,
+      "channels_at_50ghz": 229,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 76,
+      "slots_used": 456,
+      "mean_slots_per_connection": 6.0
+    },
+    {
+      "tier": "C+L",
+      "bands": [
+        "L",
+        "C"
+      ],
+      "load_fraction": 0.75,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 916,
+      "bandwidth_thz": 11.45,
+      "channels_at_50ghz": 229,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 115,
+      "slots_used": 686,
+      "mean_slots_per_connection": 5.965217391304348
+    },
+    {
+      "tier": "C+L",
+      "bands": [
+        "L",
+        "C"
+      ],
+      "load_fraction": 1.0,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 916,
+      "bandwidth_thz": 11.45,
+      "channels_at_50ghz": 229,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 153,
+      "slots_used": 916,
+      "mean_slots_per_connection": 5.9869281045751634
+    },
+    {
+      "tier": "S+C+L",
+      "bands": [
+        "L",
+        "C",
+        "S"
+      ],
+      "load_fraction": 0.25,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 1667,
+      "bandwidth_thz": 20.8375,
+      "channels_at_50ghz": 416,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 70,
+      "slots_used": 416,
+      "mean_slots_per_connection": 5.942857142857143
+    },
+    {
+      "tier": "S+C+L",
+      "bands": [
+        "L",
+        "C",
+        "S"
+      ],
+      "load_fraction": 0.5,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 1667,
+      "bandwidth_thz": 20.8375,
+      "channels_at_50ghz": 416,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 139,
+      "slots_used": 832,
+      "mean_slots_per_connection": 5.985611510791367
+    },
+    {
+      "tier": "S+C+L",
+      "bands": [
+        "L",
+        "C",
+        "S"
+      ],
+      "load_fraction": 0.75,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 1667,
+      "bandwidth_thz": 20.8375,
+      "channels_at_50ghz": 416,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 208,
+      "slots_used": 1248,
+      "mean_slots_per_connection": 6.0
+    },
+    {
+      "tier": "S+C+L",
+      "bands": [
+        "L",
+        "C",
+        "S"
+      ],
+      "load_fraction": 1.0,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 1667,
+      "bandwidth_thz": 20.8375,
+      "channels_at_50ghz": 416,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 278,
+      "slots_used": 1666,
+      "mean_slots_per_connection": 5.9928057553956835
+    },
+    {
+      "tier": "S+C+L+U",
+      "bands": [
+        "L",
+        "C",
+        "S",
+        "U"
+      ],
+      "load_fraction": 0.25,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 2877,
+      "bandwidth_thz": 35.9625,
+      "channels_at_50ghz": 719,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 120,
+      "slots_used": 716,
+      "mean_slots_per_connection": 5.966666666666667
+    },
+    {
+      "tier": "S+C+L+U",
+      "bands": [
+        "L",
+        "C",
+        "S",
+        "U"
+      ],
+      "load_fraction": 0.5,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 2877,
+      "bandwidth_thz": 35.9625,
+      "channels_at_50ghz": 719,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 240,
+      "slots_used": 1436,
+      "mean_slots_per_connection": 5.983333333333333
+    },
+    {
+      "tier": "S+C+L+U",
+      "bands": [
+        "L",
+        "C",
+        "S",
+        "U"
+      ],
+      "load_fraction": 0.75,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 2877,
+      "bandwidth_thz": 35.9625,
+      "channels_at_50ghz": 719,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 360,
+      "slots_used": 2156,
+      "mean_slots_per_connection": 5.988888888888889
+    },
+    {
+      "tier": "S+C+L+U",
+      "bands": [
+        "L",
+        "C",
+        "S",
+        "U"
+      ],
+      "load_fraction": 1.0,
+      "slot_width_hz": 12500000000.0,
+      "num_slots": 2877,
+      "bandwidth_thz": 35.9625,
+      "channels_at_50ghz": 719,
+      "demand_widths_slots": [
+        4,
+        8,
+        6,
+        6
+      ],
+      "connections_modeB_N": 480,
+      "slots_used": 2876,
+      "mean_slots_per_connection": 5.991666666666666
+    }
+  ],
+  "kernel_timings_modeB": [
+    {
+      "N": 153,
+      "min_seconds": 0.00046939204912632704,
+      "median_seconds": 0.00048416899517178535,
+      "samples": 1241
+    },
+    {
+      "N": 230,
+      "min_seconds": 0.0010948710842058063,
+      "median_seconds": 0.0011429570149630308,
+      "samples": 523
+    },
+    {
+      "N": 278,
+      "min_seconds": 0.0017519199755042791,
+      "median_seconds": 0.0018526370404288173,
+      "samples": 324
+    },
+    {
+      "N": 480,
+      "min_seconds": 0.0073022430296987295,
+      "median_seconds": 0.00807202747091651,
+      "samples": 76
+    },
+    {
+      "N": 900,
+      "min_seconds": 0.02127284195739776,
+      "median_seconds": 0.025611281453166157,
+      "samples": 24
+    }
+  ]
+}

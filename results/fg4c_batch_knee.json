@@ -1,0 +1,2522 @@
+{
+  "config": {
+    "batch_sizes": [
+      1,
+      4,
+      16,
+      64,
+      256,
+      1024
+    ],
+    "gpu_mem_fraction_cap": 0.5,
+    "grid_specs": [
+      {
+        "n_ch": 230,
+        "spacing_hz": 50000000000.0
+      },
+      {
+        "n_ch": 900,
+        "spacing_hz": 50000000000.0
+      },
+      {
+        "n_ch": 2100,
+        "spacing_hz": 25000000000.0
+      }
+    ],
+    "max_rel_deviation_budget": 1e-12,
+    "n_steps": 20,
+    "rounds": 7,
+    "span_length_m": 100000.0
+  },
+  "env_end": {
+    "gpu": {
+      "compute_apps": [
+        "2866005, 878"
+      ],
+      "foreign_process_count": 1,
+      "memory_total_mib": 12288.0,
+      "memory_used_mib": 885.0,
+      "utilization_pct": 86.0
+    },
+    "loadavg": [
+      25.33,
+      19.11,
+      19.41
+    ]
+  },
+  "env_start": {
+    "gpu": {
+      "compute_apps": [],
+      "foreign_process_count": 0,
+      "memory_total_mib": 12288.0,
+      "memory_used_mib": 7.0,
+      "utilization_pct": 0.0
+    },
+    "loadavg": [
+      17.36,
+      21.57,
+      20.91
+    ]
+  },
+  "knee_by_n": {
+    "2100": {
+      "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+      "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+      "cpu_batched_beats_cpu_serial_from_batch": 1,
+      "first_gpu_win_ratio": 6.854186541289053,
+      "gpu_beats_cpu_serial_from_batch": 1,
+      "per_batch": [
+        {
+          "batch": 1,
+          "cpu_batched_us_per_candidate": 72861.15200258791,
+          "cpu_serial_us_per_candidate": 145033.2299573347,
+          "gpu_over_cpu_batched": 0.2904126739673333,
+          "gpu_over_cpu_serial": 0.14589623348826045,
+          "gpu_us_per_candidate": 21159.801981411874
+        },
+        {
+          "batch": 4,
+          "cpu_batched_us_per_candidate": 21141.44476945512,
+          "cpu_serial_us_per_candidate": 145850.7427596487,
+          "gpu_over_cpu_batched": 0.22669860321664195,
+          "gpu_over_cpu_serial": 0.03286055256581952,
+          "gpu_us_per_candidate": 4792.735999217257
+        },
+        {
+          "batch": 16,
+          "cpu_batched_us_per_candidate": 9664.798373705707,
+          "cpu_serial_us_per_candidate": 149267.46443961747,
+          "gpu_over_cpu_batched": 0.3158215523184706,
+          "gpu_over_cpu_serial": 0.020448874352411345,
+          "gpu_us_per_candidate": 3052.3516252287664
+        },
+        {
+          "batch": 64,
+          "cpu_batched_us_per_candidate": 7730.610202997923,
+          "cpu_serial_us_per_candidate": 147257.61095360212,
+          "gpu_over_cpu_batched": 0.07753976153209806,
+          "gpu_over_cpu_serial": 0.004070619289259903,
+          "gpu_us_per_candidate": 599.4296716380632
+        },
+        {
+          "batch": 256,
+          "cpu_batched_us_per_candidate": 8054.407183863077,
+          "cpu_serial_us_per_candidate": 149131.59012075994,
+          "gpu_over_cpu_batched": 0.06598996728881362,
+          "gpu_over_cpu_serial": 0.0035640340598763636,
+          "gpu_us_per_candidate": 531.5100665939099
+        },
+        {
+          "batch": 1024,
+          "cpu_batched_us_per_candidate": 68491.42817486609,
+          "cpu_serial_us_per_candidate": 171377.88851368896,
+          "gpu_over_cpu_batched": 0.0067152196792286956,
+          "gpu_over_cpu_serial": 0.0026837475378371336,
+          "gpu_us_per_candidate": 459.9349863383395
+        }
+      ]
+    },
+    "230": {
+      "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+      "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+      "cpu_batched_beats_cpu_serial_from_batch": 4,
+      "first_gpu_win_ratio": 3.8309757610392303,
+      "gpu_beats_cpu_serial_from_batch": 16,
+      "per_batch": [
+        {
+          "batch": 1,
+          "cpu_batched_us_per_candidate": 1966.854091733694,
+          "cpu_serial_us_per_candidate": 1033.93301833421,
+          "gpu_over_cpu_batched": 1.542843483821509,
+          "gpu_over_cpu_serial": 2.9349560999106337,
+          "gpu_us_per_candidate": 3034.5480190590024
+        },
+        {
+          "batch": 4,
+          "cpu_batched_us_per_candidate": 660.3649817407131,
+          "cpu_serial_us_per_candidate": 958.5352381691337,
+          "gpu_over_cpu_batched": 1.578253349674182,
+          "gpu_over_cpu_serial": 1.0873082208542761,
+          "gpu_us_per_candidate": 1042.2232444398105
+        },
+        {
+          "batch": 16,
+          "cpu_batched_us_per_candidate": 218.1741874665022,
+          "cpu_serial_us_per_candidate": 952.9803719487973,
+          "gpu_over_cpu_batched": 1.140174134065275,
+          "gpu_over_cpu_serial": 0.2610301036539917,
+          "gpu_us_per_candidate": 248.7565652700141
+        },
+        {
+          "batch": 64,
+          "cpu_batched_us_per_candidate": 163.64643852284644,
+          "cpu_serial_us_per_candidate": 956.3702969899168,
+          "gpu_over_cpu_batched": 0.7007712427267045,
+          "gpu_over_cpu_serial": 0.11991037201008287,
+          "gpu_us_per_candidate": 114.67871809145436
+        },
+        {
+          "batch": 256,
+          "cpu_batched_us_per_candidate": 118.17712083939114,
+          "cpu_serial_us_per_candidate": 957.670129082544,
+          "gpu_over_cpu_batched": 0.32570374030573873,
+          "gpu_over_cpu_serial": 0.0401920547661097,
+          "gpu_us_per_candidate": 38.490730275952956
+        },
+        {
+          "batch": 1024,
+          "cpu_batched_us_per_candidate": 114.70898823517928,
+          "cpu_serial_us_per_candidate": 962.3563837521942,
+          "gpu_over_cpu_batched": 0.2193924089888574,
+          "gpu_over_cpu_serial": 0.026150687714532557,
+          "gpu_us_per_candidate": 25.166281261590484
+        }
+      ]
+    },
+    "900": {
+      "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+      "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+      "cpu_batched_beats_cpu_serial_from_batch": 1,
+      "first_gpu_win_ratio": 2.1656836628726217,
+      "gpu_beats_cpu_serial_from_batch": 1,
+      "per_batch": [
+        {
+          "batch": 1,
+          "cpu_batched_us_per_candidate": 4346.800968050957,
+          "cpu_serial_us_per_candidate": 14865.417033433914,
+          "gpu_over_cpu_batched": 1.579109774899718,
+          "gpu_over_cpu_serial": 0.46174795384177797,
+          "gpu_us_per_candidate": 6864.075898192823
+        },
+        {
+          "batch": 4,
+          "cpu_batched_us_per_candidate": 2519.8767543770373,
+          "cpu_serial_us_per_candidate": 15339.249250246212,
+          "gpu_over_cpu_batched": 0.7897888166665369,
+          "gpu_over_cpu_serial": 0.12974366916640392,
+          "gpu_us_per_candidate": 1990.170479984954
+        },
+        {
+          "batch": 16,
+          "cpu_batched_us_per_candidate": 1040.9077513031662,
+          "cpu_serial_us_per_candidate": 15053.761751914863,
+          "gpu_over_cpu_batched": 0.6166182836679936,
+          "gpu_over_cpu_serial": 0.04263670181864182,
+          "gpu_us_per_candidate": 641.8427510652691
+        },
+        {
+          "batch": 64,
+          "cpu_batched_us_per_candidate": 1066.1147334758425,
+          "cpu_serial_us_per_candidate": 15181.012437096797,
+          "gpu_over_cpu_batched": 0.29197647389393944,
+          "gpu_over_cpu_serial": 0.020504589001323716,
+          "gpu_us_per_candidate": 311.2804206466535
+        },
+        {
+          "batch": 256,
+          "cpu_batched_us_per_candidate": 866.3049220558605,
+          "cpu_serial_us_per_candidate": 15236.287140851346,
+          "gpu_over_cpu_batched": 0.162446622279175,
+          "gpu_over_cpu_serial": 0.009236391198908263,
+          "gpu_us_per_candidate": 140.7283084517985
+        },
+        {
+          "batch": 1024,
+          "cpu_batched_us_per_candidate": 1363.7454151194106,
+          "cpu_serial_us_per_candidate": 16155.082622049122,
+          "gpu_over_cpu_batched": 0.08124447933922159,
+          "gpu_over_cpu_serial": 0.006858323711164876,
+          "gpu_us_per_candidate": 110.79678620262712
+        }
+      ]
+    }
+  },
+  "method": "same-process interleaved CPU/GPU, order flipped each round, min-sample ratio; complete single-span kernel (RK4/SRS ODE + tensorised NLI + ASE), not a GEMV alone",
+  "numeric_check": [
+    {
+      "batch": 1,
+      "cpu_batched_worst_rel": 2.6426068134080534e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 9.766455400417877e-07,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 1.5572255937739915e-15,
+      "n_ch": 230
+    },
+    {
+      "batch": 4,
+      "cpu_batched_worst_rel": 2.746901660077123e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 1.560577107296532e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 3.303258516760067e-15,
+      "n_ch": 230
+    },
+    {
+      "batch": 16,
+      "cpu_batched_worst_rel": 5.0356552313378e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 1.0708017749470125e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 3.573690809336503e-15,
+      "n_ch": 230
+    },
+    {
+      "batch": 64,
+      "cpu_batched_worst_rel": 4.675157133292164e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 1.0708017749470125e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 4.830995704401903e-15,
+      "n_ch": 230
+    },
+    {
+      "batch": 1,
+      "cpu_batched_worst_rel": 3.5520188948592734e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 1.7016736873387858e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 5.001712044314619e-15,
+      "n_ch": 900
+    },
+    {
+      "batch": 4,
+      "cpu_batched_worst_rel": 7.6439217062339e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 2.325192102710565e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 4.7644089533265955e-15,
+      "n_ch": 900
+    },
+    {
+      "batch": 16,
+      "cpu_batched_worst_rel": 8.638694638929456e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 1.8276479105000258e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 5.419780013056998e-15,
+      "n_ch": 900
+    },
+    {
+      "batch": 64,
+      "cpu_batched_worst_rel": 8.965546517012415e-15,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 2.1548051092934972e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 1.5827872591147944e-14,
+      "n_ch": 900
+    },
+    {
+      "batch": 1,
+      "cpu_batched_worst_rel": 1.260101159969631e-14,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 4.547162138237524e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 9.10259970599019e-15,
+      "n_ch": 2100
+    },
+    {
+      "batch": 4,
+      "cpu_batched_worst_rel": 1.4538220844182836e-14,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 5.928682317367314e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 1.1763907452452714e-14,
+      "n_ch": 2100
+    },
+    {
+      "batch": 16,
+      "cpu_batched_worst_rel": 1.537432873207268e-14,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 5.3839547354114525e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 1.086441899697118e-14,
+      "n_ch": 2100
+    },
+    {
+      "batch": 64,
+      "cpu_batched_worst_rel": 1.5383931139467363e-14,
+      "gpu_f32_within_1e-12": false,
+      "gpu_f32_worst_rel": 5.452193045014873e-06,
+      "gpu_f64_within_1e-12": true,
+      "gpu_f64_worst_rel": 2.3572789442584283e-14,
+      "n_ch": 2100
+    }
+  ],
+  "provenance": {
+    "cpu_count": 20,
+    "cuda": "12.6",
+    "git_rev": "03dd39ed8496381ce4bcaa34b193ecb0c73cd9cf",
+    "gpu": "Tesla P100-PCIE-12GB",
+    "numpy": "2.5.3",
+    "package_path": "/home/zsig/Documents/gits/wt/fg-ode-fast/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14",
+    "torch": "2.14.0+cu126"
+  },
+  "rows": [
+    {
+      "batch": 1,
+      "cpu_batched": {
+        "mean_s": 0.0024107064153733,
+        "median_s": 0.002528244978748262,
+        "min_s": 0.001966854091733694,
+        "samples": 7,
+        "spread_ratio": 1.3311541278004786
+      },
+      "cpu_batched_per_candidate_s": 0.001966854091733694,
+      "cpu_batched_speedup_vs_cpu_serial": 0.5256785557605059,
+      "cpu_serial": {
+        "median_s": 0.0010785710765048862,
+        "min_s": 0.00103393301833421,
+        "samples": 7,
+        "spread_ratio": 1.9690395125012146
+      },
+      "cpu_serial_per_candidate_s": 0.00103393301833421,
+      "gpu_f32": {
+        "mean_s": 0.002885658576685403,
+        "median_s": 0.00286767294164747,
+        "min_s": 0.0028617780189961195,
+        "samples": 7,
+        "spread_ratio": 1.0443926623206456
+      },
+      "gpu_f64": {
+        "median_s": 0.0030597649747505784,
+        "min_s": 0.0030345480190590024,
+        "samples": 7,
+        "spread_ratio": 1.4809098581405171
+      },
+      "gpu_f64_per_candidate_s": 0.0030345480190590024,
+      "gpu_f64_speedup_vs_cpu_serial": 0.3407205988636249,
+      "gpu_f64_wide": {
+        "mean_s": 0.0033808389977951136,
+        "median_s": 0.0030356920324265957,
+        "min_s": 0.003031035070307553,
+        "samples": 7,
+        "spread_ratio": 1.7714044337862007
+      },
+      "gpu_util_pct": 24.0,
+      "knee": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "loadavg_during": [
+        17.36,
+        21.57,
+        20.91
+      ],
+      "n_ch": 230,
+      "n_gpu_before": {
+        "compute_apps": [],
+        "foreign_process_count": 0,
+        "memory_total_mib": 12288.0,
+        "memory_used_mib": 7.0,
+        "utilization_pct": 0.0
+      },
+      "n_loadavg_after": 16.13,
+      "n_loadavg_before": 17.36,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 329.0
+    },
+    {
+      "batch": 4,
+      "cpu_batched": {
+        "mean_s": 0.0029640632648287074,
+        "median_s": 0.002813702914863825,
+        "min_s": 0.0026414599269628525,
+        "samples": 7,
+        "spread_ratio": 1.34264085343796
+      },
+      "cpu_batched_per_candidate_s": 0.0006603649817407131,
+      "cpu_batched_speedup_vs_cpu_serial": 1.4515234221573163,
+      "cpu_serial": {
+        "median_s": 0.004031550022773445,
+        "min_s": 0.0038341409526765347,
+        "samples": 7,
+        "spread_ratio": 2.24430454270257
+      },
+      "cpu_serial_per_candidate_s": 0.0009585352381691337,
+      "gpu_f32": {
+        "mean_s": 0.0038944917198802742,
+        "median_s": 0.003875761991366744,
+        "min_s": 0.003871646011248231,
+        "samples": 7,
+        "spread_ratio": 1.0353937341541766
+      },
+      "gpu_f64": {
+        "median_s": 0.004199390998110175,
+        "min_s": 0.004168892977759242,
+        "samples": 7,
+        "spread_ratio": 1.0478539293958273
+      },
+      "gpu_f64_per_candidate_s": 0.0010422232444398105,
+      "gpu_f64_speedup_vs_cpu_serial": 0.9197024181554704,
+      "gpu_f64_wide": {
+        "mean_s": 0.004201503986093614,
+        "median_s": 0.004168264917097986,
+        "min_s": 0.004163483972661197,
+        "samples": 7,
+        "spread_ratio": 1.055910158957087
+      },
+      "gpu_util_pct": 33.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "loadavg_during": [
+        17.36,
+        21.57,
+        20.91
+      ],
+      "n_ch": 230,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 329.0
+    },
+    {
+      "batch": 16,
+      "cpu_batched": {
+        "mean_s": 0.004936055413314274,
+        "median_s": 0.005413150996901095,
+        "min_s": 0.003490786999464035,
+        "samples": 7,
+        "spread_ratio": 1.5976497343794522
+      },
+      "cpu_batched_per_candidate_s": 0.0002181741874665022,
+      "cpu_batched_speedup_vs_cpu_serial": 4.3679794709679625,
+      "cpu_serial": {
+        "median_s": 0.015370989916846156,
+        "min_s": 0.015247685951180756,
+        "samples": 7,
+        "spread_ratio": 1.5793060708351585
+      },
+      "cpu_serial_per_candidate_s": 0.0009529803719487973,
+      "gpu_f32": {
+        "mean_s": 0.003686887012528522,
+        "median_s": 0.003674851031973958,
+        "min_s": 0.0036586259957402945,
+        "samples": 7,
+        "spread_ratio": 1.0354073034074325
+      },
+      "gpu_f64": {
+        "median_s": 0.00403547496534884,
+        "min_s": 0.003980105044320226,
+        "samples": 7,
+        "spread_ratio": 1.0603147073539372
+      },
+      "gpu_f64_per_candidate_s": 0.0002487565652700141,
+      "gpu_f64_speedup_vs_cpu_serial": 3.8309757610392303,
+      "gpu_f64_wide": {
+        "mean_s": 0.004017725420583572,
+        "median_s": 0.003977983957156539,
+        "min_s": 0.0039699210319668055,
+        "samples": 7,
+        "spread_ratio": 1.0733054885021895
+      },
+      "gpu_util_pct": 51.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "loadavg_during": [
+        17.36,
+        21.57,
+        20.91
+      ],
+      "n_ch": 230,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 329.0
+    },
+    {
+      "batch": 64,
+      "cpu_batched": {
+        "mean_s": 0.013807934143447451,
+        "median_s": 0.013825732050463557,
+        "min_s": 0.010473372065462172,
+        "samples": 7,
+        "spread_ratio": 1.6733031935846665
+      },
+      "cpu_batched_per_candidate_s": 0.00016364643852284644,
+      "cpu_batched_speedup_vs_cpu_serial": 5.844125332775875,
+      "cpu_serial": {
+        "median_s": 0.06298436201177537,
+        "min_s": 0.06120769900735468,
+        "samples": 7,
+        "spread_ratio": 1.1868653965053788
+      },
+      "cpu_serial_per_candidate_s": 0.0009563702969899168,
+      "gpu_f32": {
+        "mean_s": 0.0039880037241216216,
+        "median_s": 0.0038224220043048263,
+        "min_s": 0.003821450052782893,
+        "samples": 7,
+        "spread_ratio": 1.2927006715346363
+      },
+      "gpu_f64": {
+        "median_s": 0.007463461020961404,
+        "min_s": 0.007339437957853079,
+        "samples": 7,
+        "spread_ratio": 1.0293241880773587
+      },
+      "gpu_f64_per_candidate_s": 0.00011467871809145436,
+      "gpu_f64_speedup_vs_cpu_serial": 8.339562151603644,
+      "gpu_f64_wide": {
+        "mean_s": 0.007388538830647511,
+        "median_s": 0.007341161021031439,
+        "min_s": 0.007325681974180043,
+        "samples": 7,
+        "spread_ratio": 1.0297330742675388
+      },
+      "gpu_util_pct": 14.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "loadavg_during": [
+        17.36,
+        21.57,
+        20.91
+      ],
+      "n_ch": 230,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 333.0
+    },
+    {
+      "batch": 256,
+      "cpu_batched": {
+        "mean_s": 0.03408635297091678,
+        "median_s": 0.035730641917325556,
+        "min_s": 0.03025334293488413,
+        "samples": 4,
+        "spread_ratio": 1.19715028158024
+      },
+      "cpu_batched_per_candidate_s": 0.00011817712083939114,
+      "cpu_batched_speedup_vs_cpu_serial": 8.103684725777569,
+      "cpu_serial": {
+        "median_s": 0.24916948401369154,
+        "min_s": 0.24516355304513127,
+        "samples": 7,
+        "spread_ratio": 1.0353129815540683
+      },
+      "cpu_serial_per_candidate_s": 0.000957670129082544,
+      "gpu_f32": {
+        "mean_s": 0.004693970998882183,
+        "median_s": 0.004660194041207433,
+        "min_s": 0.00464966893196106,
+        "samples": 7,
+        "spread_ratio": 1.0495964582385253
+      },
+      "gpu_f64": {
+        "median_s": 0.010032397927716374,
+        "min_s": 0.009853626950643957,
+        "samples": 7,
+        "spread_ratio": 1.0199865525406764
+      },
+      "gpu_f64_per_candidate_s": 3.8490730275952956e-05,
+      "gpu_f64_speedup_vs_cpu_serial": 24.88053934588109,
+      "gpu_f64_wide": {
+        "mean_s": 0.009904928987712733,
+        "median_s": 0.00986618793103844,
+        "min_s": 0.009843584964983165,
+        "samples": 7,
+        "spread_ratio": 1.0236469781931214
+      },
+      "gpu_util_pct": 31.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "loadavg_during": [
+        16.13,
+        21.25,
+        20.81
+      ],
+      "n_ch": 230,
+      "rounds_cpu_batched": 4,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 345.0
+    },
+    {
+      "batch": 1024,
+      "cpu_batched": {
+        "mean_s": 0.11746200395282358,
+        "median_s": 0.11746200395282358,
+        "min_s": 0.11746200395282358,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_batched_per_candidate_s": 0.00011470898823517928,
+      "cpu_batched_speedup_vs_cpu_serial": 8.38954643884703,
+      "cpu_serial": {
+        "median_s": 0.9953550730133429,
+        "min_s": 0.9854529369622469,
+        "samples": 2,
+        "spread_ratio": 1.0100483094419712
+      },
+      "cpu_serial_per_candidate_s": 0.0009623563837521942,
+      "gpu_f32": {
+        "mean_s": 0.009472540862459158,
+        "median_s": 0.009435288025997579,
+        "min_s": 0.009399499977007508,
+        "samples": 7,
+        "spread_ratio": 1.039405710277134
+      },
+      "gpu_f64": {
+        "median_s": 0.025910258991643786,
+        "min_s": 0.025770272011868656,
+        "samples": 2,
+        "spread_ratio": 1.0054321110662183
+      },
+      "gpu_f64_per_candidate_s": 2.5166281261590484e-05,
+      "gpu_f64_speedup_vs_cpu_serial": 38.23991211689153,
+      "gpu_f64_wide": {
+        "mean_s": 0.025809391152246723,
+        "median_s": 0.025784461060538888,
+        "min_s": 0.025753902038559318,
+        "samples": 7,
+        "spread_ratio": 1.0078859091513865
+      },
+      "gpu_util_pct": 21.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 4.558042844822349,
+        "best_gpu_speedup_vs_cpu_serial": 38.23991211689153,
+        "cpu_batched_beats_cpu_serial_from_batch": 4,
+        "first_gpu_win_ratio": 3.8309757610392303,
+        "gpu_beats_cpu_serial_from_batch": 16,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 1966.854091733694,
+            "cpu_serial_us_per_candidate": 1033.93301833421,
+            "gpu_over_cpu_batched": 1.542843483821509,
+            "gpu_over_cpu_serial": 2.9349560999106337,
+            "gpu_us_per_candidate": 3034.5480190590024
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 660.3649817407131,
+            "cpu_serial_us_per_candidate": 958.5352381691337,
+            "gpu_over_cpu_batched": 1.578253349674182,
+            "gpu_over_cpu_serial": 1.0873082208542761,
+            "gpu_us_per_candidate": 1042.2232444398105
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 218.1741874665022,
+            "cpu_serial_us_per_candidate": 952.9803719487973,
+            "gpu_over_cpu_batched": 1.140174134065275,
+            "gpu_over_cpu_serial": 0.2610301036539917,
+            "gpu_us_per_candidate": 248.7565652700141
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 163.64643852284644,
+            "cpu_serial_us_per_candidate": 956.3702969899168,
+            "gpu_over_cpu_batched": 0.7007712427267045,
+            "gpu_over_cpu_serial": 0.11991037201008287,
+            "gpu_us_per_candidate": 114.67871809145436
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 118.17712083939114,
+            "cpu_serial_us_per_candidate": 957.670129082544,
+            "gpu_over_cpu_batched": 0.32570374030573873,
+            "gpu_over_cpu_serial": 0.0401920547661097,
+            "gpu_us_per_candidate": 38.490730275952956
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 114.70898823517928,
+            "cpu_serial_us_per_candidate": 962.3563837521942,
+            "gpu_over_cpu_batched": 0.2193924089888574,
+            "gpu_over_cpu_serial": 0.026150687714532557,
+            "gpu_us_per_candidate": 25.166281261590484
+          }
+        ]
+      },
+      "loadavg_during": [
+        16.13,
+        21.25,
+        20.81
+      ],
+      "n_ch": 230,
+      "rounds_cpu_batched": 1,
+      "rounds_cpu_serial": 2,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 375.0
+    },
+    {
+      "batch": 1,
+      "cpu_batched": {
+        "mean_s": 0.005305916403553316,
+        "median_s": 0.0051679929019883275,
+        "min_s": 0.004346800968050957,
+        "samples": 7,
+        "spread_ratio": 1.5965587051473837
+      },
+      "cpu_batched_per_candidate_s": 0.004346800968050957,
+      "cpu_batched_speedup_vs_cpu_serial": 3.4198522413827828,
+      "cpu_serial": {
+        "median_s": 0.015080575016327202,
+        "min_s": 0.014865417033433914,
+        "samples": 7,
+        "spread_ratio": 1.42429344577806
+      },
+      "cpu_serial_per_candidate_s": 0.014865417033433914,
+      "gpu_f32": {
+        "mean_s": 0.0061185351639453855,
+        "median_s": 0.00608790700789541,
+        "min_s": 0.006058932049199939,
+        "samples": 7,
+        "spread_ratio": 1.037694912349366
+      },
+      "gpu_f64": {
+        "median_s": 0.007057720911689103,
+        "min_s": 0.006864075898192823,
+        "samples": 7,
+        "spread_ratio": 1.3203966767524344
+      },
+      "gpu_f64_per_candidate_s": 0.006864075898192823,
+      "gpu_f64_speedup_vs_cpu_serial": 2.1656836628726217,
+      "gpu_f64_wide": {
+        "mean_s": 0.007195703402560737,
+        "median_s": 0.00686330592725426,
+        "min_s": 0.006853817030787468,
+        "samples": 7,
+        "spread_ratio": 1.2601369300864356
+      },
+      "gpu_util_pct": 23.0,
+      "knee": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "loadavg_during": [
+        15.64,
+        21.06,
+        20.75
+      ],
+      "n_ch": 900,
+      "n_gpu_before": {
+        "compute_apps": [
+          "2866005, 328"
+        ],
+        "foreign_process_count": 1,
+        "memory_total_mib": 12288.0,
+        "memory_used_mib": 335.0,
+        "utilization_pct": 41.0
+      },
+      "n_loadavg_after": 12.63,
+      "n_loadavg_before": 16.13,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 377.0
+    },
+    {
+      "batch": 4,
+      "cpu_batched": {
+        "mean_s": 0.012255875560055886,
+        "median_s": 0.012838545022532344,
+        "min_s": 0.01007950701750815,
+        "samples": 7,
+        "spread_ratio": 1.3565314257164738
+      },
+      "cpu_batched_per_candidate_s": 0.0025198767543770373,
+      "cpu_batched_speedup_vs_cpu_serial": 6.087301382340175,
+      "cpu_serial": {
+        "median_s": 0.06609756697434932,
+        "min_s": 0.06135699700098485,
+        "samples": 7,
+        "spread_ratio": 1.1575874389354819
+      },
+      "cpu_serial_per_candidate_s": 0.015339249250246212,
+      "gpu_f32": {
+        "mean_s": 0.00658671060643558,
+        "median_s": 0.006548361969180405,
+        "min_s": 0.006540368078276515,
+        "samples": 7,
+        "spread_ratio": 1.0335597228787767
+      },
+      "gpu_f64": {
+        "median_s": 0.008173076086677611,
+        "min_s": 0.007960681919939816,
+        "samples": 7,
+        "spread_ratio": 1.0292086906186662
+      },
+      "gpu_f64_per_candidate_s": 0.001990170479984954,
+      "gpu_f64_speedup_vs_cpu_serial": 7.7075051632572595,
+      "gpu_f64_wide": {
+        "mean_s": 0.008066798876305776,
+        "median_s": 0.008012328995391726,
+        "min_s": 0.007957785041071475,
+        "samples": 7,
+        "spread_ratio": 1.052895369539613
+      },
+      "gpu_util_pct": 40.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "loadavg_during": [
+        15.64,
+        21.06,
+        20.75
+      ],
+      "n_ch": 900,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 385.0
+    },
+    {
+      "batch": 16,
+      "cpu_batched": {
+        "mean_s": 0.01818091972797577,
+        "median_s": 0.01716990803834051,
+        "min_s": 0.01665452402085066,
+        "samples": 7,
+        "spread_ratio": 1.2749469122572878
+      },
+      "cpu_batched_per_candidate_s": 0.0010409077513031662,
+      "cpu_batched_speedup_vs_cpu_serial": 14.462147806151199,
+      "cpu_serial": {
+        "median_s": 0.24445856898091733,
+        "min_s": 0.2408601880306378,
+        "samples": 7,
+        "spread_ratio": 1.1394524692216406
+      },
+      "cpu_serial_per_candidate_s": 0.015053761751914863,
+      "gpu_f32": {
+        "mean_s": 0.00804398428382618,
+        "median_s": 0.008010513964109123,
+        "min_s": 0.007994716987013817,
+        "samples": 7,
+        "spread_ratio": 1.028999784722321
+      },
+      "gpu_f64": {
+        "median_s": 0.010490669053979218,
+        "min_s": 0.010269484017044306,
+        "samples": 7,
+        "spread_ratio": 1.0259772588076415
+      },
+      "gpu_f64_per_candidate_s": 0.0006418427510652691,
+      "gpu_f64_speedup_vs_cpu_serial": 23.453971750759933,
+      "gpu_f64_wide": {
+        "mean_s": 0.010344251840641456,
+        "median_s": 0.010266139055602252,
+        "min_s": 0.010231668944470584,
+        "samples": 7,
+        "spread_ratio": 1.0411475485993658
+      },
+      "gpu_util_pct": 48.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "loadavg_during": [
+        15.64,
+        21.06,
+        20.75
+      ],
+      "n_ch": 900,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 407.0
+    },
+    {
+      "batch": 64,
+      "cpu_batched": {
+        "mean_s": 0.08258710752124898,
+        "median_s": 0.08246999001130462,
+        "min_s": 0.06823134294245392,
+        "samples": 4,
+        "spread_ratio": 1.5186012556197204
+      },
+      "cpu_batched_per_candidate_s": 0.0010661147334758425,
+      "cpu_batched_speedup_vs_cpu_serial": 14.2395672439516,
+      "cpu_serial": {
+        "median_s": 0.9804399210261181,
+        "min_s": 0.971584795974195,
+        "samples": 2,
+        "spread_ratio": 1.0091141041817602
+      },
+      "cpu_serial_per_candidate_s": 0.015181012437096797,
+      "gpu_f32": {
+        "mean_s": 0.009268549287558667,
+        "median_s": 0.00925557897426188,
+        "min_s": 0.009203852037899196,
+        "samples": 7,
+        "spread_ratio": 1.0235826273116684
+      },
+      "gpu_f64": {
+        "median_s": 0.0200718849664554,
+        "min_s": 0.019921946921385825,
+        "samples": 2,
+        "spread_ratio": 1.0075262746990166
+      },
+      "gpu_f64_per_candidate_s": 0.0003112804206466535,
+      "gpu_f64_speedup_vs_cpu_serial": 48.769570554934944,
+      "gpu_f64_wide": {
+        "mean_s": 0.019940341273987933,
+        "median_s": 0.019918438978493214,
+        "min_s": 0.019843150046654046,
+        "samples": 7,
+        "spread_ratio": 1.0141179629536663
+      },
+      "gpu_util_pct": 23.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "loadavg_during": [
+        15.11,
+        20.86,
+        20.69
+      ],
+      "n_ch": 900,
+      "rounds_cpu_batched": 4,
+      "rounds_cpu_serial": 2,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 437.0
+    },
+    {
+      "batch": 256,
+      "cpu_batched": {
+        "mean_s": 0.2217740600463003,
+        "median_s": 0.2217740600463003,
+        "min_s": 0.2217740600463003,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_batched_per_candidate_s": 0.0008663049220558605,
+      "cpu_batched_speedup_vs_cpu_serial": 17.58767236909326,
+      "cpu_serial": {
+        "median_s": 3.9004895080579445,
+        "min_s": 3.9004895080579445,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_serial_per_candidate_s": 0.015236287140851346,
+      "gpu_f32": {
+        "mean_s": 0.020563731851455356,
+        "median_s": 0.020530682057142258,
+        "min_s": 0.020476948004215956,
+        "samples": 7,
+        "spread_ratio": 1.0125628125276371
+      },
+      "gpu_f64": {
+        "median_s": 0.03602644696366042,
+        "min_s": 0.03602644696366042,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "gpu_f64_per_candidate_s": 0.0001407283084517985,
+      "gpu_f64_speedup_vs_cpu_serial": 108.26739345104824,
+      "gpu_f64_wide": {
+        "mean_s": 0.035939016712031195,
+        "median_s": 0.035944393021054566,
+        "min_s": 0.035844234051182866,
+        "samples": 7,
+        "spread_ratio": 1.006240277147982
+      },
+      "gpu_util_pct": 39.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "loadavg_during": [
+        14.54,
+        20.65,
+        20.62
+      ],
+      "n_ch": 900,
+      "rounds_cpu_batched": 1,
+      "rounds_cpu_serial": 1,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 487.0
+    },
+    {
+      "batch": 1024,
+      "cpu_batched": {
+        "mean_s": 1.3964753050822765,
+        "median_s": 1.3964753050822765,
+        "min_s": 1.3964753050822765,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_batched_per_candidate_s": 0.0013637454151194106,
+      "cpu_batched_speedup_vs_cpu_serial": 11.8461132429432,
+      "cpu_serial": {
+        "median_s": 16.5428046049783,
+        "min_s": 16.5428046049783,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_serial_per_candidate_s": 0.01615508262204912,
+      "gpu_f32": {
+        "mean_s": 0.06144845326031957,
+        "median_s": 0.06146103690844029,
+        "min_s": 0.06108798994682729,
+        "samples": 7,
+        "spread_ratio": 1.010880289289988
+      },
+      "gpu_f64": {
+        "median_s": 0.11345590907149017,
+        "min_s": 0.11345590907149017,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "gpu_f64_per_candidate_s": 0.00011079678620262712,
+      "gpu_f64_speedup_vs_cpu_serial": 145.80822400845113,
+      "gpu_f64_wide": {
+        "mean_s": 0.10696075770205685,
+        "median_s": 0.10676058696117252,
+        "min_s": 0.10639903298579156,
+        "samples": 7,
+        "spread_ratio": 1.020515543285911
+      },
+      "gpu_util_pct": 83.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 12.3085286302923,
+        "best_gpu_speedup_vs_cpu_serial": 145.80822400845113,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 2.1656836628726217,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 4346.800968050957,
+            "cpu_serial_us_per_candidate": 14865.417033433914,
+            "gpu_over_cpu_batched": 1.579109774899718,
+            "gpu_over_cpu_serial": 0.46174795384177797,
+            "gpu_us_per_candidate": 6864.075898192823
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 2519.8767543770373,
+            "cpu_serial_us_per_candidate": 15339.249250246212,
+            "gpu_over_cpu_batched": 0.7897888166665369,
+            "gpu_over_cpu_serial": 0.12974366916640392,
+            "gpu_us_per_candidate": 1990.170479984954
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 1040.9077513031662,
+            "cpu_serial_us_per_candidate": 15053.761751914863,
+            "gpu_over_cpu_batched": 0.6166182836679936,
+            "gpu_over_cpu_serial": 0.04263670181864182,
+            "gpu_us_per_candidate": 641.8427510652691
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 1066.1147334758425,
+            "cpu_serial_us_per_candidate": 15181.012437096797,
+            "gpu_over_cpu_batched": 0.29197647389393944,
+            "gpu_over_cpu_serial": 0.020504589001323716,
+            "gpu_us_per_candidate": 311.2804206466535
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 866.3049220558605,
+            "cpu_serial_us_per_candidate": 15236.287140851346,
+            "gpu_over_cpu_batched": 0.162446622279175,
+            "gpu_over_cpu_serial": 0.009236391198908263,
+            "gpu_us_per_candidate": 140.7283084517985
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 1363.7454151194106,
+            "cpu_serial_us_per_candidate": 16155.082622049122,
+            "gpu_over_cpu_batched": 0.08124447933922159,
+            "gpu_over_cpu_serial": 0.006858323711164876,
+            "gpu_us_per_candidate": 110.79678620262712
+          }
+        ]
+      },
+      "loadavg_during": [
+        12.63,
+        19.82,
+        20.35
+      ],
+      "n_ch": 900,
+      "rounds_cpu_batched": 1,
+      "rounds_cpu_serial": 1,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 739.0
+    },
+    {
+      "batch": 1,
+      "cpu_batched": {
+        "mean_s": 0.07452722540723958,
+        "median_s": 0.07404810702428222,
+        "min_s": 0.07286115200258791,
+        "samples": 7,
+        "spread_ratio": 1.0763447023310002
+      },
+      "cpu_batched_per_candidate_s": 0.07286115200258791,
+      "cpu_batched_speedup_vs_cpu_serial": 1.9905426413266611,
+      "cpu_serial": {
+        "median_s": 0.14625444903504103,
+        "min_s": 0.1450332299573347,
+        "samples": 7,
+        "spread_ratio": 1.0973104574713715
+      },
+      "cpu_serial_per_candidate_s": 0.1450332299573347,
+      "gpu_f32": {
+        "mean_s": 0.017115473131915287,
+        "median_s": 0.017085569095797837,
+        "min_s": 0.01706998294685036,
+        "samples": 7,
+        "spread_ratio": 1.0143818554720818
+      },
+      "gpu_f64": {
+        "median_s": 0.021330571034923196,
+        "min_s": 0.021159801981411874,
+        "samples": 7,
+        "spread_ratio": 1.0152926325384475
+      },
+      "gpu_f64_per_candidate_s": 0.021159801981411874,
+      "gpu_f64_speedup_vs_cpu_serial": 6.854186541289053,
+      "gpu_f64_wide": {
+        "mean_s": 0.021277226441140686,
+        "median_s": 0.021260090987198055,
+        "min_s": 0.0211496080737561,
+        "samples": 7,
+        "spread_ratio": 1.017291050578303
+      },
+      "gpu_util_pct": 13.0,
+      "knee": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "loadavg_during": [
+        11.1,
+        19.13,
+        20.11
+      ],
+      "n_ch": 2100,
+      "n_gpu_before": {
+        "compute_apps": [
+          "2866005, 458"
+        ],
+        "foreign_process_count": 1,
+        "memory_total_mib": 12288.0,
+        "memory_used_mib": 465.0,
+        "utilization_pct": 34.0
+      },
+      "n_loadavg_after": 25.33,
+      "n_loadavg_before": 12.63,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 7,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 641.0
+    },
+    {
+      "batch": 4,
+      "cpu_batched": {
+        "mean_s": 0.08738524744486702,
+        "median_s": 0.08667710400186479,
+        "min_s": 0.08456577907782048,
+        "samples": 7,
+        "spread_ratio": 1.0929428900133853
+      },
+      "cpu_batched_per_candidate_s": 0.02114144476945512,
+      "cpu_batched_speedup_vs_cpu_serial": 6.898806791595054,
+      "cpu_serial": {
+        "median_s": 0.5870071450481191,
+        "min_s": 0.5834029710385948,
+        "samples": 5,
+        "spread_ratio": 1.0147853584118627
+      },
+      "cpu_serial_per_candidate_s": 0.1458507427596487,
+      "gpu_f32": {
+        "mean_s": 0.013532480856935893,
+        "median_s": 0.013500039000064135,
+        "min_s": 0.013487996067851782,
+        "samples": 7,
+        "spread_ratio": 1.0171359726867204
+      },
+      "gpu_f64": {
+        "median_s": 0.019375105970539153,
+        "min_s": 0.019170943996869028,
+        "samples": 5,
+        "spread_ratio": 1.013331320910906
+      },
+      "gpu_f64_per_candidate_s": 0.004792735999217257,
+      "gpu_f64_speedup_vs_cpu_serial": 30.4316246051251,
+      "gpu_f64_wide": {
+        "mean_s": 0.01926320170917149,
+        "median_s": 0.019250642973929644,
+        "min_s": 0.01916418701875955,
+        "samples": 7,
+        "spread_ratio": 1.01137225177492
+      },
+      "gpu_util_pct": 12.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "loadavg_during": [
+        11.01,
+        18.98,
+        20.06
+      ],
+      "n_ch": 2100,
+      "rounds_cpu_batched": 7,
+      "rounds_cpu_serial": 5,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 677.0
+    },
+    {
+      "batch": 16,
+      "cpu_batched": {
+        "mean_s": 0.15682974952505901,
+        "median_s": 0.1590227250708267,
+        "min_s": 0.15463677397929132,
+        "samples": 2,
+        "spread_ratio": 1.0283629241523284
+      },
+      "cpu_batched_per_candidate_s": 0.009664798373705707,
+      "cpu_batched_speedup_vs_cpu_serial": 15.444446812850051,
+      "cpu_serial": {
+        "median_s": 2.3882794310338795,
+        "min_s": 2.3882794310338795,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_serial_per_candidate_s": 0.14926746443961747,
+      "gpu_f32": {
+        "mean_s": 0.01822054700460285,
+        "median_s": 0.018188764923252165,
+        "min_s": 0.018157060025259852,
+        "samples": 7,
+        "spread_ratio": 1.015781081137191
+      },
+      "gpu_f64": {
+        "median_s": 0.04883762600366026,
+        "min_s": 0.04883762600366026,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "gpu_f64_per_candidate_s": 0.0030523516252287664,
+      "gpu_f64_speedup_vs_cpu_serial": 48.90244728224267,
+      "gpu_f64_wide": {
+        "mean_s": 0.04865132643109454,
+        "median_s": 0.0486631520325318,
+        "min_s": 0.04849686904344708,
+        "samples": 7,
+        "spread_ratio": 1.0057472769904523
+      },
+      "gpu_util_pct": 15.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "loadavg_during": [
+        10.29,
+        18.7,
+        19.96
+      ],
+      "n_ch": 2100,
+      "rounds_cpu_batched": 2,
+      "rounds_cpu_serial": 1,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 771.0
+    },
+    {
+      "batch": 64,
+      "cpu_batched": {
+        "mean_s": 0.49475905299186707,
+        "median_s": 0.49475905299186707,
+        "min_s": 0.49475905299186707,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_batched_per_candidate_s": 0.007730610202997923,
+      "cpu_batched_speedup_vs_cpu_serial": 19.048640027988448,
+      "cpu_serial": {
+        "median_s": 9.424487101030536,
+        "min_s": 9.424487101030536,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_serial_per_candidate_s": 0.14725761095360212,
+      "gpu_f32": {
+        "mean_s": 0.02517620844966067,
+        "median_s": 0.025138021912425756,
+        "min_s": 0.02507401490584016,
+        "samples": 7,
+        "spread_ratio": 1.0172406838408554
+      },
+      "gpu_f64": {
+        "median_s": 0.03836349898483604,
+        "min_s": 0.03836349898483604,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "gpu_f64_per_candidate_s": 0.0005994296716380632,
+      "gpu_f64_speedup_vs_cpu_serial": 245.66286575569546,
+      "gpu_f64_wide": {
+        "mean_s": 0.03818597198863115,
+        "median_s": 0.03816305799409747,
+        "min_s": 0.038094263058155775,
+        "samples": 7,
+        "spread_ratio": 1.00672303161765
+      },
+      "gpu_util_pct": 20.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "loadavg_during": [
+        10.16,
+        18.39,
+        19.85
+      ],
+      "n_ch": 2100,
+      "rounds_cpu_batched": 1,
+      "rounds_cpu_serial": 1,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 855.0
+    },
+    {
+      "batch": 256,
+      "cpu_batched": {
+        "mean_s": 2.0619282390689477,
+        "median_s": 2.0619282390689477,
+        "min_s": 2.0619282390689477,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_batched_per_candidate_s": 0.008054407183863077,
+      "cpu_batched_speedup_vs_cpu_serial": 18.51552655787549,
+      "cpu_serial": {
+        "median_s": 38.177687070914544,
+        "min_s": 38.177687070914544,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_serial_per_candidate_s": 0.14913159012075994,
+      "gpu_f32": {
+        "mean_s": 0.06918321759440005,
+        "median_s": 0.06916927709244192,
+        "min_s": 0.06911506201140583,
+        "samples": 7,
+        "spread_ratio": 1.002907065594692
+      },
+      "gpu_f64": {
+        "median_s": 0.13606657704804093,
+        "min_s": 0.13606657704804093,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "gpu_f64_per_candidate_s": 0.0005315100665939099,
+      "gpu_f64_speedup_vs_cpu_serial": 280.58093250508665,
+      "gpu_f64_wide": {
+        "mean_s": 0.12891694657238467,
+        "median_s": 0.1287357750115916,
+        "min_s": 0.12830541096627712,
+        "samples": 7,
+        "spread_ratio": 1.016826851083794
+      },
+      "gpu_util_pct": 40.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "loadavg_during": [
+        10.04,
+        17.33,
+        19.43
+      ],
+      "n_ch": 2100,
+      "rounds_cpu_batched": 1,
+      "rounds_cpu_serial": 1,
+      "rounds_gpu": 7,
+      "vram_peak_mib": 1085.0
+    },
+    {
+      "batch": 1024,
+      "cpu_batched": {
+        "mean_s": 70.13522245106287,
+        "median_s": 70.13522245106287,
+        "min_s": 70.13522245106287,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_batched_per_candidate_s": 0.06849142817486609,
+      "cpu_batched_speedup_vs_cpu_serial": 2.5021800987437803,
+      "cpu_serial": {
+        "median_s": 175.4909578380175,
+        "min_s": 175.4909578380175,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "cpu_serial_per_candidate_s": 0.17137788851368896,
+      "gpu_f32": {
+        "mean_s": 0.23116385996884978,
+        "median_s": 0.22954669396858662,
+        "min_s": 0.22927522601094097,
+        "samples": 6,
+        "spread_ratio": 1.0415477859138889
+      },
+      "gpu_f64": {
+        "median_s": 0.47097342601045966,
+        "min_s": 0.47097342601045966,
+        "samples": 1,
+        "spread_ratio": 1.0
+      },
+      "gpu_f64_per_candidate_s": 0.0004599349863383395,
+      "gpu_f64_speedup_vs_cpu_serial": 372.61329014796706,
+      "gpu_f64_wide": {
+        "mean_s": 0.462701400470299,
+        "median_s": 0.4628283759811893,
+        "min_s": 0.46214885695371777,
+        "samples": 6,
+        "spread_ratio": 1.0019450596143933
+      },
+      "gpu_util_pct": 100.0,
+      "knee_for_this_n": {
+        "best_gpu_speedup_vs_cpu_batched": 148.91545589985213,
+        "best_gpu_speedup_vs_cpu_serial": 372.61329014796706,
+        "cpu_batched_beats_cpu_serial_from_batch": 1,
+        "first_gpu_win_ratio": 6.854186541289053,
+        "gpu_beats_cpu_serial_from_batch": 1,
+        "per_batch": [
+          {
+            "batch": 1,
+            "cpu_batched_us_per_candidate": 72861.15200258791,
+            "cpu_serial_us_per_candidate": 145033.2299573347,
+            "gpu_over_cpu_batched": 0.2904126739673333,
+            "gpu_over_cpu_serial": 0.14589623348826045,
+            "gpu_us_per_candidate": 21159.801981411874
+          },
+          {
+            "batch": 4,
+            "cpu_batched_us_per_candidate": 21141.44476945512,
+            "cpu_serial_us_per_candidate": 145850.7427596487,
+            "gpu_over_cpu_batched": 0.22669860321664195,
+            "gpu_over_cpu_serial": 0.03286055256581952,
+            "gpu_us_per_candidate": 4792.735999217257
+          },
+          {
+            "batch": 16,
+            "cpu_batched_us_per_candidate": 9664.798373705707,
+            "cpu_serial_us_per_candidate": 149267.46443961747,
+            "gpu_over_cpu_batched": 0.3158215523184706,
+            "gpu_over_cpu_serial": 0.020448874352411345,
+            "gpu_us_per_candidate": 3052.3516252287664
+          },
+          {
+            "batch": 64,
+            "cpu_batched_us_per_candidate": 7730.610202997923,
+            "cpu_serial_us_per_candidate": 147257.61095360212,
+            "gpu_over_cpu_batched": 0.07753976153209806,
+            "gpu_over_cpu_serial": 0.004070619289259903,
+            "gpu_us_per_candidate": 599.4296716380632
+          },
+          {
+            "batch": 256,
+            "cpu_batched_us_per_candidate": 8054.407183863077,
+            "cpu_serial_us_per_candidate": 149131.59012075994,
+            "gpu_over_cpu_batched": 0.06598996728881362,
+            "gpu_over_cpu_serial": 0.0035640340598763636,
+            "gpu_us_per_candidate": 531.5100665939099
+          },
+          {
+            "batch": 1024,
+            "cpu_batched_us_per_candidate": 68491.42817486609,
+            "cpu_serial_us_per_candidate": 171377.88851368896,
+            "gpu_over_cpu_batched": 0.0067152196792286956,
+            "gpu_over_cpu_serial": 0.0026837475378371336,
+            "gpu_us_per_candidate": 459.9349863383395
+          }
+        ]
+      },
+      "loadavg_during": [
+        25.33,
+        19.11,
+        19.41
+      ],
+      "n_ch": 2100,
+      "rounds_cpu_batched": 1,
+      "rounds_cpu_serial": 1,
+      "rounds_gpu": 6,
+      "vram_peak_mib": 1571.0
+    }
+  ],
+  "schema_version": 1
+}

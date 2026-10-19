@@ -1,0 +1,66 @@
+{
+  "schema": "fu4_fidelity_golden/v1",
+  "description": "Fidelity-tier golden for QoTValidator SNR assembly after FU-4 (union: port loss + booster ASE + noise-only filtering penalty).",
+  "scenarios": [
+    {
+      "name": "legacy_two_hop_equalize_on",
+      "kind": "legacy",
+      "accepted": true,
+      "snr_db": 26.0347304295729
+    },
+    {
+      "name": "legacy_three_hop_equalize_on",
+      "kind": "legacy",
+      "accepted": true,
+      "snr_db": 24.152139265826385
+    },
+    {
+      "name": "legacy_two_hop_equalize_off",
+      "kind": "legacy",
+      "accepted": true,
+      "snr_db": 23.0296997909201
+    },
+    {
+      "name": "legacy_express_attenuation",
+      "kind": "legacy",
+      "accepted": true,
+      "snr_db": 25.989211917341827
+    },
+    {
+      "name": "legacy_high_filtering",
+      "kind": "legacy",
+      "accepted": true,
+      "snr_db": 25.025781931578116
+    },
+    {
+      "name": "legacy_blocked_channel",
+      "kind": "legacy",
+      "accepted": false,
+      "snr_db": null
+    },
+    {
+      "name": "flex_two_hop_equalize_on",
+      "kind": "flex",
+      "accepted": true,
+      "snr_db": 26.0347304295729
+    },
+    {
+      "name": "flex_three_hop_equalize_on",
+      "kind": "flex",
+      "accepted": true,
+      "snr_db": 24.152139265826385
+    },
+    {
+      "name": "flex_two_hop_equalize_off",
+      "kind": "flex",
+      "accepted": true,
+      "snr_db": 23.0296997909201
+    },
+    {
+      "name": "flex_blocked_slots",
+      "kind": "flex",
+      "accepted": false,
+      "snr_db": null
+    }
+  ]
+}

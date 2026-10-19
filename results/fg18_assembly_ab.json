@@ -1,0 +1,169 @@
+{
+  "question": "两个施加点收敛前 vs 收敛后的逐项偏差（直接对装配函数做 A/B）",
+  "why_not_scenario_level": "§0 证明本仓 roadm_config 恒为 None（790 calls / 0 非 None），故现有场景上改前改后必然逐位相同（门 2 读数佐证）。机制只能靠对装配函数的直接 A/B 暴露。",
+  "rows": [
+    {
+      "config": "fu4_base",
+      "kwargs": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.2
+      },
+      "equalize_output_power": true,
+      "before_signal_only_loss_db": 5.2,
+      "after_loss_db": 5.0,
+      "loss_db_delta": -0.20000000000000018,
+      "before_power": [
+        0.0003019951720402016,
+        0.0006039903440804032,
+        0.001509975860201008
+      ],
+      "after_power": [
+        0.001,
+        0.002,
+        0.005
+      ],
+      "bitwise_identical": false,
+      "max_rel": 2.3113112148259116,
+      "after_booster_ase_injected": true,
+      "after_booster_ase_placeholder_db": -323.4383250919422
+    },
+    {
+      "config": "high_filtering",
+      "kwargs": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 2.0
+      },
+      "equalize_output_power": true,
+      "before_signal_only_loss_db": 7.0,
+      "after_loss_db": 5.0,
+      "loss_db_delta": -2.0,
+      "before_power": [
+        0.000199526231496888,
+        0.000399052462993776,
+        0.00099763115748444
+      ],
+      "after_power": [
+        0.001,
+        0.002,
+        0.005
+      ],
+      "bitwise_identical": false,
+      "max_rel": 4.011872336272723,
+      "after_booster_ase_injected": true,
+      "after_booster_ase_placeholder_db": -323.4383250919422
+    },
+    {
+      "config": "express_attn_nonzero",
+      "kwargs": {
+        "insertion_loss_db": 5.0,
+        "express_attenuation_db": 2.0
+      },
+      "equalize_output_power": true,
+      "before_signal_only_loss_db": 5.2,
+      "after_loss_db": 7.0,
+      "loss_db_delta": 1.7999999999999998,
+      "before_power": [
+        0.0003019951720402016,
+        0.0006039903440804032,
+        0.001509975860201008
+      ],
+      "after_power": [
+        0.001,
+        0.002,
+        0.005
+      ],
+      "bitwise_identical": false,
+      "max_rel": 2.3113112148259116,
+      "after_booster_ase_injected": true,
+      "after_booster_ase_placeholder_db": -320.75396865893657
+    },
+    {
+      "config": "equalize_off",
+      "kwargs": {
+        "insertion_loss_db": 5.0,
+        "equalize_output_power": false
+      },
+      "equalize_output_power": false,
+      "before_signal_only_loss_db": 5.2,
+      "after_loss_db": 5.0,
+      "loss_db_delta": -0.20000000000000018,
+      "before_power": [
+        0.0003019951720402016,
+        0.0006039903440804032,
+        0.001509975860201008
+      ],
+      "after_power": [
+        0.00031622776601683794,
+        0.0006324555320336759,
+        0.0015811388300841897
+      ],
+      "bitwise_identical": false,
+      "max_rel": 0.04712854805089961,
+      "after_booster_ase_injected": false,
+      "after_booster_ase_placeholder_db": null
+    },
+    {
+      "config": "zero_filtering",
+      "kwargs": {
+        "insertion_loss_db": 5.0,
+        "filtering_penalty_db": 0.0
+      },
+      "equalize_output_power": true,
+      "before_signal_only_loss_db": 5.0,
+      "after_loss_db": 5.0,
+      "loss_db_delta": 0.0,
+      "before_power": [
+        0.00031622776601683794,
+        0.0006324555320336759,
+        0.0015811388300841897
+      ],
+      "after_power": [
+        0.001,
+        0.002,
+        0.005
+      ],
+      "bitwise_identical": false,
+      "max_rel": 2.1622776601683795,
+      "after_booster_ase_injected": true,
+      "after_booster_ase_placeholder_db": -323.4383250919422
+    },
+    {
+      "config": "zero_express_attn",
+      "kwargs": {
+        "insertion_loss_db": 5.0,
+        "express_attenuation_db": 0.0
+      },
+      "equalize_output_power": true,
+      "before_signal_only_loss_db": 5.2,
+      "after_loss_db": 5.0,
+      "loss_db_delta": -0.20000000000000018,
+      "before_power": [
+        0.0003019951720402016,
+        0.0006039903440804032,
+        0.001509975860201008
+      ],
+      "after_power": [
+        0.001,
+        0.002,
+        0.005
+      ],
+      "bitwise_identical": false,
+      "max_rel": 2.3113112148259116,
+      "after_booster_ase_injected": true,
+      "after_booster_ase_placeholder_db": -323.4383250919422
+    }
+  ],
+  "summary": {
+    "configs": 6,
+    "bitwise_identical": 0,
+    "moved": 6,
+    "moved_configs": [
+      "fu4_base",
+      "high_filtering",
+      "express_attn_nonzero",
+      "equalize_off",
+      "zero_filtering",
+      "zero_express_attn"
+    ]
+  }
+}
