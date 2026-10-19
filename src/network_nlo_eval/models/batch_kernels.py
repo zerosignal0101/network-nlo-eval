@@ -62,7 +62,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from network_nlo_eval.core.types import NDArrayFloat
-from network_nlo_eval.models.numba_kernels import H_PLANCK, _NLI_SPAN_EXPONENT
+# ⚠️ WP-MERGE-FG-FLEX 第 3 轮：批量核是 **P2 的实现结构**（张量化 NLI + GEMM），
+# 它的两个常量住在 P2 那份核里。P1 那份核（`numba_kernels`）没有批量路径。
+from network_nlo_eval.models.numba_kernels_p2 import H_PLANCK, _NLI_SPAN_EXPONENT
 
 #: RK4 子步数。与 ``_calc_span_noise_and_power_jit`` 的 ``n_steps=20`` 是同一个值，
 #: 少一位就会让批量与串行的偏差离开 1e-12 预算——它是数值契约的一部分。

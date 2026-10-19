@@ -21,14 +21,26 @@ from network_nlo_eval.models.batch_kernels import (
     batched_span_noise_and_power,
     build_batch_constants,
 )
+# ⚠️ WP-MERGE-FG-FLEX 第 3 轮：两套 NLI 物理**都留**，用 `nli_model` 档位区分。
+#
+# * `numba_kernels`     —— P1 (23)/(29)/(30)/(34) 闭式，逐信道 `B_i`。
+#                          字节 = flexgrid-dev @ cb24704 的冻结内核。
+# * `numba_kernels_p2`  —— P2 Eq. 21 张量化，符号率口径。
+#                          字节 = wp/fg-integrate @ 57c7221 的冻结内核。
+#
+# 两份核**不共用**任何一个物理函数；只有纯数学工具（`_db_to_lin` 等）在两边
+# 逐位相同——那份等同性由 `tests/test_merge_nli_models.py` 守着。
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
     _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
     _calc_nf_lin_jit,
-    _calc_span_noise_and_power_jit,
+    _calc_span_noise_and_power_jit as _p1_calc_span_noise_and_power_jit,
     _db_to_lin,
+)
+from network_nlo_eval.models.numba_kernels_p2 import (
+    _calc_span_noise_and_power_jit as _p2_calc_span_noise_and_power_jit,
     g_cache_stats,
     nli_cache_stats,
     nli_tensors,
@@ -36,14 +48,6 @@ from network_nlo_eval.models.numba_kernels import (
     raman_g_matrix_tabular,
     raman_g_pair_matrices,
     raman_g_pair_matrices_tabular,
-)
-from network_nlo_eval.models.numba_kernels import (
-    _calc_aeff_dynamic,
-    _calc_beta2_from_d,
-    _calc_beta3_from_s_d,
-    _calc_fiber_attenuation_npm,
-    _calc_nf_lin_jit,
-    _calc_span_noise_and_power_jit,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
@@ -153,6 +157,77 @@ POWER_WIDTH_DEFAULT = "fixed_power"
 RAMAN_SPECTRUM_MODES = ("legacy", "tabular")
 RAMAN_SPECTRUM_DEFAULT = "tabular"
 
+#: ══════════════════════════════════════════════════════════════════════
+#: NLI 物理档位（WP-MERGE-FG-FLEX **第 3 轮**裁决）
+#: ══════════════════════════════════════════════════════════════════════
+#:
+#: ⚠️ **为什么有这一档**：第 2 轮把 :mod:`network_nlo_eval.models.numba_kernels`
+#: 整份换成了 FG 的字节，同时把 P1 的 ``B_i`` **改名成** ``symbol_rate_hz`` 喂进
+#: P2 的公式。那个组合是「P2 的 GN 模型 + 占用带宽当符号率」，**两边都没验证过**。
+#: 第 3 轮改判：**两套物理都留**，用显式档位区分，谁都不许被另一套替换。
+#:
+#: ``"p1_closed"``（**默认**）
+#:     P1 (23)/(29)/(30)/(34) 闭式。带宽量是**逐信道** ``B_i`` / ``B_ℓ``
+#:     （P1 (29) 的 ``asinh(φ_i B_i²/πα)``、(30) 的 ``atan(φ_{i,ℓ} B_i/α_ℓ)``、
+#:     (34) 的 ``B_i``）。核在 :mod:`network_nlo_eval.models.numba_kernels`，
+#:     字节 = ``flexgrid-dev @ cb24704`` 的冻结内核。
+#:
+#: ``"p2_gn"``
+#:     P2 Eq. 21 张量化。带宽量是**符号率** ``rs_hz``（核内的 ``symbol_rate_hz``），
+#:     指纹是 ``(16/27)·γ²P³/rs²·T²`` 与 ``asinh(3φ·rs²/(8π·a_t))``。核在
+#:     :mod:`network_nlo_eval.models.numba_kernels_p2`，字节 =
+#:     ``wp/fg-integrate @ 57c7221`` 的冻结内核。
+#:
+#: ⚠️ **这两档不能互相比较**：它们是两套物理，数字本来就该不同。拿 ``p1_closed``
+#: 的读数去对 FG 的金标准（或反过来）并期望逐位相同，是把两套物理当成一套——
+#: 这正是第 2 轮 V1 判据本身的错误。各自的源头才是各自的判据。
+#:
+#: 默认取 ``"p1_closed"``：本产品是**逐连接带宽分辨率**的 QoT，P1 的 ``B_i``
+#: 才是它的物理；FG 的加速是**实现结构**，不该反过来决定物理。
+NLI_MODELS = ("p1_closed", "p2_gn")
+NLI_MODEL_DEFAULT = "p1_closed"
+
+#: 各 NLI 档位**允许**的 ``ode_accel`` 取值。
+#:
+#: ``"p1_closed"`` 只有 ``("off", "cached")``：P1 核里**没有**拉曼 G 矩阵、没有
+#: 去分支 matvec、没有张量化 NLI——那三样都是 FG 的**实现结构**，不是 P1 的物理。
+#: 本轮**不做** P1 核的加速（另立一轮），故这里显式只留 P1 已有的两档。
+#:
+#: ``"p2_gn"`` 四档全在：``"off"``（冻结参考）、``"cached"``（跨段记忆化）、
+#: ``"cached_g"``（G 缓存）、``"matvec"``（默认）。
+ODE_ACCEL_MODES_BY_NLI_MODEL: dict[str, tuple[str, ...]] = {
+    "p1_closed": ("off", "cached"),
+    "p2_gn": ("off", "cached", "cached_g", "matvec"),
+}
+
+#: 各 NLI 档位**默认**的 ``ode_accel``（构造参数给 ``None`` 时取这个）。
+#:
+#: ⚠️ ``ODE_ACCEL_DEFAULT``（= ``"matvec"``）**保持不变**——它仍是 ``p2_gn`` 档的
+#: 生产默认，``tests/test_fg4b_nli_vectorization.py`` 断言它等于 ``"matvec"``，
+#: 本轮不动那个常量。``p1_closed`` 档没有 matvec 可选，其默认落在 ``"off"``
+#: （P1 的冻结参考路径）。
+ODE_ACCEL_DEFAULT_BY_NLI_MODEL: dict[str, str] = {
+    "p1_closed": "off",
+    "p2_gn": ODE_ACCEL_DEFAULT,
+}
+
+#: 各 NLI 档位**允许**的 ``raman_spectrum`` 取值。
+#:
+#: ``"p1_closed"`` 只有 ``("legacy",)``：P1 核用的是 legacy 那条合成折线
+#: （``_calc_raman_profile_jit``），没有 tabular 闭式增益谱那条路。
+RAMAN_SPECTRUM_MODES_BY_NLI_MODEL: dict[str, tuple[str, ...]] = {
+    "p1_closed": ("legacy",),
+    "p2_gn": ("legacy", "tabular"),
+}
+
+#: 各 NLI 档位**默认**的 ``raman_spectrum``（构造参数给 ``None`` 时取这个）。
+#: ``RAMAN_SPECTRUM_DEFAULT``（= ``"tabular"``）同样保持不变，仍是 ``p2_gn`` 档
+#: 的生产默认；``p1_closed`` 档唯一可选的是 ``"legacy"``。
+RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL: dict[str, str] = {
+    "p1_closed": "legacy",
+    "p2_gn": RAMAN_SPECTRUM_DEFAULT,
+}
+
 #: FG-4e 批量常量包的命中/未命中计数——证明 (N,N) 常量确实跨候选复用。
 _BATCH_CACHE_STATS = {"hits": 0, "misses": 0}
 
@@ -160,7 +235,7 @@ _BATCH_CACHE_STATS = {"hits": 0, "misses": 0}
 def batch_cache_stats() -> dict[str, int]:
     """返回批量常量包缓存的命中/未命中计数。
 
-    与 :func:`~network_nlo_eval.models.numba_kernels.g_cache_stats` 同构：证据不是
+    与 :func:`~network_nlo_eval.models.numba_kernels_p2.g_cache_stats` 同构：证据不是
     "我说它复用了"，而是命中计数确实随批量调用增长。
     """
     return dict(_BATCH_CACHE_STATS)
@@ -215,10 +290,11 @@ class MultiBandISRSGN:
         phi_kurtosis: float = 0.0,  # 0.0为高斯(默认), -0.6190为64QAM
         connections: Sequence[ConnectionSpec] | None = None,
         slots_per_channel: int | None = None,
-        ode_accel: str = ODE_ACCEL_DEFAULT,
+        ode_accel: str | None = None,
         channel_bandwidth_source: str = CHANNEL_BANDWIDTH_DEFAULT,
         power_width_mode: str = POWER_WIDTH_DEFAULT,
-        raman_spectrum: str = RAMAN_SPECTRUM_DEFAULT,
+        raman_spectrum: str | None = None,
+        nli_model: str = NLI_MODEL_DEFAULT,
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -231,31 +307,63 @@ class MultiBandISRSGN:
             phi_kurtosis: 峰度修正，0.0 为高斯，-0.6190 为 64QAM。
             connections: (可选) 灵活栅格连接列表。给定后进入**逐连接模式**：
                 全部逐连接数组按连接中心频率计算。为 None 时保持遗留行为，数值逐位不变。
-            ode_accel: 加速档位，见 :data:`ODE_ACCEL_MODES`。默认 ``"matvec"``。
-                ⚠️ 合并后的并集档位见该常量：``"off"`` 是 FG-2 与 WP-O2 共同的冻结
-                参考路径；``"cached"``（flexgrid 侧跨段记忆化）；``"cached_g"``
-                与基线逐位相等；``"matvec"``（默认）用去分支两次 matvec，
-                相对偏差 <= 1e-12。
+            ode_accel: 加速档位，见 :data:`ODE_ACCEL_MODES`。**给 ``None`` 时由
+                :attr:`nli_model` 解析**：``"p1_closed"`` → ``"off"``（P1 的冻结
+                参考路径，P1 核本轮没有加速档）；``"p2_gn"`` → ``"matvec"``。
+                ⚠️ 合并后的并集档位见 :data:`ODE_ACCEL_MODES`：``"off"`` 是 FG-2 与
+                WP-O2 共同的冻结参考路径；``"cached"``（flexgrid 侧跨段记忆化）；
+                ``"cached_g"`` 与基线逐位相等；``"matvec"``（``p2_gn`` 档默认）用
+                去分支两次 matvec，相对偏差 <= 1e-12。
+                ⚠️ **档位与物理必须匹配**：给 ``"p1_closed"`` 配 ``"cached_g"`` 或
+                ``"matvec"`` 会抛 ``ValueError``——P1 核里没有拉曼 G 矩阵、没有
+                去分支 matvec，硬跑等于**静默**把加速请求丢掉。
             slots_per_channel: (可选) 每**遗留信道**占用的槽数，仅用于把 ROADM 的
                 ``blocked_channels`` 展开成 ``blocked_slots``。遗留模式下不影响任何数值。
             raman_spectrum: FG-U1 拉曼增益谱档位，见 :data:`RAMAN_SPECTRUM_MODES`。
+                **给 ``None`` 时由 :attr:`nli_model` 解析**：``"p1_closed"`` →
+                ``"legacy"``（P1 核只有 legacy 折线那条路）；``"p2_gn"`` →
+                ``"tabular"``。
                 ⚠️ **合并说明**：``"off"`` 与 ``"cached"`` 是 **legacy-only** 的冻结路径
                 （前者逐对重建 legacy 折线，后者只把它记忆化），结构上无法换谱。
                 因此这两档必须**显式**配 ``raman_spectrum="legacy"``，否则构造期抛
                 ``ValueError``——沿用 FG-15 既有的"显式拒绝而非静默回退"口径，
                 不为 flexgrid 的旧调用点开静默回退的后门。
+                ⚠️ ``"p1_closed"`` 档只允许 ``"legacy"``（P1 核没有 tabular 谱）。
             channel_bandwidth_source: 逐信道 ``B_i`` 的取值口径，见
                 :data:`CHANNEL_BANDWIDTH_SOURCES`。默认 ``"symbol_rate"``（legacy 逐位不变）。
             power_width_mode: ``P_i`` / ``B_i`` 归一化口径，见 :data:`POWER_WIDTH_MODES`。
                 默认 ``"fixed_power"``。
+            nli_model: NLI 物理档位，见 :data:`NLI_MODELS`。默认 ``"p1_closed"``
+                （P1 (23)/(29)/(30)/(34) 闭式，逐信道 ``B_i``）。
+                ``"p2_gn"`` 走 P2 Eq. 21 张量化（符号率口径）。
+                ⚠️ 两档是**两套物理**，数字本来就该不同，不得互相比较。
 
         Raises:
             ValueError: 档位名非法；``tabular`` 与 legacy-only 档位组合；
+                ``ode_accel`` / ``raman_spectrum`` 与 ``nli_model`` 不匹配；
                 ``channel_bandwidth_source`` / ``power_width_mode`` 取值非法；
                 逐连接带宽 ``B_i`` 非正 / 非有限；``slots_per_channel < 1``。
         """
-        if ode_accel not in ODE_ACCEL_MODES:
-            raise ValueError(f"ode_accel must be one of {ODE_ACCEL_MODES}, got {ode_accel!r}.")
+        if nli_model not in NLI_MODELS:
+            raise ValueError(f"nli_model must be one of {NLI_MODELS}, got {nli_model!r}.")
+        allowed_ode_accel = ODE_ACCEL_MODES_BY_NLI_MODEL[nli_model]
+        allowed_raman_spectrum = RAMAN_SPECTRUM_MODES_BY_NLI_MODEL[nli_model]
+        if ode_accel is None:
+            ode_accel = ODE_ACCEL_DEFAULT_BY_NLI_MODEL[nli_model]
+        if raman_spectrum is None:
+            raman_spectrum = RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL[nli_model]
+        if ode_accel not in allowed_ode_accel:
+            raise ValueError(
+                f"ode_accel must be one of {allowed_ode_accel} for nli_model={nli_model!r}, "
+                f"got {ode_accel!r}. The other modes belong to the other NLI physics: "
+                f"see ODE_ACCEL_MODES_BY_NLI_MODEL."
+            )
+        if raman_spectrum not in allowed_raman_spectrum:
+            raise ValueError(
+                f"raman_spectrum must be one of {allowed_raman_spectrum} for "
+                f"nli_model={nli_model!r}, got {raman_spectrum!r}. The other tiers belong "
+                f"to the other NLI physics: see RAMAN_SPECTRUM_MODES_BY_NLI_MODEL."
+            )
         if slots_per_channel is not None and slots_per_channel < 1:
             raise ValueError(f"slots_per_channel must be >= 1, got {slots_per_channel}.")
         if channel_bandwidth_source not in CHANNEL_BANDWIDTH_SOURCES:
@@ -283,18 +391,14 @@ class MultiBandISRSGN:
         self.delta_f_co_hz = 15e12  # 石英光纤受激拉曼散射（SRS）增益谱的截断频率
         self.ode_accel = ode_accel
         self.raman_spectrum = raman_spectrum
+        self.nli_model = nli_model
         self.n2_m2_w = ref_fiber_config.nonlinear_index_n2
         self.connections = list(connections) if connections is not None else None
         if slots_per_channel is not None and slots_per_channel < 1:
             raise ValueError(f"slots_per_channel must be >= 1, got {slots_per_channel}.")
         self.slots_per_channel = slots_per_channel
-        self.ode_accel = ode_accel
-        self.raman_spectrum = raman_spectrum
-        self.phi_kurtosis = phi_kurtosis
         self.channel_bandwidth_source = channel_bandwidth_source
         self.power_width_mode = power_width_mode
-
-        self.connections = list(connections) if connections is not None else None
 
         self._span_cache: dict[tuple, tuple] = {}
         self._precompute_channel_dependent_properties()
@@ -407,27 +511,47 @@ class MultiBandISRSGN:
             self.f_abs_hz = self.grid.frequencies  # (Hz)
 
         # 衰减系数 (Np/m)
-        # ⚠️ WP-MERGE-FG-FLEX 取 **FG 侧口径**：本路径**恒用** alpha0/1/2 波长多项式，
-        # 不看 ``FiberSpanConfig.use_attenuation_polynomial``。
+        # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：这里按 NLI 档位分派，两套物理各用各的
+        # 口径，**不**在这里"统一"。
         #
-        # 为什么不是 flexgrid 侧那个 `if use_attenuation_polynomial:` 分支：
-        #   * 该开关在 **FG 树里本来就只对波形级 `physics/qot_checker` 生效**，
-        #     `models/isrs_gn.py` 从来不读它——这正是 FG-14 记录并裁决过的
-        #     「装配口径分歧」（`docs/fg14_assembly_provenance.md` /
-        #     `results/fg14_assembly_divergence.json`）。合并若让 isrs_gn 也开始读它，
-        #     等于单方面改掉一条已裁决的分歧，并让默认档（``False`` ⇒ 常数衰减）
-        #     与 `wp/fg-integrate` 的冻结结果全场景不等（实测 alpha 变 ⇒ 每个量都变）。
-        #   * flexgrid-dev 一侧**没有任何测试**依赖 isrs_gn 遵守该开关
-        #     （`git grep use_attenuation_polynomial HEAD -- tests/` 无命中）。
-        #   * 判据 V1（首要判据）要求合并树与 `wp/fg-integrate` 逐位相同。
-        # 保留分歧本身：想用常数衰减的调用方应走 `physics/qot_checker`，那里仍认这个开关。
-        self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(
-            self.lambdas_m,
-            self.ref_fiber_config.reference_wavelength_nm,
-            self.ref_fiber_config.attenuation_alpha2,
-            self.ref_fiber_config.attenuation_alpha1,
-            self.ref_fiber_config.attenuation_alpha0,
-        )
+        # * ``"p1_closed"`` → **flexgrid-dev 口径**：读
+        #   ``FiberSpanConfig.use_attenuation_polynomial``。为假（默认）时用
+        #   **常数**衰减 ``attenuation_db_km_ref·ln(10)/10/1e3``。
+        #   这是 p1_closed 档与 ``cb24704`` 逐位相同的前提：alpha 不同 ⇒
+        #   ``p_out_fiber`` 不同 ⇒ 自动增益 ``gain`` 不同 ⇒ P1 (34) 的 ASE
+        #   （``NF·h·ν·B_i·(gain−1)``）不同 ⇒ 场景读数不同。
+        # * ``"p2_gn"`` → **FG 口径**：本路径**恒用** alpha0/1/2 波长多项式，
+        #   不看 ``use_attenuation_polynomial``。这是 FG-14 记录并裁决过的
+        #   「装配口径分歧」（`docs/fg14_assembly_provenance.md` /
+        #   `results/fg14_assembly_divergence.json`），本轮**原样保留**。
+        if self.nli_model == "p1_closed":
+            if self.ref_fiber_config.use_attenuation_polynomial:
+                self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(
+                    self.lambdas_m,
+                    self.ref_fiber_config.reference_wavelength_nm,
+                    self.ref_fiber_config.attenuation_alpha2,
+                    self.ref_fiber_config.attenuation_alpha1,
+                    self.ref_fiber_config.attenuation_alpha0,
+                )
+            else:
+                alpha = self.ref_fiber_config.attenuation_db_km_ref * np.log(10) / 10 / 1e3
+                self.alpha_power_npm_channels = np.full(self.n_nodes, alpha)
+        else:
+            # FG 侧口径：恒用 alpha0/1/2 波长多项式。
+            #
+            # 为什么 P2 档不读该开关：它在 **FG 树里本来就只对波形级
+            # `physics/qot_checker` 生效**，`models/isrs_gn.py` 从来不读它——
+            # 这正是 FG-14 记录并裁决过的分歧。合并若让 P2 档也开始读它，
+            # 等于单方面改掉一条已裁决的分歧，并让默认档（``False`` ⇒ 常数衰减）
+            # 与 `wp/fg-integrate` 的冻结结果全场景不等。
+            # 保留分歧本身：想用常数衰减的调用方应走 `physics/qot_checker`。
+            self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(
+                self.lambdas_m,
+                self.ref_fiber_config.reference_wavelength_nm,
+                self.ref_fiber_config.attenuation_alpha2,
+                self.ref_fiber_config.attenuation_alpha1,
+                self.ref_fiber_config.attenuation_alpha0,
+            )
 
         # 有效模面积 (m^2)
         self.a_eff_m2_channels = _calc_aeff_dynamic(
@@ -638,6 +762,173 @@ class MultiBandISRSGN:
     ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
         """计算单跨段的功率演化、NLI 噪声和 ASE 噪声。
 
+        ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：这是一个**派发口**，按 :attr:`nli_model`
+        分派到两套**互不共用**的物理实现：
+
+        * ``"p1_closed"`` → :meth:`_calc_span_noise_and_power_p1`
+          （P1 (23)/(29)/(30)/(34) 闭式 + 逐信道 ``B_i``）
+        * ``"p2_gn"`` → :meth:`_calc_span_noise_and_power_p2`
+          （P2 Eq. 21 张量化 + 符号率）
+
+        两套的数值**不互相比较**：它们是两套物理。
+        """
+        if self.nli_model == "p1_closed":
+            return self._calc_span_noise_and_power_p1(
+                power_in_w, span_length_m, edfa_config, roadm_config, n_effective_spans
+            )
+        return self._calc_span_noise_and_power_p2(
+            power_in_w, span_length_m, edfa_config, roadm_config, n_effective_spans
+        )
+
+    def _calc_span_noise_and_power_p1(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """``nli_model="p1_closed"``：P1 (23)/(29)/(30)/(34) 闭式路径。
+
+        本方法的算式**逐字取自** ``flexgrid-dev @ cb24704`` 的
+        ``models/isrs_gn.py``（同一份 P1 物理），目的是让 ``p1_closed`` 档与
+        flexgrid-dev **逐位相同**。三处与 P2 路径不同、且都是**物理**差异：
+
+        1. **NF 默认值**：edfa 为 None（或其 NF 为 None）时取
+           ``np.ones_like(self.nf_lin_channels)``（即 NF = 0 dB 的"未指定"口径），
+           **不是** P2 路径的 ``self.nf_lin_channels``。
+        2. **跨段后放大在 Python 层显式施加**（P1 (34)）：增益取自 EDFA 配置，
+           ASE 按 ``NF·h·ν·B_i·(gain−1)`` 逐信道算。P1 核里那个 ASE 分支是
+           **死代码**（核返回的 ASE 被丢弃，见 ``p1_eq34_ase_dead_kernel`` 锚点）。
+        3. **ROADM 口径**：按 ``ROADMConfig.path_loss_db(operation)`` 取损耗，
+           等化档把损耗补回来并加 booster ASE，滤波惩罚只乘噪声。
+
+        Args:
+            power_in_w: 各信道入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: 跨段后的 EDFA 配置。
+            roadm_config: (可选) 跨段后的 ROADM 配置。
+            n_effective_spans: 有效跨段数，用于 NLI 累积效应。
+
+        Returns:
+            Tuple 包含 ``(power_out_w, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w)``。
+        """
+        # 1. 处理放大器噪声系数 (NF)。
+        # ⚠️ 与 P2 路径的差异见方法 docstring 第 1 条：P1 取 flexgrid-dev 口径
+        #    （未指定 NF 时恒为 1.0），这是 p1_closed 与 cb24704 逐位相同的前提。
+        if edfa_config is not None and edfa_config.noise_figure_db is not None:
+            noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
+            if noise_figure_db.ndim == 0:
+                current_nf_lin = np.full_like(self.nf_lin_channels, 10 ** (float(noise_figure_db) / 10))
+            else:
+                if noise_figure_db.shape != (self.n_nodes,):
+                    raise ValueError(
+                        "EDFA noise-figure array must contain one value per channel "
+                        f"({self.n_nodes},); got {noise_figure_db.shape}."
+                    )
+                current_nf_lin = 10 ** (noise_figure_db / 10)
+        else:
+            current_nf_lin = np.ones_like(self.nf_lin_channels)
+
+        # 1.5 形状契约校验（设计 §3.4）。逐连接数组必须长度恰为 N 且同序对齐。
+        n_conn = self.n_nodes
+        if np.shape(power_in_w) != (n_conn,):
+            raise ValueError(f"power_in_w must have shape ({n_conn},), got {np.shape(power_in_w)}.")
+        current_nf_lin = np.asarray(current_nf_lin, dtype=np.float64)
+        if current_nf_lin.shape != (n_conn,):
+            raise ValueError(f"nf_lin_channels must have shape ({n_conn},), got {current_nf_lin.shape}.")
+
+        # 2. 调用 P1 冻结内核 (热路径)。跨段记忆化是纯 memoization，命中时返回的
+        #    就是上一次算出来的那些数组 ⇒ 与 "off" 逐位相等。
+        cached = None
+        if self.ode_accel == "cached":
+            cache_key = (
+                power_in_w.tobytes(),
+                float(span_length_m),
+                int(n_effective_spans),
+                current_nf_lin.tobytes(),
+            )
+            cached = self._span_cache.get(cache_key)
+
+        if cached is not None:
+            # 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。
+            p_out_fiber, s2_spm, s2_xpm = cached
+        else:
+            # ⚠️ 核的第四个返回值（ASE）是**死代码**：P1 (34) 的 ASE 在下面按
+            #    "显式施加 EDFA" 那一步算，故这里丢弃。锚点 `p1_eq34_ase_dead_kernel`
+            #    就是这条"死代码"事实的可执行形式。
+            p_out_fiber, s2_spm, s2_xpm, _ = _p1_calc_span_noise_and_power_jit(
+                power_in_w=power_in_w,
+                span_length_m=span_length_m,
+                f_rel_hz=self.f_rel_hz,
+                f_abs_hz=self.f_abs_hz,
+                lambdas_m=self.lambdas_m,
+                alpha_power_npm=self.alpha_power_npm_channels,
+                a_eff_m2=self.a_eff_m2_channels,
+                beta2_s2_m=self.beta2_s2_m,
+                beta3_s3_m=self.beta3_s3_m,
+                n2_m2_w=self.n2_m2_w,
+                nf_lin_channels=current_nf_lin,
+                # 标量符号率：只用于 SRS 频带边界 f_m/f_M，**不是** B_i。
+                symbol_rate_hz=self.symbol_rate_hz,
+                # ⚠️ 逐信道带宽 B_i —— P1 (23)/(29)/(30)/(34) 的那个 B_i / B_ℓ。
+                #    B_i 不许退回标量（任务书 §3）。
+                b_hz_channels=self.channel_bandwidth_hz_channels,
+                n_effective_spans=n_effective_spans,
+                cr_w_m_hz=self.cr_w_m_hz,
+                k_bar=self.k_bar,
+                delta_f_co_hz=self.delta_f_co_hz,
+            )
+            if self.ode_accel == "cached":
+                self._span_cache[cache_key] = (p_out_fiber, s2_spm, s2_xpm)
+
+        # 3. 显式应用 EDFA。旧实现返回未放大的出纤功率，且 edfa=None 仍产生 ASE。
+        if edfa_config is None:
+            p_out = p_out_fiber
+            s2_ase = np.zeros_like(power_in_w)
+        else:
+            if edfa_config.target_gain_db is None:
+                gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)
+            else:
+                gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))
+            if edfa_config.gain_ripple_db is not None:
+                ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
+                if ripple.shape != (self.n_nodes,):
+                    raise ValueError("EDFA gain-ripple array must contain one value per channel.")
+                gain *= 10 ** (ripple / 10)
+            p_out = p_out_fiber * gain
+            # P1 (34) 的 B_i 走逐信道数组（WP-Q1）。legacy 下该数组恒等于标量
+            # symbol_rate_hz ⇒ 与 WP-Q1 之前的算式逐位相同。
+            s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum(
+                gain - 1, 0
+            )
+            s2_ase[power_in_w <= 0] = 0
+
+        # 4. ROADM 损耗同等衰减信号和已生成噪声。
+        if roadm_config:
+            loss_lin = _db_to_lin(roadm_config.path_loss_db())
+            p_out /= loss_lin
+            s2_spm /= loss_lin
+            s2_xpm /= loss_lin
+            s2_ase /= loss_lin
+
+        return p_out, s2_spm, s2_xpm, s2_ase
+
+    def _calc_span_noise_and_power_p2(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """``nli_model="p2_gn"``：P2 Eq. 21 张量化路径。
+
+        本方法的算式逐字取自 ``wp/fg-integrate @ 57c7221`` 的 ``models/isrs_gn.py``，
+        目的是让 ``p2_gn`` 档与 FG **逐位相同**。
+
+        计算单跨段的功率演化、NLI 噪声和 ASE 噪声。
+
         Args:
             power_in_w: 各信道入纤功率 (W)。
             span_length_m: 跨段长度 (m)。
@@ -704,7 +995,7 @@ class MultiBandISRSGN:
             # 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。
             p_out_fiber, s2_spm, s2_xpm, s2_ase = cached
         else:
-            p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit(
+            p_out_fiber, s2_spm, s2_xpm, s2_ase = _p2_calc_span_noise_and_power_jit(
                 power_in_w=power_in_w,
                 span_length_m=span_length_m,
                 f_rel_hz=self.f_rel_hz,
@@ -716,13 +1007,15 @@ class MultiBandISRSGN:
                 beta3_s3_m=self.beta3_s3_m,
                 n2_m2_w=self.n2_m2_w,
                 nf_lin_channels=current_nf_lin,
-                # ⚠️ WP-MERGE-FG-FLEX：合并后的内核用**一个**逐节点数组承载
-                # P1 的 B_i（numba_kernels 侧已把 flexgrid 的 `b_hz_channels`
-                # 改名并入 `symbol_rate_hz`）。这里传 `channel_bandwidth_hz_channels`
-                # 而不是 `symbol_rate_hz_channels`，因为后者在默认档下与它**逐位
-                # 相同**（同一恒等式），而 `channel_bandwidth_source="occupied"`
-                # 时才让多槽宽度真正进入 QoT。**B_i 不许退回标量。**
-                symbol_rate_hz=self.channel_bandwidth_hz_channels,
+                # ⚠️ WP-MERGE-FG-FLEX **第 3 轮改判**：P2 的带宽量是**符号率**，
+                # 不是 P1 的信道带宽。上一轮把 P1 的 `b_hz_channels` **改名**成
+                # `symbol_rate_hz` 喂进 P2 公式（还把占用带宽当符号率塞进去），
+                # 得到的「P2 的 GN 模型 + 占用带宽当符号率」两边都没验证过。
+                # 现在 P2 档**回到 FG 的口径**：传**声明的符号率**数组。
+                # 逐信道的 `B_i` 属于 P1 档，去 `_calc_span_noise_and_power_p1`。
+                # ⚠️ 默认档（`channel_bandwidth_source="symbol_rate"`）下两者逐位
+                # 相同（同一恒等式），故 `p2_gn` 档的既有读数不受影响。
+                symbol_rate_hz=self.symbol_rate_hz_channels,
                 n_effective_spans=n_effective_spans,
                 cr_w_m_hz=self.cr_w_m_hz,
                 delta_f_co_hz=self.delta_f_co_hz,
@@ -823,8 +1116,18 @@ class MultiBandISRSGN:
 
         Raises:
             ValueError: ``ode_accel`` 不是 ``"matvec"``；``power_in_w`` 不是
-                ``(B, N)`` 或 N 与本 evaluator 不符；NF 覆盖数组长度不对。
+                ``(B, N)`` 或 N 与本 evaluator 不符；NF 覆盖数组长度不对；
+                ``nli_model`` 不是 ``"p2_gn"``（P1 档**暂无批量路径**）。
         """
+        # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：批量入口是 **P2 的实现结构**（张量化 NLI +
+        #    GEMM），P1 核**没有**对应的批量路径。本轮不做 P1 核的加速
+        #    （另立一轮），故这里**显式拒绝**，而不是悄悄退回串行。
+        if self.nli_model != "p2_gn":
+            raise ValueError(
+                "calc_span_noise_and_power_batch is only available for nli_model='p2_gn': "
+                "the batched kernel is the batch form of the P2 tensorised NLI. "
+                f"Got nli_model={self.nli_model!r}; the P1 tier has no batch path yet."
+            )
         P = np.asarray(power_in_w, dtype=np.float64)
         n_conn = self.n_nodes
         if P.ndim != 2 or P.shape[1] != n_conn:
@@ -897,6 +1200,7 @@ class MultiBandISRSGN:
                 self.channel_bandwidth_source,
                 self.power_width_mode,
                 self.raman_spectrum,
+                self.nli_model,
             )
         return self._fiber_evaluator_cache[key]
 
@@ -944,6 +1248,49 @@ class MultiBandISRSGN:
         blocked.update(index for index in roadm.blocked_channels if index < n_nodes)
         blocked.update(index for index in roadm.blocked_slots if index < n_nodes)
         return sorted(blocked)
+
+    def _blocked_nodes_p1(self, roadm: "ROADMConfig") -> list[int]:
+        """``nli_model="p1_closed"`` 用的阻断节点解析（**逐字取自 flexgrid-dev**）。
+
+        ⚠️ 与 :meth:`_resolve_blocked_node_indices`（合并后的单一真源）的**口径
+        差异**只在遗留模式：flexgrid-dev 的遗留模式只认 ``blocked_channels``，
+        **不**把 ``blocked_slots`` 当节点索引用；合并后的真源两者都认。
+
+        这是**有意的**：`p1_closed` 档要跟 `flexgrid-dev @ cb24704` **逐位相同**，
+        阻断集合不同 ⇒ 被阻断节点的 SNR（= −inf）就不同 ⇒ 场景读数就不同。
+        两套物理各用各的阻断口径，不在这里"统一"。
+
+        逐连接模式（``connections is not None``）：按槽区间重叠判定，与
+        flexgrid-dev 的 ``roadm_blocks_node`` 逐字相同。
+        """
+        if self.connections is not None:
+            blocked: list[int] = []
+            for index in range(self.n_nodes):
+                if self._roadm_blocks_node_p1(roadm, index):
+                    blocked.append(index)
+            return blocked
+        return [index for index in range(self.n_nodes) if index in roadm.blocked_channels]
+
+    def _roadm_blocks_node_p1(self, roadm: "ROADMConfig", node_index: int) -> bool:
+        """逐节点问法（P1 档），逐字取自 ``flexgrid-dev`` 的 ``roadm_blocks_node``。"""
+        if self.connections is not None:
+            if node_index >= len(self.connections):
+                return False
+            blocked_slots = set(roadm.blocked_slots)
+            if roadm.blocked_channels:
+                if not self.slots_per_channel:
+                    raise ValueError(
+                        "Per-connection mode needs slots_per_channel "
+                        "(channel_spacing_hz / slot_width_hz) to expand ROADM "
+                        "blocked_channels into slots. Construct the evaluator with "
+                        "slots_per_channel=..., or use blocked_slots."
+                    )
+                per_channel = self.slots_per_channel
+                for channel_index in roadm.blocked_channels:
+                    blocked_slots.update(range(channel_index * per_channel, (channel_index + 1) * per_channel))
+            conn = self.connections[node_index]
+            return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
+        return node_index in roadm.blocked_channels
 
     def evaluate_path(self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat) -> PathQoTResult:
         """按拓扑顺序评估光纤、跨段 EDFA 和 ROADM。
@@ -1003,6 +1350,43 @@ class MultiBandISRSGN:
                 remaining_km -= span_km
 
             if roadm is None:
+                continue
+            if self.nli_model == "p1_closed":
+                # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：P1 档的 ROADM 装配**逐字取自**
+                #    `flexgrid-dev @ cb24704`。与 P2 档（FG-14 的 `fold_roadm_terms`
+                #    口径）的差别是**浮点级**的：`x / loss * loss` 与 `x` 在 IEEE-754
+                #    下**不**逐位相等，所以两套口径的 SNR 会差最后几位。
+                #    `p1_closed` 档既然承诺与 cb24704 逐位相同，就必须走这一支。
+                operation = "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
+                loss_db = roadm.path_loss_db(operation)
+                loss = 10 ** (loss_db / 10)
+                power /= loss
+                total_spm /= loss
+                total_xpm /= loss
+                total_ase /= loss
+                if roadm.equalize_output_power:
+                    gain = loss
+                    power *= gain
+                    total_spm *= gain
+                    total_xpm *= gain
+                    total_ase *= gain
+                    nf = 10 ** (roadm.booster_noise_figure_db / 10)
+                    booster_ase = (
+                        nf
+                        * 6.62607015e-34
+                        * self.f_abs_hz
+                        * self.channel_bandwidth_hz_channels
+                        * (gain - 1)
+                    )
+                    booster_ase[power <= 0] = 0
+                    total_ase += booster_ase
+                penalty = 10 ** (roadm.filtering_penalty_db / 10)
+                total_spm *= penalty
+                total_xpm *= penalty
+                total_ase *= penalty
+                blocked = self._blocked_nodes_p1(roadm)
+                if blocked:
+                    power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
                 continue
             # ROADM 装配：权威口径（FG-14）。按端口取损耗，booster 恢复入纤功率时
             # 改注入 ASE 而不衰减信号，滤波惩罚只作用在噪声上。
