@@ -15,6 +15,7 @@ from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
 from network_nlo_eval.models.numba_kernels import _calc_beta2_from_d, _calc_beta3_from_s_d, _w_to_dbm
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
+from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
 
 if TYPE_CHECKING:
     from network_nlo_eval.network.elements import ROADMConfig
@@ -256,20 +257,19 @@ class PyNLOQoTEvaluator:
             if roadm is None:
                 continue
             allowed = [index for index in active_channels if not self._is_blocked(roadm, index)]
+            # ROADM 常量走与统计侧同一个 fold_roadm_terms：端口语义与损耗只定义一次。
+            terms = fold_roadm_terms(roadm, is_last_hop=hop_index == len(optical_path.fiber_configs) - 1)
             current = self.physical["ROADM"](
                 pass_channels=allowed,
                 passband_hz=roadm.passband_hz or self._default_passband_hz,
-                insertion_loss_db=roadm.path_loss_db(
-                    "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
-                ),
+                # loss_db 是折叠时同一次 path_loss_db 求值的 dB 形式，不是反算。
+                insertion_loss_db=terms.loss_db,
                 filter_order=roadm.filter_order,
             ).forward(current)
-            if roadm.equalize_output_power:
+            if terms.equalize:
                 current = self.physical["EDFA"](
-                    gain_db=roadm.path_loss_db(
-                        "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
-                    ),
-                    nf_db=roadm.booster_noise_figure_db,
+                    gain_db=terms.loss_db,
+                    nf_db=terms.booster_nf_db,
                     seed=self.seed + hop_index + 1,
                 ).forward(current)
         return current
