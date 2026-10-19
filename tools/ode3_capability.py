@@ -168,12 +168,13 @@ CAPABILITIES: list[dict] = [
         "file": "src/network_nlo_eval/models/numba_kernels.py",
         "status": "both",
         "involves_physics": True,
-        "evidence": "⚠️ WP-MERGE-FG-FLEX **第 2/4 轮改判**：本条原记 fu4_only"
-        "（「需改冻结内核，WP-O3 §8 明确列为不做」）。合并后本仓已有 matvec / cached_g"
-        "（p2_gn 档，来自 wp/fg-integrate），第 4 轮又给 p1_closed 档补上 matvec"
-        "（models/numba_kernels_p1_accel.py）。⚠️ **冻结核 numba_kernels.py 仍未被改动**"
+        "evidence": "⚠️ WP-MERGE-FG-FLEX **第 5 轮改判**：本条原记 fu4_only"
+        "（「需改冻结内核，WP-O3 §8 明确列为不做」）。第 4 轮已把 matvec 加速建到"
+        "闭式 ECZ 上（models/numba_kernels_p1_accel.py），本轮那套被移除的物理"
+        "（含它的 cached_g 档）也已整体离开本树 —— 加速**只剩** ECZ 这一条线。"
+        "⚠️ **冻结核 numba_kernels.py 仍未被改动**"
         "（字节仍是 6611c416…）：加速**全部**在另立的新模块里，off 档继续以冻结核为基准。"
-        "仍标 involves_physics=True：加速重排浮点求和 ⇒ 非逐位相等（实测 max_rel ~2e-15，"
+        "仍标 involves_physics=True：加速重排浮点求和 ⇒ 非逐位相等（实测 max_rel 1.269e-15，"
         "预算 1e-12 不放宽）。",
     },
     {

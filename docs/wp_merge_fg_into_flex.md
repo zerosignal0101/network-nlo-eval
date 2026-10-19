@@ -1035,3 +1035,271 @@ passed 从基线的 590 涨到 612（本轮新增 21 条守卫 + 1 条改写的�
    `contains` 字面量一字未改）。
 7. **`flexgrid-dev` / `wp/fg-integrate` 两棵树全程只读**；没有 push；
    `wp/fg-rt` 只被读取。合并树没有 detached HEAD。
+
+---
+
+# 10. 第 5 轮：把 P2 整档**移除**，只留闭式 ECZ + 加速
+
+## 10.1 这一轮做的是「移除」，不是「搬家」
+
+任务书的定性很直接：`flexgrid-dev` 由 `ecz-dev` 衍生，**只需要闭式 ECZ**；
+另一套 NLI 物理（历史上在本仓文档里称 `p2_gn`，P2 Eq. 21 张量化、符号率口径）
+是 `wp/fg-integrate` 的模型线，**不属于本产品交付物**。所以这一轮没有「把两套
+都留着加开关」这种选项——那是第 3 轮的产物，本轮把它**整体拆掉**。
+
+移除后的本仓物理是**唯一一套**：P1 (23)/(29)/(30)/(34) 闭式，逐信道 `B_i`，
+核在 `src/network_nlo_eval/models/numba_kernels.py`，
+字节 = `flexgrid-dev @ cb24704` 的冻结内核（`6611c416…`，**逐字节未变**）。
+加速建在**同一套算式**上（第 4 轮写的 `numba_kernels_p1_accel.py`），不引入第二条物理。
+
+**随之收窄的档位机制**（它们只在「两套物理」下才有意义）：
+
+| 档位机制 | 原值 | 第 5 轮 | 为什么 |
+|---|---|---|---|
+| NLI 物理档位形参 | `p1_closed` / `p2_gn` | **删除** | 只剩一套物理，按档查表没有消费者 |
+| `ODE_ACCEL_MODES` | `off/cached/cached_g/matvec` | `off/cached/matvec` | `cached_g` 是拉曼 G 矩阵缓存，只对拉曼 ODE 有意义 |
+| `RAMAN_SPECTRUM_MODES` | `legacy/tabular` | `legacy` | `tabular` 只经由拉曼 ODE 进入计算 |
+| `RAMAN_SPECTRUM_DEFAULT` | `tabular` | `legacy` | 同上，闭式核内部只走 legacy 合成折线 |
+
+**没有改的**（任务书红线）：`MAX_REL_DEVIATION = 1e-12` 一字未动；
+默认加速档仍是 `matvec`；`numba_kernels.py` 仍是 `6611c416…`。
+
+## 10.2 移除清单
+
+### 源码（`src/`）
+
+| 文件 | 处理 | 说明 |
+|---|---|---|
+| `models/numba_kernels_p2.py`（1480 行） | **删除** | P2 Eq. 21 张量化 + RK4 ODE + 拉曼 G 矩阵 + NLI 张量化 |
+| `models/batch_kernels.py`（366 行） | **删除** | P2 的批量核；ECZ 走第 4 轮写的 `calc_span_noise_and_power_batch` |
+| `models/isrs_gn.py` | 改造 | 删：`nli_model` 形参、`NLI_MODEL_DEFAULT`、三张 `*_BY_NLI_MODEL` 分派表、`_calc_span_noise_and_power_p2`、`_batch_constants_for_span`、`_nli_tensors_for_span`、`_nli_kernel_kwargs`、`_g_full/_g_gain/_g_loss` 预计算、`batch_cache_stats` |
+
+改造后 `models/` 只剩三个文件：`isrs_gn.py`、`numba_kernels.py`、`numba_kernels_p1_accel.py`。
+
+`evaluate_path` 的 ROADM 装配不再分派：**恒走** `_apply_roadm_p1`（逐字取自
+`cb24704`）。FG-14 记录的那条「装配口径分歧」随该物理移除而消失——那条分歧本来
+就是**两套物理之间**的分歧。`rwa.qot_checker.fold_roadm_terms` **函数本身保留**，
+仍被 `rwa/qot_checker` 与 `physics/qot_checker` 使用。
+
+### 工具（`tools/`）
+
+`ode_formula_map.py` / `ode3_sync.py` / `ode3_capability.py` 三处：
+删掉指向已删文件的那份内核常量与它的 J5 守卫，**保留**全部面向幸存内核的守卫
+（绝对 sha256 + 相对 `git diff b69563a` 为空，两条同时成立）。代码锚点的
+`contains` 字面量一字未改，只重排行号。
+
+### 脚本（`scripts/`）
+
+删除 10 个**只产已删物理证据**的脚本：`fg4a_bench` / `fg4a_speedup_ab` /
+`fg4b_speedup_ab` / `fg4c_batch_knee` / `fg4a_capture_golden` /
+`fg_u1_raman_spectrum_evidence` / `fu2_scu_evidence` / `fg2_evidence` /
+`fg4e_speedup_ab` / `fg4a_write_design_doc`。
+
+保留并改写的 2 个：`fg4g_q2_trace_diff.py`（仍有活测试调用，删掉 `cached_g` 档位
+与物理档位钉子）、`fg14_divergence_probe.py`（`measure_raw` 仍被 FG-13 测试引用）。
+
+## 10.3 删测试清单（12 个文件 / 56 条，逐条一行理由）
+
+删除范围由 `tests/fg4b_tier_pin_policy.py::ROUND5_P2_REMOVAL_AUTHORIZATION`
+**逐条列名**地夹住：`round5_removal_violations()` 核对「实际删除集合 ⊆ 授权集合」，
+多删一条即响。授权不是橡皮。
+
+### `tests/test_fg4b_nli_vectorization.py`（14 条）—— 整档的张量化 NLI 判据
+
+- `test_f4b_1_default_tier_within_budget` —— 默认档 vs 冻结档的 1e-12 预算，跑在已删物理上；ECZ 同类判据在 `test_p1_closed_accel.py`，覆盖更广。
+- `test_f4b_1_cached_g_remains_the_bit_exact_tier` —— `cached_g` 随该物理整体离场；闭式 ECZ 没有拉曼 G 矩阵。
+- `test_f4b_2_off_is_bit_identical_to_origin_main` —— 与另一条线的 `origin/main` 逐位比对，两套物理不可互比。
+- `test_f4b_2_off_tier_passes_no_tensors_to_the_kernel` —— 断言 `off` 档**不**向核传张量；张量化是已删物理的结构，ECZ 没有这条接线。
+- `test_f4b_2_frozen_nli_source_is_intact` —— 守的是已删那份核的字节冻结；幸存内核由 `test_p1_closed_accel` + J5 守卫双重接管。
+- `test_f4b_3_tensor_nli_matches_frozen_nli_with_budget` —— 守「**张量化** NLI ≈ 逐对冻结 NLI」，被测实现已不存在。
+- `test_f4b_3_tensor_nli_survives_non_uniform_per_channel_power` —— 同上（逐信道功率下的张量化路径）。
+- `test_f4b_4_heterogeneous_symbol_rates_are_preserved` —— 符号率口径是那套物理的带宽量；ECZ 的带宽量是逐信道 `B_i`，命题不同。
+- `test_f4b_4_zero_power_channels_are_excluded` —— 张量化 NLI 的零功率掩码；ECZ 批量入口的零功率语义由 `test_p1_closed_accel.py::test_batch_handles_zero_power_channels` 覆盖。
+- `test_f4b_4_t_tilde_fit_and_kurtosis_branches_are_covered` —— `t_tilde` 拟合与**峰度**分支；闭式 P1 核全文 0 处 `phi_kurtosis`（HEAD 上同样是 0）⇒ 无可测对象。
+- `test_f4b_5_tensors_are_reused_across_calls` / `test_f4b_5_tensor_cache_is_keyed_on_what_it_depends_on` / `test_f4b_5_tensors_are_read_only` —— 三条都是**张量缓存**的复用/键控/只读性；ECZ 的等价物是第 4 轮的 P1 XPM 对矩阵缓存。
+- `test_f4b_6_end_to_end_path_with_roadm_and_tilt` —— 端到端比对**张量化**路径；端到端路径本身仍在 FG-13 / FU-4 里覆盖，只是不再经由已删物理。
+
+**保留**：`test_f4b_1_default_tier_is_matvec`（生产默认档是 `matvec` 是编排方裁决，与哪套物理无关）。
+
+### `tests/test_fg4a_numeric_identity.py`（10 条）
+
+- `test_f4a_3_bit_identical_to_golden` / `test_f4a_4_matvec_within_budget` / `test_f4a_4_measured_deviation_is_bounded_and_reported` —— `results/fg4a_golden.json` 录自 FG 树、属已删物理；闭式 ECZ 的同类判据由 `test_p1_closed_accel.py` 承担（实测 max_rel 1.269e-15）。
+- `test_f4a_3_cached_g_matches_off_exactly` —— `cached_g` 随该物理离场。
+- `test_f4a_5_g_cache_is_reused_not_rebuilt` / `test_f4a_5_cached_matrices_are_read_only` / `test_f4a_g_split_matrices_partition_the_reference_g` —— 拉曼 G 矩阵的复用/只读/自洽，被测实现已不存在。
+- `test_f4a_frozen_ode_body_is_still_byte_identical` / `test_f4a_frozen_dp_dz_is_still_byte_identical` —— 守 RK4 功率演进与 `_calc_dp_dz` 逐字未变；闭式 ECZ 没有这两个函数。
+- `test_f4a_capture_script_check_mode_passes` —— 跑 `scripts/fg4a_capture_golden.py --check`，该脚本录的是已失效金标准且本身依赖 `cached_g`。
+
+**保留**：`test_f4a_tolerance_budget_is_not_loosened`（`MAX_REL_DEVIATION_ALLOWED == 1e-12`，**任务书红线**，必须原地留下）、四条来源/确定性判据、G2 策略守卫本身。
+
+### `tests/test_fg_u1_raman_spectrum.py`（8 条）
+
+- `test_kernel_interpolator_matches_numpy` —— njit 插值器住在已删核里；`rs` 侧的插值正确性由 `test_interpolation_error_within_declared_tolerance` 覆盖。
+- `test_legacy_builder_matches_frozen_polyline` / `test_pair_matrices_agree_with_full_matrix` / `test_cache_survives_pair_then_full_request_order` / `test_tier_cache_entries_do_not_collide` —— 守的是 G 矩阵构建器与其缓存，被测实现已不存在。
+- `test_default_tier_is_tabular` / `test_tabular_changes_the_numbers` / `test_tabular_rejects_frozen_off_path` —— `tabular` 档在评估器上已不可达。
+
+**保留 9 条**：`physics/raman_spectrum.py` 的谱表/闭式/插值/峰位/截断/不对称近似测试**一条不少**（这是超宽带**波段**物理资产）。其中两条**改钉在谱形层重写**：`test_anchor_is_bit_identical_between_tiers`（两档在 13.2 THz 处逐位相等）与 `test_tabular_is_nonzero_beyond_legacy_cutoff`（FU-1 核心物理主张）——命题与数值判据原样保留，只是改用 `rs` 模块而不是已删的核内构建器。
+
+### `tests/test_fg15_legacy_bitwise.py`（4 条）
+
+- `test_default_tier_is_now_tabular` / `test_tabular_and_legacy_are_distinguishable` —— `tabular` 档不再可达。
+- `test_legacy_still_reproduces_pre_flip_golden_bitwise` / `test_legacy_golden_pin_survives_for_every_declared_scenario` —— 逐位复现 `results/fg4a_golden.json`；那份金标准属已删物理，拿它当闭式 ECZ 的期望值**正是第 3 轮判废过的那类跨物理互比**。
+
+**保留**：`test_legacy_tier_still_exists_and_is_explicitly_selectable`（「legacy 档不许被删」）。
+
+### `tests/test_fg2_flexible_grid.py`（6 条）
+
+- `test_f2_3_span_noise_bit_identical_to_golden` / `test_f2_3_legacy_path_still_matches_golden` —— `results/fg2_golden_cplusl_230x50.npz` 的输出列录自 FG 树（`meta__git_rev = 0c2546f3…`）。
+- `test_f2_5_kernel_guards_against_short_symbol_rate_array` —— 短数组守卫的口径是那套物理的带宽量。
+- `test_f2_7_ode_function_body_unchanged` / `test_f2_7_ode_signature_is_the_frozen_one` / `test_f2_7_kernel_takes_frequencies_from_the_caller` —— 三条都守 RK4 ODE（`_calc_exact_power_profile_ode`）；闭式 ECZ 用解析闭式，没有该函数。
+
+**保留并改写**（**灵活栅格覆盖一条不少**）：前两条改判为**物理无关**的更强形式——
+「灵活栅格路径 ≡ 遗留栅格路径**逐位相同**」（不依赖任何历史快照，且直接守住
+「两种表示走同一条物理」这个核心合同）；第三条改用 `b_hz_channels`
+（闭式 ECZ 的逐信道带宽量），命题「逐信道量长度必须等于信道数」原样保留。
+
+### `tests/test_fg1_physics_parity.py`（4 条）
+
+- `test_kernel_uses_ode_and_not_the_analytic_tilt_variant` —— 结构守卫「核里有 RK4、没有解析变体」；闭式 ECZ 的「不该变成 ODE 变体」由字节冻结（`6611c416…`）以更强方式接管。
+- `test_lowlevel_matches_origin_main` —— 逐位复现 `results/fg1_golden_main.json`（provenance = `origin/main`，另一条线的物理）。
+- `test_parity_artifact_is_present_and_ok` —— 检查「本树与 `origin/main` 逐位一致」的对齐报告；该命题随物理移除而**不再成立**。
+- `test_kurtosis_scenario_is_sensitive_to_phi_kurtosis` —— 守拉曼 ODE 里那套**峰度感知 XPM**；闭式 P1 核全文 0 处 `phi_kurtosis` ⇒ 没有可测对象，不是放宽而是撤下。
+
+**保留**：`test_golden_file_declares_origin_main`（golden 的出处**声明**是关于文件内容的事实）、`test_scenarios_are_non_degenerate`（现算，不读 golden）。
+
+### `tests/test_fg14_assembly_provenance.py`（3 条）
+
+- `test_fg14_assembly_divergence_record_reproduces` / `test_fg14_divergence_stays_within_its_authorized_magnitude` —— 两条量的是「本树 vs `origin/main`」的装配分歧。那个授权幅度是为「**同一套物理、两套装配实现**」裁决的，跨到另一套物理后失去前提。
+- `test_fg14_the_pin_is_not_a_vacuous_assertion` —— 撤下上一条后钉子**本来就红**，这条会**因为错误的原因通过**——那正是它自己禁止的失效形态。保留它比删掉更糟：会给出「纪律仍在生效」的**虚假保证**。
+
+**ROADM 行为覆盖一条不少**，改由 `test_fg20_roadm_injection_behavior.py`（45 条，期望值仍由 `fold_roadm_terms` **独立**重算）与 FG-13（9 条）承担，两者在闭式 ECZ 下全绿。**保留 5 条**只读已落盘记录或字节守卫的判据。
+
+### 其余 4 个文件（10 条）
+
+| 文件 | 测试 | 理由 |
+|---|---|---|
+| `test_merge_fg_into_flex.py` | `test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers` | 跨两套物理比较 `B_i` 落点，去掉一套后命题消失 |
+| `test_merge_fg_into_flex.py` | `test_cached_g_vs_matvec_within_budget` | `cached_g` 随该物理离场 |
+| `test_ode3_flexgrid_sync.py` | `test_guard2b_j5_frozen_p2_kernel_is_byte_frozen` | 守的是已删那份内核的字节冻结 |
+| `test_p1_closed_accel.py` | `test_p2_gn_tiers_are_unchanged` / `test_nli_model_default_is_still_p1_closed` | 物理档位机制整体移除 |
+| `test_fu2_sclu_bands.py` | `test_evaluate_path_actually_reaches_tabular_spectrum` | `tabular` 档不再可达 |
+| `test_fg4e_cpu_batching.py` | `test_batch_constants_are_reused_across_calls` | 守的是已删物理的批量常量包命中计数 |
+
+## 10.4 判据实测读数（V1–V4）
+
+环境：`loadavg 0.72 / 1.06 / 1.00`，`cpu_count = 20`，`cpu_affinity = 20`，
+BLAS `mkl-sdl 2025`，`MKL_NUM_THREADS = OMP_NUM_THREADS = 12`，N = 68 信道。
+
+### V1 公式不动 + 与 `cb24704` 逐项对照
+
+| 项 | 读数 |
+|---|---|
+| `numba_kernels.py` sha256 | `6611c4164a60d0dc…f4aa4` |
+| `sha256 == cb24704 的字节` | **True** |
+| `b_hz_channels[i]` / `b_hz_channels[l_idx]` 字面量 | 4 处 / 1 处，**都在** |
+| **5752 项逐项对照** | **cases=6, values=5752, mismatched=0, sha256_equal=True** |
+
+对照两侧都显式钉 `ode_accel="off"`（冻结参考路径），所以这是**对等**比较，
+没有一侧被静默换档。两侧 readings sha256 同为 `14d77108b5616d39…`.
+
+### V2 加速正确性（预算 `1e-12`，**不放宽**）
+
+| 构造 | 比较 | max_rel | max ULP |
+|---|---|---|---|
+| 混合 n_slots | `matvec ≡ off` | **1.269e-15** | 11 |
+| 混合 n_slots | `batch ≡ serial` B=8/16/32/68/142 | 6.230e-16 … 1.375e-15 | 4 … 12 |
+| 均匀 | `matvec ≡ off` | **1.288e-15** | 7 |
+| 均匀 | `batch ≡ serial` B=8/16/32/68/142 | 4.898e-16 … 1.483e-15 | 3 … 13 |
+
+全批宽通过，最差 `1.483e-15`，对 `1e-12` 预算有约 **675 倍**余量。
+
+### V3 收益（必须带 loadavg 与线程数）
+
+| 批宽 B | 串行 off | 串行 matvec | 批量 matvec | 档位收益 | 批量收益 | 端到端 | 冷启动首次 |
+|---|---|---|---|---|---|---|---|
+| 8 | 0.686 ms | 0.249 ms | 0.061 ms | **2.76×** | **4.11×** | 11.33× | 0.135 ms |
+| 16 | 1.374 ms | 0.492 ms | 0.116 ms | **2.79×** | **4.23×** | 11.81× | 0.113 ms |
+| 32 | 2.921 ms | 1.031 ms | 0.179 ms | **2.83×** | **5.76×** | 16.31× | 0.128 ms |
+| 68 | 5.843 ms | 2.090 ms | 0.328 ms | **2.80×** | **6.37×** | 17.80× | 0.128 ms |
+| 142 | 12.458 ms | 4.372 ms | 0.640 ms | **2.85×** | **6.83×** | 19.47× | 0.135 ms |
+
+**全部在第 4 轮实测区间的下沿之上**：
+
+| 指标 | 第 4 轮区间 | 本轮读数 | 下沿 | 判定 |
+|---|---|---|---|---|
+| 串行档位收益 | 2.71–2.94× | 2.76–2.85× | 2.71× | **过** |
+| 批量收益 | 3.66–6.91× | 4.11–6.83× | 3.66× | **过** |
+| 端到端 | 10.22–19.86× | 11.33–19.47× | 10.22× | **过** |
+
+(N,N) 对矩阵一次性构建 **0.077 ms**（evaluator 级，跨跨段/跨候选复用）。
+**冷启动如实记**：首次调用 0.113–0.135 ms，比热路径慢 1.3–1.7×——多付一次构建，
+第二次起反超。这个代价第 4 轮就量过，本轮**同样存在，没有被隐藏**。
+
+### V4 套件 + grep 归零
+
+```
+$ grep -rn "p2_gn\|numba_kernels_p2\|NLI_MODEL_DEFAULT\|batch_kernels" src/ tests/ tools/
+（无输出，exit 1）
+```
+
+套件：**2 failed / 363 passed / 2 skipped**。两条 failed 都是**既有环境问题**，
+与本轮改动无关：
+
+1. `tests/test_ode_dev.py::test_tools_check_reproduces[ode_compare.py]` ——
+   `ModuleNotFoundError: No module named 'fu4_scenarios_legacy'`
+2. `tests/test_bwqot_bandwidth.py::test_q_evidence_tools_check_reproduces[bwqot_legacy_regression.py]`
+   —— 同族：需要外部 `ecz-dev` 基线树。
+
+`fu4_scenarios_legacy` **在本仓从未提交过**（`git log --all -- tests/fu4_scenarios_legacy.py` 为空），
+两个脚本都**未被本轮改动**（`git status tools/` 只显示我改的三个文件）。
+
+干净导入：`isrs_gn` / `numba_kernels` / `numba_kernels_p1_accel` /
+`physics.raman_spectrum` / `rwa.qot_checker` / `physics.qot_checker` /
+`core.bands` / `core.flexgrid` / `rwa.allocators` 全部 OK；
+构造签名里**已无** `nli_model`；`ODE_ACCEL_DEFAULT == "matvec"`（红线未动）。
+
+## 10.5 第 5 轮我没做什么 / 残留风险
+
+1. **在 `evaluate_path` 上重录了 3 份证据**（`fg13_roadm_probe.json`、
+   `fg13_impact_probe.json`、`fu4_fidelity_golden.json`；`fu4_assembly_delta.json`
+   的 **`after` 列**）。这些是**派生读数**，物理换了必须重录——但这是「换底重录」，
+   不是放宽判据：相应测试仍然是**逐位复现**。
+   `fu4_assembly_delta.json` 的 **`before` 列是 FG 树的不可变历史捕获**，
+   脚本刻意不重取，**一个字节未动**；`test_fu4_3` 钉的具体 ΔSNR 数值随
+   `after` 重录由 -0.096115 dB 变为 -0.886334 dB，但**命题（≠0，即
+   「union 不会塌回 FG 树的数」）未变**，且仍然钉着具体读数。
+2. **重排了 `isrs_gn.py` 的代码锚点行号**（`tools/ode_formula_map.py` 与
+   `results/ode_dev_anchor_relocation.json`）。`contains` 字面量一字未改；
+   18 条物理公式号一条没动。
+3. **`phi_kurtosis` 成了 ECZ 上的哑参数**：构造器仍接受它、存下来，
+   但闭式 P1 核全文 0 处引用（HEAD 上同样是 0）⇒ **对读数无影响**。
+   我**没有**删这个形参（那是公开 API 变更，超出本轮授权），只把那条依赖它的
+   测试撤下并在此记录。
+4. **`raman_spectrum="tabular"` 现在会抛 `ValueError`**。谱本身
+   （`physics/raman_spectrum.py`：Lin & Agrawal 2006 响应函数的傅里叶变换闭式
+   增益谱 + 出处 CSV + 互校）**保留在树里**并有测试；移除的只是
+   **评估器不再暴露该档**。下游若有代码显式传 `tabular`，会**显式报错**
+   （沿用仓内「显式拒绝而非静默回退」口径），不会静默跑成 legacy。
+5. **FG-20 的一条操作阈值被刻意改判**：原「B=1 时批量臂更慢」（`ratio < 1.0`）
+   是在**已删物理的批量核**上测出来的性能启发式。ECZ 批量核实测 B=1 时
+   批量臂反而**略快**（1.04–1.09×）。我把它从「钉方向」改为「钉合理区间
+   [0.2, 5.0] + 打印实测值」，并在这里说明——这正是该测试原本警告的情形
+   （「阈值不该被顺带改掉」），所以是**刻意**改判，不是悄悄翻转。
+   真正的收益结论由 V3 的 B=8..142 承担，不受这条启发式影响。
+6. **FG-13 的实时影响量现在结构性为 0**：只剩一套 ROADM 装配，
+   `prospective_full_union` / `prospective_ports_only` 与 committed 按构造相同。
+   我把该测试拆成两段：实时差值（`roadm_hoop` 逐位 0；`path_cplusl_roadm`
+   残留 0.101 dB，来自**阻断信道口径**的既有分歧，与本轮无关），
+   以及**历史影响量**——由 `results/fg14_pre_fix_baseline.json` 冻结的
+   「修复前读数」与当前 committed 读数**现算**，仍 > 0.9 dB / 5.0 dB。
+7. **规模维度**沿用第 4 轮：N = 68 信道，批宽 B = 8/16/32/68/142。
+   N = 142 的**信道数**没有单独测。
+8. **没有 push 任何分支**；`flexgrid-dev` / `wp/fg-integrate` 全程只读
+   （V1 的对照树是从 `cb24704` `git archive` 到 `/tmp` 跑的，**没有写入**）。
+9. **`evidence/merge/` 的历史证据一个都没删**（含 `v4p_probe.py`，
+   第 4 轮版原样保留）。哪些对应已删物理：
+   `v1p_flexgrid_dev_p1closed.json`、`v1p_merged_tree_p1closed.json`、
+   `v1p_merged_tree_p2gn.json`、`v1p_fg_integrate_p2gn.json`、
+   `v1_fg_integrate_rollout.json`、`v1_merged_tree_rollout.json`、
+   `v4p_probe.json`、`v3p_probe.json`、`suite_v4.txt`、`suite_v4_round3.txt`
+   ——这些是**已删那一档**的历史读数，保留作为「它曾经存在过」的记录，
+   但**不再是本树的验收依据**；本轮的新读数在 `v5_probe.json`。

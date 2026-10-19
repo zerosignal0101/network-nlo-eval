@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 from types import ModuleType
 
+import numpy as np
 import pytest
 
 from network_nlo_eval.network.elements import ROADMConfig
@@ -45,6 +46,35 @@ def _load_script(name: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+#: FG-14 分歧探针的**原始读数**与**逐位比较**。
+#:
+#: ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：``test_fg13_impact_is_physics_scale_not_float_noise``
+#: 改用这两个函数，把「历史影响量」从**冻结的修复前基线**与**当前 committed 读数**
+#: 现算得出（实时影响探针在只剩一套 ROADM 装配后恒为 0，见该测试 docstring）。
+#: 两个函数都来自那个探针模块——它们**只读** ``evaluate_path`` 的输出与冻结基线，
+#: 不与被测路径共享代码，因此仍是独立参照。
+_FG14_PROBE = _load_script("fg14_divergence_probe")
+measure_raw = _FG14_PROBE.measure_raw
+
+
+def _max_abs_dev_snr(baseline_snr, current_snr) -> float | None:
+    """逐元素 SNR 最大绝对差；**只比两侧都有限**的下标。
+
+    冻结基线录于阻断口径分歧裁决**之前**，两侧的 ``-inf``（被阻断）位置**不同**。
+    直接 ``np.abs(a - b)`` 会得到 ``inf``，而那些位置本来就**不可比**（信号被阻断，
+    没有 SNR 可言）。故按两侧有限性的交集取差——这正是 FG-14 探针自己
+    ``compare()`` 想做的事，但它在两侧有限掩码长度不同的时候会抛广播错误，
+    这里在测试侧显式取交集，顺带把「被阻断点不可比」这件事写进代码。
+    """
+    a = np.asarray(baseline_snr, dtype=np.float64)
+    b = np.asarray(current_snr, dtype=np.float64)
+    assert a.shape == b.shape, f"shape mismatch {a.shape} vs {b.shape}"
+    both = np.isfinite(a) & np.isfinite(b)
+    if not np.any(both):
+        return None
+    return float(np.max(np.abs(a[both] - b[both])))
 
 
 # ======================================================================
@@ -220,15 +250,23 @@ def test_fg13_evaluate_path_calls_the_union_folding() -> None:
 
 
 def test_fg13_impact_is_physics_scale_not_float_noise() -> None:
-    """FG-13 量化的影响是 dB 量级；FG-14 之后由**冻结的修复前基线**继续担保。
+    """FG-13 量化的影响是 dB 量级；该历史量由**冻结的修复前基线**继续担保。
 
-    FG-13 交付时这条比较的是"若修复"与"现状"。FG-14 §2 真的修复了之后，
-    ``scripts/fg13_impact_probe.py`` 的 before/after 两侧变成同一套装配，差值归零
-    —— 那不是"影响变小"，而是这把尺子**已经完成使命**。
+    FG-13 交付时这条比较的是「若修复」与「现状」。修复做完之后，
+    ``scripts/fg13_impact_probe.py`` 的 before/after 两侧变成**同一套装配**，差值归零
+    —— 那不是「影响变小」，而是这把尺子**已经完成使命**。
 
-    ⇒ 数字改由 FG-14 的产物担保：``results/fg14_pre_fix_baseline.json`` 冻结了
-    修复前的读数，当前树与它的差**就是**当初量化的那个影响量。这里断言两份
-    独立产物的数字一致，任何一侧被悄悄改写都会红。
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：移除被移除那套物理后，闭式 ECZ 的 ROADM 装配
+    （``_apply_roadm_p1``）成为**唯一**装配，故影响探针的
+    ``prospective_full_union`` / ``prospective_ports_only`` 两侧与 committed
+    **按构造完全相同** ⇒ 实时差值恒为 **0.0**（不再只是「恰好归零」）。
+
+    故本条改为两段断言，**把两件事分开钉**：
+
+    1. **实时差值 == 0**，且注明这是**结构性**的（只剩一套装配），不是巧合；
+    2. **历史影响量仍然 > 0.9 dB**，由 ``results/fg14_pre_fix_baseline.json``
+       冻结的「修复前读数」与**当前树**的 committed 读数现算相比得到——
+       那个 dB 量级的结论**没有随物理移除而丢失**，仍然被守住。
     """
     report = json.loads(IMPACT_JSON.read_text(encoding="utf-8"))
     snr = {
@@ -237,38 +275,49 @@ def test_fg13_impact_is_physics_scale_not_float_noise() -> None:
         for row in rows
         if "snr_db" in row["outputs"]
     }
-    fg13_roadm = snr["fg1_scenarios.py/roadm_hoop"]["max_abs_delta"]
-    fg13_cplusl = snr["fg4a_scenarios.py/path_cplusl_roadm"]["max_abs_delta"]
-    assert fg13_roadm > 0.9
-    assert fg13_cplusl > 5.0
+    # (1) 实时影响探针：只剩一套装配 ⇒ 差值**塌到历史量级之下**。
+    #
+    # * ``fg1/roadm_hoop`` 逐位归零：committed 的 ``_apply_roadm_p1`` 与并集变体在
+    #   这个纯 ROADM 场景上**逐位相同**。
+    # * ``fg4a/path_cplusl_roadm`` 残留 0.101 dB：来自**阻断信道口径**的细微差别
+    #   （ECZ 的 ``_blocked_nodes_p1`` 在遗留模式下只认 ``blocked_channels``，
+    #   并集变体走 ``_resolve_blocked_node_indices`` 还认 ``blocked_slots``）。
+    #   那是 flexgrid-dev 与 WG 之间**既有**的阻断口径分歧，与本轮的物理移除无关，
+    #   且比当初量化的 5+ dB 装配差**小两个数量级**。此处钉住「低于历史量级」这一
+    #   命题，不把 0.101 这个具体读数也一并钉死（它会随阻断口径的取舍变化）。
+    assert snr["fg1_scenarios.py/roadm_hoop"]["max_abs_delta"] == 0.0
+    assert snr["fg4a_scenarios.py/path_cplusl_roadm"]["max_abs_delta"] < 1.0
 
-    # FG-14 的独立复算：冻结的修复前基线 vs 当前树。
-    fg14 = json.loads(
+    # (2) 历史影响量：冻结的「修复前基线」vs 当前 committed 读数，**现算**。
+    frozen = json.loads(
         (REPO_ROOT / "results" / "fg14_pre_fix_baseline.json").read_text(encoding="utf-8")
     )
-    assert fg14["schema"] == "fg14-pre-fix-baseline-v1"
-    divergence = json.loads(
-        (REPO_ROOT / "results" / "fg14_assembly_divergence.json").read_text(encoding="utf-8")
-    )
-    committed = divergence["committed"]["roadm_hoop"]["outputs"]["snr_db"]["authorized_max_abs_dev"]
-    assert abs(committed - fg13_roadm) < 1e-12, (
-        f"FG-13 量化的 {fg13_roadm!r} dB 与 FG-14 实测的 {committed!r} dB 不一致 —— "
-        "两份产物必有一侧被改写。"
-    )
+    assert frozen["schema"] == "fg14-pre-fix-baseline-v1"
+    current = measure_raw("committed")
+    for key, floor in (("fg1/roadm_hoop", 0.9), ("fg4a/path_cplusl_roadm", 5.0)):
+        max_dev = _max_abs_dev_snr(frozen["scenarios"][key]["snr_db"], current[key]["snr_db"])
+        assert max_dev is not None and max_dev > floor, (
+            f"{key}: 修复前→当前树的 SNR 移动 {max_dev} dB 不再是 dB 量级"
+        )
 
 
 def test_fg13_both_goldens_are_reproducible_after_the_repin() -> None:
     """FG-14 重钉后，两套既有金标准都必须仍逐位重现。
 
-    * ``results/fg4a_golden.json`` —— **经** ``evaluate_path``
-      （``path_cplusl_roadm``）；FG-14 §2 按授权重钉，重钉出处记在 ``repins`` 链里；
     * ``results/fu4_fidelity_golden.json`` —— **不经** ``evaluate_path``
       （走 ``QoTValidator``），对这一刀本就免疫，本断言顺带钉住这个结构性事实。
+
+    ⚠️ 第 5 轮：``results/fg4a_golden.json`` 那一半已随被移除的物理离场（见下）。
     """
     import subprocess
     import sys
 
-    for script in ("fg4a_capture_golden", "fu4_capture_golden"):
+    # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：原列表还有 ``fg4a_capture_golden``。该脚本用
+    # ``CAPTURE_MODE = "cached_g"`` 录一份属于**被移除那套物理**的金标准，已随该物理
+    # 离场（``scripts/fg4a_capture_golden.py`` 依赖 ``cached_g`` 档与张量化核）。
+    # 本条**保留仍然成立的那一半**：``fu4_fidelity_golden.json`` 走 ``QoTValidator``，
+    # 不经 ``evaluate_path``，**对本次改动免疫**，其可复算性继续被守住。
+    for script in ("fu4_capture_golden",):
         proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell, no user input
             [sys.executable, str(REPO_ROOT / "scripts" / f"{script}.py"), "--check"],
             capture_output=True,

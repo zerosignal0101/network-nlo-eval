@@ -54,7 +54,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 590,
+          "line": 457,
           "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("
         }
       ],
@@ -153,7 +153,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 427,
+          "line": 303,
           "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"
         },
         {
@@ -181,7 +181,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1035,
+          "line": 722,
           "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,"
         },
         {
@@ -190,19 +190,9 @@
           "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"
         },
         {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1126,
-          "contains": "spm_pre = ((16.0 / 27.0) * (gamma_ii_sq * p_cube / (symbol_rate_hz**2))) * (big_t * big_t)"
-        },
-        {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
           "line": 504,
           "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"
-        },
-        {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1139,
-          "contains": "pre = ((gamma_sq * p_sq) * p_in_w[:, None]) / symbol_rate_hz"
         }
       ],
       "conforms": true,
@@ -238,11 +228,6 @@
           "contains": "(p_i_w**3 / b_i_hz**2)"
         },
         {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1126,
-          "contains": "spm_pre = ((16.0 / 27.0) * (gamma_ii_sq * p_cube / (symbol_rate_hz**2))) * (big_t * big_t)"
-        },
-        {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
           "line": 329,
           "contains": "(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)"
@@ -271,11 +256,6 @@
           "file": "src/network_nlo_eval/models/numba_kernels.py",
           "line": 459,
           "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"
-        },
-        {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 871,
-          "contains": "p_in_w[i], symbol_rate_hz[i], n_span, gamma_ii, phi_i, alpha_power_npm[i], t_i_tilde, L_m, epsilon_n_span=0.05"
         }
       ],
       "conforms": true,
@@ -326,19 +306,9 @@
           "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"
         },
         {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1140,
-          "contains": "pre = ((32.0 / 27.0) * pre) * (big_t * big_t)"
-        },
-        {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
           "line": 482,
           "contains": "phi_il = ("
-        },
-        {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1038,
-          "contains": "phi_il = delta_f_hz * phi_base"
         },
         {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
@@ -351,19 +321,9 @@
           "contains": "b_hz_channels[l_idx],  # P1 (30) 的 B_ℓ = 干扰信道自己的带宽"
         },
         {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 890,
-          "contains": "rs_l_hz=symbol_rate_hz[l_idx],"
-        },
-        {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
           "line": 492,
           "contains": "b_hz_channels[i],  # P1 (30) 的 B_i = COI 的带宽（atan 参数）"
-        },
-        {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 891,
-          "contains": "rs_i_hz=symbol_rate_hz[i],"
         }
       ],
       "conforms": true,
@@ -431,12 +391,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1732,
+          "line": 1167,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1735,
+          "line": 1170,
           "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"
         }
       ],
@@ -459,22 +419,22 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1052,
+          "line": 739,
           "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1057,
+          "line": 744,
           "contains": "gain *= 10 ** (ripple / 10)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1061,
+          "line": 748,
           "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum("
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1062,
+          "line": 749,
           "contains": "gain - 1, 0"
         }
       ],
@@ -507,7 +467,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1019,
+          "line": 706,
           "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("
         }
       ],
@@ -596,12 +556,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1050,
+          "line": 737,
           "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1062,
+          "line": 749,
           "contains": "gain - 1, 0"
         }
       ],
@@ -624,7 +584,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1732,
+          "line": 1167,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         }
       ],
@@ -675,7 +635,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1688,
+          "line": 1142,
           "contains": "total_spm *= transfer"
         }
       ],
@@ -689,7 +649,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1585,
+          "line": 1044,
           "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"
         }
       ],
@@ -703,7 +663,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1589,
+          "line": 1048,
           "contains": "total_spm *= penalty"
         }
       ],
@@ -749,23 +709,13 @@
           "contains": "if abs(phi_i) < _EPSILON:"
         },
         {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1041,
-          "contains": "abs_phi_base = max(abs(phi_base), _EPSILON)"
-        },
-        {
           "file": "src/network_nlo_eval/models/numba_kernels.py",
           "line": 341,
           "contains": "return max(result, 0.0)"
         },
         {
-          "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-          "line": 1127,
-          "contains": "sigma_spm_2 = np.where(p_in_w > 0, np.maximum(spm_pre * spm_sum, 0.0), 0.0)"
-        },
-        {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1047,
+          "line": 734,
           "contains": "s2_ase = np.zeros_like(power_in_w)"
         }
       ],
@@ -779,7 +729,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1594,
+          "line": 1053,
           "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"
         }
       ],
@@ -793,7 +743,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 428,
+          "line": 304,
           "contains": "self.delta_f_co_hz = 15e12"
         }
       ],

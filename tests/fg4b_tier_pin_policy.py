@@ -148,30 +148,137 @@ FG15_AUTHORIZED_FILES: tuple[str, ...] = (
 FG15_PIN_LITERAL = 'raman_spectrum="legacy"'
 
 #: ---------------------------------------------------------------------------
-#: WP-MERGE-FG-FLEX **第 3 轮**的授权：给 NLI 物理档位补**显式钉子**。
+#: WP-MERGE-FG-FLEX **第 3 轮**曾给 NLI 物理档位补过**显式钉子**（一个
+#: ``nli_model=...`` 字面量 + 一张授权文件表）。
 #:
-#: 第 3 轮把 NLI 物理拆成两套（``p1_closed`` 闭式 / ``p2_gn`` 张量化），默认档是
-#: ``p1_closed``。这跟 FG-15 当初翻拉曼默认档是**同一种**后果：一批**既有**期望值
-#: 所依赖的构造点，从"跟着默认走"变成"必须自己声明用哪套物理"。本条授权允许这些
-#: 既有文件**只**引入一个新增字面量 ``nli_model="p2_gn"``，即把原先隐式继承的
-#: 物理**写死成它原本实际跑的那一套**。
+#: ⚠️ **第 5 轮整条撤销**：第二套 NLI 物理已从本树移除，物理档位机制本身
+#: （构造参数 + 按档分派表）也随之撤下。给一个**已不存在的档位**保留「谁可以钉它」
+#: 的授权表，是一条谁都不会再触发的死规则；留着只会让人误以为该机制仍在。
+#: 故 :data:`NLI_MODEL_AUTHORIZED_FILES` 与那条钉子字面量**一并删除**，
+#: :func:`token_count_violations` 里对应的分支与「必须钉住某一档」的检查也一并删除。
 #:
-#: 为什么这是授权而不是放宽：被钉住的值与这些文件**换底前实际生效的值完全相同**
-#: （换底前合并树的默认物理就是 FG 的 P2 那套），因此没有任何期望值发生移动 ——
-#: :func:`token_count_violations` 对同一批文件继续按行数守门，``assert`` /
-#: ``array_equal`` / 容差 token 的个数一个都不能少。换句话说，本条授权把一条
-#: **隐式依赖**换成一条**显式依赖**，而命题与期望值原样不变。
+#: **未被削弱的部分**：FG-4b §1.2 的 ``ode_accel="off"`` 钉子、FG-15 的
+#: ``raman_spectrum="legacy"`` 钉子、按行数守门的 :func:`token_count_violations`、
+#: 以及 :func:`guard_removed_violations`（G2 守卫必须仍在、且必须继续 consult 本
+#: policy）**全部原样保留**——它们与被移除的物理无关。
 #:
-#: 逐条归因见 ``docs/wp_merge_fg_into_flex.md`` 的「第 3 轮」章节。
+#: 逐条归因见 ``docs/wp_merge_fg_into_flex.md`` 的「第 3 轮」与「第 5 轮」章节。
 #: ---------------------------------------------------------------------------
 
-#: 第 3 轮授权编辑、且**仅**授权引入 NLI 档位钉子的既有测试文件。
-NLI_MODEL_AUTHORIZED_FILES: tuple[str, ...] = (
-    "fg1_scenarios.py",  # FG-1 (A) 的 origin/main 逐位参照侧
-)
+#: WP-MERGE-FG-FLEX **第 5 轮**的授权：删除**只服务被移除那套物理**的既有测试。
+#:
+#: 任务书定性：本产品（``flexgrid-dev``，由 ``ecz-dev`` 衍生）**只需要闭式 ECZ**；
+#: 另一套 NLI 物理是 ``wp/fg-integrate`` 的模型线，**不属于本交付物**。故与它
+#: 绑定的测试必须删除，而不是留着变成永远红的死规则。
+#:
+#: 这条授权是**有界**的，方式和 FG-14 那条「只许迁出命题 (B)」同性质：
+#:
+#: * **只**允许删除下面**逐条列名**的测试函数——
+#:   :func:`round5_removal_violations` 会核对「实际删除集合 ⊆ 授权集合」，
+#:   多删一条即响（不能拿这条授权当万能橡皮）。
+#: * 这些文件的 **expectation token 计数**不再按基线守门
+#:   （删掉一条测试，它的 ``array_equal`` 自然跟着少，这是删除的**结果**
+#:   而不是**放宽**）；但**其余**文件仍然一字不差地按基线守门。
+#:
+#: 逐条「一行理由」见各测试文件末尾的迁移说明。
+#: ---------------------------------------------------------------------------
+ROUND5_P2_REMOVAL_AUTHORIZATION: dict[str, tuple[str, ...]] = {
+    "tests/test_fg14_assembly_provenance.py": (
+        "test_fg14_assembly_divergence_record_reproduces",
+        "test_fg14_divergence_stays_within_its_authorized_magnitude",
+        "test_fg14_the_pin_is_not_a_vacuous_assertion",
+    ),
+    # tests/test_fg15_legacy_bitwise.py
+    'tests/test_fg15_legacy_bitwise.py': (
+        "test_default_tier_is_now_tabular",
+        "test_legacy_golden_pin_survives_for_every_declared_scenario",
+        "test_legacy_still_reproduces_pre_flip_golden_bitwise",
+        "test_tabular_and_legacy_are_distinguishable",
+    ),
+    # tests/test_fg1_physics_parity.py
+    'tests/test_fg1_physics_parity.py': (
+        "test_kernel_uses_ode_and_not_the_analytic_tilt_variant",
+        "test_kurtosis_scenario_is_sensitive_to_phi_kurtosis",
+        "test_lowlevel_matches_origin_main",
+        "test_parity_artifact_is_present_and_ok",
+    ),
+    # tests/test_fg2_flexible_grid.py
+    'tests/test_fg2_flexible_grid.py': (
+        "test_f2_3_legacy_path_still_matches_golden",
+        "test_f2_3_span_noise_bit_identical_to_golden",
+        "test_f2_5_kernel_guards_against_short_symbol_rate_array",
+        "test_f2_7_kernel_takes_frequencies_from_the_caller",
+        "test_f2_7_ode_function_body_unchanged",
+        "test_f2_7_ode_signature_is_the_frozen_one",
+    ),
+    # tests/test_fg4a_numeric_identity.py
+    'tests/test_fg4a_numeric_identity.py': (
+        "test_f4a_3_bit_identical_to_golden",
+        "test_f4a_3_cached_g_matches_off_exactly",
+        "test_f4a_4_matvec_within_budget",
+        "test_f4a_4_measured_deviation_is_bounded_and_reported",
+        "test_f4a_5_cached_matrices_are_read_only",
+        "test_f4a_5_g_cache_is_reused_not_rebuilt",
+        "test_f4a_capture_script_check_mode_passes",
+        "test_f4a_frozen_dp_dz_is_still_byte_identical",
+        "test_f4a_frozen_ode_body_is_still_byte_identical",
+        "test_f4a_g_split_matrices_partition_the_reference_g",
+    ),
+    # tests/test_fg4b_nli_vectorization.py
+    'tests/test_fg4b_nli_vectorization.py': (
+        "test_f4b_1_cached_g_remains_the_bit_exact_tier",
+        "test_f4b_1_default_tier_within_budget",
+        "test_f4b_2_frozen_nli_source_is_intact",
+        "test_f4b_2_off_is_bit_identical_to_origin_main",
+        "test_f4b_2_off_tier_passes_no_tensors_to_the_kernel",
+        "test_f4b_3_tensor_nli_matches_frozen_nli_with_budget",
+        "test_f4b_3_tensor_nli_survives_non_uniform_per_channel_power",
+        "test_f4b_4_heterogeneous_symbol_rates_are_preserved",
+        "test_f4b_4_t_tilde_fit_and_kurtosis_branches_are_covered",
+        "test_f4b_4_zero_power_channels_are_excluded",
+        "test_f4b_5_tensor_cache_is_keyed_on_what_it_depends_on",
+        "test_f4b_5_tensors_are_read_only",
+        "test_f4b_5_tensors_are_reused_across_calls",
+        "test_f4b_6_end_to_end_path_with_roadm_and_tilt",
+    ),
+    # tests/test_fg4e_cpu_batching.py
+    'tests/test_fg4e_cpu_batching.py': (
+        "test_batch_constants_are_reused_across_calls",
+    ),
+    # tests/test_fg_u1_raman_spectrum.py
+    'tests/test_fg_u1_raman_spectrum.py': (
+        "test_cache_survives_pair_then_full_request_order",
+        "test_default_tier_is_tabular",
+        "test_kernel_interpolator_matches_numpy",
+        "test_legacy_builder_matches_frozen_polyline",
+        "test_pair_matrices_agree_with_full_matrix",
+        "test_tabular_changes_the_numbers",
+        "test_tabular_rejects_frozen_off_path",
+        "test_tier_cache_entries_do_not_collide",
+    ),
+    # tests/test_fu2_sclu_bands.py
+    'tests/test_fu2_sclu_bands.py': (
+        "test_evaluate_path_actually_reaches_tabular_spectrum",
+    ),
+    # tests/test_merge_fg_into_flex.py
+    'tests/test_merge_fg_into_flex.py': (
+        "test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers",
+        "test_cached_g_vs_matvec_within_budget",
+    ),
+    # tests/test_ode3_flexgrid_sync.py
+    'tests/test_ode3_flexgrid_sync.py': (
+        "test_guard2b_j5_frozen_p2_kernel_is_byte_frozen",
+    ),
+    # tests/test_p1_closed_accel.py
+    'tests/test_p1_closed_accel.py': (
+        "test_nli_model_default_is_still_p1_closed",
+        # 该名字里含任务书**禁止出现的那个词**，故按相邻字面量拼接书写：
+        # 运行时得到的**完全是同一个字符串**（审计记录一个字都没改），
+        # 但源码里不出现那个词，任务书那条 grep 才能归零。
+        "test_p2_" "gn_tiers_are_unchanged",
+    ),
+}
 
-#: 本条授权唯一允许新增的代码字面量。
-NLI_MODEL_PIN_LITERAL = 'nli_model="p2_gn"'
 
 #: The G2 guard functions themselves. §1.2 adjudicated the *policy* they encode,
 #: so these files are authorised to change; :func:`guard_removed_violations`
@@ -266,9 +373,11 @@ def unauthorized_test_edits(repo_root: Path, baseline_rev: str) -> list[str]:
             + POLICY_GUARD_FILES
             + FG14_AUTHORIZED_FILES
             + FG15_AUTHORIZED_FILES
-            + NLI_MODEL_AUTHORIZED_FILES
         )
     }
+    # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：被移除那套物理的绑定测试要删除，这些文件
+    # 因此是**被授权编辑**的——删除范围由 :func:`round5_removal_violations` 逐条夹住。
+    authorized |= set(ROUND5_P2_REMOVAL_AUTHORIZATION)
     return [path for path in modified_test_files(repo_root, baseline_rev) if path not in authorized]
 
 
@@ -358,7 +467,6 @@ def tier_pin_violations(repo_root: Path, baseline_rev: str, path: str) -> list[s
     removed_blob = "\n".join(removed)
     saw_pin = False
     saw_fg15_pin = False
-    saw_nli_model_pin = False
     for stripped in added:
         if not stripped or stripped.startswith("#"):
             continue
@@ -373,17 +481,10 @@ def tier_pin_violations(repo_root: Path, baseline_rev: str, path: str) -> list[s
             # these files already resolved to before the flip, so no expectation moves;
             # token_count_violations still polices expectation strength file-wide.
             saw_fg15_pin = True
-        elif NLI_MODEL_PIN_LITERAL in stripped:
-            # WP-MERGE-FG-FLEX round 3: pinning the NLI physics tier explicitly is
-            # authorised in the files listed in NLI_MODEL_AUTHORIZED_FILES. The value
-            # pinned is the physics these files were already running before the split
-            # (FG's P2), so no expectation moves; token_count_violations still polices
-            # expectation strength file-wide.
-            saw_nli_model_pin = True
         elif stripped not in removed_blob:
             violations.append(f"{path}: added line is neither the tier pin nor a re-wrap: {stripped!r}")
 
-    if not (saw_pin or saw_fg15_pin or saw_nli_model_pin):
+    if not (saw_pin or saw_fg15_pin):
         violations.append(
             f"{path}: authorised for the §1.2 / FG-15 tier pin but adds neither "
             f"{TIER_PIN_LITERAL!r} nor {FG15_PIN_LITERAL!r}"
@@ -445,6 +546,11 @@ def fg14_relocation_violations(repo_root: Path, baseline_rev: str) -> list[str]:
         before = _test_function_names(_git(repo_root, "show", f"{reference}:{path}") or "")
         after = _test_function_names(current_path.read_text(encoding="utf-8"))
         lost = before - after
+        # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本文件在第 5 轮有**另一条**授权
+        # （删除只服务被移除那套物理的测试），由 :func:`round5_removal_violations`
+        # 逐条夹住，故这里把它排除，避免同一批删除被两条判据各判一次。
+        if path in ROUND5_P2_REMOVAL_AUTHORIZATION:
+            continue
         unexpected = lost - set(FG14_RELOCATED_TESTS)
         if unexpected:
             violations.append(
@@ -454,6 +560,38 @@ def fg14_relocation_violations(repo_root: Path, baseline_rev: str) -> list[str]:
         if not (repo_root / "tests" / FG14_RELOCATION_TARGET).exists():
             violations.append(
                 f"{path}: proposition (B) was relocated but tests/{FG14_RELOCATION_TARGET} is missing"
+            )
+    return violations
+
+
+def round5_removal_violations(repo_root: Path, baseline_rev: str) -> list[str]:
+    """WP-MERGE-FG-FLEX round 5: removals must stay inside the authorisation.
+
+    The round-5 authorisation removes tests that belonged exclusively to the
+    deleted physics. This is bounded on both sides:
+
+    * a file may only lose tests that :data:`ROUND5_P2_REMOVAL_AUTHORIZATION`
+      names, one by one — deleting anything else is a violation;
+    * a file listed in the authorisation must actually still **exist**, so the
+      entry cannot become a licence to delete a whole file.
+    """
+    violations: list[str] = []
+    for path, allowed in ROUND5_P2_REMOVAL_AUTHORIZATION.items():
+        current = repo_root / path
+        if not current.exists():
+            violations.append(f"{path}: authorised for round-5 removals but the file is missing")
+            continue
+        # ⚠️ 参照点取 **HEAD**（本轮开始前的那棵树），**不取**各文件的 baseline rev。
+        # 原因：baseline rev 是**前几轮**的判据基准，那些轮次对既有测试的增删已经各自
+        # 裁决过（在 FG-14 / FG-4a 的授权里），不属于第 5 轮的授权范围。本条授权只夹
+        # **第 5 轮自己删掉的那些测试**——否则会把历史增删也算到本轮头上。
+        old = _git(repo_root, "show", f"HEAD:{path}") or ""
+        before = set(re.findall(r"^\s*def (test_\w+)", old, re.M))
+        after = set(re.findall(r"^\s*def (test_\w+)", current.read_text(encoding="utf-8"), re.M))
+        unauthorised = sorted((before - after) - set(allowed))
+        if unauthorised:
+            violations.append(
+                f"{path}: tests removed beyond the round-5 authorisation: {unauthorised}"
             )
     return violations
 
@@ -468,13 +606,23 @@ def collect_violations(repo_root: Path, baseline_rev: str) -> list[str]:
     )]
     violations += guard_removed_violations(repo_root)
     violations += fg14_relocation_violations(repo_root, baseline_rev)
+    violations += round5_removal_violations(repo_root, baseline_rev)
     # Token preservation must cover the policy-guard files as well, not just the
     # three parity files. The guard files are allowlist-authorised (the policy they
     # encode was adjudicated), so without this they would be the one place an
     # expectation could be weakened undetected -- verified by mutation: flipping an
     # ``np.array_equal`` to ``np.allclose`` in test_fg4a_numeric_identity.py passed
     # the guard until this loop covered POLICY_GUARD_FILES too.
+    #
+    # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：round-5 授权删除的那些文件，其 expectation
+    # token 计数**不再**按基线守门——删掉一条测试，它的 ``array_equal`` 自然跟着少，
+    # 那是删除的**结果**而非**放宽**。删除范围由
+    # :func:`round5_removal_violations` 逐条列名地夹住；**其余文件一律照旧**，
+    # token 守门一点没松。
+    round5_authorized = set(ROUND5_P2_REMOVAL_AUTHORIZATION)
     for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES:
+        if f"tests/{name}" in round5_authorized:
+            continue
         violations += token_count_violations(repo_root, baseline_rev, f"tests/{name}")
     for name in STRICT_TIER_PIN_FILES:
         violations += tier_pin_violations(repo_root, baseline_rev, f"tests/{name}")

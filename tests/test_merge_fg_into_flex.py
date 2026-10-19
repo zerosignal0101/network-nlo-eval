@@ -87,8 +87,13 @@ def _mixed_connections(grid: FlexibleGrid) -> list[ConnectionSpec]:
 
 
 def _legacy_only_tier(ode_accel: str) -> str:
-    """``off`` / ``cached`` 是 legacy-only 的冻结路径，必须显式配 ``legacy`` 谱档。"""
-    return "legacy" if ode_accel in ("off", "cached") else "tabular"
+    """ECZ 的拉曼谱档：**只有** ``"legacy"``。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：原实现在 ``off``/``cached`` 返 ``"legacy"``、
+    在加速档返 ``"tabular"``——因为 ``"tabular"`` 只经由被移除那套物理的拉曼 ODE
+    进入计算。现在闭式 ECZ 只有一条路，故参数保留（调用点原样）、恒返 ``"legacy"``。
+    """
+    return "legacy"
 
 
 def _evaluator(
@@ -98,7 +103,6 @@ def _evaluator(
     *,
     raman_spectrum: str | None = None,
     channel_bandwidth_source: str = "occupied",
-    nli_model: str = "p2_gn",
 ) -> MultiBandISRSGN:
     return MultiBandISRSGN(
         grid=grid,
@@ -109,14 +113,6 @@ def _evaluator(
         ode_accel=ode_accel,
         raman_spectrum=raman_spectrum or _legacy_only_tier(ode_accel),
         channel_bandwidth_source=channel_bandwidth_source,
-        # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：本类用例全部建立在 FG 的加速档
-        # （``cached_g`` / ``matvec`` / 批量核）之上——那些是 **P2** 的实现结构。
-        # 第 3 轮把 NLI 物理拆成两套后，默认档是 ``p1_closed``（P1 闭式），
-        # 故这里**显式**钉 ``"p2_gn"``：这些用例的数字与换底前**完全相同**
-        # （换底前合并树跑的就是 FG 那套物理），没有任何期望值发生移动。
-        # P1 档的 ``B_i`` 行为由 :meth:`TestPerChannelBandwidth.
-        # test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers` 单独覆盖。
-        nli_model=nli_model,
     )
 
 
@@ -145,34 +141,6 @@ class TestPerChannelBandwidth:
         sym = _evaluator(grid, conns, "matvec", channel_bandwidth_source="symbol_rate")
         assert not np.array_equal(sym.channel_bandwidth_hz_channels, b_i)
 
-    def test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers(self) -> None:
-        """⚠️ WP-MERGE-FG-FLEX **第 3 轮新增**：``B_i`` 在**两套** NLI 物理里都逐信道。
-
-        第 3 轮把 NLI 物理拆成两套（``p1_closed`` 闭式 / ``p2_gn`` 张量化），
-        ``B_i`` 随之落在两处：P1 核的 ``b_hz_channels``（P1 (23)/(29)/(30)/(34)）
-        与 P2 核的 ``symbol_rate_hz``。这条用例**两档都查**：
-
-        * ``B_i`` 数组本身与档位无关（是逐连接槽宽），故两档上必须**逐位相同**；
-        * 每档的**物理入口**必须真的接上自己的那一份（``p1_closed`` 走
-          ``b_hz_channels``，``p2_gn`` 走 ``symbol_rate_hz``）。
-
-        第 2 轮那个「把 ``B_i`` 改名成 ``symbol_rate_hz`` 喂进 P2」的组合，
-        正是本轮要消除的东西：它让两套物理共用一个名字，从而看不出
-        哪一档真的在用逐信道带宽。
-        """
-        grid = _mixed_grid()
-        conns = _mixed_connections(grid)
-        p1 = _evaluator(grid, conns, "off", nli_model="p1_closed")
-        p2 = _evaluator(grid, conns, "matvec", nli_model="p2_gn")
-        b_p1 = p1.channel_bandwidth_hz_channels
-        b_p2 = p2.channel_bandwidth_hz_channels
-        assert np.array_equal(b_p1, b_p2), "B_i 数组本身不该随 NLI 档位变化"
-        assert len(set(b_p1.tolist())) > 1, "B_i 退化成标量了，这条用例失去意义"
-        np.testing.assert_allclose(b_p1, np.array([n for n, *_ in MIXED_PLAN]) * SLOT_WIDTH_HZ)
-        # P1 档确实把逐信道 B_i 喂给了 **P1 核**（参数名就是 b_hz_channels）。
-        assert p1.nli_model == "p1_closed"
-        assert p2.nli_model == "p2_gn"
-
     def test_uniform_b_i_collapses_to_legacy_scalar_bitwise(self) -> None:
         """``symbol_rate`` 档下 ``B_i`` 恒等于标量符号率 ⇒ 与 legacy 逐位相同。
 
@@ -185,13 +153,10 @@ class TestPerChannelBandwidth:
             FiberSpanConfig(length_km=80.0),
             50e9,
             power_width_mode="fixed_psd",
-            raman_spectrum="tabular",
-            # ⚠️ 第 3 轮：``tabular`` 是 P2 的拉曼谱档 ⇒ 显式钉 P2 档。
-            nli_model="p2_gn",
         )
         assert np.array_equal(ev_sym.channel_bandwidth_hz_channels, ev_sym_pp._power_width_scale() * 0 + np.full(8, 50e9))
 
-    @pytest.mark.parametrize("mode", ["off", "cached_g", "matvec"])
+    @pytest.mark.parametrize("mode", ["cached", "matvec"])
     def test_mixed_b_i_off_vs_matvec_within_budget(self, mode: str) -> None:
         """同 Raman 档下 ``matvec`` 与 ``off`` 的偏差在 FG 的 1e-12 预算内。"""
         grid = _mixed_grid()
@@ -206,25 +171,6 @@ class TestPerChannelBandwidth:
         worst = max(_max_rel(x, y) for x, y in zip(a, b, strict=True))
         bitwise = _all_bitwise(a, b)
         print(f"\n[V3] off vs {mode}（同 Raman=legacy）: bitwise={bitwise} max_rel={worst:.3e}")
-        assert worst <= MAX_REL_DEVIATION
-
-    def test_cached_g_vs_matvec_within_budget(self) -> None:
-        """``cached_g`` 与 ``matvec`` 的偏差在预算内。
-
-        ⚠️ 实测**不是逐位相等**（max_rel ≈ 2.4e-16）：FG-4a 的 ``matvec`` 按设计
-        重排求和。任务书 V3 字面写的"逐位"在此不成立，详见模块 docstring。
-        """
-        grid = _mixed_grid()
-        conns = _mixed_connections(grid)
-        power = np.array([c.launch_power_w for c in conns], dtype=np.float64)
-        a = _evaluator(grid, conns, "cached_g", raman_spectrum="tabular")._calc_span_noise_and_power(
-            power, SPAN_LENGTH_M, None, None, 1
-        )
-        b = _evaluator(grid, conns, "matvec", raman_spectrum="tabular")._calc_span_noise_and_power(
-            power, SPAN_LENGTH_M, None, None, 1
-        )
-        worst = max(_max_rel(x, y) for x, y in zip(a, b, strict=True))
-        print(f"\n[V3] cached_g vs matvec（同 Raman=tabular）: bitwise={_all_bitwise(a, b)} max_rel={worst:.3e}")
         assert worst <= MAX_REL_DEVIATION
 
     @pytest.mark.parametrize("batch", [8, 16, 64, 142])
@@ -260,52 +206,28 @@ class TestPerChannelBandwidth:
     def test_wide_connection_is_not_physics_identical_to_narrow(self) -> None:
         """反向检查：若这条不成立，上面的等价性就可能是在测一个 no-op。
 
-        ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：这条用例的**归属档位变了**，理由是编排方
-        第 3 轮查明的事实——第 2 轮把「多槽占用宽度进入 QoT」这件事实现在 **P2 档**
-        （做法是把 P1 的 ``B_i`` **改名**成 ``symbol_rate_hz`` 喂进 P2 公式）。那个
-        组合两边都没验证过，第 3 轮判它作废。
+        **逐信道带宽真正进入 QoT 的地方是闭式 ECZ**：P1 的 ``b_hz_channels`` 就是
+        P1 (23)/(29)/(30)/(34) 的 ``B_i``。所以 ``occupied`` 与 ``symbol_rate``
+        **必须**给出不同的噪声——这就是本条命题（"逐信道"不是空话）。
 
-        第 3 轮把两套物理分开后，**逐信道带宽真正进入 QoT 的地方是 P1 档**：
-        P1 的 ``b_hz_channels`` 就是 P1 (23)/(29)/(30)/(34) 的 ``B_i``。所以：
-
-        * **P1 档**（``p1_closed``）：``occupied`` 与 ``symbol_rate`` **必须**给出
-          不同的噪声——这就是本条命题（"逐信道"不是空话）。
-        * **P2 档**（``p2_gn``）：P2 的带宽量是**符号率**（FG 口径），所以
-          ``occupied`` 与 ``symbol_rate`` **必须**给出**相同**的噪声——P2 档
-          **看不见**占用宽度。这条断言把两档的差异**钉死**，防止将来有人
-          又把 ``B_i`` 塞回 P2。
-
-        两段都是**反向检查**：一段证明 P1 的逐信道化是真的，一段证明 P2 不会被
-        多槽宽度污染。
+        ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本条原有两段，第二段断言「那套被移除的
+        物理**看不见**占用宽度（FG 口径的带宽量是符号率）」。该物理整体移除后，
+        第二段**失去被测对象**，已删除；**第一段（ECZ 逐信道语义）原样保留**，
+        它正是本题数「多槽占用宽度进入 QoT」的判据。
         """
         grid = _mixed_grid()
         conns = _mixed_connections(grid)
         power = np.array([c.launch_power_w for c in conns], dtype=np.float64)
 
-        # --- P1 档：逐信道 B_i 真的进入 QoT ---
         # ⚠️ 观测量选 **SPM**（下标 1）而不是 ASE：P1 的 ASE 按 P1 (34) 是
         # `NF·h·ν·B_i·(gain−1)`，而本用例**不传 EDFA** ⇒ ASE 恒为 0，测不出
         # 带宽口径。SPM 走 P1 (29) 的 `asinh(φ_i·B_i²/(π·α))`，B_i 直接进公式。
-        p1_occupied = _evaluator(grid, conns, "off", nli_model="p1_closed")
-        p1_by_rate = _evaluator(
-            grid, conns, "off", nli_model="p1_closed", channel_bandwidth_source="symbol_rate"
-        )
+        p1_occupied = _evaluator(grid, conns, "off")
+        p1_by_rate = _evaluator(grid, conns, "off", channel_bandwidth_source="symbol_rate")
         a = p1_occupied._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
         b = p1_by_rate._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
         assert not np.array_equal(a[1], b[1]), (
-            "P1 档下 occupied 与 symbol_rate 的 SPM 完全相同 —— B_i 没有真正进入 QoT"
-        )
-
-        # --- P2 档：占用宽度**不**进入 P2（FG 口径：带宽量是符号率）---
-        p2_occupied = _evaluator(grid, conns, "matvec", nli_model="p2_gn")
-        p2_by_rate = _evaluator(
-            grid, conns, "matvec", nli_model="p2_gn", channel_bandwidth_source="symbol_rate"
-        )
-        c = p2_occupied._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
-        d = p2_by_rate._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
-        assert np.array_equal(c[3], d[3]), (
-            "P2 档的噪声被占用宽度污染了 —— P2 的带宽量必须是符号率（FG 口径）。"
-            "第 3 轮已判废「把 B_i 改名成 symbol_rate_hz 喂 P2」的那个组合。"
+            "闭式 ECZ 下 occupied 与 symbol_rate 的 SPM 完全相同 —— B_i 没有真正进入 QoT"
         )
 
 

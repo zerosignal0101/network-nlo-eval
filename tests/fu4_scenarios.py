@@ -250,8 +250,7 @@ def run_scenario(scenario: Scenario) -> dict[str, Any]:
         connections=connections,
         slots_per_channel=scenario.slots_per_channel if connections is not None else None,
         # WP-MERGE-FG-FLEX 第 3 轮：FU-4 的保真金标准是 **P2** 那套物理
-        # (P2 Eq. 21 张量化)，显式钉在 ``p2_gn`` 档（默认档已是 P1 闭式）。
-        nli_model="p2_gn",
+        # ⚠️ 第 5 轮：原注释说明「显式钉第二套物理」。该物理已整体移除。
         # FG-15: pin the Raman tier explicitly. ``results/fu4_fidelity_golden.json`` was
         # captured under ``legacy``, and this fixture's proposition is the SNR *assembly*
         # (the FU-4 union question), not the choice of spectrum. Following the global

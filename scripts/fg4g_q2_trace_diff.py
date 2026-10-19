@@ -150,7 +150,9 @@ def main() -> int:
     ap.add_argument(
         "--force-accel",
         default=None,
-        choices=["off", "cached_g", "matvec"],
+        # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：原含 ``"cached_g"``（拉曼 G 矩阵缓存），
+        # 随被移除的那套物理整体离场；闭式 ECZ 只有 off / cached / matvec 三档。
+        choices=["off", "cached", "matvec"],
         help="强制 evaluator 的 ode_accel 档位。用来证明 0.314 dB 与档位无关。",
     )
     args = ap.parse_args()
@@ -192,19 +194,13 @@ def main() -> int:
         # env.py 用默认参数构造 evaluator（不传 ode_accel），因此这里改的是
         # 实例属性：下游 for_fiber 会把它透传给每个子 evaluator。
         env.evaluator.ode_accel = args.force_accel
-        # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：被强制的是 FG 的加速档（``"off"`` /
-        # ``"matvec"``），它们属于 **P2** 那套物理。构造器里的 ``nli_model`` 默认
-        # 是 ``"p1_closed"``，而 P1 档**没有** matvec——只改 ``ode_accel`` 会让
-        # ``for_fiber`` 透传出一对不匹配的组合并抛错。故这里**一起**把 NLI 物理
-        # 档位钉到 ``"p2_gn"``：被比较的本来就是 FG 那套物理（Q2 分歧是 FG 侧
-        # 的编排问题）。
-        env.evaluator.nli_model = "p2_gn"
+        # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：原实现还会把 NLI 物理档位钉到那套
+        # **已移除**的物理（因为当时被强制的加速档属于它）。本仓现在只有闭式 ECZ
+        # 一套物理，它的 matvec 是第 4 轮新写的 ``numba_kernels_p1_accel``，
+        # **不再**需要钉任何物理档位，故这一行整体删除。
         if args.force_accel == "off":
-            # FG-15: ``off`` 是结构上只认 legacy 的冻结参照路径（在核内逐对重建
-            # legacy 折线），而 FG-15 起全局默认谱档是 ``tabular``。两者**必须**
-            # 一起改：for_fiber 会把 (ode_accel, raman_spectrum) 一起透传给子
-            # evaluator，只改前者会让子构造 ``tabular`` + ``off`` 而抛错。
-            # 构造期建好的 G 矩阵在这里用不到——``off`` 走的是核内 legacy 折线。
+            # ``off`` 是冻结参照路径；闭式 ECZ 的全局默认谱档就是 ``legacy``，
+            # 这里显式钉住，免得将来默认档变化时 ``off`` 的读数跟着动。
             env.evaluator.raman_spectrum = "legacy"
         env.evaluator._fiber_evaluator_cache.clear()
 

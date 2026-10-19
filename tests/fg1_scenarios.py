@@ -203,8 +203,8 @@ def run_reference(scenario: Scenario) -> dict[str, Any]:
         symbol_rate_hz=scenario.symbol_rate_hz,
         phi_kurtosis=scenario.phi_kurtosis,
         # WP-MERGE-FG-FLEX 第 3 轮：本模块是 FG 侧物理的**出处**对照面
-        # (P2 Eq. 21 张量化)，必须显式钉在 ``p2_gn`` 档——默认档已是 P1 闭式。
-        nli_model="p2_gn",
+        # ⚠️ 第 5 轮：原注释说明「必须显式钉第二套物理」。那套物理已整体移除，
+        # 本仓只剩闭式 ECZ，故此处不再有档位可钉。
         # FG-4b §1.2: this is the *port-fidelity* reference, so it is pinned to the
         # frozen ``off`` tier on purpose — the assertion is bit-equality with
         # origin/main, which is a statement about the port, not about which
@@ -235,7 +235,6 @@ def run_reference(scenario: Scenario) -> dict[str, Any]:
                 symbol_rate_hz=scenario.symbol_rate_hz,
                 phi_kurtosis=scenario.phi_kurtosis,
                 # WP-MERGE-FG-FLEX 第 3 轮：同 hop-0，显式钉在 P2 档。
-                nli_model="p2_gn",
                 # Same freeze-point rationale as the hop-0 evaluator above.
                 ode_accel="off",
                 raman_spectrum="legacy",

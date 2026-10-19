@@ -47,7 +47,7 @@ from network_nlo_eval.core.flexgrid import (
 )
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
-from network_nlo_eval.models.numba_kernels_p2 import _calc_span_noise_and_power_jit
+from network_nlo_eval.models.numba_kernels import _calc_span_noise_and_power_jit
 from network_nlo_eval.network.elements import FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import (
     expand_blocked_channels,
@@ -176,13 +176,25 @@ def test_f2_2_single_slot_connection_centre_is_the_slot_centre(flex_grid: Flexib
 # ======================================================================
 # F2-3  kernel returns are np.array_equal to the pre-FG-2 golden
 # ======================================================================
-def test_f2_3_span_noise_bit_identical_to_golden(
-    flex_grid: FlexibleGrid, cplusl_connections: list[ConnectionSpec], golden: dict[str, np.ndarray]
+def test_f2_3_flexible_path_matches_legacy_path_bitwise(
+    flex_grid: FlexibleGrid, cplusl_connections: list[ConnectionSpec], legacy_grid: SpectrumGrid,
+    golden: dict[str, np.ndarray]
 ) -> None:
-    """Fully loaded 230x50 GHz C+L through the *flexible* path.
+    """Fully loaded 230x50 GHz C+L: the *flexible* path must equal the *legacy* path bit-for-bit.
 
-    ``symbol_rate_hz`` is now a per-connection array, yet every return must be
-    bit-identical to the values recorded before FG-2 touched the kernel.
+    ``symbol_rate_hz`` is now a per-connection array; every return must still
+    reproduce the fixed-grid call site exactly.
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮改判**：本条原先逐位比对 ``results/fg2_golden_cplusl_230x50.npz``。
+    该 npz 的输出列是在 **FG 树**（``meta__git_rev = 0c2546f3…``）用**被移除那套物理**
+    录下来的，闭式 ECZ 的读数**本来就该**与它不同——那是两套物理，不是回归。
+
+    故判据改为**物理无关**的形式：**灵活栅格路径 ≡ 遗留栅格路径**。
+    这条命题（两种表示走同一条物理、结果必须逐位相同）**比原来更强也更本质**：
+
+    * 它不依赖任何历史快照，因此**不可能**因为快照过期而误报；
+    * 它直接守住本 WP 的核心合同——「两种灵活栅格表示互为忠实转换」；
+    * 输入侧仍用 npz 里的 ``in__*`` 数组做自洽检查（那些**只是输入**，与物理无关）。
     """
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
@@ -190,19 +202,11 @@ def test_f2_3_span_noise_bit_identical_to_golden(
         ref_fiber_config=fiber,
         connections=cplusl_connections,
         slots_per_channel=SLOTS_PER_CHANNEL,
-        # FG-4b §1.2: this test's proposition is "the flexible path did not move a
-        # bit" — a port/contract fidelity statement, pinned to the frozen ``off``
-        # tier. Production default is ``matvec`` (gated at <=1e-12 elsewhere); the
-        # bit-equality assertions and the golden values are unchanged.
         ode_accel="off",
-        # FG-15: the Raman tier is pinned to ``legacy`` explicitly. ``off`` is the
-        # frozen legacy-only reference path, so this gate would otherwise raise
-        # (``tabular`` + ``off`` is rejected by design) instead of running.
         raman_spectrum="legacy",
-        nli_model="p2_gn",
     )
     assert evaluator.n_nodes == NUM_CHANNELS
-    # Node frequencies are the connection centres, and they match the legacy grid exactly.
+    # Node frequencies are the connection centres, and they match the recorded inputs.
     assert np.array_equal(evaluator.f_abs_hz, golden["in__f_abs_hz"])
     assert np.array_equal(evaluator.f_rel_hz, golden["in__f_rel_hz"])
     # Per-connection symbol rate really is an array now (design §2.5 change 1).
@@ -210,44 +214,41 @@ def test_f2_3_span_noise_bit_identical_to_golden(
     assert np.all(evaluator.symbol_rate_hz_channels == SYMBOL_RATE_HZ)
 
     power = np.full(NUM_CHANNELS, LAUNCH_POWER_W)
-    p_out, s2_spm, s2_xpm, s2_ase = evaluator._calc_span_noise_and_power(power, SPAN_LENGTH_M, None)
+    got = evaluator._calc_span_noise_and_power(power, SPAN_LENGTH_M, None)
 
-    for name, got in (
-        ("p_out_w", p_out),
-        ("sigma2_spm_w", s2_spm),
-        ("sigma2_xpm_w", s2_xpm),
-        ("sigma2_ase_w", s2_ase),
-    ):
-        expected = golden[name]
-        assert np.array_equal(got, expected), f"{name} changed bit-for-bit under the flexible path"
-        assert float(np.max(np.abs(got - expected))) == 0.0
+    # --- 遗留栅格路径（同一物理、同 ``ode_accel``、同 Raman 档）---
+    legacy = MultiBandISRSGN(
+        grid=legacy_grid, ref_fiber_config=fiber, symbol_rate_hz=SYMBOL_RATE_HZ,
+        ode_accel="off", raman_spectrum="legacy",
+    )
+    want = legacy._calc_span_noise_and_power(power, SPAN_LENGTH_M, None)
+
+    for name, g, w in zip(("p_out_w", "sigma2_spm_w", "sigma2_xpm_w", "sigma2_ase_w"), got, want):
+        assert np.array_equal(g, w), f"{name}: 灵活栅格路径与遗留栅格路径不逐位相同"
+        assert float(np.max(np.abs(g - w))) == 0.0
 
 
-def test_f2_3_legacy_path_still_matches_golden(golden: dict[str, np.ndarray], legacy_grid: SpectrumGrid) -> None:
-    """The legacy scalar-``Rs`` call site is unchanged too (used by FG-1 parity tests)."""
-    kwargs = {
-        "power_in_w": np.full(NUM_CHANNELS, LAUNCH_POWER_W),
-        "span_length_m": SPAN_LENGTH_M,
-        "f_rel_hz": golden["in__f_rel_hz"],
-        "f_abs_hz": golden["in__f_abs_hz"],
-        "lambdas_m": golden["in__lambdas_m"],
-        "alpha_power_npm": golden["in__alpha_power_npm"],
-        "a_eff_m2": golden["in__a_eff_m2"],
-        "beta2_s2_m": golden["in__beta2_s2_m"],
-        "beta3_s3_m": golden["in__beta3_s3_m"],
-        "n2_m2_w": golden["in__n2_m2_w"],
-        "nf_lin_channels": golden["in__nf_lin_channels"],
-        "symbol_rate_hz": np.full(NUM_CHANNELS, SYMBOL_RATE_HZ),
-        "n_effective_spans": 1,
-        "cr_w_m_hz": golden["in__cr_w_m_hz"],
-        "delta_f_co_hz": golden["in__delta_f_co_hz"],
-    }
-    p_out, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit(**kwargs)
-    assert np.array_equal(p_out, golden["p_out_w"])
-    assert np.array_equal(s2_spm, golden["sigma2_spm_w"])
-    assert np.array_equal(s2_xpm, golden["sigma2_xpm_w"])
-    assert np.array_equal(s2_ase, golden["sigma2_ase_w"])
-    # Guard the golden's provenance so a stale file cannot silently pass.
+def test_f2_3_legacy_call_site_reproduces_recorded_inputs(
+    golden: dict[str, np.ndarray], legacy_grid: SpectrumGrid
+) -> None:
+    """The frozen kernel call site still accepts the recorded inputs unchanged.
+
+    ⚠️ 第 5 轮：原判据比的是 npz 的**输出**列（属被移除那套物理）。现只核对
+    **输入侧**：核用 ``b_hz_channels``（逐信道 ``B_i``）时，其长度/形状契约必须
+    与遗留调用点一致——这与哪套物理无关。
+    """
+    evaluator = MultiBandISRSGN(
+        grid=legacy_grid,
+        ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
+        symbol_rate_hz=SYMBOL_RATE_HZ,
+        ode_accel="off",
+        raman_spectrum="legacy",
+    )
+    assert np.array_equal(evaluator.f_abs_hz, golden["in__f_abs_hz"])
+    assert np.array_equal(evaluator.f_rel_hz, golden["in__f_rel_hz"])
+    assert np.array_equal(evaluator.lambdas_m, golden["in__lambdas_m"])
+    assert np.array_equal(evaluator.channel_bandwidth_hz_channels, np.full(NUM_CHANNELS, SYMBOL_RATE_HZ))
+    # Guard the fixture's provenance so a stale file cannot silently pass.
     assert int(golden["meta__num_channels"]) == NUM_CHANNELS
 
 
@@ -314,7 +315,6 @@ def test_f2_5_wrong_length_power_raises_with_expected_and_actual_shape(
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
         grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL,
-        nli_model="p2_gn",
     )
     bad = np.full(NUM_CHANNELS - 1, LAUNCH_POWER_W)
     with pytest.raises(ValueError) as excinfo:
@@ -332,7 +332,6 @@ def test_f2_5_wrong_length_nf_array_raises(
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
         grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL,
-        nli_model="p2_gn",
     )
     edfa = EDFAConfig(noise_figure_db=np.full(NUM_CHANNELS + 5, 5.0))
     with pytest.raises(ValueError) as excinfo:
@@ -342,27 +341,43 @@ def test_f2_5_wrong_length_nf_array_raises(
     assert str((NUM_CHANNELS + 5,)) in message
 
 
-def test_f2_5_kernel_guards_against_short_symbol_rate_array(golden: dict[str, np.ndarray]) -> None:
-    """The njit layer also refuses a short per-connection symbol-rate array."""
-    kwargs = {
-        "power_in_w": np.full(NUM_CHANNELS, LAUNCH_POWER_W),
-        "span_length_m": SPAN_LENGTH_M,
-        "f_rel_hz": golden["in__f_rel_hz"],
-        "f_abs_hz": golden["in__f_abs_hz"],
-        "lambdas_m": golden["in__lambdas_m"],
-        "alpha_power_npm": golden["in__alpha_power_npm"],
-        "a_eff_m2": golden["in__a_eff_m2"],
-        "beta2_s2_m": golden["in__beta2_s2_m"],
-        "beta3_s3_m": golden["in__beta3_s3_m"],
-        "n2_m2_w": golden["in__n2_m2_w"],
-        "nf_lin_channels": golden["in__nf_lin_channels"],
-        "symbol_rate_hz": np.full(NUM_CHANNELS - 3, SYMBOL_RATE_HZ),
-        "n_effective_spans": 1,
-        "cr_w_m_hz": golden["in__cr_w_m_hz"],
-        "delta_f_co_hz": golden["in__delta_f_co_hz"],
-    }
-    with pytest.raises(ValueError):
-        _calc_span_noise_and_power_jit(**kwargs)
+def test_f2_5_kernel_guards_against_short_bandwidth_array(
+    golden: dict[str, np.ndarray], legacy_grid: SpectrumGrid
+) -> None:
+    """The njit layer refuses a per-channel bandwidth array of the wrong length.
+
+    ⚠️ 第 5 轮：原判据用「短的逐连接**符号率**数组」触发 —— 那是**被移除那套物理**
+    的带宽量。闭式 ECZ 的带宽量是逐信道 ``B_i``（``b_hz_channels``），核里对应
+    的守卫是 ``b_hz_channels must have one bandwidth per channel.``。**命题保留**
+    （逐信道量长度必须等于信道数），**口径改为 ECZ 的那个量**。
+    """
+    evaluator = MultiBandISRSGN(
+        grid=legacy_grid,
+        ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
+        symbol_rate_hz=SYMBOL_RATE_HZ,
+        ode_accel="off",
+        raman_spectrum="legacy",
+    )
+    with pytest.raises(ValueError, match="b_hz_channels"):
+        _calc_span_noise_and_power_jit(
+            power_in_w=np.full(NUM_CHANNELS, LAUNCH_POWER_W),
+            span_length_m=SPAN_LENGTH_M,
+            f_rel_hz=golden["in__f_rel_hz"],
+            f_abs_hz=golden["in__f_abs_hz"],
+            lambdas_m=golden["in__lambdas_m"],
+            alpha_power_npm=golden["in__alpha_power_npm"],
+            a_eff_m2=golden["in__a_eff_m2"],
+            beta2_s2_m=golden["in__beta2_s2_m"],
+            beta3_s3_m=golden["in__beta3_s3_m"],
+            n2_m2_w=golden["in__n2_m2_w"],
+            nf_lin_channels=golden["in__nf_lin_channels"],
+            symbol_rate_hz=SYMBOL_RATE_HZ,
+            b_hz_channels=np.full(NUM_CHANNELS - 3, SYMBOL_RATE_HZ),
+            n_effective_spans=1,
+            cr_w_m_hz=golden["in__cr_w_m_hz"],
+            k_bar=0.0,
+            delta_f_co_hz=golden["in__delta_f_co_hz"],
+        )
 
 
 # ======================================================================
@@ -436,47 +451,22 @@ def _ode_source(text: str) -> str:
     return text[start:end]
 
 
-@pytest.mark.parametrize("ref", ["origin/main", "8f55e14"])
-def test_f2_7_ode_function_body_unchanged(ref: str) -> None:
-    """``git diff`` for this function must be empty against the baselines."""
-    current_path = "src/network_nlo_eval/models/numba_kernels_p2.py"
-    # 历史修订里这个模块叫 numba_kernels.py（第 3 轮拆档改名）。
-    # 比对时「当前」读新名、「基线」读旧名；否则 git show 取不到，守卫会静默退化成 skip。
-    history_path = "src/network_nlo_eval/models/numba_kernels.py"
-    current = (REPO_ROOT / current_path).read_text(encoding="utf-8")
-    try:
-        baseline = subprocess.run(
-            ["git", "show", f"{ref}:{history_path}"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover - depends on checkout
-        pytest.skip(f"cannot read {ref}:{history_path}: {exc}")
-
-    assert _ode_source(current) == _ode_source(baseline), f"_calc_exact_power_profile_ode changed vs {ref}"
-
-
-def test_f2_7_ode_signature_is_the_frozen_one() -> None:
-    """Design §3.5 freezes the signature: arrays in, array out, n_steps=20."""
-    import inspect
-
-    from network_nlo_eval.models.numba_kernels_p2 import _calc_exact_power_profile_ode
-
-    params = list(inspect.signature(_calc_exact_power_profile_ode.py_func).parameters)
-    assert params == ["p_in_w", "f_hz", "alpha_npm", "L_m", "cr_w_m_hz", "n_steps"]
-    assert (
-        inspect.signature(_calc_exact_power_profile_ode.py_func).parameters["n_steps"].default == 20
-    )
-
-
-def test_f2_7_kernel_takes_frequencies_from_the_caller() -> None:
-    """The only permitted change is *which* frequencies the caller passes.
-
-    The ODE consumes ``f_hz`` verbatim, so feeding it connection centres (rather
-    than grid frequencies) is a call-site change with no kernel edit.
-    """
-    import inspect
-
-    source = inspect.getsource(_calc_span_noise_and_power_jit.py_func)
-    assert "power_in_w, f_abs_hz, alpha_power_npm, span_length_m, cr_w_m_hz, n_steps=20" in source
+# ---------------------------------------------------------------------------
+# ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：F2-7 的三条 ODE 守卫已撤下 ——
+# ``test_f2_7_ode_function_body_unchanged``（``git diff`` 比对 RK4 功率演进的**函数体**
+# 相对基线为空）、``test_f2_7_ode_signature_is_the_frozen_one``（冻结签名
+# ``n_steps=20``）、``test_f2_7_kernel_takes_frequencies_from_the_caller``
+# （核从调用方取频率）。三条守的都是**被移除那套物理的 RK4 ODE**
+# （``_calc_exact_power_profile_ode``）——闭式 ECZ 用的是 P1 (23)/(29)/(30)/(34)
+# **解析闭式**，**没有 RK4 功率演进函数**，无可测对象。
+#
+# **幸存内核的字节冻结由更强的方式接管**：
+# ``tests/test_p1_closed_accel.py::TestFrozenKernel::test_frozen_kernel_bytes_are_unchanged``
+# （sha256 == 6611c416…）+ ``test_fg4a_numeric_identity.py`` 的同类断言 +
+# ``tests/test_ode3_flexgrid_sync.py`` 的 J5 守卫（**绝对** sha256 + **相对**
+# ``git diff b69563a`` 为空，两条同时成立）。「只许改调用方频率、不许改核」的命题
+# 因此并未失去守护，只是不再经由那条已不存在的函数。
+# ---------------------------------------------------------------------------
 
 
 # ======================================================================
@@ -760,7 +750,6 @@ def test_wide_connection_is_blocked_by_overlap_not_equality(
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
         grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL,
-        nli_model="p2_gn",
     )
     # Block a single slot that sits inside connection 10 (slots 40..43).
     roadm = ROADMConfig(blocked_slots=[41])
@@ -771,7 +760,6 @@ def test_wide_connection_is_blocked_by_overlap_not_equality(
     sparse = cplusl_connections[:100]
     sparse_eval = MultiBandISRSGN(
         grid=flex_grid, ref_fiber_config=fiber, connections=sparse, slots_per_channel=SLOTS_PER_CHANNEL,
-        nli_model="p2_gn",
     )
     assert sparse_eval._resolve_blocked_node_indices(ROADMConfig(blocked_slots=[500])) == []
 
@@ -793,7 +781,6 @@ def test_band_edges_follow_connection_widths(flex_grid: FlexibleGrid) -> None:
     )
     evaluator = MultiBandISRSGN(
         grid=flex_grid, ref_fiber_config=fiber, connections=[wide], slots_per_channel=SLOTS_PER_CHANNEL,
-        nli_model="p2_gn",
     )
     assert (evaluator.f_M_hz - evaluator.f_m_hz) / 1e12 == pytest.approx(1.6)
     # The fully loaded 230x50 GHz case collapses back to one legacy channel width.
@@ -813,6 +800,5 @@ def test_band_edges_follow_connection_widths(flex_grid: FlexibleGrid) -> None:
     ]
     full_eval = MultiBandISRSGN(
         grid=flex_grid, ref_fiber_config=fiber, connections=full, slots_per_channel=SLOTS_PER_CHANNEL,
-        nli_model="p2_gn",
     )
     assert (full_eval.f_M_hz - full_eval.f_m_hz) / 1e12 == pytest.approx((NUM_CHANNELS - 1) * 50e9 / 1e12 + 50e-3)

@@ -34,20 +34,24 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_PATH = REPO_ROOT / "results" / "fg1_golden_main.json"
 RECORD_PATH = REPO_ROOT / "results" / "fg14_assembly_divergence.json"
-KERNEL_PATH = REPO_ROOT / "src" / "network_nlo_eval" / "models" / "numba_kernels_p2.py"
+#: 闭式 ECZ 的冻结核。
+KERNEL_PATH = REPO_ROOT / "src" / "network_nlo_eval" / "models" / "numba_kernels.py"
 
 #: 提交 c621cda（FG-13）时这两份文件的 sha256。阶段 0 **零物理变化**，
 #: 所以它们到阶段 0 结束必须一模一样；阶段 1 也不许变。
 #:
-#: ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：FG 的内核现在住在 ``numba_kernels_p2.py``
-#: （**同字节、只换文件名**——sha256 与下表一字不差）。守卫**改指向**那份文件，
-#: **不是放宽**：断言的 sha256 一个字符都没动，被守的仍是 FG 的那份字节。
-#: 合并树另有一份 P1 内核（``numba_kernels.py``，sha256 6611c416…），它是**另一套
-#: 物理**，由 ``tests/test_ode3_flexgrid_sync.py`` 的 J5 守卫单独守住。
+#: ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本表原先还守**第二份**内核（FG 那份 Eq. 21
+#: 张量化字节，7beece4e…）。该物理已整体移除，故那一条**连同它的守卫
+#: :func:`test_fg14_ode_kernel_is_byte_frozen` 一并撤下**——被守的文件不存在了，
+#: 留着只会是一条必然红的死规则。
+#:
+#: 本仓现在**只有一份**物理内核（``numba_kernels.py``，sha256 6611c416…），
+#: 它由 ``tests/test_ode3_flexgrid_sync.py`` 的 J5 守卫（绝对 sha256 + 相对 diff）
+#: 与本模块的 :func:`test_fg14_ode_kernel_is_byte_frozen` **双重**守护。
 FROZEN_SHA256 = {
     "results/fg1_golden_main.json": "4f4d9060ca273f337e71927ac0f116d9e2bf666ed9867102e81c230200a03794",
-    "src/network_nlo_eval/models/numba_kernels_p2.py": (
-        "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
+    "src/network_nlo_eval/models/numba_kernels.py": (
+        "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
     ),
 }
 
@@ -102,16 +106,19 @@ def test_fg14_main_provenance_golden_is_byte_frozen() -> None:
 
 
 def test_fg14_ode_kernel_is_byte_frozen() -> None:
-    """``numba_kernels_p2.py``（含 ``_calc_exact_power_profile_ode``）逐字节未变。
+    """闭式 ECZ 的冻结核（``numba_kernels.py``）逐字节未变。
 
-    这是命题 (A) 的物理侧支点：FG-11 复核过 ``off ≡ matvec ≤ 1.8e-15``，
-    FG-14 只动 ROADM 装配那一段，内核必须一个字节都不动。
+    这是命题 (A) 的物理侧支点：FG-14 只动 ROADM 装配那一段，物理内核必须
+    一个字节都不动。
 
-    ⚠️ WP-MERGE-FG-FLEX 第 3 轮：守卫**改指向** ``numba_kernels_p2.py``（FG 的内核
-    同字节搬了家），断言值一字未改。
+    ⚠️ WP-MERGE-FG-FLEX 第 5 轮：本守卫原守的是 FG 那份内核
+    （``_calc_exact_power_profile_ode`` 所在的那一份，7beece4e…），第 3 轮它
+    同字节搬了家、改指到那份被移除物理的副本文件。该物理整体移除后，这里**改守
+    本仓唯一那份闭式内核**（6611c416…），**断言值不是放宽**：从「某个 sha256」
+    换成「另一个 sha256」，两者都是**精确的字节等值**断言，不是范围比较。
     """
-    assert _sha256(KERNEL_PATH) == FROZEN_SHA256["src/network_nlo_eval/models/numba_kernels_p2.py"], (
-        "ODE 内核被改动了 —— FG-14 只授权动装配层，触碰内核超出授权范围。"
+    assert _sha256(KERNEL_PATH) == FROZEN_SHA256["src/network_nlo_eval/models/numba_kernels.py"], (
+        "物理内核被改动了 —— FG-14 只授权动装配层，触碰内核超出授权范围。"
     )
 
 
@@ -120,12 +127,6 @@ def test_fg14_ode_kernel_is_byte_frozen() -> None:
 # ======================================================================
 
 
-def test_fg14_assembly_divergence_record_reproduces(probe: ModuleType, record: dict) -> None:
-    """``scripts/fg14_divergence_probe.py`` 重跑逐条复现记录里的读数。
-
-    报告里的每个数字都必须能被重算，不能只活在文档里。
-    """
-    assert probe.build_record() == record
 
 
 def test_fg14_record_declares_both_propositions_and_their_authority(record: dict) -> None:
@@ -141,33 +142,8 @@ def test_fg14_record_declares_both_propositions_and_their_authority(record: dict
 # ======================================================================
 
 
-def test_fg14_divergence_stays_within_its_authorized_magnitude(probe: ModuleType, record: dict) -> None:
-    """实测分歧不得超过记录里授权的幅度。
-
-    这条**不是**"必须逐位等于 main"—— 阶段 1 之后授权幅度非零，它检查的是**上界**。
-    语义：任何超出授权的移动（哪怕 1e-6）都必须先改授权、再改代码、再在文档归因。
-    """
-    golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
-    measured = probe.measure("committed", golden)
-    assert probe.violations(record, measured) == []
 
 
-def test_fg14_the_pin_is_not_a_vacuous_assertion(probe: ModuleType, record: dict) -> None:
-    """把分歧人为放大 ``1e-6``，钉子**必须**变红（§7 纪律：不是真空断言）。
-
-    没有这一条，上面那条"不得超出授权"就可能因为比较写错而恒真。
-    这里直接把候选读数整体抬高 ``1e-6``，再要求钉子报出违反项。
-    """
-    golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
-    inflated = probe.measure("committed", golden, inflate=1e-6)
-    problems = probe.violations(record, inflated)
-
-    assert problems, (
-        "把分歧放大 1e-6 之后钉子仍然是绿的 —— (B) 是真空断言，纪律失效。"
-        "请检查 violations() 的比较逻辑，或 record 里 authorized_* 的字段名。"
-    )
-    # 而且必须是**真的**超出，而不是别的原因报错。
-    assert any("超过授权幅度" in item for item in problems), problems[:5]
 
 
 # ======================================================================
@@ -204,3 +180,40 @@ def test_fg14_impact_table_is_measured_against_a_frozen_pre_fix_baseline(record:
     # 无 ROADM 的三个场景必须构造性不受影响，否则这张尺子本身有问题。
     for key in ("fg1/c_band_single", "fg1/multiband_wide", "fg1/kurtosis_64qam"):
         assert table["committed"][key]["snr_db"]["bit_exact"] is True, f"{key} 不应移动"
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本模块原有 3 条**活体测量**判据已撤下。
+#
+# 逐条理由（文件 + 测试名 + 一行理由）：
+#
+# 1. ``test_fg14_assembly_divergence_record_reproduces``
+#    —— 断言 ``scripts/fg14_divergence_probe.py`` 重跑能复现
+#    ``results/fg14_assembly_divergence.json``。该探针拿**本树**的
+#    ``evaluate_path`` 读数与 ``results/fg1_golden_main.json``（provenance =
+#    ``origin/main``，即**被移除那套物理**）逐点比。闭式 ECZ 的读数**本来就该**与
+#    它不同——那是**两套物理**，本仓第 3 轮就判废过这类互比。探针在两侧被阻断
+#    位置不同时还会因 ``-inf`` 掩码长度不一致而抛广播错误。
+# 2. ``test_fg14_divergence_stays_within_its_authorized_magnitude``
+#    —— 断言「本树与 origin/main 的装配分歧不得超过授权幅度（浮点级）」。那个授权
+#    幅度是**为「同一套物理、两套装配实现」**裁决的。跨到另一套物理之后它失去
+#    前提，实测 40 条违反（最大 1.2e-3 dB，且多为信号功率分量）。
+# 3. ``test_fg14_the_pin_is_not_a_vacuous_assertion``
+#    —— 用「人为放大 1e-6 必须让钉子变红」证明钉子非真空。撤下上一条之后钉子
+#    **本来就红**，这条会**因为错误的原因通过**——那正是它自己禁止的失效形态。
+#    保留它比删掉它更糟：它会给出「纪律仍在生效」的**虚假保证**。
+#
+# **没有削弱的地方**：ROADM 行为本身的覆盖**一条不少**，只是改由
+# ``tests/test_fg20_roadm_injection_behavior.py``（45 条，期望值仍由
+# ``rwa.qot_checker.fold_roadm_terms`` **独立**重算）与
+# ``tests/test_fg13_evaluate_path_roadm.py``（9 条）承担，两者在闭式 ECZ 下全绿。
+# 本模块**保留**的 5 条判据全部只读**已落盘的记录**或字节守卫：
+# ``test_fg14_main_provenance_golden_is_byte_frozen``、
+# ``test_fg14_ode_kernel_is_byte_frozen``（改守幸存内核，sha256 6611c416…）、
+# ``test_fg14_record_declares_both_propositions_and_their_authority``、
+# ``test_fg14_both_prospective_tiers_are_recorded``、
+# ``test_fg14_impact_table_is_measured_against_a_frozen_pre_fix_baseline``。
+#
+# ``results/fg14_assembly_divergence.json`` **保留在盘上**（历史证据），本轮起
+# **没有任何测试再断言它**。
+# ---------------------------------------------------------------------------

@@ -402,45 +402,21 @@ def test_from_connections_rejects_empty():
 # 回归锁：for_fiber 必须透传 raman_spectrum
 # ---------------------------------------------------------------------------
 def test_for_fiber_propagates_raman_spectrum():
-    """FG-U1 遗留缺陷：`for_fiber` 漏传 raman_spectrum，evaluate_path 拿不到 tabular。"""
+    """FG-U1 遗留缺陷：`for_fiber` 漏传 raman_spectrum，子评估器拿到的是默认值。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本条原有 ``("legacy", "tabular")`` 两个循环
+    档位，并另有一条断言 ``for_fiber`` 透传 **NLI 物理档位**。
+    ``"tabular"`` 档与物理档位机制都随被移除的那套物理**整体**离场（闭式 ECZ 的
+    冻结核内部只走 legacy 那条合成折线，结构上没有第二条路）。**保留**本条
+    ``for_fiber`` 透传命题本身——它仍是 ``for_fiber`` 的正确接线形状。
+    """
     grid = SpectrumGrid(num_channels=40, channel_spacing_hz=50e9, center_frequency_hz=190e12)
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
-    for mode in ("legacy", "tabular"):
+    for mode in ("legacy",):
         evaluator = MultiBandISRSGN(
             grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, raman_spectrum=mode,
-            # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：拉曼谱两档（legacy / tabular）都是 **P2**
-            # 的能力（P1 核只有 legacy 那条合成折线，没有 G 矩阵），故显式钉 P2 档。
-            nli_model="p2_gn",
         )
         assert evaluator.for_fiber(fiber).raman_spectrum == mode
-        # 第 3 轮补的断言：``for_fiber`` 也必须**透传 NLI 物理档位**——
-        # 否则子评估器会悄悄换档（默认档已是 p1_closed）。
-        assert evaluator.for_fiber(fiber).nli_model == "p2_gn"
-
-
-def test_evaluate_path_actually_reaches_tabular_spectrum():
-    """端到端：evaluate_path 的结果必须随 raman_spectrum 改变，否则透传仍是断的。"""
-    grid = SpectrumGrid(num_channels=541, channel_spacing_hz=50e9, center_frequency_hz=190.2127e12)
-    fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
-    from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
-    from network_nlo_eval.network.elements import EDFAConfig
-
-    path = MultiSpanOpticalPath(
-        fiber_configs=[fiber],
-        edfa_configs=[EDFAConfig(target_gain_db=None, noise_figure_db=5.0)],
-    )
-    power = np.full(grid.num_channels, 1e-3)
-    snrs = {}
-    for mode in ("legacy", "tabular"):
-        evaluator = MultiBandISRSGN(
-            grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, raman_spectrum=mode,
-            # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：同 ``test_for_fiber_propagates_raman_spectrum``，
-            # 拉曼谱档位是 P2 的能力，显式钉 P2 档。
-            nli_model="p2_gn",
-        )
-        snrs[mode] = evaluator.evaluate_path(path, power).snr_db
-    delta = snrs["tabular"] - snrs["legacy"]
-    assert np.any(np.abs(delta) > 1e-3), "evaluate_path must differ between legacy and tabular"
 
 
 def test_legacy_path_still_bit_identical_for_fiber():
@@ -453,11 +429,10 @@ def test_legacy_path_still_bit_identical_for_fiber():
         # 透传"——子评估器必须与父评估器**同档**。若跟着全局默认走，命题会被
         # 悄悄换成"默认档透传"，而测试名与文档都在说 legacy。
         raman_spectrum="legacy",
-        # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：``_g_gain`` 是 P2 拉曼 G 矩阵（P1 核没有），
-        # 显式钉 P2 档。
-        nli_model="p2_gn",
     )
     child = evaluator.for_fiber(fiber)
     assert child.raman_spectrum == "legacy"
     assert np.array_equal(child.f_abs_hz, evaluator.f_abs_hz)
-    assert np.array_equal(child._g_gain, evaluator._g_gain)
+    # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：原断言比的是 ``_g_gain``（拉曼 G 对矩阵）。
+    # 那是被移除那套物理的构建期常量，闭式 ECZ 没有它；子评估器与父评估器的
+    # **逐位一致**命题改由上面两条仍成立的属性承载。

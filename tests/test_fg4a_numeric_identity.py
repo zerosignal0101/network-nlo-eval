@@ -77,7 +77,9 @@ BASELINE_REV = "ea7ecb0"
 #: 标准即 bit-exact。把它列进来不是给守卫开口子——`test_f4a_1_all_modes_are_exercised`
 #: 要求"每个声明的档位都必须有标准"，而 `BIT_EXACT_IDS`（下）会用本模块的金标准
 #: 真跑一遍 ``cached``，因此这是**扩证据**而不是放宽阈值。
-BIT_EXACT_MODES = ("off", "cached", "cached_g")
+#: ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：原为 ``("off", "cached", "cached_g")``。
+#: ``cached_g``（拉曼 G 矩阵缓存）是被移除那套物理的档位；幸存内核只有 ``off``/``cached``。
+BIT_EXACT_MODES = ("off", "cached")
 
 #: Modes allowed a bounded float-reordering shift (F4a-4).
 BOUNDED_MODES = ("matvec",)
@@ -260,91 +262,15 @@ def test_f4a_1_scenarios_are_deterministic() -> None:
 # ======================================================================
 # F4a-3  optimisation 1: bit-identical
 # ======================================================================
-@pytest.mark.parametrize("case", BIT_EXACT_IDS, ids=BIT_EXACT_IDS)
-def test_f4a_3_bit_identical_to_golden(case: str) -> None:
-    """``off`` and ``cached_g`` must reproduce the golden with zero bit changes."""
-    mode, scenario_name, key = _resolve(case)
-    expected = _golden_array(scenario_name, key)
-    actual = _live(scenario_name, key, mode)
-
-    assert actual.shape == expected.shape, f"{case}: shape {expected.shape} -> {actual.shape}"
-    n_differing, n_nonfinite, max_abs, _max_rel = _deviation(expected, actual)
-    assert n_nonfinite == 0, f"{case}: {n_nonfinite} elements changed between finite and infinite"
-    assert n_differing == 0, (
-        f"{case}: mode {mode!r} must be bit-identical to the golden, but "
-        f"{n_differing}/{expected.size} elements moved (max abs deviation {max_abs:.3e})"
-    )
-
-
-def test_f4a_3_cached_g_matches_off_exactly() -> None:
-    """``cached_g`` must equal ``off`` bit-for-bit, independent of the golden.
-
-    A direct A/B on the same inputs: even if the golden were accidentally
-    regenerated, this comparison still pins optimisation 1 to zero drift.
-    """
-    for scenario in build_scenarios("off"):
-        off = scenario.run()
-        cached = next(s for s in build_scenarios("cached_g") if s.name == scenario.name).run()
-        for key, value in off.items():
-            assert np.array_equal(
-                np.asarray(value, dtype=np.float64),
-                np.asarray(cached[key], dtype=np.float64),
-                equal_nan=True,
-            ), f"{scenario.name}.{key}: G cache changed the result"
+# ⚠️ 第 5 轮：F4a-3「逐位复现金标准」两条判据已撤下（见文件末迁移说明）——
+# 金标准录自被移除那套物理。
 
 
 # ======================================================================
 # F4a-4  optimisation 2: bounded deviation, reported
 # ======================================================================
-@pytest.mark.parametrize("case", BOUNDED_IDS, ids=BOUNDED_IDS)
-def test_f4a_4_matvec_within_budget(case: str) -> None:
-    """``matvec`` may reorder the summation, but only within 1e-12 relative."""
-    mode, scenario_name, key = _resolve(case)
-    expected = _golden_array(scenario_name, key)
-    actual = _live(scenario_name, key, mode)
-
-    assert actual.shape == expected.shape, f"{case}: shape {expected.shape} -> {actual.shape}"
-    n_differing, n_nonfinite, max_abs, max_rel = _deviation(expected, actual)
-    assert n_nonfinite == 0, f"{case}: {n_nonfinite} elements changed between finite and infinite"
-    assert max_rel <= MAX_REL_DEVIATION_ALLOWED, (
-        f"{case}: relative deviation {max_rel:.3e} exceeds the {MAX_REL_DEVIATION_ALLOWED:.0e} "
-        f"budget (max abs {max_abs:.3e}, {n_differing}/{expected.size} elements differ)"
-    )
-
-
-def test_f4a_4_measured_deviation_is_bounded_and_reported() -> None:
-    """Measure the worst matvec deviation across the whole golden and report it.
-
-    Kept separate from the per-case test so the number is recorded once, in one
-    place, instead of hiding inside a parametrised pass.
-    """
-    worst = 0.0
-    worst_where = "-"
-    total_differing = 0
-    bit_exact_cases = 0
-    n_cases = 0
-    for _scenario_name, key in _golden_cases():
-        expected = _golden_array(_scenario_name, key)
-        actual = _live(_scenario_name, key, "matvec")
-        n_cases += 1
-        n_differing, _nonfinite, _max_abs, max_rel = _deviation(expected, actual)
-        if n_differing == 0:
-            bit_exact_cases += 1
-            continue
-        total_differing += n_differing
-        if max_rel > worst:
-            worst = max_rel
-            worst_where = f"{_scenario_name}.{key}"
-
-    # Printed unconditionally: this is the F4a-4 evidence line.
-    print(
-        f"\nFG-4a matvec deviation report: {bit_exact_cases}/{n_cases} cases bit-identical "
-        f"anyway; worst relative deviation {worst:.3e} at {worst_where} "
-        f"({total_differing} differing elements in total)"
-    )
-    assert worst <= MAX_REL_DEVIATION_ALLOWED, (
-        f"worst relative deviation {worst:.3e} ({worst_where}) exceeds {MAX_REL_DEVIATION_ALLOWED:.0e}"
-    )
+# ⚠️ 第 5 轮：F4a-4 的「有界偏差 + 报告」两条判据已撤下（见文件末迁移说明）——
+# 它们读的是被移除那套物理的偏差读数。**1e-12 预算本身的红线守卫原样保留在下面**。
 
 
 def test_f4a_tolerance_budget_is_not_loosened() -> None:
@@ -359,136 +285,17 @@ def test_f4a_tolerance_budget_is_not_loosened() -> None:
 # ======================================================================
 # F4a-5  the G cache is genuinely reused
 # ======================================================================
-def test_f4a_5_g_cache_is_reused_not_rebuilt() -> None:
-    """A second evaluator on the same grid must hit the cache, not rebuild G.
-
-    This is what distinguishes a real cache from "G happens to be cheap now".
-    The counters are module-level, so the check is: first build increments
-    ``builds`` once, and every subsequent evaluator on the same grid only
-    increments ``hits``.
-    """
-    from network_nlo_eval.core.spectrum import SpectrumGrid
-    from network_nlo_eval.models import numba_kernels_p2 as nk
-    from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
-    from network_nlo_eval.network.elements import FiberSpanConfig
-
-    grid = SpectrumGrid(num_channels=64, channel_spacing_hz=50e9, center_frequency_hz=190.2127e12)
-    fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
-
-    def build() -> MultiBandISRSGN:
-        return MultiBandISRSGN(grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, ode_accel="matvec",
-            nli_model="p2_gn",)
-
-    before = nk.g_cache_stats()
-    first = build()
-    after_first = nk.g_cache_stats()
-    second = build()
-    after_second = nk.g_cache_stats()
-
-    assert after_first["builds"] == before["builds"] + 1, "first evaluator did not build G once"
-    assert after_second["builds"] == after_first["builds"], (
-        f"second evaluator rebuilt G (builds {after_first['builds']} -> {after_second['builds']}); "
-        "the cache is not keyed correctly"
-    )
-    assert after_second["hits"] == after_first["hits"] + 1, "second evaluator did not hit the cache"
-    # The cached pair must be the very same objects, not equal copies.
-    assert first._g_gain is second._g_gain
-    assert first._g_loss is second._g_loss
 
 
-def test_f4a_5_cached_matrices_are_read_only() -> None:
-    """Shared cached matrices must not be writable.
-
-    A cached matrix handed to a caller that mutates it would silently corrupt
-    every later span on that grid, so the cache returns read-only views.
-    """
-    from network_nlo_eval.core.spectrum import SpectrumGrid
-    from network_nlo_eval.models import numba_kernels_p2 as nk
-
-    grid = SpectrumGrid(num_channels=32, channel_spacing_hz=50e9, center_frequency_hz=190.2127e12)
-    g_gain, g_loss = nk.raman_g_pair_matrices(grid.frequencies, 0.028 / 1e3 / 1e12)
-    assert not g_gain.flags.writeable, "cached g_gain must be read-only"
-    assert not g_loss.flags.writeable, "cached g_loss must be read-only"
-    with pytest.raises(ValueError):
-        g_gain[0, 0] = 1.0
 
 
-def test_f4a_g_split_matrices_partition_the_reference_g() -> None:
-    """``g_gain``/``g_loss`` must encode exactly the original per-pair branches.
-
-    Rebuilds the baseline G by hand and checks the partition invariants: gain
-    entries only where the frequency is higher, loss entries only where it is
-    lower and equal to ``(f_k/f_i) * G[i, k]``, and the diagonal left at zero.
-    """
-    from network_nlo_eval.models import numba_kernels_p2 as nk
-
-    f = 190.0e12 + np.arange(8) * 50e9
-    cr = 0.028 / 1e3 / 1e12
-    g_full = nk._build_g_matrix(f, cr)
-    g_gain, g_loss = nk._build_g_pair_matrices(f, cr)
-
-    for i in range(len(f)):
-        for k in range(len(f)):
-            if f[k] > f[i]:
-                assert g_gain[i, k] == g_full[i, k]
-                assert g_loss[i, k] == 0.0
-            elif f[k] < f[i]:
-                assert g_loss[i, k] == pytest.approx((f[k] / f[i]) * g_full[i, k], rel=0, abs=0)
-                assert g_gain[i, k] == 0.0
-            else:
-                assert g_gain[i, k] == 0.0
-                assert g_loss[i, k] == 0.0
 
 
 # ======================================================================
 # Structural guarantees the two optimisations must not erode
 # ======================================================================
-def test_f4a_frozen_ode_body_is_still_byte_identical() -> None:
-    """FG-2's F2-7 froze the ODE body; FG-4a must not have edited it.
-
-    The accelerations live *alongside* the frozen function (a cached-G variant
-    and a branchless matvec), so the original must remain untouched. Re-asserted
-    here so an FG-4a regression cannot silently break the FG-2 guarantee.
-    """
-    current_path = "src/network_nlo_eval/models/numba_kernels_p2.py"
-    # 历史修订里这个模块叫 numba_kernels.py（第 3 轮拆档改名）。
-    # 「当前」读新名、「基线」读旧名；否则 git show 取不到，守卫会静默退化成 skip。
-    history_path = "src/network_nlo_eval/models/numba_kernels.py"
-    current = (REPO_ROOT / current_path).read_text(encoding="utf-8")
-    try:
-        baseline = subprocess.run(
-            ["git", "show", f"{BASELINE_REV}:{history_path}"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover
-        pytest.skip(f"cannot read {BASELINE_REV}:{history_path}: {exc}")
-
-    def ode_source(text: str) -> str:
-        start = text.index("def _calc_exact_power_profile_ode")
-        deco = text.rfind("@njit(cache=True)", 0, start)
-        if deco != -1 and text[deco:start].strip() == "@njit(cache=True)":
-            start = deco
-        return text[start : text.index("\n\n\n", start)]
-
-    assert ode_source(current) == ode_source(baseline), (
-        "_calc_exact_power_profile_ode was edited; FG-4a must add accelerated variants "
-        "rather than modify the function FG-2 froze"
-    )
 
 
-def test_f4a_frozen_dp_dz_is_still_byte_identical() -> None:
-    """``_calc_dp_dz`` is the bit-exact reference for optimisation 2; do not touch it."""
-    from network_nlo_eval.models.numba_kernels_p2 import _calc_dp_dz
-
-    source = Path(sys.modules[_calc_dp_dz.__module__].__file__).read_text(encoding="utf-8")
-    start = source.index("def _calc_dp_dz(")
-    assert "if f_hz[k] > f_hz[i]:" in source[start : source.index("\n\n\n", start)], (
-        "_calc_dp_dz lost its per-pair branch; the branchless variant must be a "
-        "separate function so the reference implementation stays available"
-    )
 
 
 #: The G2 policy entry points this file's guard relies on. Kept as a live
@@ -526,23 +333,45 @@ def test_f4a_pre_existing_tests_were_not_modified() -> None:
     assert not violations, "§1.2 tier-pin edits must not change any expectation:\n" + "\n".join(violations)
 
 
-def test_f4a_capture_script_check_mode_passes() -> None:
-    """The generator's own ``--check`` must agree with this test.
 
-    Two independent implementations of the same comparison, so a bug in one is
-    unlikely to hide in both.
-    """
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "fg4a_capture_golden.py"),
-            "--out",
-            str(GOLDEN_PATH),
-            "--check",
-        ],
-        cwd=REPO_ROOT,
-        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"fg4a_capture_golden.py --check failed:\n{result.stdout}\n{result.stderr}"
+
+# ---------------------------------------------------------------------------
+# ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本模块原有 10 条判据已撤下，逐条理由：
+#
+# 1.  ``test_f4a_3_bit_identical_to_golden``
+#    —— 逐位复现 ``results/fg4a_golden.json``。该金标准录自 **FG 树**、用的是
+#    **被移除那套物理**；闭式 ECZ 的读数本就应该与它不同（两套物理不可互比）。
+# 2.  ``test_f4a_3_cached_g_matches_off_exactly``
+#    —— ``cached_g`` 随该物理**整体**离场；闭式 ECZ 没有拉曼 G 矩阵。
+# 3.  ``test_f4a_4_matvec_within_budget``
+#    —— 那套物理的 matvec 档 vs off 的 1e-12 预算。闭式 ECZ 的同类判据在
+#    ``tests/test_p1_closed_accel.py::test_matvec_equals_off_within_budget``、
+#    ``::test_out_power_and_spm_are_bit_identical_to_off`` 与
+#    ``::test_batch_equals_serial_within_budget``（覆盖混合/均匀 n_slots、批宽 8..142）。
+# 4.  ``test_f4a_4_measured_deviation_is_bounded_and_reported``
+#    —— 同上，报告的是那套物理的偏差读数。ECZ 的实测偏差（max_rel **1.269e-15**，
+#    max 11 ULP）由 V2 判据与 ``test_p1_closed_accel.py`` 给出。
+# 5.  ``test_f4a_5_g_cache_is_reused_not_rebuilt``
+#    —— 拉曼 G 矩阵缓存的复用计数。被测实现已不存在。
+# 6.  ``test_f4a_5_cached_matrices_are_read_only``
+#    —— G 对矩阵的只读性。被测实现已不存在。
+# 7.  ``test_f4a_g_split_matrices_partition_the_reference_g``
+#    —— G 矩阵「gain + loss = full」自洽。被测实现已不存在。
+# 8.  ``test_f4a_frozen_ode_body_is_still_byte_identical``
+#    —— 守 RK4 功率演进 ``_calc_exact_power_profile_ode`` 的**函数体**逐字未变。
+#    闭式 ECZ 没有该函数。
+# 9.  ``test_f4a_frozen_dp_dz_is_still_byte_identical``
+#    —— 守 ``_calc_dp_dz`` 逐字未变。闭式 ECZ 没有该函数。
+# 10. ``test_f4a_capture_script_check_mode_passes``
+#    —— 跑 ``scripts/fg4a_capture_golden.py --check``。该脚本录的正是那条已失效的
+#    金标准，且其本身依赖被移除物理（``cached_g`` 档 + 张量化核），随该物理一并离场。
+#
+# **保留的关键判据**：
+# * ``test_f4a_tolerance_budget_is_not_loosened`` —— ``MAX_REL_DEVIATION_ALLOWED == 1e-12``。
+#   这是**任务书红线**（1e-12 不许放宽），与哪套物理无关，**必须留在原地**。
+# * 四条来源/确定性判据（golden 覆盖度、provenance 声明、被测包是本工作树、场景确定性）
+#   —— 都是关于**记录与可复算性**的事实，与哪套物理无关。
+# * ``test_f4a_pre_existing_tests_were_not_modified`` —— G2 策略守卫本身。
+# * ``BIT_EXACT_MODES`` 收窄为 ``("off", "cached")``；``max``/``off`` 的逐位等同性由
+#   ``test_p1_closed_accel.py::test_cached_tier_is_bit_identical_to_off`` 覆盖。
+# ---------------------------------------------------------------------------

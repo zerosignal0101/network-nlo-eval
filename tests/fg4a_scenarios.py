@@ -166,8 +166,7 @@ def _legacy_evaluator(
         symbol_rate_hz=SYMBOL_RATE_HZ,
         phi_kurtosis=phi_kurtosis,
         # WP-MERGE-FG-FLEX 第 3 轮：FG-4a 的金标准是 **P2 Eq. 21** 那套物理，
-        # 必须显式钉在 ``p2_gn`` 档（默认档已是 P1 闭式，两套物理数字本就不同）。
-        nli_model="p2_gn",
+        # ⚠️ 第 5 轮：原注释说明「必须显式钉第二套物理」。该物理已整体移除。
         ode_accel=ode_accel,
         raman_spectrum=raman_spectrum,
     )
@@ -276,7 +275,6 @@ def _flexgrid_evaluator(ode_accel: str, raman_spectrum: str = RAMAN_SPECTRUM_PIN
         connections=connections,
         slots_per_channel=SLOTS_PER_CHANNEL,
         # WP-MERGE-FG-FLEX 第 3 轮：同 _legacy_evaluator，显式钉在 P2 档。
-        nli_model="p2_gn",
         ode_accel=ode_accel,
         raman_spectrum=raman_spectrum,
     )
@@ -293,7 +291,7 @@ def build_scenarios(
 
     Args:
         ode_accel: Which FG-4a acceleration path the evaluators should use.
-            ``"off"`` and ``"cached_g"`` must reproduce the golden bit-for-bit;
+            ``"off"`` must reproduce the golden bit-for-bit;
             ``"matvec"`` is allowed a bounded float-reordering shift.
         raman_spectrum: Which Raman spectrum tier to build evaluators with.
             Defaults to :data:`RAMAN_SPECTRUM_PIN` (``"legacy"``) — **not** to the

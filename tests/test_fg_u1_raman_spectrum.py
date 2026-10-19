@@ -15,13 +15,7 @@ import numpy as np
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models import numba_kernels_p2 as nk
-from network_nlo_eval.models.isrs_gn import (
-    NLI_MODEL_DEFAULT,
-    RAMAN_SPECTRUM_DEFAULT,
-    RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL,
-    MultiBandISRSGN,
-)
+from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.network.elements import FiberSpanConfig
 from network_nlo_eval.physics import raman_spectrum as rs
 
@@ -85,16 +79,6 @@ def test_interpolation_error_within_declared_tolerance() -> None:
     assert np.max(np.abs(got - want)) <= DECLARED_INTERP_TOLERANCE
 
 
-def test_kernel_interpolator_matches_numpy() -> None:
-    """Njit 插值器必须与 numpy 参考实现等价（G 矩阵全靠它）。"""
-    df_grid, shape_grid = rs.load_raman_gain_table()
-    probe = np.linspace(-1.0, rs.TABLE_MAX_THZ + 5.0, 5_000)
-    for value in probe:
-        kernel = nk._interp_uniform_shape(
-            float(value), float(df_grid[0]), rs.TABLE_STEP_THZ, len(shape_grid), shape_grid
-        )
-        reference = float(rs.interp_raman_gain_shape(value, df_grid, shape_grid))
-        assert kernel == pytest.approx(reference, rel=0, abs=1e-15)
 
 
 def test_spectrum_peak_is_near_13_thz() -> None:
@@ -116,63 +100,34 @@ def test_out_of_range_is_truncated_not_extrapolated() -> None:
 
 
 def test_anchor_is_bit_identical_between_tiers() -> None:
-    """两档在 13.2 THz 处必须**逐位相等**——否则比较会被幅度混淆。"""
-    f_hz = np.ascontiguousarray(np.array([190e12, 190e12 + 13.2e12]), dtype=np.float64)
-    legacy = nk._build_g_matrix(f_hz, CR)
-    tabular = nk._build_g_matrix_tabular(f_hz, CR, *rs.load_raman_gain_table(), rs.TABLE_STEP_THZ)
-    assert legacy[0, 1] == tabular[0, 1]
+    """两条谱在 13.2 THz 处必须**逐位相等**——否则比较会被幅度混淆。
 
-
-def test_legacy_builder_matches_frozen_polyline() -> None:
-    """Legacy 档必须与 FG-2 冻结折线逐位相等（本刀没有动 legacy）。"""
-    f_hz = np.ascontiguousarray(_grid(400), dtype=np.float64)
-    g = nk._build_g_matrix(f_hz, CR)
-    df = np.abs(f_hz[:, None] - f_hz[None, :]) / 1e12
-    assert np.array_equal(g, _frozen_legacy_g(df))
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本条原先经由被移除那套物理的 G 矩阵构建器
+    比较两档。谱**本身**（`physics/raman_spectrum.py`）保留，故命题保留，
+    改钉在**谱形层**上：legacy 合成折线在 13.2 THz 处 ≡ ``cr*13.2e12``，
+    而 tabular 谱按定义 ``S(PEAK_ANCHOR_THZ) ≡ 1``，同一语义。
+    """
+    anchor = np.array([13.2])
+    legacy = _frozen_legacy_g(anchor)[0]
+    tabular = CR * 13.2e12 * float(rs.raman_gain_shape(anchor)[0])
+    assert legacy == tabular
 
 
 def test_tabular_is_nonzero_beyond_legacy_cutoff() -> None:
-    """FU1 的核心物理主张：legacy 在 >15.6 THz 恒零，真实谱不是。"""
-    f_hz = np.ascontiguousarray(np.array([190e12, 190e12 + 20e12, 190e12 + 27e12]), dtype=np.float64)
-    legacy = nk._build_g_matrix(f_hz, CR)
-    tabular = nk._build_g_matrix_tabular(f_hz, CR, *rs.load_raman_gain_table(), rs.TABLE_STEP_THZ)
-    assert legacy[0, 1] == 0.0 and legacy[0, 2] == 0.0
-    assert tabular[0, 1] > 0.0 and tabular[0, 2] > 0.0
-    # 相对峰值 G(13.2 THz) = cr*13.2e12 归一：27 THz 处只剩 ~10%。
+    """FU1 的核心物理主张：legacy 在 >15.6 THz 恒零，真实谱不是。
+
+    ⚠️ 第 5 轮：同上一条——改钉在谱形层（`rs` 模块），命题与数值判据原样保留。
+    这是**超宽带物理资产**的核心主张，不随「评估器不再暴露该档」而失效。
+    """
+    probe = np.array([20.0, 27.0])
     peak_g = CR * 13.2e12
-    assert tabular[0, 2] / peak_g == pytest.approx(0.10, abs=0.02)
-    assert tabular[0, 1] / peak_g == pytest.approx(0.33, abs=0.02)
-
-
-def test_pair_matrices_agree_with_full_matrix() -> None:
-    """Tabular 矩阵对必须与完整 G 自洽（gain = G，loss = 频率比 * G）。"""
-    f_hz = np.ascontiguousarray(_grid(120), dtype=np.float64)
-    df_grid, shape_grid = rs.load_raman_gain_table()
-    g = nk._build_g_matrix_tabular(f_hz, CR, df_grid, shape_grid, rs.TABLE_STEP_THZ)
-    g_gain, g_loss = nk._build_g_pair_matrices_tabular(f_hz, CR, df_grid, shape_grid, rs.TABLE_STEP_THZ)
-    assert np.array_equal(g_gain, np.triu(g, k=1))
-    expected_loss = np.tril(g, k=-1) * (f_hz[None, :] / f_hz[:, None])
-    assert np.allclose(g_loss, expected_loss, rtol=1e-15, atol=0)
-
-
-def test_cache_survives_pair_then_full_request_order() -> None:
-    """先取矩阵对、再取完整 G 不得返回 None（FG-U1 修掉的缓存槽位缺陷）。"""
-    f_hz = np.ascontiguousarray(_grid(60), dtype=np.float64)
-    gain, loss = nk.raman_g_pair_matrices_tabular(f_hz, CR)
-    assert gain is not None and loss is not None
-    full = nk.raman_g_matrix_tabular(f_hz, CR)
-    assert full is not None and np.allclose(full, gain + loss / (f_hz[None, :] / f_hz[:, None]))
-
-
-def test_tier_cache_entries_do_not_collide() -> None:
-    """Legacy 与 tabular 必须各占各的缓存条目，不能互相覆盖。"""
-    f_hz = np.ascontiguousarray(_grid(60), dtype=np.float64)
-    legacy = nk.raman_g_matrix(f_hz, CR)
-    tabular = nk.raman_g_matrix_tabular(f_hz, CR)
-    assert not np.allclose(legacy, tabular)
-
-
-# --- 档位接线 --------------------------------------------------------------
+    legacy = _frozen_legacy_g(probe)
+    tabular = peak_g * np.asarray(rs.raman_gain_shape(probe), dtype=np.float64)
+    assert np.all(legacy == 0.0), "legacy 折线在 15.6 THz 之外必须恒零"
+    assert np.all(tabular > 0.0), "真实石英谱在 20/27 THz 处不应为零"
+    # 相对峰值 G(13.2 THz) = cr*13.2e12 归一：27 THz 处只剩 ~10%。
+    assert tabular[1] / peak_g == pytest.approx(0.10, abs=0.02)
+    assert tabular[0] / peak_g == pytest.approx(0.33, abs=0.02)
 
 
 def _evaluator(raman_spectrum: str, ode_accel: str = "matvec") -> MultiBandISRSGN:
@@ -182,49 +137,13 @@ def _evaluator(raman_spectrum: str, ode_accel: str = "matvec") -> MultiBandISRSG
         symbol_rate_hz=50e9,
         raman_spectrum=raman_spectrum,
         ode_accel=ode_accel,
-        nli_model="p2_gn",
     )
 
 
-def test_default_tier_is_tabular() -> None:
-    """默认档现在是 tabular（FG-15 换底），且 legacy 仍逐位可达。
-
-    **为什么这条期望值必须移动（逐条归因，不是只改数字）**：这条测试的命题
-    本身就是"**默认档是什么**"，所以换底必然让它移动——这是 FG-15 唯一
-    授权移动的既有期望值之一。机制是物理的：legacy 的两个截断（13.2 / 15.6 THz）
-    使相隔 >15.6 THz 的耦合被迫为零，而 S+C+L+U 跨约 27 THz。
-
-    下面两行仍在同一档上核对 G 矩阵，确保换底没有顺手改坏 legacy 的数值：
-    ``_evaluator("legacy")`` 是**显式**取 legacy，不是靠默认。
-
-    ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：拉曼谱默认档现在是**按 NLI 物理档位解析**的
-    ——``p2_gn`` 档默认 ``"tabular"``（FG-15 的裁决不变），``p1_closed`` 档默认
-    ``"legacy"``（P1 核只有 legacy 折线）。常量 ``RAMAN_SPECTRUM_DEFAULT`` 本身
-    一个字没动。构造签名的**最后一个**默认参数现在是 ``nli_model``，
-    故 ``__defaults__[-1]`` 不再是拉曼档位。
-    """
-    assert RAMAN_SPECTRUM_DEFAULT == "tabular"
-    assert RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL["p2_gn"] == "tabular"
-    assert RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL["p1_closed"] == "legacy"
-    assert MultiBandISRSGN.__init__.__defaults__[-1] == NLI_MODEL_DEFAULT
-    assert MultiBandISRSGN.__init__.__defaults__[-1] == "p1_closed"
-    ev = _evaluator("legacy")
-    assert ev.raman_spectrum == "legacy"
-    assert np.allclose(ev._g_gain, nk.raman_g_pair_matrices(ev.f_abs_hz, ev.cr_w_m_hz)[0])
 
 
-def test_tabular_changes_the_numbers() -> None:
-    """Tabular 档必须真的改变结果（否则这一刀什么都没做）。"""
-    legacy = _evaluator("legacy")
-    tabular = _evaluator("tabular")
-    assert not np.allclose(legacy._g_gain, tabular._g_gain)
-    assert not np.allclose(legacy._g_loss, tabular._g_loss)
 
 
-def test_tabular_rejects_frozen_off_path() -> None:
-    """`off` 是冻结的 legacy 路径，与 tabular 的组合必须显式报错而不是静默退化。"""
-    with pytest.raises(ValueError, match="cached_g"):
-        _evaluator("tabular", ode_accel="off")
 
 
 def test_unknown_tier_rejected() -> None:

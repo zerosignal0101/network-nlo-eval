@@ -24,8 +24,8 @@ import pytest
 
 from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.models.isrs_gn import (
-    ODE_ACCEL_DEFAULT_BY_NLI_MODEL,
-    ODE_ACCEL_MODES_BY_NLI_MODEL,
+    ODE_ACCEL_DEFAULT,
+    ODE_ACCEL_MODES,
     MultiBandISRSGN,
 )
 from network_nlo_eval.models.numba_kernels import _calc_span_noise_and_power_jit
@@ -91,7 +91,6 @@ def _evaluator(
         ode_accel=ode_accel,
         raman_spectrum="legacy",
         channel_bandwidth_source="occupied",
-        nli_model="p1_closed",
     )
 
 
@@ -335,32 +334,27 @@ class TestBatchEntry:
 # 档位接线
 # ---------------------------------------------------------------------------
 class TestTierWiring:
-    """``p1_closed`` 的档位表与默认档的接线。"""
+    """闭式 ECZ 的档位表与默认档接线。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本类原先覆盖两套物理的档位表与默认档，
+    判据走按档分派表（``*_BY_NLI_MODEL``）。那套物理整体移除后**只剩一套**，
+    按档查表已无消费者；**保留下来的判据改钉在全局档位元组上，命题不变**，
+    只删掉只测被移除那套物理的那几条。
+    """
 
     def test_p1_closed_supports_matvec_but_not_cached_g(self) -> None:
-        modes = ODE_ACCEL_MODES_BY_NLI_MODEL["p1_closed"]
-        assert "matvec" in modes, "p1_closed 必须支持 matvec（第 4 轮新增）"
+        """ECZ 认的三档，``cached_g`` **不许**回来。"""
+        modes = ODE_ACCEL_MODES
+        assert "matvec" in modes, "闭式 ECZ 必须支持 matvec（第 4 轮新增）"
         assert "off" in modes and "cached" in modes
         assert "cached_g" not in modes, (
-            "cached_g 是 P2 的拉曼 G 矩阵缓存；P1 核走解析出纤功率，没有 G 矩阵可缓存"
+            "cached_g 是拉曼 G 矩阵缓存；ECZ 闭式核走解析出纤功率，没有 G 矩阵可缓存"
         )
 
-    def test_p2_gn_tiers_are_unchanged(self) -> None:
-        """P2 档的行为不许动（第 4 轮的禁止项之一）。"""
-        assert ODE_ACCEL_MODES_BY_NLI_MODEL["p2_gn"] == ("off", "cached", "cached_g", "matvec")
-        assert ODE_ACCEL_DEFAULT_BY_NLI_MODEL["p2_gn"] == "matvec"
-
     def test_p1_closed_default_is_the_measured_faster_tier(self) -> None:
-        """``p1_closed`` 的默认加速档：第 4 轮按实测定为 ``"matvec"``。
+        """默认加速档是 ``"matvec"``——第 4 轮按实测定档，**本轮不许改**。
 
         读数依据见 ``docs/wp_merge_fg_into_flex.md`` 的「第 4 轮」章节。
         想要与 ``cb24704`` **逐位相同**的读数，显式配 ``ode_accel="off"``。
         """
-        assert ODE_ACCEL_DEFAULT_BY_NLI_MODEL["p1_closed"] == "matvec"
-
-    def test_nli_model_default_is_still_p1_closed(self) -> None:
-        """``nli_model`` 的默认档**不许改**（任务书第 4 条）。"""
-        assert ODE_ACCEL_DEFAULT_BY_NLI_MODEL["p1_closed"] is not None
-        from network_nlo_eval.models.isrs_gn import NLI_MODEL_DEFAULT
-
-        assert NLI_MODEL_DEFAULT == "p1_closed"
+        assert ODE_ACCEL_DEFAULT == "matvec"

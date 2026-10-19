@@ -4,7 +4,7 @@
     "before": "FG-tree lumped insertion_loss_db + filtering_penalty_db on signal and noise",
     "after": "union: port loss + booster ASE + noise-only filtering_penalty_db"
   },
-  "package_dir": "/home/zsig/Documents/gits/wt/fg-uwb-fid/src/network_nlo_eval",
+  "package_dir": "/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval",
   "before": [
     {
       "scenario": {
@@ -240,7 +240,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 26.0347304295729
+      "snr_db": 25.265176304717638
     },
     {
       "scenario": {
@@ -259,7 +259,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 24.152139265826385
+      "snr_db": 23.391590837855194
     },
     {
       "scenario": {
@@ -284,7 +284,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 23.0296997909201
+      "snr_db": 22.239480441560254
     },
     {
       "scenario": {
@@ -306,7 +306,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 25.989211917341827
+      "snr_db": 25.227016934879526
     },
     {
       "scenario": {
@@ -328,7 +328,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 25.025781931578116
+      "snr_db": 24.255573729782306
     },
     {
       "scenario": {
@@ -370,7 +370,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 26.0347304295729
+      "snr_db": 25.265176304717638
     },
     {
       "scenario": {
@@ -389,7 +389,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 24.152139265826385
+      "snr_db": 23.391590837855194
     },
     {
       "scenario": {
@@ -414,7 +414,7 @@
       },
       "node_count": 8,
       "accepted": true,
-      "snr_db": 23.0296997909201
+      "snr_db": 22.239480441560254
     },
     {
       "scenario": {
@@ -447,8 +447,8 @@
       "kind": "legacy",
       "description": "Fixed grid, 2 hops, booster on (equalize_output_power=True).",
       "before_snr_db": 23.125814425161867,
-      "after_snr_db": 26.0347304295729,
-      "delta_db": 2.908916004411033,
+      "after_snr_db": 25.265176304717638,
+      "delta_db": 2.1393618795557714,
       "moved": true
     },
     {
@@ -456,8 +456,8 @@
       "kind": "legacy",
       "description": "Fixed grid, 3 hops, booster on. Accumulates booster ASE 3x.",
       "before_snr_db": 17.604538298040442,
-      "after_snr_db": 24.152139265826385,
-      "delta_db": 6.547600967785943,
+      "after_snr_db": 23.391590837855194,
+      "delta_db": 5.787052539814752,
       "moved": true
     },
     {
@@ -465,8 +465,8 @@
       "kind": "legacy",
       "description": "Fixed grid, 2 hops, equalize_output_power=False. Answers the brief's required measurement: does the union collapse to the FG-tree result here?",
       "before_snr_db": 23.125814425161867,
-      "after_snr_db": 23.0296997909201,
-      "delta_db": -0.09611463424176492,
+      "after_snr_db": 22.239480441560254,
+      "delta_db": -0.8863339836016131,
       "moved": true
     },
     {
@@ -474,8 +474,8 @@
       "kind": "legacy",
       "description": "Fixed grid, 2 hops, express port attenuated 2 dB so express != drop.",
       "before_snr_db": 23.125814425161867,
-      "after_snr_db": 25.989211917341827,
-      "delta_db": 2.86339749217996,
+      "after_snr_db": 25.227016934879526,
+      "delta_db": 2.101202509717659,
       "moved": true
     },
     {
@@ -483,8 +483,8 @@
       "kind": "legacy",
       "description": "Fixed grid, 2 hops, filtering_penalty_db=2.0 (heavily cascading WSS).",
       "before_snr_db": 21.681810666809035,
-      "after_snr_db": 25.025781931578116,
-      "delta_db": 3.343971264769081,
+      "after_snr_db": 24.255573729782306,
+      "delta_db": 2.5737630629732706,
       "moved": true
     },
     {
@@ -501,8 +501,8 @@
       "kind": "flex",
       "description": "Flexible grid, 2 hops, booster on. Guards the FG-2 capability survives.",
       "before_snr_db": 23.125814425161867,
-      "after_snr_db": 26.0347304295729,
-      "delta_db": 2.908916004411033,
+      "after_snr_db": 25.265176304717638,
+      "delta_db": 2.1393618795557714,
       "moved": true
     },
     {
@@ -510,8 +510,8 @@
       "kind": "flex",
       "description": "Flexible grid, 3 hops, booster on.",
       "before_snr_db": 17.604538298040442,
-      "after_snr_db": 24.152139265826385,
-      "delta_db": 6.547600967785943,
+      "after_snr_db": 23.391590837855194,
+      "delta_db": 5.787052539814752,
       "moved": true
     },
     {
@@ -519,8 +519,8 @@
       "kind": "flex",
       "description": "Flexible grid, 2 hops, equalize_output_power=False.",
       "before_snr_db": 23.125814425161867,
-      "after_snr_db": 23.0296997909201,
-      "delta_db": -0.09611463424176492,
+      "after_snr_db": 22.239480441560254,
+      "delta_db": -0.8863339836016131,
       "moved": true
     },
     {
@@ -537,8 +537,8 @@
     "scenario_count": 10,
     "moved_count": 8,
     "rejected_both_ends": 2,
-    "max_abs_delta_db": 6.547600967785943,
-    "min_delta_db": -0.09611463424176492,
-    "max_delta_db": 6.547600967785943
+    "max_abs_delta_db": 5.787052539814752,
+    "min_delta_db": -0.8863339836016131,
+    "max_delta_db": 5.787052539814752
   }
 }

@@ -1,22 +1,22 @@
 {
   "baseline_snr_db": [
-    16.563650546596666,
-    16.325889090371277,
-    16.21806509637,
-    16.154973587200644,
-    16.115948961707044,
-    16.09351977636486,
-    16.084996609924033,
-    16.090430758863153,
-    16.112631244300516,
-    16.159257984316284,
-    16.251386660341506,
-    16.475682044360237
+    27.506397722946062,
+    26.97190058751458,
+    26.74643075170924,
+    26.621291692150436,
+    26.548506048567614,
+    26.511130177037266,
+    26.50311411033019,
+    26.524519986931537,
+    26.5815449897333,
+    26.69137451078293,
+    26.902543240560213,
+    27.42590979581468
   ],
   "field_sweep": [
     {
       "baseline_value": 5.0,
-      "evaluate_path_max_abs_delta_db": 0.9008316611483274,
+      "evaluate_path_max_abs_delta_db": 0.08649407023733957,
       "evaluate_path_snr_bitwise_identical": false,
       "field": "insertion_loss_db",
       "perturbed_value": 8.0,
@@ -25,7 +25,7 @@
     },
     {
       "baseline_value": 0.2,
-      "evaluate_path_max_abs_delta_db": 2.7016493712455265,
+      "evaluate_path_max_abs_delta_db": 2.419189258165183,
       "evaluate_path_snr_bitwise_identical": false,
       "field": "filtering_penalty_db",
       "perturbed_value": 2.0,
@@ -34,7 +34,7 @@
     },
     {
       "baseline_value": 0.0,
-      "evaluate_path_max_abs_delta_db": 0.047846348713587616,
+      "evaluate_path_max_abs_delta_db": 0.03196353016711129,
       "evaluate_path_snr_bitwise_identical": false,
       "field": "express_attenuation_db",
       "perturbed_value": 2.0,
@@ -43,7 +43,7 @@
     },
     {
       "baseline_value": 1.0,
-      "evaluate_path_max_abs_delta_db": 0.5091476658389631,
+      "evaluate_path_max_abs_delta_db": 0.019216142059505614,
       "evaluate_path_snr_bitwise_identical": false,
       "field": "add_drop_loss_db",
       "perturbed_value": 3.0,
@@ -52,7 +52,7 @@
     },
     {
       "baseline_value": 5.0,
-      "evaluate_path_max_abs_delta_db": 0.6869717079964275,
+      "evaluate_path_max_abs_delta_db": 0.0614299893325807,
       "evaluate_path_snr_bitwise_identical": false,
       "field": "booster_noise_figure_db",
       "perturbed_value": 8.0,
@@ -61,7 +61,7 @@
     },
     {
       "baseline_value": true,
-      "evaluate_path_max_abs_delta_db": 2.5242850188803025,
+      "evaluate_path_max_abs_delta_db": 3.1189027460325,
       "evaluate_path_snr_bitwise_identical": false,
       "field": "equalize_output_power",
       "perturbed_value": false,
@@ -83,12 +83,12 @@
   "structural_demo": {
     "on_LAST_hop_only": {
       "bitwise_identical": false,
-      "max_abs_delta_db": 0.8571833036491903,
+      "max_abs_delta_db": 0.033368480126192424,
       "note": "FG-14 修复前：末跳损耗同时除信号与全部累积噪声，在 SNR 比值里代数抵消；FG-14 修复后：equalize_output_power 默认 True，booster 以 NF·h·ν·Rs·(loss−1) 在损耗之后**注入** ASE，这部分噪声不再被同一损耗约掉 ⇒ 末跳损耗重新可观测。"
     },
     "on_NON_LAST_hop_only": {
       "bitwise_identical": false,
-      "max_abs_delta_db": 0.09629645277483334,
+      "max_abs_delta_db": 0.054557790290274966,
       "note": "非末跳损耗只作用于此前累积噪声，其后还要累加新噪声 ⇒ 预期可观测"
     },
     "probe_field": "insertion_loss_db (5.0 -> 8.0 dB，一个 evaluate_path 确实读取的字段)"

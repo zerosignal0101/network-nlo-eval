@@ -10,12 +10,12 @@
 |---|---|---|
 | J5 | `src/network_nlo_eval/models/numba_kernels.py` 逐字节等于已核出处 `flexgrid-dev` 的冻结字节 | ✅ 通过（sha256 `6611c4164a60d0dc…`） |
 | J6 | 6 个 legacy 场景 `delta_db == 0.0` | ✅ 通过（逐位相同 6/6） |
-| J7 | 每段都有 kind，且 `kind == physics` 的片段数为 1 | ❌ 失败（共 38 段） |
+| J7 | 每段都有 kind，且 `kind == physics` 的片段数为 1 | ❌ 失败（共 37 段） |
 | J8 | 端到端跑通，≥2 个不同 `n_slots`，逐连接 SNR 落盘 | ✅ 通过（4 个不同 n_slots：[2, 3, 6, 8]） |
 
 ## 1. 同步了什么（逐文件逐片段，J7 分类）
 
-共裁定 **38** 段：engineering 34 段、physics 4 段；**被应用的 35 段里，physics 为 1 段**。
+共裁定 **37** 段：engineering 34 段、physics 3 段；**被应用的 35 段里，physics 为 1 段**。
 
 ### 1.1 已应用（按文件）
 
@@ -40,7 +40,7 @@
 | `models/isrs_gn.py` | MultiBandISRSGN.symbol_rate_hz_channels | `216` | **engineering** | `applied` | ★ 索引空间适配：np.full(n_nodes, 标量 Rs)。遗留下与标量逐位等价（WP-O1 已证 isrs_gn.py:215-216）。**不是**逐连接异构 Rs——那需改冻结内核。 |
 | `models/isrs_gn.py` | MultiBandISRSGN.roadm_blocks_node | `485-509 (rwa 侧同语义)` | **engineering** | `applied_new` | ★ fu4 把同一套 blocked_slots 解析逻辑在 rwa / physics / isrs_gn 三处各写一遍（其中 physics 侧靠私有属性 _slots_per_channel_hint 传参）。本 WP 收敛成一个方法，三处共用，保证语义不会漂移。legacy 分支逐字等价。 |
 | `models/isrs_gn.py` | MultiBandISRSGN.for_fiber 透传 connections/ode_accel/slots_per_channel | `n/a` | **engineering** | `applied_new` | ★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。⚠️ WP-MERGE-FG-FLEX：合并在透传序列里插入了 `ode_accel` / `raman_spectrum`，锚点随之改钉在 `slots_per_channel` 与 `ode_accel` 相邻的那两行上（透传事实未变，仍是同一处 `for_fiber` 调用）。 |
-| `models/isrs_gn.py` | 逐连接异构 symbol_rate_hz 数组参数 | `1306, 1328-1330 (numba_kernels.py)` | **physics** | `ported_adapted` | ★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。⚠️ WP-MERGE-FG-FLEX **第 3 轮**：上一轮把 flexgrid 侧的 `b_hz_channels` **改名**并入 `symbol_rate_hz`（内核侧收**一个**逐节点数组承载 P1 的 B_i），锚点因此改钉在调用点 `symbol_rate_hz=self.channel_bandwidth_hz_channels` 上——那个组合是「P2 的 GN 模型 + 占用带宽当符号率」，**两边都没验证过**。第 3 轮改判为**两套物理都留、显式档位区分**：P1 档的调用点回到 `b_hz_channels=self.channel_bandwidth_hz_channels`（P1 核的参数名就是 `b_hz_channels`），P2 档则回到 FG 口径的 `symbol_rate_hz=self.symbol_rate_hz_channels`。**判据口径不动**：paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量；改的只是它现在住在**哪个档位、叫什么名字**。 |
+| `models/isrs_gn.py` | 逐连接异构 symbol_rate_hz 数组参数 | `1306, 1328-1330 (numba_kernels.py)` | **physics** | `ported_adapted` | ★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。⚠️ WP-MERGE-FG-FLEX **第 5 轮**：第 3 轮为区分两套物理而引入的档位机制（物理档位形参 + 按档分派表）已随其中一套**整体移除**。本仓现在**只有**闭式 ECZ，调用点固定为 `b_hz_channels=self.channel_bandwidth_hz_channels`（P1 核的参数名就是 `b_hz_channels`）。**判据口径不动**：paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量。 |
 | `network/elements.py` | ROADMConfig.blocked_slots | `84-87` | **engineering** | `applied` | 灵活栅格下的权威阻断字段（12.5 GHz 粒度）。默认空列表，遗留行为不变。 |
 | `network/elements.py` | validate_blocked_channels 扩展到槽 | `96-99` | **engineering** | `applied` | 槽索引的非负/唯一校验，与既有信道校验同构。 |
 | `network/elements.py` | ROADMConfig.blocked_slot_set() | `102-111` | **engineering** | `ported` | 实测本仓 src/ tests/ tools/ 中**零调用方**（死代码）。语义已由 isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。★ WP-MERGE-FG-FLEX 相位守卫翻转：方法已由合并带进来，且不再是死代码——tests/test_fg2_flexible_grid.py:737/743 实际调用它并断言返回值。按通例翻成正向不变量：存在 + 只定义一次（`def blocked_slot_set(` 在 elements.py 内仅 1 处定义）+ 可达（tests 直接调用）。语义仍与既有实现同源，翻转的是「本仓不存在该能力」这条相位守卫，不是判据口径。 |
@@ -62,8 +62,7 @@
 | 文件 | 片段 | fu4 行 | kind | 理由 |
 |---|---|---|---|---|
 | `models/isrs_gn.py` | 用连接占用带覆写 f_m_hz / f_M_hz 并真正传给内核 | `n/a（fu4 用真 ODE，无此参数）` | **physics** | ★ 物理片段。O2 已在 Python 侧按连接占用带算出 f_m_hz/f_M_hz，但冻结内核在核内用标量 Rs 重算二者，故该修正在本仓是**死代码**。让它生效需给内核加参数 = J5。见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。⚠️ WP-MERGE-FG-FLEX 复核结论：**未翻转**，维持 not_ported（不是留白，是有出处的复核）。锚点 `conn.centre_hz + conn.n_slots * conn.grid.slot_width_hz / 2` 确实在 isrs_gn.py 存在且只出现 1 次，但 (a) `git diff b69563a -- models/isrs_gn.py` 证明该段是 **O2 既有代码**，本次合并只在它上方加了两行注释，没有把新能力带进来——相位守卫的前提并未被推翻；(b) `f_m_hz` / `f_M_hz` 在整个 src/ 中仍**零读取方**（只有同一处 if/else 的 4 行赋值），依旧没有真正传给内核，「死代码」的结论今天仍成立。故按通例翻成 `ported` 会是假声明，不翻。翻转需要先给内核加逐连接带边参数，那需要单独的 J5 授权。 |
-| `models/numba_kernels.py` | 整个文件（fu4 用 RK4 _calc_exact_power_profile_ode 真 ODE 传播；本仓用 ECZ 闭式 _calc_span_out_power_jit） | `1-1480` | **physics** | ★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。⚠️ WP-MERGE-FG-FLEX **第 3 轮**复核结论：J5 已**恢复**为「相对 b69563a 的 diff 为空」**且**「sha256 == 6611c416…」的绝对正向不变量，**两条同时成立**——因为本轮把本文件恢复成 flexgrid-dev 的冻结字节（P1 闭式那一份）。FG 的 RK4 ODE（`_calc_exact_power_profile_ode`）与 ode_accel 加速**整份搬到**`numba_kernels_p2.py`（同字节，只换文件名），由那里的 J5 记录单独守。本条 `kind == "physics"`：J7 的硬闸门要求任何被应用的物理片段自带非空 `paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 `paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 (23)/(29)/(30)/(34) 逐式改写，无法诚实地给出论文公式号。故 action 暂留 not_ported，**待裁决**，不作假声明。 |
-| `models/numba_kernels_p2.py` | 整个文件（FG 的 RK4 ODE + NLI 张量化 + 拉曼 G 矩阵 + 批量张量） | `1-1480` | **physics** | ★ 第 3 轮新增：FG 的冻结内核**同字节**搬进本文件（只换文件名，sha256 仍为 7beece4e…），由 `j5_frozen_kernel_p2` 记录单独守。它承载的是 **P2 Eq. 21** 那套物理（符号率口径），与 P1 闭式是**两套不同物理**；本轮按编排方裁决把两套都保留、用 `nli_model` 档位区分，谁都不许被另一套替换。本条 `kind == "physics"` 且 action 留 not_ported：与上面同源的理由——FG 的 RK4 数值传播不是按 P1 (23)/(29)/(30)/(34) 逐式改写的，J7 要求被应用的物理片段自带论文公式号授权，这里给不出诚实的一组，故不作假声明。 |
+| `models/numba_kernels.py` | 整个文件（fu4 用 RK4 _calc_exact_power_profile_ode 真 ODE 传播；本仓用 ECZ 闭式 _calc_span_out_power_jit） | `1-1480` | **physics** | ★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。⚠️ WP-MERGE-FG-FLEX **第 3 轮**复核结论：J5 已**恢复**为「相对 b69563a 的 diff 为空」**且**「sha256 == 6611c416…」的绝对正向不变量，**两条同时成立**——因为本轮把本文件恢复成 flexgrid-dev 的冻结字节（P1 闭式那一份）。⚠️ WP-MERGE-FG-FLEX **第 5 轮**：FG 的 RK4 ODE / ode_accel 那套物理已**整体移除**，其 J5 记录与 ``j5_frozen_kernel_p2`` 证据块一并撤下。本仓现在**只有**闭式 ECZ。本条 `kind == "physics"`：J7 的硬闸门要求任何被应用的物理片段自带非空 `paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 `paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 (23)/(29)/(30)/(34) 逐式改写，无法诚实地给出论文公式号。故 action 暂留 not_ported，**待裁决**，不作假声明。 |
 
 ### 1.3 `core/bands.py` 的最小闭包（728 行 → 最小片段）
 
@@ -126,7 +125,7 @@
 | QoTValidator._roadm_terms（把 inline 装配抽成函数） | `rwa/qot_checker.py` | `fu4_only` | 否 | 纯重构（PLAN §0 已证语义为零）。故意不搬，使 legacy 装配算式保持逐字不变。 |
 | 逐连接异构符号率（symbol_rate_hz 数组参数） | `models/numba_kernels.py` | `fu4_only` | **是** | ★ 物理缺口。fu4 核接受 (N,) Rs 并据此算 ASE；本仓冻结核只吃标量。改它 = 改 numba_kernels.py = 违反 J5。O2 已显式拒绝，O3 沿用。证据：e2e.probes.heterogeneous_rs。 |
 | SRS 频带边界按真实连接占用带（f_m_hz/f_M_hz） | `models/numba_kernels.py` | `fu4_only` | **是** | ★ 物理缺口。本仓 Python 侧已按占用带算出 f_m_hz/f_M_hz，但冻结核在核内用标量 Rs 重算，故该修正是死代码。让它生效需给内核加参数 = J5。证据：e2e.known_limitations.srs_band_edges_still_scalar_rs。 |
-| ode_accel: matvec / cached_g 加速档 | `models/numba_kernels.py` | `both` | **是** | ⚠️ WP-MERGE-FG-FLEX **第 2/4 轮改判**：本条原记 fu4_only（「需改冻结内核，WP-O3 §8 明确列为不做」）。合并后本仓已有 matvec / cached_g（p2_gn 档，来自 wp/fg-integrate），第 4 轮又给 p1_closed 档补上 matvec（models/numba_kernels_p1_accel.py）。⚠️ **冻结核 numba_kernels.py 仍未被改动**（字节仍是 6611c416…）：加速**全部**在另立的新模块里，off 档继续以冻结核为基准。仍标 involves_physics=True：加速重排浮点求和 ⇒ 非逐位相等（实测 max_rel ~2e-15，预算 1e-12 不放宽）。 |
+| ode_accel: matvec / cached_g 加速档 | `models/numba_kernels.py` | `both` | **是** | ⚠️ WP-MERGE-FG-FLEX **第 5 轮改判**：本条原记 fu4_only（「需改冻结内核，WP-O3 §8 明确列为不做」）。第 4 轮已把 matvec 加速建到闭式 ECZ 上（models/numba_kernels_p1_accel.py），本轮那套被移除的物理（含它的 cached_g 档）也已整体离开本树 —— 加速**只剩** ECZ 这一条线。⚠️ **冻结核 numba_kernels.py 仍未被改动**（字节仍是 6611c416…）：加速**全部**在另立的新模块里，off 档继续以冻结核为基准。仍标 involves_physics=True：加速重排浮点求和 ⇒ 非逐位相等（实测 max_rel 1.269e-15，预算 1e-12 不放宽）。 |
 | P1 闭式核的 matvec 档 + 批量入口（XPM 信道对矩阵 + 矩阵-向量乘） | `models/numba_kernels_p1_accel.py` | `ode_dev_only` | **是** | WP-MERGE-FG-FLEX **第 4 轮新增**（fu4 侧没有）。把 P1 (30) 的 XPM 「与信道对相关」的部分预计算成 (N,N) 矩阵，l 方向求和降成矩阵-向量乘；P1 的**算式一个字未改**（常数与 asinh/atan 参数形式逐字不变，冻结核未动）。仍标 involves_physics=True：XPM 的求和次序变了 ⇒ 与 off 档非逐位相等（实测 max_rel 1.3e-15 ~ 2.1e-15，预算 1e-12 不放宽）；出纤功率与 SPM 仍逐位相同。 |
 | phi_kurtosis（64QAM 峰度进入 XPM） | `models/numba_kernels.py` | `fu4_only` | **是** | 本仓闭式 ECZ 模型无此参数；引入它等于改变 NLI 模型，按 J1 需 P1/P2 公式号支撑，O2 未取得，故不移植。 |
 | numba 缺失时的 njit 降级垫片 | `models/numba_kernels.py` | `ode_dev_only` | 否 | 本仓独有：ImportError 时 njit 退化为恒等装饰器，让无 JIT 的最小环境也能跑统计模型。O2 已带（ecz-dev 既有）。 |
@@ -168,7 +167,7 @@ O2 移植的 `MultiBandISRSGN.for_fiber` 只传 `(grid, fiber_config, Rs)`，逐
 
 ### 6.2 O2 公式锚点行号漂移
 
-在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **22** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
+在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **21** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
 
 ### 6.3 `BandSpec` 波长/频率 docstring 反了
 

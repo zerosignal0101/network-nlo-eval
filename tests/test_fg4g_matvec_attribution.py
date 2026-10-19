@@ -71,7 +71,6 @@ def _evaluators(ode_accel: str, **kw):
         # side would compare two different physics instead of two ODE paths.
         raman_spectrum="legacy",
         **kw,
-        nli_model="p2_gn",
     )
 
 

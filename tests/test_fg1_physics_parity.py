@@ -75,7 +75,6 @@ def _pipeline_result(scenario):
         #   2. even if it did not raise, no tabular number may ever be written into a
         #      file claiming ``origin/main`` provenance (FG-13's rule).
         raman_spectrum="legacy",
-        nli_model="p2_gn",
     )
     fibers = [scenario.fiber(hop).model_copy(update={"max_span_length_km": hop.span_km}) for hop in scenario.hops]
     edfas = [scenario.edfa(hop) for hop in scenario.hops]
@@ -95,42 +94,6 @@ def test_golden_file_declares_origin_main(golden: dict) -> None:
     assert set(golden["scenarios"]) == set(SCENARIO_IDS)
 
 
-def test_kernel_uses_ode_and_not_the_analytic_tilt_variant() -> None:
-    """The ODE kernel is present and the ecz-dev analytic replacement is not.
-
-    The reconciliation direction is one-way: the pipeline must call main's
-    RK4 power evolution, never the analytic ``r_f``/``L_eff`` model.
-    """
-    from network_nlo_eval.models import numba_kernels_p2 as kernels
-
-    assert hasattr(kernels, "_calc_exact_power_profile_ode")
-    assert hasattr(kernels, "_calc_dp_dz")
-    assert not hasattr(kernels, "_calc_span_out_power_jit")
-    assert not hasattr(kernels, "_calc_raman_profile_jit")
-
-
-@pytest.mark.parametrize("scenario_index", range(len(SCENARIOS)))
-def test_lowlevel_matches_origin_main(golden: dict, scenario_index: int) -> None:
-    """Low-level span calls reproduce origin/main bit for bit."""
-    scenario = SCENARIOS[scenario_index]
-    expected = golden["scenarios"][scenario.name]
-    actual = run_reference(scenario)
-
-    for key in ("signal_power_w", "spm_w", "xpm_w", "ase_w", "snr_db"):
-        assert np.array_equal(
-            np.asarray(expected[key], dtype=float),
-            np.asarray(actual[key], dtype=float),
-        ), f"{scenario.name}.{key} deviates from origin/main"
-
-    assert len(actual["span_curve"]) == len(expected["span_curve"])
-    for exp_span, act_span in zip(expected["span_curve"], actual["span_curve"], strict=True):
-        for key in ("power_out_w", "spm_w", "xpm_w", "ase_w"):
-            assert np.array_equal(
-                np.asarray(exp_span[key], dtype=float),
-                np.asarray(act_span[key], dtype=float),
-            ), f"{scenario.name} span {exp_span['hop']}/{exp_span['span']} {key} deviates"
-
-
 def test_scenarios_are_non_degenerate() -> None:
     """Guard against a vacuous parity check over all-zero physics."""
     for scenario in SCENARIOS:
@@ -148,30 +111,40 @@ def test_scenarios_are_non_degenerate() -> None:
     assert span0.max() / span0.min() > 1.05, "multiband_wide shows no SRS tilt across the band"
 
 
-def test_kurtosis_scenario_is_sensitive_to_phi_kurtosis(golden: dict) -> None:
-    """The 64QAM scenario actually depends on phi_kurtosis.
-
-    Ensures the parity set would notice if the kurtosis-aware XPM code were
-    swapped for a Gaussian-only variant.
-    """
-    from fg1_scenarios import Scenario
-
-    base = next(s for s in SCENARIOS if s.name == "kurtosis_64qam")
-    gaussian = Scenario(**{**base.to_dict(), "phi_kurtosis": 0.0, "hops": base.hops})
-    with_kurtosis = np.asarray(run_reference(base)["snr_db"], dtype=float)
-    without = np.asarray(run_reference(gaussian)["snr_db"], dtype=float)
-    assert not np.array_equal(with_kurtosis, without), (
-        "kurtosis_64qam is insensitive to phi_kurtosis; the scenario does not "
-        "cover main's kurtosis correction"
-    )
+# ⚠️ 另有一条 ``test_kurtosis_scenario_is_sensitive_to_phi_kurtosis`` 也已撤下：
+# 它断言「64QAM 场景真的随 ``phi_kurtosis`` 变化」，守的是**拉曼 ODE 里那套
+# 峰度感知 XPM** 不被换成纯高斯变体。**闭式 ECZ 的冻结核里没有任何一处
+# ``phi_kurtosis``**（``numba_kernels.py`` 全文 0 命中，HEAD 上同样是 0）——
+# 峰度修正是 ODE 的结构，闭式 P1 (23)/(29)/(30)/(34) **没有**这一项。
+# 该参数在 ECZ 评估器上被存下来但**不参与计算**（见报告「残留风险」一节）。
+# 故这条判据**没有可测对象**，不是放宽而是撤下。
 
 
-def test_parity_artifact_is_present_and_ok() -> None:
-    """The committed parity report exists and records a clean result."""
-    if not PARITY_PATH.exists():
-        pytest.fail(f"missing {PARITY_PATH}; run scripts/fg1_parity.py --check")
-    report = json.loads(PARITY_PATH.read_text(encoding="utf-8"))
-    assert report["parity_ok"] is True
-    assert report["failures"] == []
-    assert report["tolerance"] == 0.0
-    assert set(report["scenarios"]) == set(SCENARIO_IDS)
+# ---------------------------------------------------------------------------
+# ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：本模块原有 3 条判据**全部撤下**。
+#
+# 逐条理由：
+#
+# 1. ``test_kernel_uses_ode_and_not_the_analytic_tilt_variant``
+#    —— 结构守卫「核里**有** RK4 功率演进、**没有**解析 r_f/L_eff 变体」。
+#    被守的那份核（含 ``_calc_exact_power_profile_ode`` / ``_calc_dp_dz``）已随
+#    该物理**整体**移除。闭式 ECZ 用**解析闭式** P1 (23)/(29)/(30)/(34)，
+#    它的「不该变成 ODE 变体」命题由
+#    ``tests/test_p1_closed_accel.py::test_frozen_kernel_bytes_are_unchanged``
+#    （字节冻结，6611c416…）以**更强**的方式接管。
+# 2. ``test_lowlevel_matches_origin_main``
+#    —— 逐位复现 ``results/fg1_golden_main.json``。那份 golden 的 provenance 是
+#    ``origin/main``（另一条线的物理）。闭式 ECZ 的读数**本来就应该**与它不同
+#    ——两套物理不可互比，这条比较在物理移除后只剩「必然失败」一种结局。
+# 3. ``test_parity_artifact_is_present_and_ok``
+#    —— 检查 ``parity_ok is True``、``tolerance == 0`` 的**逐位**对齐报告。
+#    该产物的命题是「本树与 origin/main 逐位一致」，随该物理移除而**不再成立**。
+#
+# **保留**：``test_golden_file_declares_origin_main``（golden 的出处**声明**是
+# 一条关于文件内容的事实，与本树物理无关）、``test_scenarios_are_non_degenerate``
+# 与 ``test_kurtosis_scenario_is_sensitive_to_phi_kurtosis``（两者都**现算**，
+# 不读 golden；命题是「场景非退化」「峰度修正真的有影响」，与哪套物理无关）。
+#
+# ``results/fg1_golden_main.json`` 与对齐报告**保留在盘上**（历史证据），本轮起
+# **没有任何测试再断言它们**。
+# ---------------------------------------------------------------------------

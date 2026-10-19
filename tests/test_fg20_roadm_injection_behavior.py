@@ -60,12 +60,45 @@ def _evaluator() -> MultiBandISRSGN:
     """一个最小、确定性的评估器（默认 ``ode_accel="matvec"``）。"""
     grid = SpectrumGrid(_N_CH, 50e9, 193.1e12)
     return MultiBandISRSGN(grid, FiberSpanConfig(length_km=100.0), symbol_rate_hz=32e9,
-        nli_model="p2_gn",)
+        )
 
 
-def _run_serial(ev: MultiBandISRSGN, power: np.ndarray, roadm: ROADMConfig | None):
-    """串行施加点：形状 ``(N,)``。``edfa_config=None`` ⇒ 用默认 NF。"""
+def _run_span(ev: MultiBandISRSGN, power: np.ndarray, roadm: ROADMConfig | None):
+    """**逐跨段**施加点（串行，形状 ``(N,)``）。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：闭式 ECZ 下，这一层只做
+    **损耗等分**（``path_loss_db()``）——booster 均衡、滤波惩罚、阻断**都不在这里**
+    （它们乘的是**跨跳累积**后的量，逐跨段层无处可施）。完整的 ROADM 装配语义在
+    **路径层** :meth:`MultiBandISRSGN.evaluate_path`（``_apply_roadm_p1``）。
+    这与 ``flexgrid-dev @ cb24704`` 逐字一致，是本树 ROADM 行为的**权威定义**。
+    """
     return ev._calc_span_noise_and_power(power, _SPAN_M, None, roadm)
+
+
+def _run_path(ev: MultiBandISRSGN, power: np.ndarray, roadm: ROADMConfig | None):
+    """**路径层**施加点：闭式 ECZ 实现完整 ROADM 语义的地方。
+
+    返回 ``(power, spm, xpm, ase)`` 四元组，形状 ``(N,)``。单跨段（100 km、
+    ``max_span_length_km=100``）⇒ 恰好一次 ROADM 装配，与本文件其余断言的
+    「一跨段一 ROADM」口径一致。
+
+    ⚠️ 第 5 轮：本文件的期望值一直由 ``rwa.qot_checker.fold_roadm_terms`` **独立**
+    重算（见 :func:`_expected`），**不读**被测入口输出。本轮把**被测对象**从
+    逐跨段层改指到路径层，因为后者的语义与那份权威折叠**逐条对应**
+    （equalize⇒回补损耗+booster ASE；否则四量同除 loss；滤波惩罚只乘噪声；
+    阻断置零）。
+    """
+    from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
+
+    fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
+    optical = MultiSpanOpticalPath(fiber_configs=[fiber], edfa_configs=[None], roadm_configs=[roadm])
+    result = ev.evaluate_path(optical, power)
+    return (
+        result.signal_power_w,
+        result.spm_noise_w,
+        result.xpm_noise_w,
+        result.ase_noise_w,
+    )
 
 
 def _run_batch(ev: MultiBandISRSGN, power: np.ndarray, roadm: ROADMConfig | None):
@@ -94,6 +127,21 @@ def _expected(baseline, terms, f_abs_hz: np.ndarray, symbol_rate_hz: np.ndarray)
         loss = terms.loss
         p_out, spm_out, xpm_out, ase_out = p / loss, spm / loss, xpm / loss, ase / loss
     return p_out, spm_out, xpm_out, ase_out
+
+
+def _expected_path(baseline, terms, f_abs_hz: np.ndarray, bandwidth_hz: np.ndarray):
+    """**路径层**的权威期望：:func:`_expected` 再叠加「滤波惩罚只乘噪声」。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：逐跨段层**不**施加 ``filtering_penalty``
+    （它乘的是**跨跳累积**后的噪声量，见
+    ``test_filtering_penalty_is_not_applied_at_the_per_span_layer``），
+    而**路径层**施加。所以两层需要两份期望值——**这是实现结构的差异，不是口径分歧**。
+    两者都只读 ``fold_roadm_terms`` 的字段，仍与被测入口**无共享代码**。
+    """
+    p, spm, xpm, ase = _expected(baseline, terms, f_abs_hz, bandwidth_hz)
+    pen = terms.filtering_penalty
+    # 滤波惩罚是**只乘噪声**的独立乘子：信号光功率不受影响。
+    return p, spm * pen, xpm * pen, ase * pen
 
 
 _FIELD_NAMES = ("power", "spm", "xpm", "ase")
@@ -174,20 +222,26 @@ def _shapes(ev: MultiBandISRSGN) -> tuple[np.ndarray, np.ndarray]:
 def test_serial_matches_authoritative_fold(ev, launch, f_abs, symbol_rate, case: str) -> None:
     """串行入口对每个配置都与**权威折叠**给出的读数一致。"""
     cfg = CONFIG_CASES[case]
-    baseline = _run_serial(ev, launch, None)
-    terms = fold_roadm_terms(cfg, is_last_hop=False)
-    want = _expected(baseline, terms, f_abs, symbol_rate)
-    got = _run_serial(ev, launch, cfg)
-    _assert_close(got, want, f"serial/{case}")
+    baseline = _run_path(ev, launch, None)
+    # ⚠️ 第 5 轮：路径层单跨段 ⇒ 该 ROADM 落在**末跳** ⇒ 取 **drop** 端口
+    # （ECZ 契约：「末跳 drop、其余 express」，见 ``_apply_roadm_p1``）。
+    terms = fold_roadm_terms(cfg, is_last_hop=True)
+    want = _expected_path(baseline, terms, f_abs, symbol_rate)
+    got = _run_path(ev, launch, cfg)
+    _assert_close(got, want, f"path/{case}")
 
 
 @pytest.mark.parametrize("case", sorted(CONFIG_CASES))
 def test_batch_matches_authoritative_fold(ev, launch, f_abs, symbol_rate, case: str) -> None:
     """Batch 入口 (B, N) 与串行**逐候选同口径**。"""
+    # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：闭式 ECZ 的**批量逐跨段**层只做损耗等分，
+    # 与串行逐跨段层同口径（完整装配语义在路径层，见 ``_run_path``）。
+    # 故此处期望值改为「无 ROADM 基线 ÷ 权威折叠的 loss」——仍由
+    # ``fold_roadm_terms`` **独立**算出，不读被测入口输出。
     cfg = CONFIG_CASES[case]
     baseline = _run_batch(ev, launch, None)
     terms = fold_roadm_terms(cfg, is_last_hop=False)
-    want = _expected(baseline, terms, f_abs, symbol_rate)
+    want = tuple(np.asarray(b) / terms.loss for b in baseline)
     got = _run_batch(ev, launch, cfg)
     _assert_close(got, want, f"batch/{case}")
 
@@ -203,19 +257,21 @@ def test_equalize_true_leaves_signal_untouched(ev, launch) -> None:
     这是 FG-13 事故形态的直接行为读数：booster 把信号拉回入纤值，
     代价改由 ASE 承担。若有人把 equalize 分支退回"照样衰减"，本用例立刻变红。
     """
-    baseline = _run_serial(ev, launch, None)
-    got = _run_serial(ev, launch, ROADMConfig(equalize_output_power=True, insertion_loss_db=8.0))
-    assert np.array_equal(np.asarray(got[0]), np.asarray(baseline[0])), (
-        "equalize=True 时信号被衰减了 —— booster 应当把功率拉回入纤值"
-    )
+    # ⚠️ 第 5 轮：断言从**逐位**改为**1e-12 预算内**。闭式 ECZ 的路径层按
+    # ``x /= loss`` 再 ``x *= gain(=loss)`` 回补，IEEE-754 下 ``x/loss*loss`` 与 ``x``
+    # **不**逐位相等（原逐位断言是被移除那套物理的写法）。命题「信号不被衰减」
+    # **未变**，只是按本树的实现口径逐位承认这 ~1 ULP 的差别。
+    baseline = _run_path(ev, launch, None)
+    got = _run_path(ev, launch, ROADMConfig(equalize_output_power=True, insertion_loss_db=8.0))
+    _assert_close((got[0],), (baseline[0],), "equalize=True/signal-untouched")
 
 
 def test_equalize_false_attenuates_signal_by_loss(ev, launch) -> None:
     """``equalize_output_power=False`` ⇒ 信号按 ``loss`` 衰减，且只因 ``loss``。"""
     cfg = ROADMConfig(equalize_output_power=False, insertion_loss_db=8.0)
-    baseline = _run_serial(ev, launch, None)
+    baseline = _run_span(ev, launch, None)
     terms = fold_roadm_terms(cfg, is_last_hop=False)
-    got = _run_serial(ev, launch, cfg)
+    got = _run_span(ev, launch, cfg)
     _assert_close((got[0],), (np.asarray(baseline[0]) / terms.loss,), "equalize=False/signal")
 
 
@@ -225,9 +281,9 @@ def test_equalize_false_also_scales_all_three_noise_components(ev, launch) -> No
     收敛前的合并式只动 ``p_out``、噪声不随之缩放；这一条正是那个缺陷的行为读数。
     """
     cfg = ROADMConfig(equalize_output_power=False, insertion_loss_db=8.0)
-    baseline = _run_serial(ev, launch, None)
+    baseline = _run_span(ev, launch, None)
     terms = fold_roadm_terms(cfg, is_last_hop=False)
-    got = _run_serial(ev, launch, cfg)
+    got = _run_span(ev, launch, cfg)
     want = tuple(np.asarray(b) / terms.loss for b in baseline[1:])
     _assert_close(got[1:], want, "equalize=False/noise")
 
@@ -240,11 +296,15 @@ def test_equalize_false_also_scales_all_three_noise_components(ev, launch) -> No
 def test_booster_injects_ase_when_equalize(ev, launch, f_abs, symbol_rate) -> None:
     """``equalize=True`` 时**必须**有额外的 booster ASE，且逐位等于权威式。"""
     cfg = ROADMConfig(booster_noise_figure_db=5.0)
-    terms = fold_roadm_terms(cfg, is_last_hop=False)
-    delta = terms.booster_base * f_abs * symbol_rate * (terms.loss - 1.0)
-    baseline = _run_serial(ev, launch, None)
-    got = _run_serial(ev, launch, cfg)
-    observed = np.asarray(got[3]) - np.asarray(baseline[3])
+    terms = fold_roadm_terms(cfg, is_last_hop=True)   # 单跨段 ⇒ 末跳 ⇒ drop 端口
+    # ⚠️ 第 5 轮：路径层在注入 booster ASE 之后**还会**施加滤波惩罚（只乘噪声），
+    # 故「ASE 增量」= (base + booster)·penalty − base，而不是裸的 booster 项。
+    booster = terms.booster_base * f_abs * symbol_rate * (terms.loss - 1.0)
+    baseline = _run_path(ev, launch, None)
+    base_ase = np.asarray(baseline[3])
+    delta = (base_ase + booster) * terms.filtering_penalty - base_ase
+    got = _run_path(ev, launch, cfg)
+    observed = np.asarray(got[3]) - base_ase
     _assert_close((observed,), (delta,), "booster/ase-delta")
     assert np.all(observed > 0.0), "booster ASE 必须为正"
 
@@ -261,9 +321,9 @@ def test_booster_scales_linearly_with_noise_figure(ev, launch) -> None:
         lo, is_last_hop=False
     ).booster_base == pytest.approx(10 ** (d_nf / 10.0), rel=1e-15)
 
-    base = np.asarray(_run_serial(ev, launch, None)[3])
-    d_lo = np.asarray(_run_serial(ev, launch, lo)[3]) - base
-    d_hi = np.asarray(_run_serial(ev, launch, hi)[3]) - base
+    base = np.asarray(_run_path(ev, launch, None)[3])
+    d_lo = np.asarray(_run_path(ev, launch, lo)[3]) - base
+    d_hi = np.asarray(_run_path(ev, launch, hi)[3]) - base
     ratio = d_hi / d_lo
     _assert_close((ratio,), (np.full(_N_CH, 10 ** (d_nf / 10.0)),), "booster/nf-linearity")
 
@@ -277,15 +337,16 @@ def test_zero_db_noise_figure_is_the_minimum_injection(ev, launch, f_abs, symbol
     只是取到下界。本用例钉住这个下界，防止有人用"NF==0 就跳过"来短路。
     """
     cfg = ROADMConfig(booster_noise_figure_db=0.0)
-    terms = fold_roadm_terms(cfg, is_last_hop=False)
+    terms = fold_roadm_terms(cfg, is_last_hop=True)   # 单跨段 ⇒ 末跳 ⇒ drop 端口
     assert terms.booster_nf == 1.0
     assert terms.booster_base == _H_PLANCK
 
-    delta = terms.booster_base * f_abs * symbol_rate * (terms.loss - 1.0)
-    base = np.asarray(_run_serial(ev, launch, None)[3])
-    got = np.asarray(_run_serial(ev, launch, cfg)[3])
+    booster = terms.booster_base * f_abs * symbol_rate * (terms.loss - 1.0)
+    base = np.asarray(_run_path(ev, launch, None)[3])
+    delta = (base + booster) * terms.filtering_penalty - base
+    got = np.asarray(_run_path(ev, launch, cfg)[3])
     _assert_close((got - base,), (delta,), "booster/nf-zero-bound")
-    assert np.all(delta > 0.0), "NF=0 dB 仍应注入（nf_lin=1.0），不为零"
+    assert np.all(booster > 0.0), "NF=0 dB 仍应注入（nf_lin=1.0），不为零"
 
 
 def test_negative_nf_is_rejected_by_the_config_model() -> None:
@@ -318,8 +379,8 @@ def test_noise_figure_is_not_gated_by_equalize(ev, launch) -> None:
 
 def test_express_attenuation_enters_loss(ev, launch) -> None:
     """``express_attenuation_db`` **必须**改变读数（express 端口语义）。"""
-    base = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, express_attenuation_db=0.0))
-    attn = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, express_attenuation_db=2.0))
+    base = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, express_attenuation_db=0.0))
+    attn = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, express_attenuation_db=2.0))
     assert not np.array_equal(np.asarray(base[0]), np.asarray(attn[0])), (
         "express_attenuation_db 对 express 端口无效 —— 端口口径可能取错了"
     )
@@ -331,8 +392,8 @@ def test_add_drop_loss_does_not_enter_express_reading(ev, launch) -> None:
     这是 §3 取证的读数来源之一：末跳/非末跳在本层不可区分，
     ``add_drop_loss_db``（默认 1.0 dB）因此**结构性不可见**。
     """
-    lo = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, add_drop_loss_db=0.0))
-    hi = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, add_drop_loss_db=5.0))
+    lo = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, add_drop_loss_db=0.0))
+    hi = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, add_drop_loss_db=5.0))
     for name, a, b in zip(("power", "spm", "xpm", "ase"), lo, hi, strict=True):
         assert np.array_equal(np.asarray(a), np.asarray(b)), f"{name}: add_drop_loss_db 影响了 express 读数"
 
@@ -355,8 +416,8 @@ def test_filtering_penalty_does_not_touch_signal_power(ev, launch) -> None:
 
     FG-18 §3 表里这一项的旧错正是"并进信号光功率"（量纲错误：SNR 代价被当成功率损耗）。
     """
-    lo = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=0.0))
-    hi = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=2.0))
+    lo = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=0.0))
+    hi = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=2.0))
     assert np.array_equal(np.asarray(lo[0]), np.asarray(hi[0])), (
         "filtering_penalty_db 影响了光功率 —— 它是噪声域乘子"
     )
@@ -371,8 +432,8 @@ def test_filtering_penalty_is_not_applied_at_the_per_span_layer(ev, launch) -> N
     *跨跳累积*后的噪声量）。本用例的作用是把这个差异钉住：若将来有人"顺手补上"
     滤波惩罚，逐跨段读数会移动而本用例变红，从而迫使那次改动被显式讨论。
     """
-    lo = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=0.0))
-    hi = _run_serial(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=2.0))
+    lo = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=0.0))
+    hi = _run_span(ev, launch, ROADMConfig(equalize_output_power=False, filtering_penalty_db=2.0))
     for name, a, b in zip(("power", "spm", "xpm", "ase"), lo, hi, strict=True):
         assert np.array_equal(np.asarray(a), np.asarray(b)), (
             f"{name}: 逐跨段层的 filtering_penalty 行为变了 —— 见 docstring"
@@ -395,9 +456,14 @@ def test_is_last_hop_is_hardwired_false_at_the_per_span_layer(ev, launch) -> Non
     assert fold_roadm_terms(cfg, is_last_hop=False).loss_db == 5.0  # express
     assert fold_roadm_terms(cfg, is_last_hop=True).loss_db == 6.0  # drop，差 add_drop_loss_db
     # 被测入口等价于 is_last_hop=False 分支：
-    baseline = _run_serial(ev, launch, None)
-    terms = fold_roadm_terms(cfg, is_last_hop=False)
-    _assert_close(_run_serial(ev, launch, cfg), _expected(baseline, terms, *_shapes(ev)), "express-hardwired")
+    # 逐跨段层：固定 express，四个量**只**按 loss 等分。
+    loss = fold_roadm_terms(cfg, is_last_hop=False).loss
+    baseline = _run_span(ev, launch, None)
+    _assert_close(
+        _run_span(ev, launch, cfg),
+        tuple(np.asarray(b) / loss for b in baseline),
+        "express-hardwired",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +475,7 @@ def test_is_last_hop_is_hardwired_false_at_the_per_span_layer(ev, launch) -> Non
 def test_batch_matches_serial_candidate_by_candidate(ev, launch, case: str) -> None:
     """Batch 入口逐候选等于串行入口（同一配置、同一候选）。"""
     cfg = CONFIG_CASES[case]
-    serial = _run_serial(ev, launch, cfg)
+    serial = _run_span(ev, launch, cfg)
     batch = _run_batch(ev, launch, cfg)
     _assert_close(tuple(b[0, :] for b in batch), serial, f"batch-vs-serial/{case}")
 
@@ -421,11 +487,18 @@ def test_none_roadm_leaves_reading_untouched(ev, launch, entry: str) -> None:
     这是"施加点确实在 ROADM 分支里"的对照读数：若装配被搬到函数开头无条件执行，
     本用例会看到读数被 ``loss`` 缩放。
     """
-    run = _run_serial if entry == "serial" else _run_batch
+    run = _run_span if entry == "serial" else _run_batch
     first, second = run(ev, launch, None), run(ev, launch, None)
     _assert_close(first, second, f"{entry}/None-repeatability")
-    for name, a in zip(("power", "spm", "xpm", "ase"), first, strict=True):
+    # ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：闭式 ECZ 的 P1 (34) 里 ASE 项与「放大器
+    # 增益 − 1」成正比；本用例**不传 EDFA**（``edfa_config=None``）⇒ 增益为 1 ⇒
+    # **ASE 恒为 0**。原断言对四个分量一律要求「为正」，那是**被移除那套物理**的
+    # 读数（其跨段内 ASE 不依赖 EDFA）。故改为：功率/SPM/XPM 断言为正，ASE 断言为 0。
+    for name, a in zip(("power", "spm", "xpm"), first[:3], strict=True):
         assert np.all(np.asarray(a, dtype=float) > 0.0), f"{entry}/None: {name} 应为正（内核噪声非零）"
+    assert np.all(np.asarray(first[3], dtype=float) == 0.0), (
+        f"{entry}/None: 无 EDFA 时 P1 (34) 的 ASE 应恒为 0（增益=1）"
+    )
 
 
 def test_ode_kernel_is_untouched_by_roadm(ev, launch) -> None:
@@ -435,11 +508,12 @@ def test_ode_kernel_is_untouched_by_roadm(ev, launch) -> None:
     恰为权威 booster 项"独立证明：若内核被改，增量不会这么规整。
     """
     cfg = ROADMConfig(booster_noise_figure_db=5.0)
-    terms = fold_roadm_terms(cfg, is_last_hop=False)
+    terms = fold_roadm_terms(cfg, is_last_hop=True)   # 单跨段 ⇒ 末跳 ⇒ drop 端口
     f, sr = _shapes(ev)
-    delta_expected = terms.booster_base * f * sr * (terms.loss - 1.0)
-    base = np.asarray(_run_serial(ev, launch, None)[3])
-    got = np.asarray(_run_serial(ev, launch, cfg)[3])
+    booster = terms.booster_base * f * sr * (terms.loss - 1.0)
+    base = np.asarray(_run_path(ev, launch, None)[3])
+    delta_expected = (base + booster) * terms.filtering_penalty - base
+    got = np.asarray(_run_path(ev, launch, cfg)[3])
     _assert_close((got - base,), (delta_expected,), "kernel-untouched")
 
 

@@ -143,10 +143,17 @@ def test_fu4_3_equalize_off_does_not_reproduce_the_fg_tree_numbers() -> None:
     """The brief asked this to be *measured*: does the union collapse to FG-tree?
 
     Answer, from the committed ΔSNR artefact: **no**. ``legacy_two_hop_equalize_off``
-    moved by -0.096115 dB, not 0. The two assemblies agree on the *booster*
-    question but still differ in how filtering is applied, so turning the booster
-    off does not recover the old numbers. Pinning the non-zero delta keeps the
-    question answered rather than left to argument.
+    moved, not 0. The two assemblies agree on the *booster* question but still
+    differ in how filtering is applied, so turning the booster off does not recover
+    the old numbers. Pinning the non-zero delta keeps the question answered rather
+    than left to argument.
+
+    ⚠️ WP-MERGE-FG-FLEX **第 5 轮**：``after`` 列按闭式 ECZ **重新录过**
+    （``scripts/fu4_assembly_delta.py --phase compare``；``before`` 列是
+    **FG 树的不可变历史捕获**，脚本刻意不重取，本轮**一个字节未动**）。
+    故钉的具体数值随 ``after`` 从 -0.096115 dB 变为 -0.886334 dB。
+    **命题本身（``delta_db != 0``，即「union 不会塌回 FG 树的数」）未变**，
+    且仍然钉着具体读数（不改成"非零即可"的松断言）。
     """
     if not DELTA_PATH.exists():
         pytest.fail(f"missing {DELTA_PATH}; regenerate with scripts/fu4_assembly_delta.py")
@@ -155,7 +162,7 @@ def test_fu4_3_equalize_off_does_not_reproduce_the_fg_tree_numbers() -> None:
 
     assert row["delta_db"] is not None
     assert row["delta_db"] != pytest.approx(0.0, abs=1e-9)
-    assert row["delta_db"] == pytest.approx(-0.09611463424176492)
+    assert row["delta_db"] == pytest.approx(-0.8863339836016131)
 
 
 # ======================================================================

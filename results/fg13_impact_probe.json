@@ -114,19 +114,19 @@
     {
       "outputs": {
         "ase_noise_w": {
-          "bitwise_identical": false,
-          "max_abs_delta": 1.3003685067638058e-07,
-          "max_rel_delta": 3.587236728846461
+          "bitwise_identical": true,
+          "max_abs_delta": 0.0,
+          "max_rel_delta": 0.0
         },
         "signal_power_w": {
-          "bitwise_identical": false,
-          "max_abs_delta": 8.018698524237147e-06,
-          "max_rel_delta": 2.3113112148259116
+          "bitwise_identical": true,
+          "max_abs_delta": 0.0,
+          "max_rel_delta": 0.0
         },
         "snr_db": {
-          "bitwise_identical": false,
-          "max_abs_delta": 0.9788093176398398,
-          "max_rel_delta": 0.055388623625377616
+          "bitwise_identical": true,
+          "max_abs_delta": 0.0,
+          "max_rel_delta": 0.0
         },
         "span_count": {
           "after": 2,
@@ -135,14 +135,14 @@
           "max_abs_delta": null
         },
         "spm_noise_w": {
-          "bitwise_identical": false,
-          "max_abs_delta": 2.540872026273584e-08,
-          "max_rel_delta": 2.4673685045253175
+          "bitwise_identical": true,
+          "max_abs_delta": 0.0,
+          "max_rel_delta": 0.0
         },
         "xpm_noise_w": {
-          "bitwise_identical": false,
-          "max_abs_delta": 5.059477916401197e-08,
-          "max_rel_delta": 2.4673685045253175
+          "bitwise_identical": true,
+          "max_abs_delta": 0.0,
+          "max_rel_delta": 0.0
         }
       },
       "scenario": "roadm_hoop",
@@ -154,8 +154,8 @@
       "outputs": {
         "ase_noise_w": {
           "bitwise_identical": false,
-          "max_abs_delta": 1.0393227490386584e-08,
-          "max_rel_delta": 0.009262838496558958
+          "max_abs_delta": 2.878261365568528e-06,
+          "max_rel_delta": 1.0
         },
         "roadm_count": {
           "after": 1,
@@ -165,13 +165,13 @@
         },
         "signal_power_w": {
           "bitwise_identical": false,
-          "max_abs_delta": 4.159646109688468e-08,
-          "max_rel_delta": 2.3146228532547535
+          "max_abs_delta": 0.001,
+          "max_rel_delta": 1.0
         },
         "snr_db": {
           "bitwise_identical": false,
-          "max_abs_delta": 5.186963433453025,
-          "max_rel_delta": 0.28913656143103117
+          "max_abs_delta": 0.10104351344523721,
+          "max_rel_delta": 0.0043926485857187095
         },
         "span_count": {
           "after": 3,
@@ -181,13 +181,13 @@
         },
         "spm_noise_w": {
           "bitwise_identical": false,
-          "max_abs_delta": 1.6068791387539092e-10,
-          "max_rel_delta": 2.470894236970274
+          "max_abs_delta": 5.412272127886762e-07,
+          "max_rel_delta": 1.0
         },
         "xpm_noise_w": {
           "bitwise_identical": false,
-          "max_abs_delta": 6.095536499467452e-10,
-          "max_rel_delta": 2.4709022210313245
+          "max_abs_delta": 1.6373935123946258e-06,
+          "max_rel_delta": 1.0
         }
       },
       "scenario": "path_cplusl_roadm",

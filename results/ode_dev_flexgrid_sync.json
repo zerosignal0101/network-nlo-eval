@@ -4,12 +4,12 @@
   "wp_base_commit": "b69563a",
   "fu4_ref": "wp/fg-uwb-fid@a233002",
   "summary": {
-    "n_segments": 38,
+    "n_segments": 37,
     "n_engineering": 34,
-    "n_physics": 4,
+    "n_physics": 3,
     "n_physics_applied": 1,
     "n_ported_or_applied": 35,
-    "n_not_ported": 3,
+    "n_not_ported": 2,
     "files_touched": [
       "src/network_nlo_eval/core/bands.py",
       "src/network_nlo_eval/models/isrs_gn.py",
@@ -25,13 +25,6 @@
     "provenance_branch": "flexgrid-dev",
     "flexgrid_side_sha256_baseline": "b69563a",
     "diff_vs_wp_base_empty": true
-  },
-  "j5_frozen_kernel_p2": {
-    "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-    "frozen_sha256": "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205",
-    "sha256_matches": true,
-    "provenance_branch": "wp/fg-integrate",
-    "note": "FG 的 P2 内核：第 3 轮同字节搬进 numba_kernels_p2.py（只换文件名）。"
   },
   "segments": [
     {
@@ -250,7 +243,7 @@
       "fu4_lines": "1306, 1328-1330 (numba_kernels.py)",
       "kind": "physics",
       "action": "ported_adapted",
-      "rationale": "★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。⚠️ WP-MERGE-FG-FLEX **第 3 轮**：上一轮把 flexgrid 侧的 `b_hz_channels` **改名**并入 `symbol_rate_hz`（内核侧收**一个**逐节点数组承载 P1 的 B_i），锚点因此改钉在调用点 `symbol_rate_hz=self.channel_bandwidth_hz_channels` 上——那个组合是「P2 的 GN 模型 + 占用带宽当符号率」，**两边都没验证过**。第 3 轮改判为**两套物理都留、显式档位区分**：P1 档的调用点回到 `b_hz_channels=self.channel_bandwidth_hz_channels`（P1 核的参数名就是 `b_hz_channels`），P2 档则回到 FG 口径的 `symbol_rate_hz=self.symbol_rate_hz_channels`。**判据口径不动**：paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量；改的只是它现在住在**哪个档位、叫什么名字**。",
+      "rationale": "★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。⚠️ WP-MERGE-FG-FLEX **第 5 轮**：第 3 轮为区分两套物理而引入的档位机制（物理档位形参 + 按档分派表）已随其中一套**整体移除**。本仓现在**只有**闭式 ECZ，调用点固定为 `b_hz_channels=self.channel_bandwidth_hz_channels`（P1 核的参数名就是 `b_hz_channels`）。**判据口径不动**：paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量。",
       "paper_formulas": [
         "P1 (23)",
         "P1 (29)",
@@ -442,16 +435,7 @@
       "fu4_lines": "1-1480",
       "kind": "physics",
       "action": "not_ported",
-      "rationale": "★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。⚠️ WP-MERGE-FG-FLEX **第 3 轮**复核结论：J5 已**恢复**为「相对 b69563a 的 diff 为空」**且**「sha256 == 6611c416…」的绝对正向不变量，**两条同时成立**——因为本轮把本文件恢复成 flexgrid-dev 的冻结字节（P1 闭式那一份）。FG 的 RK4 ODE（`_calc_exact_power_profile_ode`）与 ode_accel 加速**整份搬到**`numba_kernels_p2.py`（同字节，只换文件名），由那里的 J5 记录单独守。本条 `kind == \"physics\"`：J7 的硬闸门要求任何被应用的物理片段自带非空 `paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 `paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 (23)/(29)/(30)/(34) 逐式改写，无法诚实地给出论文公式号。故 action 暂留 not_ported，**待裁决**，不作假声明。"
-    },
-    {
-      "file": "src/network_nlo_eval/models/numba_kernels_p2.py",
-      "origin": "wp/fg-integrate@57c7221 models/numba_kernels.py",
-      "symbol": "整个文件（FG 的 RK4 ODE + NLI 张量化 + 拉曼 G 矩阵 + 批量张量）",
-      "fu4_lines": "1-1480",
-      "kind": "physics",
-      "action": "not_ported",
-      "rationale": "★ 第 3 轮新增：FG 的冻结内核**同字节**搬进本文件（只换文件名，sha256 仍为 7beece4e…），由 `j5_frozen_kernel_p2` 记录单独守。它承载的是 **P2 Eq. 21** 那套物理（符号率口径），与 P1 闭式是**两套不同物理**；本轮按编排方裁决把两套都保留、用 `nli_model` 档位区分，谁都不许被另一套替换。本条 `kind == \"physics\"` 且 action 留 not_ported：与上面同源的理由——FG 的 RK4 数值传播不是按 P1 (23)/(29)/(30)/(34) 逐式改写的，J7 要求被应用的物理片段自带论文公式号授权，这里给不出诚实的一组，故不作假声明。"
+      "rationale": "★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。⚠️ WP-MERGE-FG-FLEX **第 3 轮**复核结论：J5 已**恢复**为「相对 b69563a 的 diff 为空」**且**「sha256 == 6611c416…」的绝对正向不变量，**两条同时成立**——因为本轮把本文件恢复成 flexgrid-dev 的冻结字节（P1 闭式那一份）。⚠️ WP-MERGE-FG-FLEX **第 5 轮**：FG 的 RK4 ODE / ode_accel 那套物理已**整体移除**，其 J5 记录与 ``j5_frozen_kernel_p2`` 证据块一并撤下。本仓现在**只有**闭式 ECZ。本条 `kind == \"physics\"`：J7 的硬闸门要求任何被应用的物理片段自带非空 `paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 `paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 (23)/(29)/(30)/(34) 逐式改写，无法诚实地给出论文公式号。故 action 暂留 not_ported，**待裁决**，不作假声明。"
     }
   ],
   "errors": []

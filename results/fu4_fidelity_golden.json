@@ -6,31 +6,31 @@
       "name": "legacy_two_hop_equalize_on",
       "kind": "legacy",
       "accepted": true,
-      "snr_db": 26.0347304295729
+      "snr_db": 25.265176304717638
     },
     {
       "name": "legacy_three_hop_equalize_on",
       "kind": "legacy",
       "accepted": true,
-      "snr_db": 24.152139265826385
+      "snr_db": 23.391590837855194
     },
     {
       "name": "legacy_two_hop_equalize_off",
       "kind": "legacy",
       "accepted": true,
-      "snr_db": 23.0296997909201
+      "snr_db": 22.239480441560254
     },
     {
       "name": "legacy_express_attenuation",
       "kind": "legacy",
       "accepted": true,
-      "snr_db": 25.989211917341827
+      "snr_db": 25.227016934879526
     },
     {
       "name": "legacy_high_filtering",
       "kind": "legacy",
       "accepted": true,
-      "snr_db": 25.025781931578116
+      "snr_db": 24.255573729782306
     },
     {
       "name": "legacy_blocked_channel",
@@ -42,19 +42,19 @@
       "name": "flex_two_hop_equalize_on",
       "kind": "flex",
       "accepted": true,
-      "snr_db": 26.0347304295729
+      "snr_db": 25.265176304717638
     },
     {
       "name": "flex_three_hop_equalize_on",
       "kind": "flex",
       "accepted": true,
-      "snr_db": 24.152139265826385
+      "snr_db": 23.391590837855194
     },
     {
       "name": "flex_two_hop_equalize_off",
       "kind": "flex",
       "accepted": true,
-      "snr_db": 23.0296997909201
+      "snr_db": 22.239480441560254
     },
     {
       "name": "flex_blocked_slots",

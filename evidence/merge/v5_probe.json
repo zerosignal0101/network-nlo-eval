@@ -1,0 +1,705 @@
+{
+  "V1pp_formula_untouched": {
+    "all_literals_present": true,
+    "frozen_kernel_path": "/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/models/numba_kernels.py",
+    "frozen_kernel_sha256": "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4",
+    "frozen_kernel_sha256_matches_cb24704": true,
+    "literal_occurrences": {
+      "b_hz_channels[i]": 4,
+      "b_hz_channels[l_idx]": 1
+    },
+    "literals_present": {
+      "asinh_form_spm": true,
+      "asinh_form_spm_half": true,
+      "atan_form_xpm": true,
+      "atan_form_xpm_half": true,
+      "b_hz_channels[i]": true,
+      "b_hz_channels[l_idx]": true,
+      "spm_4_9": true,
+      "xpm_32_27": true,
+      "xpm_prefactor": true
+    },
+    "passed": true
+  },
+  "V2pp_accuracy": {
+    "mixed_n_slots": {
+      "b_i_distinct": [
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0
+      ],
+      "b_i_nonuniform": true,
+      "b_i_values": [
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0,
+        12500000000.0,
+        25000000000.0,
+        37500000000.0,
+        50000000000.0
+      ],
+      "construction": "mixed_n_slots",
+      "n_channels": 68,
+      "passed": true,
+      "results": [
+        {
+          "bitwise": false,
+          "id": "matvec==off",
+          "max_rel": 1.2688676061070993e-15,
+          "max_ulp": 11,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 1.2688676061070993e-15,
+              "max_ulp": 11
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 8,
+          "bitwise": false,
+          "id": "batch==serial:B=8",
+          "max_rel": 1.3745605498852433e-15,
+          "max_ulp": 12,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 1.3745605498852433e-15,
+              "max_ulp": 12
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 16,
+          "bitwise": false,
+          "id": "batch==serial:B=16",
+          "max_rel": 6.230321443718856e-16,
+          "max_ulp": 4,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 6.230321443718856e-16,
+              "max_ulp": 4
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 32,
+          "bitwise": false,
+          "id": "batch==serial:B=32",
+          "max_rel": 1.307253609796017e-15,
+          "max_ulp": 11,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 1.307253609796017e-15,
+              "max_ulp": 11
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 68,
+          "bitwise": false,
+          "id": "batch==serial:B=68",
+          "max_rel": 7.57238616463843e-16,
+          "max_ulp": 6,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 7.57238616463843e-16,
+              "max_ulp": 6
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 142,
+          "bitwise": false,
+          "id": "batch==serial:B=142",
+          "max_rel": 7.57238616463843e-16,
+          "max_ulp": 6,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 7.57238616463843e-16,
+              "max_ulp": 6
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        }
+      ]
+    },
+    "passed": true,
+    "uniform": {
+      "b_i_distinct": [
+        12500000000.0
+      ],
+      "b_i_nonuniform": false,
+      "b_i_values": [
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0,
+        12500000000.0
+      ],
+      "construction": "uniform",
+      "n_channels": 68,
+      "passed": true,
+      "results": [
+        {
+          "bitwise": false,
+          "id": "matvec==off",
+          "max_rel": 1.2876332018444335e-15,
+          "max_ulp": 7,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 1.2876332018444335e-15,
+              "max_ulp": 7
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 8,
+          "bitwise": false,
+          "id": "batch==serial:B=8",
+          "max_rel": 1.1540798500893794e-15,
+          "max_ulp": 8,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 1.1540798500893794e-15,
+              "max_ulp": 8
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 16,
+          "bitwise": false,
+          "id": "batch==serial:B=16",
+          "max_rel": 4.897615136419174e-16,
+          "max_ulp": 3,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 4.897615136419174e-16,
+              "max_ulp": 3
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 32,
+          "bitwise": false,
+          "id": "batch==serial:B=32",
+          "max_rel": 1.4829398080417315e-15,
+          "max_ulp": 13,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 1.4829398080417315e-15,
+              "max_ulp": 13
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 68,
+          "bitwise": false,
+          "id": "batch==serial:B=68",
+          "max_rel": 6.152672586399936e-16,
+          "max_ulp": 5,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 6.152672586399936e-16,
+              "max_ulp": 5
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        },
+        {
+          "batch_width": 142,
+          "bitwise": false,
+          "id": "batch==serial:B=142",
+          "max_rel": 7.602127425187882e-16,
+          "max_ulp": 6,
+          "passed": true,
+          "per_item": [
+            {
+              "bitwise": true,
+              "item": "p_out",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_spm",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            },
+            {
+              "bitwise": false,
+              "item": "sigma2_xpm",
+              "max_rel": 7.602127425187882e-16,
+              "max_ulp": 6
+            },
+            {
+              "bitwise": true,
+              "item": "sigma2_ase",
+              "max_rel": 0.0,
+              "max_ulp": 0
+            }
+          ],
+          "requirement": "max_rel <= 1e-12"
+        }
+      ]
+    }
+  },
+  "V3pp_speedup": {
+    "note": "pair_matrix_build_s \u662f (N,N) \u5bf9\u77e9\u9635\u7684**\u4e00\u6b21\u6027**\u6784\u5efa\u6210\u672c\uff08evaluator \u7ea7\uff0c\u8de8\u8de8\u6bb5/\u8de8\u5019\u9009\u590d\u7528\uff09\u3002serial_matvec_s / batch_matvec_s \u90fd\u662f**\u70ed\u8def\u5f84**\u8bfb\u6570\uff08\u6784\u5efa\u5df2\u644a\u9500\uff09\uff1bcold_first_call_s \u662f**\u51b7\u542f\u52a8**\u9996\u6b21\u8c03\u7528\u7684\u8bfb\u6570\uff08\u542b\u6784\u5efa\uff09\u3002",
+    "pair_matrix_build_s": 7.663504220545292e-05,
+    "rows": [
+      {
+        "batch_matvec_s": 6.0552963986992836e-05,
+        "batch_speedup": 4.10623940201405,
+        "batch_width": 8,
+        "cold_first_call_s": 0.00013468298129737377,
+        "end_to_end_speedup": 11.325339423930973,
+        "n_channels": 68,
+        "serial_matvec_s": 0.00024864496663212776,
+        "serial_off_s": 0.0006857828702777624,
+        "tier_speedup_serial": 2.7580806463393395
+      },
+      {
+        "batch_matvec_s": 0.00011633196845650673,
+        "batch_speedup": 4.233573238438722,
+        "batch_width": 16,
+        "cold_first_call_s": 0.00011272402480244637,
+        "end_to_end_speedup": 11.807656281897838,
+        "n_channels": 68,
+        "serial_matvec_s": 0.0004924999084323645,
+        "serial_off_s": 0.001373607898131013,
+        "tier_speedup_serial": 2.789052088361255
+      },
+      {
+        "batch_matvec_s": 0.00017906096763908863,
+        "batch_speedup": 5.7566642958100855,
+        "batch_width": 32,
+        "cold_first_call_s": 0.00012846500612795353,
+        "end_to_end_speedup": 16.312276919516137,
+        "n_channels": 68,
+        "serial_matvec_s": 0.0010307938791811466,
+        "serial_off_s": 0.0029208920896053314,
+        "tier_speedup_serial": 2.8336335213065698
+      },
+      {
+        "batch_matvec_s": 0.00032820203341543674,
+        "batch_speedup": 6.367693494048384,
+        "batch_width": 68,
+        "cold_first_call_s": 0.00012805708684027195,
+        "end_to_end_speedup": 17.803037278920446,
+        "n_channels": 68,
+        "serial_matvec_s": 0.0020898899529129267,
+        "serial_off_s": 0.005842993035912514,
+        "tier_speedup_serial": 2.7958376601449486
+      },
+      {
+        "batch_matvec_s": 0.0006397338584065437,
+        "batch_speedup": 6.83471100247631,
+        "batch_width": 142,
+        "cold_first_call_s": 0.00013474305160343647,
+        "end_to_end_speedup": 19.473474652392092,
+        "n_channels": 68,
+        "serial_matvec_s": 0.004372396040707827,
+        "serial_off_s": 0.012457841075956821,
+        "tier_speedup_serial": 2.8492023503753976
+      }
+    ]
+  },
+  "batch_widths": [
+    8,
+    16,
+    32,
+    68,
+    142
+  ],
+  "environment": {
+    "blas_name": "mkl-sdl",
+    "blas_version": "2025",
+    "cpu_affinity": 20,
+    "cpu_count": 20,
+    "loadavg_15m": 1.00341796875,
+    "loadavg_1m": 0.7177734375,
+    "loadavg_5m": 1.06494140625,
+    "mkl_max_threads": 12,
+    "numba_threading_layer": "default",
+    "thread_env": {
+      "MKL_NUM_THREADS": "12",
+      "NUMEXPR_NUM_THREADS": null,
+      "OMP_NUM_THREADS": "12",
+      "OPENBLAS_NUM_THREADS": null
+    }
+  },
+  "max_rel_budget": 1e-12,
+  "n_channels": 68,
+  "probe": "v5_probe",
+  "provenance": {
+    "phys_commit": "738a7f5ed4adf09fc305f9a67acc305e5a39c60c",
+    "phys_tree": "/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/__init__.py",
+    "python": "3.12.14"
+  },
+  "round": 5,
+  "wp": "WP-MERGE-FG-FLEX"
+}
