@@ -155,7 +155,7 @@ FORMULAS: list[dict] = [
                          "G(0,f_i+f_1) G(0,f_i+f_1+f_2) G(0,f_i+f_2) df_1 df_2, "
                          "with B_i the channel bandwidth",
         "code": [
-            {"file": G, "line": 722, "contains": "symbol_rate_hz=self.channel_bandwidth_hz_channels,"},
+            {"file": G, "line": 725, "contains": "symbol_rate_hz=self.channel_bandwidth_hz_channels,"},
             {"file": K, "line": 1126, "contains": "spm_pre = ((16.0 / 27.0) * (gamma_ii_sq * p_cube / (symbol_rate_hz**2))) * (big_t * big_t)"},
             {"file": K, "line": 1139, "contains": "pre = ((gamma_sq * p_sq) * p_in_w[:, None]) / symbol_rate_hz"},
         ],
@@ -288,8 +288,8 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "SNR(f_i) = P / (sigma^2_ASE(f_i) + sigma^2_NLI(f_i))",
         "code": [
-            {"file": G, "line": 1027, "contains": "total_noise = total_spm + total_xpm + total_ase"},
-            {"file": G, "line": 1030, "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"},
+            {"file": G, "line": 1030, "contains": "total_noise = total_spm + total_xpm + total_ase"},
+            {"file": G, "line": 1033, "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -338,7 +338,7 @@ FORMULAS: list[dict] = [
         "code": [
             {"file": K, "line": 1326, "contains": "G_i = p_in_w[i] / p_out_w[i]"},
             {"file": K, "line": 1329, "contains": "n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * symbol_rate_hz[i]"},
-            {"file": G, "line": 704, "contains": "p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit("},
+            {"file": G, "line": 707, "contains": "p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit("},
         ],
         "conforms": False,
         "verdict": "dead_code_violates_eq34",
@@ -436,7 +436,7 @@ FORMULAS: list[dict] = [
         "paper_formula": "SNR_i^-1 ≈ SNR_TRX,i^-1 + SNR_ASE,i^-1 + SNR_NLI,i^-1 "
                          "= (P_i / (kappa_i P_i + P_ASE,i'' + eta_n(f_i) P_i^3))^-1",
         "code": [
-            {"file": G, "line": 1027, "contains": "total_noise = total_spm + total_xpm + total_ase"},
+            {"file": G, "line": 1030, "contains": "total_noise = total_spm + total_xpm + total_ase"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -491,7 +491,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_span_noise_accumulation",
         "quantity": "逐跨段噪声累积（按信号传递比缩放已有噪声 + 累加本跨段噪声）",
         "class": "engineering",
-        "code": [{"file": G, "line": 993, "contains": "total_spm *= transfer"}],
+        "code": [{"file": G, "line": 996, "contains": "total_spm *= transfer"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 用 (24) 的跨段求和与 (34) 的 ×N 表达多跨段；(29)(30) 用 N^{1+eps} / N。"
                       "「已有噪声按信号传递比缩放」这一递推写法是 P1 未规定的实现细节，"
@@ -511,7 +511,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_filtering_penalty",
         "quantity": "级联滤波统计模型 SNR 惩罚（只乘噪声）",
         "class": "engineering",
-        "code": [{"file": G, "line": 1020, "contains": "total_spm *= terms.filtering_penalty"}],
+        "code": [{"file": G, "line": 1023, "contains": "total_spm *= terms.filtering_penalty"}],
         "verdict": "keep_ecz",
         "paper_note": "P2 (1) 允许把实现代价作为独立可加项（SNR_TRX 项）；P1 没有这一项。"
                       "论文未提及具体口径，保留 ecz 实现。",
@@ -549,7 +549,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_blocked_channels",
         "quantity": "被阻断信道清零",
         "class": "engineering",
-        "code": [{"file": G, "line": 1025, "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"}],
+        "code": [{"file": G, "line": 1028, "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"}],
         "verdict": "keep_ecz",
         "paper_note": "网络层语义，论文无对应式。",
     },

@@ -181,7 +181,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 722,
+          "line": 725,
           "contains": "symbol_rate_hz=self.channel_bandwidth_hz_channels,"
         },
         {
@@ -391,12 +391,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1027,
+          "line": 1030,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1030,
+          "line": 1033,
           "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"
         }
       ],
@@ -467,7 +467,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 704,
+          "line": 707,
           "contains": "p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit("
         }
       ],
@@ -584,7 +584,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1027,
+          "line": 1030,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         }
       ],
@@ -635,7 +635,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 993,
+          "line": 996,
           "contains": "total_spm *= transfer"
         }
       ],
@@ -663,7 +663,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1020,
+          "line": 1023,
           "contains": "total_spm *= terms.filtering_penalty"
         }
       ],
@@ -729,7 +729,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1025,
+          "line": 1028,
           "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"
         }
       ],

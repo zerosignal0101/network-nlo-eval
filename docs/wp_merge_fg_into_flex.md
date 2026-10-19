@@ -293,3 +293,161 @@ FG 的守卫 `test_fg15_legacy_bitwise.py:116` 要求
 （与 FG 自己在 `tests/fg1_scenarios.py` 的做法一致）。属已声明的测试改动，见 §6。
 
 ---
+
+## 6. 判据实测读数（V1–V5）
+
+全部命令可复算。物理树一律由 `PYTHONPATH` 切换。
+
+### V1 —— FG 判决摘要逐位相同（**通过**）
+
+探针：`evidence/merge/v1_rollout_probe.py`（新增）。口径与 RL 仓
+`tools/fg11_rollout_trace.py` 逐字一致（同一策略 `KSPFirstFitPolicy`、同一
+`build_env`、同一逐步决策三元组），只把 seeds 从 `(0, 7)` 扩成任务书要求的 **0..3**，
+场景 `assets/pan_europe_multiband.json`，`num_requests=40`、
+`avg_arrival_interval=10.0`、`avg_holding_time=400.0`。决策摘要 = 每步
+`(action, channel, allocated)` 序列的 SHA-256。
+
+```bash
+cd /home/zsig/Documents/gits/wt/fg-rt
+PYTHONPATH=$PWD/src:<TREE>/src \
+  ~/miniconda3/envs/rl/bin/python <MERGE_WT>/evidence/merge/v1_rollout_probe.py \
+  --out <json> [--compare <other.json>]
+```
+
+| seed | steps | `wp/fg-integrate @ 57c7221` | 合并树 | reward | alloc | blocked |
+|---:|---:|---|---|---:|---:|---:|
+| 0 | 40 | `ef766e29aa05c479` | `ef766e29aa05c479` | 16.0 | 21 | 480 |
+| 1 | 40 | `078175297a017c6e` | `078175297a017c6e` | 18.0 | 21 | 544 |
+| 2 | 40 | `614c144a69191b8a` | `614c144a69191b8a` | 18.0 | 20 | 484 |
+| 3 | 40 | `d03602fde3e2ff20` | `d03602fde3e2ff20` | 20.0 | 24 | 452 |
+
+**`COMPARE: seeds=4 mismatched=0`** ⇒ V1 通过。
+证据：`evidence/merge/v1_{fg_integrate,merged_tree}_rollout.json`（各含 `provenance`
+记录两棵物理树的 commit，交叉核对无误）。
+
+另有更细的物理层逐位对照：`off` 档 7 个场景 × 29 项读数，合并树 vs `wp/fg-integrate`
+**0 不一致**（`fg4a_scenarios.build_scenarios(ode_accel="off", raman_spectrum="legacy")`）。
+
+### V2 —— flexgrid 多槽分配决策逐位相同（**通过**）
+
+**为什么换探针**：RL 仓 `wp/fg-rt` 上的 `multiband_optical_rl.config` 已硬依赖 FG 符号
+（`from network_nlo_eval.models.isrs_gn import RAMAN_SPECTRUM_DEFAULT`），而
+`flexgrid-dev` 没有这些符号 ⇒ 同一条探针在 flexgrid 树上**根本 import 不了**：
+
+```
+ImportError: cannot import name 'RAMAN_SPECTRUM_DEFAULT' from
+'network_nlo_eval.models.isrs_gn' (.../wt/flexgrid-dev/src/...)
+```
+
+任务书 V2 允许「同一探针口径**或多槽专用探针**」，故新增
+`evidence/merge/v2_multislot_probe.py`，**只用两棵树都有的符号**
+（`LinkState.allocate_slot_range` / `release_slot_range`、
+`first_fit_contiguous_windows`、`connection_overlaps_slots`），请求序列 1/2/3/4 槽混排
+（`SLOT_DEMANDS`，12 步，240 槽，每信道 4 槽），逐步记录
+`first_slot`/`n_slots`/占用摘要，最后**逐个释放**验证释放路径。
+
+| 对象 | `phys_commit` | `decision_sha256` |
+|---|---|---|
+| `flexgrid-dev @ cb24704` | `cb247045dab6…` | `895d9d04d5f4e6efee3d75209f1b0da470458d33fcad69434887e159e1680345` |
+| 合并树 | `6b8304fbaeb1…` | `895d9d04d5f4e6efee3d75209f1b0da470458d33fcad69434887e159e1680345` |
+
+**`steps_equal=True final_equal=True sha256_equal=True`** ⇒ V2 通过。
+证据：`evidence/merge/v2_{flexgrid_dev,merged_tree}_multislot.json`。
+
+### V3 —— 逐信道 `B_i` 等价性（**在 FG 自己的 1e-12 预算内通过；字面「逐位」不成立**）
+
+`tests/test_merge_fg_into_flex.py::TestPerChannelBandwidth`，8 个等价性用例。
+前置断言已确认这条链路上 `B_i` **真的非均匀**（`occupied` 档 = `n_slots × 12.5 GHz`
+= `[1.25e10, 2.50e10, 3.75e10, 5.00e10]`，且与 `symbol_rate` 档不同），
+否则「逐信道」就是空话。
+
+| 判据 | 逐位? | max_rel | 备注 |
+|---|---|---:|---|
+| `off ≡ off`（同 Raman 档） | **是** | `0.000e+00` | 自洽 |
+| `off ≡ cached_g`（同 Raman 档） | **是** | `0.000e+00` | |
+| `off ≡ matvec`（同 Raman=legacy） | 否 | `2.041e-16` | 纯浮点重排 |
+| `cached_g ≡ matvec`（同 Raman=tabular） | 否 | `2.415e-16` | 纯浮点重排 |
+| `batch ≡ serial`，B=8 | 否 | `1.707e-16` | |
+| `batch ≡ serial`，B=16 | 否 | `1.707e-16` | |
+| `batch ≡ serial`，B=64 | 否 | `1.707e-16` | |
+| `batch ≡ serial`，B=142 | 否 | `1.707e-16` | |
+
+**关于任务书写的「逐位」**：三条都在 float64 求和次序的最后一两位（1.7e-16 ~ 2.4e-16），
+比 FG 自己定的 `MAX_REL_DEVIATION_ALLOWED = 1e-12` 小四个数量级。**这不是本次合并引入的**：
+FG-4a 自己的文档写明 `matvec` 档**按设计**重排浮点求和，该预算常量被明文标注为
+"never widened"，且它给三个既有测试（`test_f4a_1`…）定的标准就是
+`off`/`cached_g` 逐位、`matvec` 有界。⇒ V3 字面要求的「`cached_g ≡ matvec` 逐位」
+与 FG 的设计本身互斥；本次按 FG 已文档化的预算断言，并**在每个用例里打印逐位读数**，
+不掩盖事实。
+
+另注：`off` 与 `matvec` 若**不固定** Raman 档，`max_rel = 2.056e-04` —— 因为 FG-15 把
+`"tabular"` 定为全局默认，而 `off` 是 legacy-only 的冻结路径。这不是数值误差，是
+**物理档位不同**，所以比较"纯加速维度"时必须把档位钉住（表中已如此处理）。
+
+### V4 —— 全部测试（**11 failed / 578 passed / 2 skipped**，38.3 s）
+
+基线对照：`flexgrid-dev @ cb24704` 是 `2 failed / 66 passed / 1 skipped`，
+`wp/fg-integrate @ 57c7221` 是 `477 passed / 2 skipped`；合并后套件共 591 项。
+
+11 个失败的归因（**没有一个是"为了让测试变绿"而留下的**）：
+
+| 失败 | 归因 | 是否本次合并造成 |
+|---|---|---|
+| `ode_dev[ode_compare.py]` | `ModuleNotFoundError: fu4_scenarios_legacy` | **否**，基线既有 |
+| `bwqot_legacy_regression.py` | 同上 | **否**，基线既有 |
+| `bwqot_probe.py` | 导入 `_calc_raman_profile_jit`（该解析内核已被 V1 裁决删除） | 是 |
+| `bwqot_cost.py` | Q-J3「内核不得出现 ODE 标识符」——合并后内核**就是** FG 的 ODE 内核 | 是 |
+| `qj5_per_channel_bandwidth_mapped_to_p1_23_29_30_34` | 要求字面量 `b_hz_channels[i]`（见 §5.2） | 是 |
+| `qj5_formula_map_check_reproduces`、`ode3[guard8]`、`ode3[guard9b]`、`ode3[guard9[relocate_anchors]]`、`ode3[guard9[flexgrid_e2e]]`、`ode_dev[ode_formula_map]` | 公式图谱 **32 条**锚点失效（见 §5.3） | 是 |
+
+即：**2 个是环境预存问题（与合并无关），9 个全部溯源到同一个根因** —— V1 要求内核逐字节
+取 FG 侧，而 flexgrid 的 J1/J2 证据体系是为**它自己的闭式实现**建的记录。已重定位 15 条
+（47 → 32），剩余 32 条**不伪造**。
+
+### V5 —— 已声明的测试/守卫改动（全部旧文本 → 新文本）
+
+| # | 位置 | 旧文本 / 旧语义 | 新文本 / 新语义 | 理由 |
+|---:|---|---|---|---|
+| 1 | `tests/test_ode3_flexgrid_sync.py` guard 7 | 断言 `SCLU_BAND_SPECS: tuple[BandSpec, ...]`、`def sclu_span_report(`、`def guard_report(`、`def hz_to_nm(`、`U_BAND_ASSUMPTIONS: tuple[str, ...] = (` **均不在** `bands.py` 中 | 三条接入点断言原样保留；翻成正向不变量：五个符号**存在**（`hz_to_nm`/`sclu_span_report`/`BandPlan.guard_report` 可调用、`U_BAND_ASSUMPTIONS`/`SCLU_BAND_SPECS` 为非空 tuple 且含 S/C/L/U）、`class BandSpec` 与 `class BandPlan` 在 `bands.py` 里**各只定义一次**（正则计数 == 1）、且真能调用 | 原为相位守卫（docstring 自称「不搬 FU-2 资产」），前提已消失 |
+| 2 | `tests/test_ode3_flexgrid_sync.py` guard 2（J5） | `git diff b69563a -- numba_kernels.py` **必须为空** | 内核 `sha256` **必须等于** `7beece4e…`（= `wp/fg-integrate @ 57c7221` 的冻结字节）；`results/…flexgrid_sync.json` 的 `j5_frozen_kernel` 改用 `frozen_sha256` / `provenance_branch` 字段 | §5.1 的客观互斥；绝对不变量比相对断言更强 |
+| 3 | `results/ode_dev_flexgrid_sync.json` 的 `j5_frozen_kernel` | `{"file": …, "diff_vs_wp_base_empty": true}` | `{"file": …, "frozen_sha256": "7beece4e…", "provenance_branch": "wp/fg-integrate", "provenance_commit": "57c7221", "flip_note": …}` | 同上 |
+| 4 | `results/ode_dev_flexgrid_sync.json` 的 11 个 `not_ported` 段 | `action: "not_ported"` + `verify_absent` | `action: "ported"` + `verify`（每条都实测 grep 到）+ `verified: true`，`rationale` 追加翻转说明 | addendum §1.2；实测锚点见处置表与 §5.3 |
+| 5 | `tools/ode3_sync.py` | 上述 11 段硬编码 `not_ported`；J5 断言 diff 为空；`--check` 断言 `verify_absent` grep 不到 | 同 3、4；`--check` 改为「已应用段的 `verify` 必须 grep 到；`not_ported` 段的 `verify_absent` 仍须 grep 不到」（后者保留） | 工具是事实源，JSON 由它派生 |
+| 6 | `tools/ode3_report.py` | 渲染 J5 为「相对 `b69563a` 的 diff 为空 ✅/❌」 | 读绝对哈希字段渲染，schema 不符时回退旧路径 | 否则会把已通过的 J5 印成 ❌ |
+| 7 | `tests/test_fg4a_numeric_identity.py` | `BIT_EXACT_MODES = ("off", "cached_g")` | `BIT_EXACT_MODES = ("off", "cached", "cached_g")` | `test_f4a_1_all_modes_are_exercised` 要求**每个声明的档位都有标准**。`cached` 是纯记忆化 ⇒ 与 `off` 按构造逐位相等，标准即 bit-exact。`BIT_EXACT_IDS` 会用金标准**真跑一遍** `cached` ⇒ 这是**扩证据**，不是放宽 |
+| 8 | `tests/test_ode_dev.py`（3 处构造） | `MultiBandISRSGN(grid, fiber, 32e9, ode_accel=mode)`（不传 Raman 档） | 显式配 `raman_spectrum=_raman_tier_for(mode)`；`off`/`cached` 配 `"legacy"`，其余 `"tabular"` | `off`/`cached` 是 legacy-only 冻结路径；与 FG 自己在 `tests/fg1_scenarios.py` 的做法一致 |
+| 9 | `tests/test_ode_dev.py`（断言 (d)） | `assert np.allclose(auto[0], power)`（依赖"跨段内施加 EDFA、`target_gain_db=None` 时自动均衡回入纤功率"） | `assert np.all(np.isfinite(auto[0]))` 且 `0 < auto[0] < power` | §5.4 删除该段后，跨段放大由调用方负责；新断言钉合并后的真实契约，并显式防"加回去" |
+| 10 | `src/.../isrs_gn.py`（非测试，行为声明） | flexgrid 版在 edfa 为 None 时 `current_nf_lin = np.ones_like(...)`（= NF **0 dB**） | 取 FG 的 `self.nf_lin_channels`（形状校验仍用 flexgrid 更严的版本） | 实测该差异让串行 `sigma2_ase_w` 比 FG 小 **3.981 倍**，`batch≡serial` 直接差 2.981（预算 1e-12） |
+| 11 | `src/.../isrs_gn.py`（非测试，行为声明） | `if self.ref_fiber_config.use_attenuation_polynomial:` 二分支 | 恒用 `_calc_fiber_attenuation_npm` 多项式 | §5.5；FG 树里该开关本就只对 `physics/qot_checker` 生效，属 FG-14 已裁决的装配分歧 |
+
+---
+
+## 7. 我没做什么 / 没跑完什么
+
+如实列出，**不粉饰**：
+
+1. **V4 未达成「零失败」**。11 个失败里 9 个是本次合并造成的（根因单一，见 §5.3/§5.2）：
+   公式图谱 32 条锚点指向的 P1 闭式实现已随 V1 的内核裁决被删除，`Q-J3` 的「内核不得含
+   ODE 标识符」与 V1 直接对撞，`Q-J5` 要求内核出现 `b_hz_channels[i]` 字面量而合并后内核
+   没有该标识符。我**没有**把这些锚点指到语义不同的行来凑绿，也没有改预算/加 skip。
+   可选的收尾路径（需你裁决）：把 P1 (29)/(30) 的记账整体重指向 P2 Eq. (21)（**这会改动
+   flexgrid 的判据口径**，任务书不允许我做）；或正式退役这批条目并改 `ode_formula_map.py`
+   的口径（同样是口径变更）；或补回 P1 闭式内核（与 V1 对撞，不可行）。
+2. **V5 的 "全部测试绿" 未达成**，且我改了 11 处（§6 V5 表）。其中 #1/#2/#3/#4/#5 是
+   addendum §2 授权的相位守卫翻转；#7–#9 是我认为必须声明的测试改动，但它们确实**动了测试**。
+3. **V3 没有做到任务书字面要求的「逐位」**（三条都是 1.7e-16 ~ 2.4e-16 的浮点重排）。
+   这是 FG 自身的设计（`matvec` 按设计重排，预算 1e-12），不是本次合并引入的。详见 §6 V3。
+4. **两条 `results/…flexgrid_sync.json` 的段我最终没有翻成 `ported`**：
+   - `f_m_hz/f_M_hz` 频带边缘那段：代码是 WP-O2 **既有**的（本次只合并了注释），且
+     `f_m_hz`/`f_M_hz` 全仓**零读取者**。翻成「已移植」是假陈述，故保留 `not_ported`。
+   - `numba_kernels.py` 整个文件：内核确实在树里（sha256 已匹配），但 J7 要求 physics 段
+     必须有 `paper_formulas` 授权，而它的物理出处是 FG 的 RK4 ODE / P2 Eq. 21，
+     **不是** P1 的闭式。授权链在另一套纪律里（`docs/fg4b_nli_vectorization.md`、
+     `docs/fg14_assembly_provenance.md`、FG 自己的金标准与 1e-12 闸门）。
+     我没有为了过闸门而编造公式号，保留 `not_ported` 并在此登记为未闭合项。
+5. **`wt/fg-integrate` 与 `network-nlo-eval` 主检出全程只读**；没有 push；
+   `wp/fg-rt` 只被读取（探针靠 `PYTHONPATH` 切物理树），未改动。
+6. **性能/规模维度没有覆盖**：FG 的基准（`results/fg4e_speedup_ab.json` 等）与 RL 侧探针的
+   批量化收益没有重测，只验证了**等价性**（批量 ≡ 串行）与正确性。
+7. **`evidence/merge/baseline_flexgrid_pytest.txt` 只记了 flexgrid 侧的基线**；
+   FG 侧的 477/2 基线取自当时 `wt/fg-integrate` 的一次运行，未单独落盘成文件。
