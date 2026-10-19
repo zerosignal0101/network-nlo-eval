@@ -176,12 +176,15 @@ def test_guard4b_p1_matvec_tier_is_reachable_and_not_a_silent_off():
     同时守住「P1 的算式没被动过」：出纤功率与 SPM 必须与 ``off`` 档**逐位相同**。
     """
     from network_nlo_eval.core.spectrum import SpectrumGrid
-    from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+    from network_nlo_eval.models.isrs_gn import MATVEC_MIN_ACTIVE_CHANNELS, MultiBandISRSGN
     from network_nlo_eval.network.elements import FiberSpanConfig
 
     fiber = FiberSpanConfig(length_km=80.0)
-    grid = SpectrumGrid(8, 50e9, 193.1e12)
-    power = np.full(8, 1e-3)
+    # 第 6 轮：``matvec`` 有了自适应门（活跃信道数 ≥ MATVEC_MIN_ACTIVE_CHANNELS）。
+    # 测「可达」必须用**足够密**的谱，否则门会把请求落回 ``off``，这条守卫就测了个寂寞。
+    n_dense = MATVEC_MIN_ACTIVE_CHANNELS + 8
+    grid = SpectrumGrid(n_dense, 50e9, 193.1e12)
+    power = np.full(n_dense, 1e-3)
 
     off = MultiBandISRSGN(
         grid, fiber, 32e9, ode_accel="off", raman_spectrum="legacy"
@@ -203,6 +206,19 @@ def test_guard4b_p1_matvec_tier_is_reachable_and_not_a_silent_off():
     denom = np.maximum(np.abs(a[2]), 1e-300)
     max_rel = float(np.max(np.abs(a[2] - b[2]) / denom))
     assert max_rel <= 1e-12, f"P1 matvec 的 XPM 相对偏差 {max_rel:.3e} 超出 1e-12 预算"
+
+    # ---- 门以下：**已声明**的落回 off，不是静默退化 ----
+    # 这是第 6 轮实测的裁决：活跃信道数低于门时矩阵-向量乘是负收益（主场景慢 3.18×），
+    # 故显式落回 ``off``。此处必须与 ``off`` **逐位全等**；上界那半边已证明非退化。
+    n_sparse = MATVEC_MIN_ACTIVE_CHANNELS - 1
+    grid_s = SpectrumGrid(n_sparse, 50e9, 193.1e12)
+    p_s = np.full(n_sparse, 1e-3)
+    off_s = MultiBandISRSGN(grid_s, fiber, 32e9, ode_accel="off", raman_spectrum="legacy")
+    mv_s = MultiBandISRSGN(grid_s, fiber, 32e9, ode_accel="matvec", raman_spectrum="legacy")
+    a_s = off_s._calc_span_noise_and_power(p_s, 80e3, None)
+    b_s = mv_s._calc_span_noise_and_power(p_s, 80e3, None)
+    for i in range(3):
+        assert np.array_equal(a_s[i], b_s[i]), f"门以下必须与 off 逐位相同（分量 {i}）"
 
 
 # ---------------------------------------------------------------------------

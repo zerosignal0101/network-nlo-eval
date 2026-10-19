@@ -24,6 +24,7 @@ import pytest
 
 from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.models.isrs_gn import (
+    MATVEC_MIN_ACTIVE_CHANNELS,
     ODE_ACCEL_DEFAULT,
     ODE_ACCEL_MODES,
     MultiBandISRSGN,
@@ -197,7 +198,11 @@ class TestMatvecTier:
         这条同时是「P1 的算式没被动过」的可执行形式：只有 XPM 的求和次序允许变。
         """
         grid = _grid()
-        conns = _connections(grid, 16)
+        # 第 6 轮：``matvec`` 有自适应门（活跃信道数 ≥ MATVEC_MIN_ACTIVE_CHANNELS）。
+        # 这条测的是「matvec 真的走了加速路径」，所以谱必须够密，否则会被门落回 off。
+        n_ch = MATVEC_MIN_ACTIVE_CHANNELS + 8
+        conns = _connections(grid, n_ch)
+        assert len(conns) >= MATVEC_MIN_ACTIVE_CHANNELS
         ev_off = _evaluator(grid, conns, "off")
         ev_mv = _evaluator(grid, conns, "matvec")
         power = np.full(len(conns), 1e-3, dtype=np.float64)

@@ -687,7 +687,7 @@ class MultiBandISRSGN:
         if cached is not None:
             # 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。
             p_out_fiber, s2_spm, s2_xpm = cached
-        elif self.ode_accel == "matvec":
+        elif self.ode_accel == "matvec" and np.count_nonzero(power_in_w) >= MATVEC_MIN_ACTIVE_CHANNELS:
             # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：``matvec`` 档走 **P1 自己的**加速实现
             #    （``models/numba_kernels_p1_accel.py``）。
             #
@@ -1172,3 +1172,18 @@ class MultiBandISRSGN:
         return PathQoTResult(
             power, total_spm, total_xpm, total_ase, snr, span_count, sum(roadm is not None for roadm in roadm_configs)
         )
+
+
+# ==========================================================================
+#: ``matvec`` 档的**自适应门**：只有活跃信道数（``power_in_w > 0`` 的条数）达到这个
+#: 阈值才走矩阵-向量乘，否则落回 ``off``（逐对求和）。
+#:
+#: 依据（实测，N=230 / 20 核 / loadavg≈0.8，41 次中位）：
+#:   * ``off`` 单跨成本 ∝ 活跃信道数（k=16 时 27.5 µs → k=64 时 133.9 µs）；
+#:   * ``matvec`` 单跨成本近似恒定（≈55–117 µs，满网格矩阵的工作量，与 k 无关）；
+#:   * 交叉点 **k* ≈ 34**；要求至少 1.2× 收益则 **k ≥ 40**。
+#:   * 交叉点是**绝对条数**而非比例：N=80/160 的交叉点也在 k≈25–29，k*/N 在
+#:     0.15–0.32 之间漂 ⇒ 按 ``k/N`` 设门会在小网格上误开。
+#: 两档数值等价（max|Δ| ≤ 1.7e-22 W，判决逐位一致），所以这个门**只影响速度**。
+MATVEC_MIN_ACTIVE_CHANNELS = 40
+
