@@ -3,29 +3,15 @@
 所有函数都应是纯 Numba 函数，不依赖 Python 对象，只处理 Numpy 数组和基本类型。
 """
 
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 import numpy as np
+from numba import njit
 
 from network_nlo_eval.core.constants import C_LIGHT, H_PLANCK, NP_TO_DB, PI
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.physics.raman_spectrum import TABLE_STEP_THZ, load_raman_gain_table
 
-_F = TypeVar("_F", bound=Callable[..., Any])
-
-try:
-    from numba import njit
-except ImportError:  # 保持统计模型在无 JIT 的最小环境中可运行。
-
-    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:  # type: ignore[misc]
-        """Return an identity decorator when optional Numba is unavailable."""
-        del args, kwargs
-
-        def decorate(function: _F) -> _F:
-            return function
-
-        return decorate
 # =============================================================================
 # 0. 常用转换函数 (JIT 优化版本)
 # =============================================================================
@@ -800,14 +786,7 @@ def _calc_xpm_variance_term_jit(
     phi_kurtosis: float,
     delta_f_hz: float,
 ) -> float:
-    """计算交叉相位调制 (XPM) 及峰度修正项产生的噪声方差 (基于 Eq. 21 第二部分)
-
-    逐信道带宽语义（flexgrid 侧 WP-Q1 的要求在 FG 结构里的落点）：``rs_l_hz`` 是
-    **干扰信道 ℓ 自己**的带宽，只进 ``term2`` 的对数项与分母；``rs_i_hz`` 是
-    **COI 自己**的带宽，只进 ``term1`` 的 arctan。两者都取自逐连接的
-    ``symbol_rate_hz`` 数组（``_compute_nli_variances`` 里分别是
-    ``symbol_rate_hz[l_idx]`` 与 ``symbol_rate_hz[i]``），**没有退回成同一个标量**。
-    """
+    """计算交叉相位调制 (XPM) 及峰度修正项产生的噪声方差 (基于 Eq. 21 第二部分)"""
     T_l = 1.0 + t_l_tilde
 
     a_t = np.zeros(2)
@@ -848,53 +827,23 @@ def _calc_xpm_variance_term_jit(
     return max(pre_factor * sum_val, 0.0)
 
 
-@njit(cache=True)  # 不使用细粒度多线程
+@njit(cache=True)
 def _compute_nli_variances(
-    n_ch: int,  # 信道总数
-    n_span: int,  # 跨段数量
-    symbol_rate_hz: NDArrayFloat,  # 逐连接符号率/信道带宽 (Hz)，形状 (N,)
-    p_in_w: NDArrayFloat,  # 各信道入纤功率 (W)
+    n_ch: int,
+    n_span: int,
+    symbol_rate_hz: NDArrayFloat,  # 逐连接符号率 (Hz)，形状 (N,)
+    p_in_w: NDArrayFloat,
     p_out_exact_w: NDArrayFloat,  # 传入精确的数值解
-    f_rel_hz: NDArrayFloat,  # 各信道相对频率 (Hz)
-    lambdas_m: NDArrayFloat,  # 各信道波长 (m)
-    a_eff_m2: NDArrayFloat,  # 各信道有效模面积 (m^2)
-    alpha_power_npm: NDArrayFloat,  # 各信道功率衰减系数 (Np/m)
-    L_m: float,  # 跨段长度 (m)
-    beta_2_s2_m: float,  # 色散参数 beta2 (s^2/m)
-    beta_3_s3_m: float,  # 色散参数 beta3 (s^3/m)
-    n_2_m2_w: float,  # 非线性折射率 n2 (m^2/W)
-    phi_kurtosis: float,  # 峰度修正因子
+    f_rel_hz: NDArrayFloat,
+    lambdas_m: NDArrayFloat,
+    a_eff_m2: NDArrayFloat,
+    alpha_power_npm: NDArrayFloat,
+    L_m: float,
+    beta_2_s2_m: float,
+    beta_3_s3_m: float,
+    n_2_m2_w: float,
+    phi_kurtosis: float,
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
-    """NLI 计算核心：负责 SPM 和 XPM 的 O(N^2) 嵌套循环。
-
-    逐信道 ``b_i`` 穿参（flexgrid 侧 WP-Q1）：``symbol_rate_hz`` 是长度 = ``n_ch``
-    的**逐连接**数组，即 P1 (29)/(30)/(34) 里各自的 ``B_i``。SPM 用
-    ``symbol_rate_hz[i]``；XPM 里干扰信道 ℓ 用 ``symbol_rate_hz[l_idx]``（``B_ℓ``），
-    COI 用 ``symbol_rate_hz[i]``（``B_i``，只进 arctan）。两处各取各的，**没有退回
-    成同一个全局标量**——这正是多槽宽连接进 QoT 的前提。
-
-    Args:
-        n_ch: 信道总数。
-        n_span: 跨段数量。
-        symbol_rate_hz: 逐连接信道带宽 ``B_i`` (Hz)，长度 = ``n_ch``。
-        p_in_w: 各信道入纤功率 (W)。
-        p_out_exact_w: ODE 精确解的出纤功率 (W)，用于反向拟合 ``t_tilde``。
-        f_rel_hz: 各信道相对频率 (Hz)。
-        lambdas_m: 各信道波长 (m)。
-        a_eff_m2: 各信道有效模面积 (m^2)。
-        alpha_power_npm: 各信道功率衰减系数 (Np/m)。
-        L_m: 跨段长度 (m)。
-        beta_2_s2_m: 色散参数 beta2 (s^2/m)。
-        beta_3_s3_m: 色散参数 beta3 (s^3/m)。
-        n_2_m2_w: 非线性折射率 n2 (m^2/W)。
-        phi_kurtosis: 峰度修正因子。
-
-    Returns
-    -------
-        Tuple[NDArrayFloat, NDArrayFloat]:
-        - sigma_spm_2: 各信道 SPM 噪声方差。
-        - sigma_xpm_2: 各信道 XPM 噪声方差。
-    """
     sigma_spm_2 = np.zeros(n_ch, dtype=np.float64)
     sigma_xpm_2 = np.zeros(n_ch, dtype=np.float64)
     n_tilde = n_span if n_span > 1 else 0
@@ -919,16 +868,7 @@ def _compute_nli_variances(
         t_i_tilde = t_tilde_array[i]
 
         sigma_spm_2[i] = _calc_spm_variance_jit(
-            # P1 (29) 的 B_i = COI 自己的逐信道带宽
-            p_in_w[i],
-            symbol_rate_hz[i],
-            n_span,
-            gamma_ii,
-            phi_i,
-            alpha_power_npm[i],
-            t_i_tilde,
-            L_m,
-            epsilon_n_span=0.05,
+            p_in_w[i], symbol_rate_hz[i], n_span, gamma_ii, phi_i, alpha_power_npm[i], t_i_tilde, L_m, epsilon_n_span=0.05
         )
 
         xpm_sum_term = 0.0
@@ -947,9 +887,7 @@ def _compute_nli_variances(
             xpm_sum_term += _calc_xpm_variance_term_jit(
                 p_i_w=p_in_w[i],
                 p_l_w=p_in_w[l_idx],
-                # P1 (30) 的 B_ℓ = 干扰信道自己的带宽
                 rs_l_hz=symbol_rate_hz[l_idx],
-                # P1 (30) 的 B_i = COI 的带宽（只进 term1 的 arctan）
                 rs_i_hz=symbol_rate_hz[i],
                 gamma_il=gamma_il,
                 phi_il=phi_il,
@@ -1365,28 +1303,18 @@ def _calculate_ase_noise_variance(
     p_out_w: NDArrayFloat,  # 各信道出纤功率 (W)
     f_abs_hz: NDArrayFloat,  # 各信道绝对频率 (Hz)
     nf_lin: NDArrayFloat,  # 各信道线性噪声系数
-    symbol_rate_hz: NDArrayFloat,  # 逐连接信道带宽 B_i (Hz)，形状 (N,)
+    symbol_rate_hz: NDArrayFloat,  # 逐连接符号率 (Hz)，形状 (N,)
     n_span: int,  # 跨段数量
 ) -> NDArrayFloat:
     """计算所有跨段累积的 ASE 噪声方差。
 
     假设每个跨段后有一个 EDFA 进行放大和噪声引入。
-
-    对应 P1 §III **(34)**：``symbol_rate_hz[i]`` 就是式中的 ``B_i``（P2 表述为
-    "bandwidth of the COI"），WP-Q1 起为逐信道量而非全局标量。
-
-    ⚠️ **本函数当前是死代码**：`_calc_span_noise_and_power_jit` 的返回值在
-    ``models/isrs_gn.py`` 里被 ``_`` 丢弃，实际生效的 ASE 在该文件里按同一形状
-    (34) 的算式在 Python 侧算出。本 WP 只把 ``B_i`` 参数化为逐信道量；此处
-    ``G_i = p_in_w / p_out_w`` 与 P1 (34) 的 ``G(f_i)`` 不符，属**既有**差异
-    （见 ``docs/ode2_papers_and_diff.md``），不在本 WP 范围内，故不动。
-
     Args:
         p_in_w: 各信道入纤功率 (W)。
         p_out_w: 各信道出纤功率 (W)。
         f_abs_hz: 各信道绝对频率 (Hz)。
         nf_lin: 各信道线性噪声系数。
-        symbol_rate_hz: 逐连接信道带宽 ``B_i`` (Hz)，长度须与 p_in_w 相同。
+        symbol_rate_hz: 逐连接符号速率 (Hz)，长度须与 p_in_w 相同。
         n_span: 跨段数量。
     Returns:
         NDArrayFloat: 每个信道的 ASE 噪声方差 (W)。
@@ -1398,7 +1326,6 @@ def _calculate_ase_noise_variance(
             G_i = p_in_w[i] / p_out_w[i]
 
             total_ase_variance[i] = (
-                # P1 (34) 的 B_i = COI 自己的逐信道带宽
                 n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * symbol_rate_hz[i]
             )
             # print(f"{G_i}, {p_in_w[i]}/{p_out_w[i]}", end=", ")
@@ -1424,7 +1351,7 @@ def _calc_span_noise_and_power_jit(
     n2_m2_w: float,  # 非线性折射率
     # --- 系统与放大器参数 ---
     nf_lin_channels: NDArrayFloat,  # 放大器线性噪声系数 (数组)
-    symbol_rate_hz: NDArrayFloat,  # 逐连接信道带宽 B_i (Hz)，形状 (N,)
+    symbol_rate_hz: NDArrayFloat,  # 逐连接符号速率 (Hz)，形状 (N,)
     n_effective_spans: int,  # 有效累积跨段数 (NLI计算用)
     # --- 物理常数 ---
     cr_w_m_hz: float,  # SRS 增益系数 Cr
@@ -1475,10 +1402,6 @@ def _calc_span_noise_and_power_jit(
     # 形状守卫：njit 无法格式化动态消息，完整消息（含 (N,) 与实际形状）由
     # Python 层 MultiBandISRSGN._calc_span_noise_and_power 抛出。此处的静态
     # 消息是第二道防线——若缺失， njit 会对越界索引静默读越界内存。
-    #
-    # WP-Q1：``symbol_rate_hz`` 就是逐信道带宽 ``B_i``，它的长度检查同时兜住了
-    # 「漏接逐信道 B_i / 静默错位」——与 flexgrid 侧原来的
-    # ``len(b_hz_channels) != num_channels`` 守卫等价，故不再单列一个数组。
     if (
         len(f_rel_hz) != num_channels
         or len(f_abs_hz) != num_channels
@@ -1510,11 +1433,9 @@ def _calc_span_noise_and_power_jit(
         )
 
     # 2. 调用 NLI 引擎，此时它将利用上述精准结果来拟合有效的 T_tilde 边界
+    # 2. 调用 NLI 引擎，此时它将利用上述精准结果来拟合有效的 T_tilde 边界
     # FG-4b：调用侧传入构建期缓存的 NLI 张量时走张量化变体；八个参数全为 None
     # 时逐字节保持 FG-2 冻结的参考路径。
-    #
-    # 逐信道 B_i：`symbol_rate_hz`（P1 (23)/(29)/(30)/(34) 的 ``B_i``）原样下传，
-    # 两条路径都按信道取值，没有退回全局标量。
     if nli_w0 is not None and nli_gamma_sq is not None and nli_spm0 is not None:
         sigma2_spm_w, sigma2_xpm_w = _compute_nli_variances_t(
             len(power_in_w),

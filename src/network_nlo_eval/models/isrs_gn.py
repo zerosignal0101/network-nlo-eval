@@ -655,17 +655,30 @@ class MultiBandISRSGN:
         """
         # 1. 处理放大器噪声系数 (NF)
         # 如果 edfa_config 提供了全频段的 NF 数组则使用之，否则使用预计算的默认值
-        if edfa_config is not None:
-            if edfa_config.noise_figure_db is not None:
-                noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
-                if noise_figure_db.ndim == 0:
-                    current_nf_lin = np.full_like(self.nf_lin_channels, 10 ** (float(noise_figure_db) / 10))
-                else:
-                    if noise_figure_db.shape != (self.n_nodes,):
-                        raise ValueError("EDFA noise-figure array must contain one value per channel.")
-                    current_nf_lin = 10 ** (noise_figure_db / 10)
+        #
+        # ⚠️ WP-MERGE-FG-FLEX：NF 形状解析取 **flexgrid 侧**（`ndim == 0` 判标量 +
+        # 逐通道数组必须恰为 (n_nodes,) 否则报错，比 FG 的 `isinstance(float)` 更严），
+        # 但**默认值取 FG 侧**：edfa 为 None（或其 NF 为 None）时用
+        # ``self.nf_lin_channels``，**不是**全 1。
+        #
+        # 为什么必须这样：flexgrid-dev 在这个 else 分支上写的是
+        # ``np.ones_like(self.nf_lin_channels)``，那等价于 **NF = 0 dB**。实测该差异
+        # 使串行路径的 ``sigma2_ase_w`` 比 FG 小 3.981 倍（`_calc_nf_lin_jit` 在这些
+        # 波长上约 3.98），批量路径不受影响 ⇒ `test_fg4e_cpu_batching` 的
+        # batch≡serial 直接差 2.981（相对预算 1e-12）。
+        if edfa_config is not None and edfa_config.noise_figure_db is not None:
+            noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
+            if noise_figure_db.ndim == 0:
+                current_nf_lin = np.full_like(self.nf_lin_channels, 10 ** (float(noise_figure_db) / 10))
+            else:
+                if noise_figure_db.shape != (self.n_nodes,):
+                    raise ValueError(
+                        "EDFA noise-figure array must contain one value per channel "
+                        f"({self.n_nodes},); got {noise_figure_db.shape}."
+                    )
+                current_nf_lin = 10 ** (noise_figure_db / 10)
         else:
-            current_nf_lin = np.ones_like(self.nf_lin_channels)
+            current_nf_lin = self.nf_lin_channels
 
         # 1.5 形状契约校验（设计 §3.4）。逐连接数组必须长度恰为 N 且同序对齐；
         # 消息含期望形状 (N,) 与实际形状。njit 内核只有静态消息，故完整诊断在此。

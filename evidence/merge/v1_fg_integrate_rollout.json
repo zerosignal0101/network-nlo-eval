@@ -1,0 +1,1643 @@
+{
+ "schema": "wp-merge-fg-flex/v1-rollout-probe/v1",
+ "policy": "KSPFirstFitPolicy (deterministic rule policy)",
+ "episode_kwargs": {
+  "num_requests": 40,
+  "avg_arrival_interval": 10.0,
+  "avg_holding_time": 400.0
+ },
+ "seeds": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "episodes": [
+  {
+   "seed": 0,
+   "steps": [
+    {
+     "step": 0,
+     "action": 0,
+     "channel": 0,
+     "allocated": 1,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 1,
+     "action": -1,
+     "channel": null,
+     "allocated": 1,
+     "reward": -1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 2,
+     "action": 0,
+     "channel": 51,
+     "allocated": 2,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 3,
+     "action": 0,
+     "channel": 0,
+     "allocated": 3,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 4,
+     "action": 0,
+     "channel": 0,
+     "allocated": 4,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 5,
+     "action": 0,
+     "channel": 0,
+     "allocated": 5,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 6,
+     "action": 0,
+     "channel": 126,
+     "allocated": 6,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 7,
+     "action": -1,
+     "channel": null,
+     "allocated": 6,
+     "reward": -1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 8,
+     "action": 0,
+     "channel": 0,
+     "allocated": 7,
+     "reward": 1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 9,
+     "action": -1,
+     "channel": null,
+     "allocated": 7,
+     "reward": -1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 10,
+     "action": 0,
+     "channel": 126,
+     "allocated": 8,
+     "reward": 1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 11,
+     "action": 0,
+     "channel": 43,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 12,
+     "action": -1,
+     "channel": null,
+     "allocated": 8,
+     "reward": -1.0,
+     "blocked": 4,
+     "blocked_qot": 4,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 13,
+     "action": -1,
+     "channel": null,
+     "allocated": 8,
+     "reward": -1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 14,
+     "action": 0,
+     "channel": 0,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 15,
+     "action": 0,
+     "channel": 1,
+     "allocated": 10,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 16,
+     "action": 0,
+     "channel": 1,
+     "allocated": 11,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 17,
+     "action": 0,
+     "channel": 2,
+     "allocated": 12,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 18,
+     "action": 0,
+     "channel": 1,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 19,
+     "action": 0,
+     "channel": 101,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 20,
+     "action": 0,
+     "channel": 114,
+     "allocated": 15,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 21,
+     "action": -1,
+     "channel": null,
+     "allocated": 15,
+     "reward": -1.0,
+     "blocked": 6,
+     "blocked_qot": 6,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 22,
+     "action": 0,
+     "channel": 117,
+     "allocated": 16,
+     "reward": 1.0,
+     "blocked": 6,
+     "blocked_qot": 6,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 23,
+     "action": -1,
+     "channel": null,
+     "allocated": 16,
+     "reward": -1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 24,
+     "action": -1,
+     "channel": null,
+     "allocated": 14,
+     "reward": -1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 25,
+     "action": -1,
+     "channel": null,
+     "allocated": 13,
+     "reward": -1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 26,
+     "action": 0,
+     "channel": 2,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 27,
+     "action": 0,
+     "channel": 0,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 28,
+     "action": 0,
+     "channel": 1,
+     "allocated": 15,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 29,
+     "action": 0,
+     "channel": 43,
+     "allocated": 16,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 30,
+     "action": 0,
+     "channel": 18,
+     "allocated": 17,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 31,
+     "action": 0,
+     "channel": 30,
+     "allocated": 18,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 32,
+     "action": 0,
+     "channel": 56,
+     "allocated": 18,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 33,
+     "action": -1,
+     "channel": null,
+     "allocated": 18,
+     "reward": -1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 34,
+     "action": -1,
+     "channel": null,
+     "allocated": 18,
+     "reward": -1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 35,
+     "action": 0,
+     "channel": 1,
+     "allocated": 19,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 36,
+     "action": 0,
+     "channel": 0,
+     "allocated": 20,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 37,
+     "action": 0,
+     "channel": 0,
+     "allocated": 20,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 38,
+     "action": -1,
+     "channel": null,
+     "allocated": 20,
+     "reward": -1.0,
+     "blocked": 12,
+     "blocked_qot": 12,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 39,
+     "action": 0,
+     "channel": 1,
+     "allocated": 21,
+     "reward": 1.0,
+     "blocked": 12,
+     "blocked_qot": 12,
+     "blocked_no_spectrum": 0
+    }
+   ]
+  },
+  {
+   "seed": 1,
+   "steps": [
+    {
+     "step": 0,
+     "action": 0,
+     "channel": 0,
+     "allocated": 1,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 1,
+     "action": 0,
+     "channel": 0,
+     "allocated": 2,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 2,
+     "action": 0,
+     "channel": 1,
+     "allocated": 3,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 3,
+     "action": 0,
+     "channel": 1,
+     "allocated": 4,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 4,
+     "action": -1,
+     "channel": null,
+     "allocated": 4,
+     "reward": -1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 5,
+     "action": 0,
+     "channel": 2,
+     "allocated": 5,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 6,
+     "action": 0,
+     "channel": 57,
+     "allocated": 6,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 7,
+     "action": 0,
+     "channel": 62,
+     "allocated": 7,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 8,
+     "action": -1,
+     "channel": null,
+     "allocated": 7,
+     "reward": -1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 9,
+     "action": -1,
+     "channel": null,
+     "allocated": 7,
+     "reward": -1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 10,
+     "action": -1,
+     "channel": null,
+     "allocated": 7,
+     "reward": -1.0,
+     "blocked": 4,
+     "blocked_qot": 4,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 11,
+     "action": -1,
+     "channel": null,
+     "allocated": 7,
+     "reward": -1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 12,
+     "action": -1,
+     "channel": null,
+     "allocated": 6,
+     "reward": -1.0,
+     "blocked": 6,
+     "blocked_qot": 6,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 13,
+     "action": -1,
+     "channel": null,
+     "allocated": 6,
+     "reward": -1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 14,
+     "action": 0,
+     "channel": 0,
+     "allocated": 7,
+     "reward": 1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 15,
+     "action": 0,
+     "channel": 67,
+     "allocated": 8,
+     "reward": 1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 16,
+     "action": -1,
+     "channel": null,
+     "allocated": 8,
+     "reward": -1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 17,
+     "action": 0,
+     "channel": 71,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 18,
+     "action": 0,
+     "channel": 0,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 19,
+     "action": 0,
+     "channel": 0,
+     "allocated": 10,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 20,
+     "action": 0,
+     "channel": 1,
+     "allocated": 11,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 21,
+     "action": -1,
+     "channel": null,
+     "allocated": 11,
+     "reward": -1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 22,
+     "action": 0,
+     "channel": 32,
+     "allocated": 12,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 23,
+     "action": 0,
+     "channel": 0,
+     "allocated": 12,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 24,
+     "action": 0,
+     "channel": 1,
+     "allocated": 12,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 25,
+     "action": 0,
+     "channel": 5,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 26,
+     "action": -1,
+     "channel": null,
+     "allocated": 12,
+     "reward": -1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 27,
+     "action": 0,
+     "channel": 0,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 28,
+     "action": 0,
+     "channel": 3,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 29,
+     "action": 0,
+     "channel": 3,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 30,
+     "action": 0,
+     "channel": 0,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 31,
+     "action": 0,
+     "channel": 83,
+     "allocated": 15,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 32,
+     "action": 0,
+     "channel": 4,
+     "allocated": 16,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 33,
+     "action": 0,
+     "channel": 1,
+     "allocated": 17,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 34,
+     "action": 0,
+     "channel": 75,
+     "allocated": 18,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 35,
+     "action": 0,
+     "channel": 40,
+     "allocated": 19,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 36,
+     "action": 0,
+     "channel": 90,
+     "allocated": 19,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 37,
+     "action": 0,
+     "channel": 122,
+     "allocated": 20,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 38,
+     "action": -1,
+     "channel": null,
+     "allocated": 20,
+     "reward": -1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 39,
+     "action": 0,
+     "channel": 95,
+     "allocated": 21,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    }
+   ]
+  },
+  {
+   "seed": 2,
+   "steps": [
+    {
+     "step": 0,
+     "action": 0,
+     "channel": 0,
+     "allocated": 1,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 1,
+     "action": -1,
+     "channel": null,
+     "allocated": 1,
+     "reward": -1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 2,
+     "action": 0,
+     "channel": 0,
+     "allocated": 2,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 3,
+     "action": 1,
+     "channel": 142,
+     "allocated": 3,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 4,
+     "action": 0,
+     "channel": 0,
+     "allocated": 4,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 5,
+     "action": 0,
+     "channel": 1,
+     "allocated": 5,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 6,
+     "action": 0,
+     "channel": 2,
+     "allocated": 6,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 7,
+     "action": 0,
+     "channel": 45,
+     "allocated": 7,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 8,
+     "action": 0,
+     "channel": 0,
+     "allocated": 8,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 9,
+     "action": 0,
+     "channel": 0,
+     "allocated": 8,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 10,
+     "action": 0,
+     "channel": 0,
+     "allocated": 8,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 11,
+     "action": 0,
+     "channel": 0,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 12,
+     "action": -1,
+     "channel": null,
+     "allocated": 9,
+     "reward": -1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 13,
+     "action": -1,
+     "channel": null,
+     "allocated": 9,
+     "reward": -1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 14,
+     "action": -1,
+     "channel": null,
+     "allocated": 9,
+     "reward": -1.0,
+     "blocked": 4,
+     "blocked_qot": 4,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 15,
+     "action": -1,
+     "channel": null,
+     "allocated": 9,
+     "reward": -1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 16,
+     "action": -1,
+     "channel": null,
+     "allocated": 9,
+     "reward": -1.0,
+     "blocked": 6,
+     "blocked_qot": 6,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 17,
+     "action": -1,
+     "channel": null,
+     "allocated": 9,
+     "reward": -1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 18,
+     "action": 0,
+     "channel": 1,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 19,
+     "action": 0,
+     "channel": 0,
+     "allocated": 10,
+     "reward": 1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 20,
+     "action": 0,
+     "channel": 2,
+     "allocated": 10,
+     "reward": 1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 21,
+     "action": 0,
+     "channel": 4,
+     "allocated": 11,
+     "reward": 1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 22,
+     "action": -1,
+     "channel": null,
+     "allocated": 11,
+     "reward": -1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 23,
+     "action": 0,
+     "channel": 13,
+     "allocated": 11,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 24,
+     "action": 0,
+     "channel": 10,
+     "allocated": 12,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 25,
+     "action": -1,
+     "channel": null,
+     "allocated": 12,
+     "reward": -1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 26,
+     "action": 0,
+     "channel": 6,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 27,
+     "action": 0,
+     "channel": 4,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 28,
+     "action": -1,
+     "channel": null,
+     "allocated": 14,
+     "reward": -1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 29,
+     "action": 0,
+     "channel": 5,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 30,
+     "action": 0,
+     "channel": 3,
+     "allocated": 15,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 31,
+     "action": 0,
+     "channel": 0,
+     "allocated": 16,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 32,
+     "action": 0,
+     "channel": 0,
+     "allocated": 16,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 33,
+     "action": 0,
+     "channel": 48,
+     "allocated": 17,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 34,
+     "action": 0,
+     "channel": 36,
+     "allocated": 18,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 35,
+     "action": -1,
+     "channel": null,
+     "allocated": 16,
+     "reward": -1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 36,
+     "action": 0,
+     "channel": 0,
+     "allocated": 17,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 37,
+     "action": 0,
+     "channel": 4,
+     "allocated": 18,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 38,
+     "action": 0,
+     "channel": 19,
+     "allocated": 19,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 39,
+     "action": 0,
+     "channel": 41,
+     "allocated": 20,
+     "reward": 1.0,
+     "blocked": 11,
+     "blocked_qot": 11,
+     "blocked_no_spectrum": 0
+    }
+   ]
+  },
+  {
+   "seed": 3,
+   "steps": [
+    {
+     "step": 0,
+     "action": 0,
+     "channel": 0,
+     "allocated": 1,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 1,
+     "action": 0,
+     "channel": 29,
+     "allocated": 2,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 2,
+     "action": 0,
+     "channel": 6,
+     "allocated": 2,
+     "reward": 1.0,
+     "blocked": 0,
+     "blocked_qot": 0,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 3,
+     "action": -1,
+     "channel": null,
+     "allocated": 2,
+     "reward": -1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 4,
+     "action": 0,
+     "channel": 0,
+     "allocated": 3,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 5,
+     "action": 0,
+     "channel": 0,
+     "allocated": 4,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 6,
+     "action": 0,
+     "channel": 33,
+     "allocated": 5,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 7,
+     "action": 0,
+     "channel": 1,
+     "allocated": 6,
+     "reward": 1.0,
+     "blocked": 1,
+     "blocked_qot": 1,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 8,
+     "action": -1,
+     "channel": null,
+     "allocated": 5,
+     "reward": -1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 9,
+     "action": 0,
+     "channel": 0,
+     "allocated": 5,
+     "reward": 1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 10,
+     "action": 0,
+     "channel": 0,
+     "allocated": 6,
+     "reward": 1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 11,
+     "action": 0,
+     "channel": 70,
+     "allocated": 7,
+     "reward": 1.0,
+     "blocked": 2,
+     "blocked_qot": 2,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 12,
+     "action": -1,
+     "channel": null,
+     "allocated": 7,
+     "reward": -1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 13,
+     "action": 0,
+     "channel": 0,
+     "allocated": 8,
+     "reward": 1.0,
+     "blocked": 3,
+     "blocked_qot": 3,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 14,
+     "action": -1,
+     "channel": null,
+     "allocated": 8,
+     "reward": -1.0,
+     "blocked": 4,
+     "blocked_qot": 4,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 15,
+     "action": -1,
+     "channel": null,
+     "allocated": 8,
+     "reward": -1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 16,
+     "action": 0,
+     "channel": 1,
+     "allocated": 9,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 17,
+     "action": 0,
+     "channel": 2,
+     "allocated": 10,
+     "reward": 1.0,
+     "blocked": 5,
+     "blocked_qot": 5,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 18,
+     "action": -1,
+     "channel": null,
+     "allocated": 10,
+     "reward": -1.0,
+     "blocked": 6,
+     "blocked_qot": 6,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 19,
+     "action": -1,
+     "channel": null,
+     "allocated": 10,
+     "reward": -1.0,
+     "blocked": 7,
+     "blocked_qot": 7,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 20,
+     "action": -1,
+     "channel": null,
+     "allocated": 10,
+     "reward": -1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 21,
+     "action": 0,
+     "channel": 99,
+     "allocated": 11,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 22,
+     "action": 0,
+     "channel": 102,
+     "allocated": 12,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 23,
+     "action": 0,
+     "channel": 3,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 24,
+     "action": 0,
+     "channel": 1,
+     "allocated": 13,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 25,
+     "action": 0,
+     "channel": 103,
+     "allocated": 14,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 26,
+     "action": 0,
+     "channel": 104,
+     "allocated": 15,
+     "reward": 1.0,
+     "blocked": 8,
+     "blocked_qot": 8,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 27,
+     "action": -1,
+     "channel": null,
+     "allocated": 15,
+     "reward": -1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 28,
+     "action": 0,
+     "channel": 2,
+     "allocated": 16,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 29,
+     "action": 0,
+     "channel": 99,
+     "allocated": 17,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 30,
+     "action": 0,
+     "channel": 105,
+     "allocated": 18,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 31,
+     "action": 0,
+     "channel": 5,
+     "allocated": 19,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 32,
+     "action": 0,
+     "channel": 97,
+     "allocated": 20,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 33,
+     "action": 0,
+     "channel": 0,
+     "allocated": 21,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 34,
+     "action": 0,
+     "channel": 103,
+     "allocated": 22,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 35,
+     "action": 0,
+     "channel": 98,
+     "allocated": 21,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 36,
+     "action": 0,
+     "channel": 46,
+     "allocated": 22,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 37,
+     "action": 0,
+     "channel": 106,
+     "allocated": 23,
+     "reward": 1.0,
+     "blocked": 9,
+     "blocked_qot": 9,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 38,
+     "action": -1,
+     "channel": null,
+     "allocated": 23,
+     "reward": -1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    },
+    {
+     "step": 39,
+     "action": 0,
+     "channel": 74,
+     "allocated": 24,
+     "reward": 1.0,
+     "blocked": 10,
+     "blocked_qot": 10,
+     "blocked_no_spectrum": 0
+    }
+   ]
+  }
+ ],
+ "provenance": {
+  "rl_commit": "3d0c56e827a6171c2f72c960310287ed72536cf1",
+  "phys_commit": "57c72210788650ce38202e0efe76026bb193e711",
+  "rl_tree": "/home/zsig/Documents/gits/wt/fg-rt/src/multiband_optical_rl/__init__.py",
+  "phys_tree": "/home/zsig/Documents/gits/wt/fg-integrate/src/network_nlo_eval/__init__.py"
+ }
+}

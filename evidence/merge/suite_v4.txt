@@ -1,0 +1,423 @@
+........FF.........FFF.................................................. [ 12%]
+......................................................................s. [ 24%]
+........................................................................ [ 36%]
+........................................................................ [ 48%]
+........................................................................ [ 60%]
+........................................................................ [ 73%]
+........................................................................ [ 85%]
+................................................FF.F..F.........F.F....s [ 97%]
+...............                                                          [100%]
+=================================== FAILURES ===================================
+___________ test_qj5_per_channel_bandwidth_mapped_to_p1_23_29_30_34 ____________
+
+    def test_qj5_per_channel_bandwidth_mapped_to_p1_23_29_30_34():
+        """Q-J5：本 WP 改动的每一项都能映射到 P1 公式号（落进 formula map）。"""
+        doc = _load("ode_dev_formula_map.json")
+        by_id = {e["id"]: e for e in doc["physics"]}
+    
+        for eid in ("p1_eq23_nli_total", "p1_eq29_spm", "p1_eq30_xpm", "p1_eq34_ase"):
+            assert eid in by_id, f"formula map 缺 {eid}"
+            assert by_id[eid]["paper"]["id"] == "P1"
+    
+        # 逐信道锚点必须真的在源码里（这是 J1 守卫的可执行形式）
+        for eid in ("p1_eq23_nli_total", "p1_eq29_spm", "p1_eq30_xpm", "p1_eq34_ase"):
+            for anchor in by_id[eid]["code"]:
+                text = (REPO / anchor["file"]).read_text(encoding="utf-8")
+>               assert anchor["contains"] in text, f"{eid} 锚点失效：{anchor['contains']!r}"
+E               AssertionError: p1_eq29_spm 锚点失效：'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)'
+E               assert 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)' in '"""Numba JIT 加速的物理层核心计算内核。\n\n所有函数都应是纯 Numba 函数，不依赖 Python 对象，只处理 Numpy 数组和基本类型。\n"""\n\nfrom typing import Any\n\nim..., symbol_rate_hz, n_effective_spans\n    )\n\n    return p_out_after_fiber, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w\n'
+
+tests/test_bwqot_bandwidth.py:186: AssertionError
+____________________ test_qj5_formula_map_check_reproduces _____________________
+
+    def test_qj5_formula_map_check_reproduces():
+        """Q-J5：公式映射 --check 必须可独立复算通过。"""
+        proc = _run_check("ode_formula_map.py")
+>       assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+E       AssertionError: FAIL: 40 条
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:213 不含 'r_f[i] = p_total_w * fi'（实际是 'for i in range(N):'）
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:215 不含 'r_f[i] = 0.0'（实际是 'p[i] = 0.0'）
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:218 不含 '0.5 * (f_M_hz**2 - delta_f_co_hz**2)'（实际是 ''）
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:221 不含 '0.5 * (f_m_hz**2 - delta_f_co_hz**2)'（实际是 '# 2b. FG-4a: G 矩阵的提升（缓存）与去分支（两次 matvec）'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:253 不含 'L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm'（实际是 'n = len(f_hz)'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:261 不含 'p_out_w[i] = ('（实际是 'elif df_thz < _RAMAN_FLOOR_THZ:'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:263 不含 '* np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)'（实际是 'peak_g = cr_w_m_hz * 13.2e12'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:264 不含 '* p_total_in'（实际是 'value = peak_g * (_RAMAN_FLOOR_THZ - df_thz) / (_RAMAN_FLOOR_THZ - _RAMAN_LINEAR_LIMIT_THZ)'）
+E           [J1] p1_eq22_preemphasis: src/network_nlo_eval/models/numba_kernels.py:259 不含 'np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f)'（实际是 '# 线性增长区'）
+E           [J1] p1_eq23_nli_total: src/network_nlo_eval/models/isrs_gn.py:722 不含 'symbol_rate_hz=self.channel_bandwidth_hz_channels,'（实际是 '# 而不是 `symbol_rate_hz_channels`，因为后者在默认档下与它**逐位'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:319 不含 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)'（实际是 'gain = 0.0'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:326 不含 '(4 / 9)'（实际是 'def _calc_dp_dz_matvec('）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:329 不含 '(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)'（实际是 '"""去分支的 dP/dz：两次 matvec 取代逐对 if。'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:333 不含 'asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))'（实际是 '与 `_calc_dp_dz` 相比没有改变数学式，只把逐对分支换成 BLAS dot；因此这是'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:334 不含 'asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))'（实际是 'FG-4c GPU/batch 化的形状（整块矩阵乘向量，无数据相关的控制流）。'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:336 不含 'term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1'（实际是 'gain_term = g_gain @ p'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:455 不含 'phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)'（实际是 'df_grid_thz: NDArrayFloat,'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:381 不含 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)'（实际是 'p_in_w: NDArrayFloat,'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:387 不含 'pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp'（实际是 ') -> NDArrayFloat:'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:389 不含 'atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)'（实际是 ''）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:390 不含 'atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))'（实际是 'RK4 循环与冻结函数逐步一致，唯一差别是 4 次子调用换成 matvec 版本。'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:392 不含 'term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1'（实际是 '"""'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:486 不含 '(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))'（实际是 'for k in range(n):'）
+E           [J1] p1_eq31_t_factor: src/network_nlo_eval/models/numba_kernels.py:641 不含 't_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2'（实际是 '_G_CACHE[key] = (cached[0], g_gain, g_loss)'）
+E           [J1] p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1027 不含 'total_noise = total_spm + total_xpm + total_ase'（实际是 'if blocked:'）
+E           [J1] p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1030 不含 'snr[active] = 10 * np.log10(power[active] / total_noise[active])'（实际是 'total_noise = total_spm + total_xpm + total_ase'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:435 不含 'gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))'（实际是 'self.ref_fiber_config.effective_area_um2_ref,'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:440 不含 'gain *= 10 ** (ripple / 10)'（实际是 '# 噪声系数 (线性)'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:444 不含 's2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum('（实际是 '# 简化：在每个跨段的中心波长处计算 beta2 和 beta3，或使用参考波长'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:445 不含 'gain - 1, 0'（实际是 '# 这里使用参考波长处的 D 和 S 来计算'）
+E           [J1] p1_eq34_ase_dead_kernel: src/network_nlo_eval/models/isrs_gn.py:704 不含 'p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit('（实际是 '# 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。'）
+E           [J1] p1_nf_per_band: src/network_nlo_eval/models/numba_kernels.py:529 不含 'nf_lin[i] = _db_to_lin(6.0)'（实际是 '# 能量守恒转移：损耗与增益呈频率比'）
+E           [J1] p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:433 不含 'gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)'（实际是 'self.a_eff_m2_channels = _calc_aeff_dynamic('）
+E           [J1] p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:445 不含 'gain - 1, 0'（实际是 '# 这里使用参考波长处的 D 和 S 来计算'）
+E           [J1] p2_eq01_snr_inv: src/network_nlo_eval/models/isrs_gn.py:1027 不含 'total_noise = total_spm + total_xpm + total_ase'（实际是 'if blocked:'）
+E           [J1] eng_span_noise_accumulation: src/network_nlo_eval/models/isrs_gn.py:993 不含 'total_spm *= transfer'（实际是 'power, span_km * 1e3, edfa, n_effective_spans=1'）
+E           [J1] eng_booster_ase: src/network_nlo_eval/models/isrs_gn.py:763 不含 ') * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64) * (terms.loss - 1.0)'（实际是 'if terms.equalize:'）
+E           [J1] eng_filtering_penalty: src/network_nlo_eval/models/isrs_gn.py:1020 不含 'total_spm *= terms.filtering_penalty'（实际是 'total_spm /= terms.loss'）
+E           [J1] eng_numeric_guards: src/network_nlo_eval/models/isrs_gn.py:430 不含 's2_ase = np.zeros_like(power_in_w)'（实际是 ')'）
+E           [J1] eng_blocked_channels: src/network_nlo_eval/models/isrs_gn.py:1025 不含 'power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0'（实际是 'total_ase *= terms.filtering_penalty'）
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...m[blocked] = total_xpm[blocked] = total_ase[blocked] = 0\'（实际是 \'total_ase *= terms.filtering_penalty\'）\n', stderr='').returncode
+
+tests/test_bwqot_bandwidth.py:201: AssertionError
+____________ test_q_evidence_tools_check_reproduces[bwqot_probe.py] ____________
+
+script = 'bwqot_probe.py'
+
+    @pytest.mark.parametrize(
+        "script", ["bwqot_probe.py", "bwqot_legacy_regression.py", "bwqot_cost.py"]
+    )
+    def test_q_evidence_tools_check_reproduces(script: str):
+        """证据工具的 --check 必须能独立复算出同样的 PASS。"""
+        proc = _run_check(script)
+>       assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+E       AssertionError: 
+E         Traceback (most recent call last):
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/tools/bwqot_probe.py", line 381, in <module>
+E             raise SystemExit(main())
+E                              ^^^^^^
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/tools/bwqot_probe.py", line 365, in main
+E             doc = run_probe()
+E                   ^^^^^^^^^^^
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/tools/bwqot_probe.py", line 208, in run_probe
+E             ref = reference_terms(ev, eff_power)
+E                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/tools/bwqot_probe.py", line 116, in reference_terms
+E             from network_nlo_eval.models.numba_kernels import _calc_gamma_coeff_scalar, _calc_raman_profile_jit
+E         ImportError: cannot import name '_calc_raman_profile_jit' from 'network_nlo_eval.models.numba_kernels' (/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/models/numba_kernels.py)
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...dels.numba_kernels\' (/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/models/numba_kernels.py)\n').returncode
+
+tests/test_bwqot_bandwidth.py:425: AssertionError
+______ test_q_evidence_tools_check_reproduces[bwqot_legacy_regression.py] ______
+
+script = 'bwqot_legacy_regression.py'
+
+    @pytest.mark.parametrize(
+        "script", ["bwqot_probe.py", "bwqot_legacy_regression.py", "bwqot_cost.py"]
+    )
+    def test_q_evidence_tools_check_reproduces(script: str):
+        """证据工具的 --check 必须能独立复算出同样的 PASS。"""
+        proc = _run_check(script)
+>       assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+E       AssertionError: verdict=FAIL  max_abs_delta_db=None
+E           FAIL: Q-J1: 场景数 0 != 6
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...ion.py', '--check'], returncode=1, stdout='verdict=FAIL  max_abs_delta_db=None\n  FAIL: Q-J1: 场景数 0 != 6\n', stderr='').returncode
+
+tests/test_bwqot_bandwidth.py:425: AssertionError
+____________ test_q_evidence_tools_check_reproduces[bwqot_cost.py] _____________
+
+script = 'bwqot_cost.py'
+
+    @pytest.mark.parametrize(
+        "script", ["bwqot_probe.py", "bwqot_legacy_regression.py", "bwqot_cost.py"]
+    )
+    def test_q_evidence_tools_check_reproduces(script: str):
+        """证据工具的 --check 必须能独立复算出同样的 PASS。"""
+        proc = _run_check(script)
+>       assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+E       AssertionError: verdict=FAIL  median=0.3743 ms  budget=10.0 ms
+E           带宽探针 median=0.0523 ms  heterogeneous=True
+E           ODE 符号命中: [{'token': '_calc_exact_power_profile_ode', 'line': 177, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode_with_g', 'line': 346, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode_matvec', 'line': 380, 'symbol': 'ode'}, {'token': 'phi_kurtosis', 'line': 786, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 809, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 818, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 845, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 900, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 900, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 964, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1022, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1023, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1181, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1196, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1212, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1234, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1253, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1359, 'symbol': 'phi_kurtosis'}, {'token': '_calc_exact_power_profile_ode_with_g', 'line': 1422, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode_matvec', 'line': 1427, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode', 'line': 1431, 'symbol': 'ode'}, {'token': 'phi_kurtosis', 'line': 1472, 'symbol': 'phi_kurtosis'}]
+E           FAIL: Q-J3: 内核出现 ODE 相关标识符 [{'token': '_calc_exact_power_profile_ode', 'line': 177, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode_with_g', 'line': 346, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode_matvec', 'line': 380, 'symbol': 'ode'}, {'token': 'phi_kurtosis', 'line': 786, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 809, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 818, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 845, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 900, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 900, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 964, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1022, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1023, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1181, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1196, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1212, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1234, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1253, 'symbol': 'phi_kurtosis'}, {'token': 'phi_kurtosis', 'line': 1359, 'symbol': 'phi_kurtosis'}, {'token': '_calc_exact_power_profile_ode_with_g', 'line': 1422, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode_matvec', 'line': 1427, 'symbol': 'ode'}, {'token': '_calc_exact_power_profile_ode', 'line': 1431, 'symbol': 'ode'}, {'token': 'phi_kurtosis', 'line': 1472, 'symbol': 'phi_kurtosis'}]
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...ode', 'line': 1431, 'symbol': 'ode'}, {'token': 'phi_kurtosis', 'line': 1472, 'symbol': 'phi_kurtosis'}]\n", stderr='').returncode
+
+tests/test_bwqot_bandwidth.py:425: AssertionError
+________________ test_guard8_formula_map_anchors_still_aligned _________________
+
+    def test_guard8_formula_map_anchors_still_aligned():
+        """J1 交叉守卫：接线导致行号漂移，但物理锚点内容必须仍能 grep 到。"""
+        doc = _load("ode_dev_anchor_relocation.json")
+>       assert doc["n_unfixable"] == 0, (
+            f"有 {doc['n_unfixable']} 条锚点无法自动修正——那通常意味着物理真的被改了"
+        )
+E       AssertionError: 有 47 条锚点无法自动修正——那通常意味着物理真的被改了
+E       assert 47 == 0
+
+tests/test_ode3_flexgrid_sync.py:340: AssertionError
+______ test_guard9_ode3_tools_check_reproduces[ode3_relocate_anchors.py] _______
+
+script = 'ode3_relocate_anchors.py'
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            "ode3_relocate_anchors.py",
+            "ode3_sync.py",
+            "ode3_flexgrid_e2e.py",
+            "ode3_capability.py",
+            "ode3_report.py",
+        ],
+    )
+    def test_guard9_ode3_tools_check_reproduces(script):
+        proc = _run_check(script)
+>       assert proc.returncode == 0, f"{script} --check 失败:\n{proc.stdout}\n{proc.stderr}"
+E       AssertionError: ode3_relocate_anchors.py --check 失败:
+E         FAIL: 40 条锚点失配（32 条无法自动修正）
+E           p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:213 occurrences=0
+E           p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:215 occurrences=0
+E           p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:218 occurrences=0
+E           p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:221 occurrences=0
+E           p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:253 occurrences=0
+E           p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:261 occurrences=0
+E           p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:263 occurrences=0
+E           p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:264 occurrences=0
+E           p1_eq22_preemphasis: src/network_nlo_eval/models/numba_kernels.py:259 occurrences=0
+E           p1_eq23_nli_total: src/network_nlo_eval/models/isrs_gn.py:722 occurrences=1
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:319 occurrences=0
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:326 occurrences=0
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:329 occurrences=0
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:333 occurrences=0
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:334 occurrences=0
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:336 occurrences=0
+E           p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:455 occurrences=0
+E           p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:381 occurrences=0
+E           p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:387 occurrences=0
+E           p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:389 occurrences=0
+E           p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:390 occurrences=0
+E           p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:392 occurrences=0
+E           p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:486 occurrences=0
+E           p1_eq31_t_factor: src/network_nlo_eval/models/numba_kernels.py:641 occurrences=0
+E           p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1027 occurrences=1
+E           p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1030 occurrences=1
+E           p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:435 occurrences=0
+E           p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:440 occurrences=0
+E           p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:444 occurrences=0
+E           p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:445 occurrences=0
+E           p1_eq34_ase_dead_kernel: src/network_nlo_eval/models/isrs_gn.py:704 occurrences=1
+E           p1_nf_per_band: src/network_nlo_eval/models/numba_kernels.py:529 occurrences=2
+E           p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:433 occurrences=0
+E           p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:445 occurrences=0
+E           p2_eq01_snr_inv: src/network_nlo_eval/models/isrs_gn.py:1027 occurrences=1
+E           eng_span_noise_accumulation: src/network_nlo_eval/models/isrs_gn.py:993 occurrences=1
+E           eng_booster_ase: src/network_nlo_eval/models/isrs_gn.py:763 occurrences=2
+E           eng_filtering_penalty: src/network_nlo_eval/models/isrs_gn.py:1020 occurrences=1
+E           eng_numeric_guards: src/network_nlo_eval/models/isrs_gn.py:430 occurrences=0
+E           eng_blocked_channels: src/network_nlo_eval/models/isrs_gn.py:1025 occurrences=1
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to....py:430 occurrences=0\n  eng_blocked_channels: src/network_nlo_eval/models/isrs_gn.py:1025 occurrences=1\n', stderr='').returncode
+
+tests/test_ode3_flexgrid_sync.py:369: AssertionError
+________ test_guard9_ode3_tools_check_reproduces[ode3_flexgrid_e2e.py] _________
+
+script = 'ode3_flexgrid_e2e.py'
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            "ode3_relocate_anchors.py",
+            "ode3_sync.py",
+            "ode3_flexgrid_e2e.py",
+            "ode3_capability.py",
+            "ode3_report.py",
+        ],
+    )
+    def test_guard9_ode3_tools_check_reproduces(script):
+        proc = _run_check(script)
+>       assert proc.returncode == 0, f"{script} --check 失败:\n{proc.stdout}\n{proc.stderr}"
+E       AssertionError: ode3_flexgrid_e2e.py --check 失败:
+E         FAIL 复算不一致: per_connection
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/tools/ode3_flexgrid_e2e.py', '--check'], returncode=1, stdout='FAIL 复算不一致: per_connection\n', stderr='').returncode
+
+tests/test_ode3_flexgrid_sync.py:369: AssertionError
+______________________ test_guard9b_ode2_tools_still_pass ______________________
+
+    def test_guard9b_ode2_tools_still_pass():
+        """WP-O2 的工具必须仍通过（O2 的验收不许被本 WP 破坏）。"""
+        for script in ("ode_formula_map.py", "ode_verdicts.py"):
+            proc = _run_check(script)
+>           assert proc.returncode == 0, f"{script} --check 失败:\n{proc.stdout}\n{proc.stderr}"
+E           AssertionError: ode_formula_map.py --check 失败:
+E             FAIL: 40 条
+E               [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:213 不含 'r_f[i] = p_total_w * fi'（实际是 'for i in range(N):'）
+E               [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:215 不含 'r_f[i] = 0.0'（实际是 'p[i] = 0.0'）
+E               [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:218 不含 '0.5 * (f_M_hz**2 - delta_f_co_hz**2)'（实际是 ''）
+E               [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:221 不含 '0.5 * (f_m_hz**2 - delta_f_co_hz**2)'（实际是 '# 2b. FG-4a: G 矩阵的提升（缓存）与去分支（两次 matvec）'）
+E               [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:253 不含 'L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm'（实际是 'n = len(f_hz)'）
+E               [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:261 不含 'p_out_w[i] = ('（实际是 'elif df_thz < _RAMAN_FLOOR_THZ:'）
+E               [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:263 不含 '* np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)'（实际是 'peak_g = cr_w_m_hz * 13.2e12'）
+E               [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:264 不含 '* p_total_in'（实际是 'value = peak_g * (_RAMAN_FLOOR_THZ - df_thz) / (_RAMAN_FLOOR_THZ - _RAMAN_LINEAR_LIMIT_THZ)'）
+E               [J1] p1_eq22_preemphasis: src/network_nlo_eval/models/numba_kernels.py:259 不含 'np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f)'（实际是 '# 线性增长区'）
+E               [J1] p1_eq23_nli_total: src/network_nlo_eval/models/isrs_gn.py:722 不含 'symbol_rate_hz=self.channel_bandwidth_hz_channels,'（实际是 '# 而不是 `symbol_rate_hz_channels`，因为后者在默认档下与它**逐位'）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:319 不含 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)'（实际是 'gain = 0.0'）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:326 不含 '(4 / 9)'（实际是 'def _calc_dp_dz_matvec('）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:329 不含 '(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)'（实际是 '"""去分支的 dP/dz：两次 matvec 取代逐对 if。'）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:333 不含 'asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))'（实际是 '与 `_calc_dp_dz` 相比没有改变数学式，只把逐对分支换成 BLAS dot；因此这是'）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:334 不含 'asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))'（实际是 'FG-4c GPU/batch 化的形状（整块矩阵乘向量，无数据相关的控制流）。'）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:336 不含 'term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1'（实际是 'gain_term = g_gain @ p'）
+E               [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:455 不含 'phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)'（实际是 'df_grid_thz: NDArrayFloat,'）
+E               [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:381 不含 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)'（实际是 'p_in_w: NDArrayFloat,'）
+E               [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:387 不含 'pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp'（实际是 ') -> NDArrayFloat:'）
+E               [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:389 不含 'atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)'（实际是 ''）
+E               [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:390 不含 'atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))'（实际是 'RK4 循环与冻结函数逐步一致，唯一差别是 4 次子调用换成 matvec 版本。'）
+E               [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:392 不含 'term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1'（实际是 '"""'）
+E               [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:486 不含 '(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))'（实际是 'for k in range(n):'）
+E               [J1] p1_eq31_t_factor: src/network_nlo_eval/models/numba_kernels.py:641 不含 't_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2'（实际是 '_G_CACHE[key] = (cached[0], g_gain, g_loss)'）
+E               [J1] p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1027 不含 'total_noise = total_spm + total_xpm + total_ase'（实际是 'if blocked:'）
+E               [J1] p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1030 不含 'snr[active] = 10 * np.log10(power[active] / total_noise[active])'（实际是 'total_noise = total_spm + total_xpm + total_ase'）
+E               [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:435 不含 'gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))'（实际是 'self.ref_fiber_config.effective_area_um2_ref,'）
+E               [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:440 不含 'gain *= 10 ** (ripple / 10)'（实际是 '# 噪声系数 (线性)'）
+E               [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:444 不含 's2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum('（实际是 '# 简化：在每个跨段的中心波长处计算 beta2 和 beta3，或使用参考波长'）
+E               [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:445 不含 'gain - 1, 0'（实际是 '# 这里使用参考波长处的 D 和 S 来计算'）
+E               [J1] p1_eq34_ase_dead_kernel: src/network_nlo_eval/models/isrs_gn.py:704 不含 'p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit('（实际是 '# 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。'）
+E               [J1] p1_nf_per_band: src/network_nlo_eval/models/numba_kernels.py:529 不含 'nf_lin[i] = _db_to_lin(6.0)'（实际是 '# 能量守恒转移：损耗与增益呈频率比'）
+E               [J1] p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:433 不含 'gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)'（实际是 'self.a_eff_m2_channels = _calc_aeff_dynamic('）
+E               [J1] p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:445 不含 'gain - 1, 0'（实际是 '# 这里使用参考波长处的 D 和 S 来计算'）
+E               [J1] p2_eq01_snr_inv: src/network_nlo_eval/models/isrs_gn.py:1027 不含 'total_noise = total_spm + total_xpm + total_ase'（实际是 'if blocked:'）
+E               [J1] eng_span_noise_accumulation: src/network_nlo_eval/models/isrs_gn.py:993 不含 'total_spm *= transfer'（实际是 'power, span_km * 1e3, edfa, n_effective_spans=1'）
+E               [J1] eng_booster_ase: src/network_nlo_eval/models/isrs_gn.py:763 不含 ') * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64) * (terms.loss - 1.0)'（实际是 'if terms.equalize:'）
+E               [J1] eng_filtering_penalty: src/network_nlo_eval/models/isrs_gn.py:1020 不含 'total_spm *= terms.filtering_penalty'（实际是 'total_spm /= terms.loss'）
+E               [J1] eng_numeric_guards: src/network_nlo_eval/models/isrs_gn.py:430 不含 's2_ase = np.zeros_like(power_in_w)'（实际是 ')'）
+E               [J1] eng_blocked_channels: src/network_nlo_eval/models/isrs_gn.py:1025 不含 'power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0'（实际是 'total_ase *= terms.filtering_penalty'）
+E             
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...m[blocked] = total_xpm[blocked] = total_ase[blocked] = 0\'（实际是 \'total_ase *= terms.filtering_penalty\'）\n', stderr='').returncode
+
+tests/test_ode3_flexgrid_sync.py:376: AssertionError
+_______________ test_tools_check_reproduces[ode_formula_map.py] ________________
+
+script = 'ode_formula_map.py'
+
+    @pytest.mark.parametrize(
+        "script", ["ode_formula_map.py", "ode_verdicts.py", "ode_compare.py"]
+    )
+    def test_tools_check_reproduces(script):
+        proc = subprocess.run(
+            [PY, str(REPO / "tools" / script), "--check"],
+            capture_output=True, text=True, cwd=str(REPO),
+            env={"PYTHONPATH": str(REPO / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin"},
+            timeout=3600,
+        )
+>       assert proc.returncode == 0, f"{script} --check 失败:\n{proc.stdout}\n{proc.stderr}"
+E       AssertionError: ode_formula_map.py --check 失败:
+E         FAIL: 40 条
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:213 不含 'r_f[i] = p_total_w * fi'（实际是 'for i in range(N):'）
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:215 不含 'r_f[i] = 0.0'（实际是 'p[i] = 0.0'）
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:218 不含 '0.5 * (f_M_hz**2 - delta_f_co_hz**2)'（实际是 ''）
+E           [J1] p1_eq18_raman_profile: src/network_nlo_eval/models/numba_kernels.py:221 不含 '0.5 * (f_m_hz**2 - delta_f_co_hz**2)'（实际是 '# 2b. FG-4a: G 矩阵的提升（缓存）与去分支（两次 matvec）'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:253 不含 'L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm'（实际是 'n = len(f_hz)'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:261 不含 'p_out_w[i] = ('（实际是 'elif df_thz < _RAMAN_FLOOR_THZ:'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:263 不含 '* np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)'（实际是 'peak_g = cr_w_m_hz * 13.2e12'）
+E           [J1] p1_eq20_span_power: src/network_nlo_eval/models/numba_kernels.py:264 不含 '* p_total_in'（实际是 'value = peak_g * (_RAMAN_FLOOR_THZ - df_thz) / (_RAMAN_FLOOR_THZ - _RAMAN_LINEAR_LIMIT_THZ)'）
+E           [J1] p1_eq22_preemphasis: src/network_nlo_eval/models/numba_kernels.py:259 不含 'np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f)'（实际是 '# 线性增长区'）
+E           [J1] p1_eq23_nli_total: src/network_nlo_eval/models/isrs_gn.py:722 不含 'symbol_rate_hz=self.channel_bandwidth_hz_channels,'（实际是 '# 而不是 `symbol_rate_hz_channels`，因为后者在默认档下与它**逐位'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:319 不含 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)'（实际是 'gain = 0.0'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:326 不含 '(4 / 9)'（实际是 'def _calc_dp_dz_matvec('）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:329 不含 '(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)'（实际是 '"""去分支的 dP/dz：两次 matvec 取代逐对 if。'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:333 不含 'asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))'（实际是 '与 `_calc_dp_dz` 相比没有改变数学式，只把逐对分支换成 BLAS dot；因此这是'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:334 不含 'asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))'（实际是 'FG-4c GPU/batch 化的形状（整块矩阵乘向量，无数据相关的控制流）。'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:336 不含 'term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1'（实际是 'gain_term = g_gain @ p'）
+E           [J1] p1_eq29_spm: src/network_nlo_eval/models/numba_kernels.py:455 不含 'phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)'（实际是 'df_grid_thz: NDArrayFloat,'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:381 不含 'term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)'（实际是 'p_in_w: NDArrayFloat,'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:387 不含 'pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp'（实际是 ') -> NDArrayFloat:'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:389 不含 'atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)'（实际是 ''）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:390 不含 'atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))'（实际是 'RK4 循环与冻结函数逐步一致，唯一差别是 4 次子调用换成 matvec 版本。'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:392 不含 'term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1'（实际是 '"""'）
+E           [J1] p1_eq30_xpm: src/network_nlo_eval/models/numba_kernels.py:486 不含 '(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))'（实际是 'for k in range(n):'）
+E           [J1] p1_eq31_t_factor: src/network_nlo_eval/models/numba_kernels.py:641 不含 't_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2'（实际是 '_G_CACHE[key] = (cached[0], g_gain, g_loss)'）
+E           [J1] p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1027 不含 'total_noise = total_spm + total_xpm + total_ase'（实际是 'if blocked:'）
+E           [J1] p1_eq33_snr: src/network_nlo_eval/models/isrs_gn.py:1030 不含 'snr[active] = 10 * np.log10(power[active] / total_noise[active])'（实际是 'total_noise = total_spm + total_xpm + total_ase'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:435 不含 'gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))'（实际是 'self.ref_fiber_config.effective_area_um2_ref,'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:440 不含 'gain *= 10 ** (ripple / 10)'（实际是 '# 噪声系数 (线性)'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:444 不含 's2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum('（实际是 '# 简化：在每个跨段的中心波长处计算 beta2 和 beta3，或使用参考波长'）
+E           [J1] p1_eq34_ase: src/network_nlo_eval/models/isrs_gn.py:445 不含 'gain - 1, 0'（实际是 '# 这里使用参考波长处的 D 和 S 来计算'）
+E           [J1] p1_eq34_ase_dead_kernel: src/network_nlo_eval/models/isrs_gn.py:704 不含 'p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit('（实际是 '# 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。'）
+E           [J1] p1_nf_per_band: src/network_nlo_eval/models/numba_kernels.py:529 不含 'nf_lin[i] = _db_to_lin(6.0)'（实际是 '# 能量守恒转移：损耗与增益呈频率比'）
+E           [J1] p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:433 不含 'gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)'（实际是 'self.a_eff_m2_channels = _calc_aeff_dynamic('）
+E           [J1] p2_eq05_lumped_ase: src/network_nlo_eval/models/isrs_gn.py:445 不含 'gain - 1, 0'（实际是 '# 这里使用参考波长处的 D 和 S 来计算'）
+E           [J1] p2_eq01_snr_inv: src/network_nlo_eval/models/isrs_gn.py:1027 不含 'total_noise = total_spm + total_xpm + total_ase'（实际是 'if blocked:'）
+E           [J1] eng_span_noise_accumulation: src/network_nlo_eval/models/isrs_gn.py:993 不含 'total_spm *= transfer'（实际是 'power, span_km * 1e3, edfa, n_effective_spans=1'）
+E           [J1] eng_booster_ase: src/network_nlo_eval/models/isrs_gn.py:763 不含 ') * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64) * (terms.loss - 1.0)'（实际是 'if terms.equalize:'）
+E           [J1] eng_filtering_penalty: src/network_nlo_eval/models/isrs_gn.py:1020 不含 'total_spm *= terms.filtering_penalty'（实际是 'total_spm /= terms.loss'）
+E           [J1] eng_numeric_guards: src/network_nlo_eval/models/isrs_gn.py:430 不含 's2_ase = np.zeros_like(power_in_w)'（实际是 ')'）
+E           [J1] eng_blocked_channels: src/network_nlo_eval/models/isrs_gn.py:1025 不含 'power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0'（实际是 'total_ase *= terms.filtering_penalty'）
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...m[blocked] = total_xpm[blocked] = total_ase[blocked] = 0\'（实际是 \'total_ase *= terms.filtering_penalty\'）\n', stderr='').returncode
+
+tests/test_ode_dev.py:277: AssertionError
+_________________ test_tools_check_reproduces[ode_compare.py] __________________
+
+script = 'ode_compare.py'
+
+    @pytest.mark.parametrize(
+        "script", ["ode_formula_map.py", "ode_verdicts.py", "ode_compare.py"]
+    )
+    def test_tools_check_reproduces(script):
+        proc = subprocess.run(
+            [PY, str(REPO / "tools" / script), "--check"],
+            capture_output=True, text=True, cwd=str(REPO),
+            env={"PYTHONPATH": str(REPO / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin"},
+            timeout=3600,
+        )
+>       assert proc.returncode == 0, f"{script} --check 失败:\n{proc.stdout}\n{proc.stderr}"
+E       AssertionError: ode_compare.py --check 失败:
+E         FAIL ode_dev_diff_vs_ecz.json: 复算结果与落盘不一致
+E         FAIL ode_dev_diff_vs_fu4.json: 复算结果与落盘不一致
+E         
+E           FATAL ode-dev: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E           FATAL ecz-dev: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E           FATAL wp/fg-uwb-fid: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...in <module>\n    import fu4_scenarios_legacy as fs\nModuleNotFoundError: No module named \'fu4_scenarios_legacy\'\n\n').returncode
+
+tests/test_ode_dev.py:277: AssertionError
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_fg20_none_roadm_adjudication.py:179: could not import 'physics_nlo_eval': No module named 'physics_nlo_eval'
+SKIPPED [1] tests/test_topology_physical_integration.py:82: could not import 'physics_nlo_eval': No module named 'physics_nlo_eval'
+11 failed, 578 passed, 2 skipped in 38.40s
+
+real	0m38.667s
+user	0m45.667s
+sys	0m8.151s

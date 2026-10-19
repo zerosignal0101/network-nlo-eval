@@ -8,8 +8,8 @@
     "n_engineering": 34,
     "n_physics": 3,
     "n_physics_applied": 1,
-    "n_ported_or_applied": 26,
-    "n_not_ported": 11,
+    "n_ported_or_applied": 35,
+    "n_not_ported": 2,
     "files_touched": [
       "src/network_nlo_eval/core/bands.py",
       "src/network_nlo_eval/models/isrs_gn.py",
@@ -20,7 +20,11 @@
   },
   "j5_frozen_kernel": {
     "file": "src/network_nlo_eval/models/numba_kernels.py",
-    "diff_vs_wp_base_empty": true
+    "frozen_sha256": "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205",
+    "sha256_matches": true,
+    "provenance_branch": "wp/fg-integrate",
+    "flexgrid_side_sha256_baseline": "b69563a",
+    "diff_vs_wp_base_empty": false
   },
   "segments": [
     {
@@ -128,10 +132,10 @@
       "symbol": "hz_to_nm",
       "fu4_lines": "127-143",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "只被未移植的 guard_report / sclu_span_report 使用；搬进来即死代码。",
-      "verify_absent": "def hz_to_nm(",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "只被未移植的 guard_report / sclu_span_report 使用；搬进来即死代码。★ WP-MERGE-FG-FLEX 相位守卫翻转：原「决定不搬」的前提已被本次合并合法作废——guard_report / sclu_span_report 一并进来了，hz_to_nm 不再是死代码。按通例翻成正向不变量：存在 + 只定义一次（`def hz_to_nm(` 在 bands.py 内仅 1 处定义）+ 可达（guard_report / sclu_span_report 的实际调用方）。",
+      "verify": "def hz_to_nm(",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/core/bands.py",
@@ -139,10 +143,10 @@
       "symbol": "ITU-T G.694.1 波长常数 + U_BAND_ASSUMPTIONS",
       "fu4_lines": "146-178",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "FU-2 的 S/C/L/U 波段表资产；含 4 条**假设**（U 波段 1660-1770 nm 无ITU 出处、U 段 NF 6.5 dB 无出处）。与 flexgrid 接线无关。",
-      "verify_absent": "U_BAND_ASSUMPTIONS: tuple[str, ...] = (",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "FU-2 的 S/C/L/U 波段表资产；含 4 条**假设**（U 波段 1660-1770 nm 无ITU 出处、U 段 NF 6.5 dB 无出处）。与 flexgrid 接线无关。★ WP-MERGE-FG-FLEX 相位守卫翻转：合并把 FG 侧波段表资产合法地带了进来，原「决定不搬」的前提消失。按通例翻成正向不变量：存在 + 只定义一次（`U_BAND_ASSUMPTIONS: tuple[str, ...] = (` 在 bands.py 内仅 1 处定义）+ 可达（模块级导出，tests 与 SCLU_BAND_SPECS 均引用）。那 4 条无 ITU 出处的**假设**随资产一并保留，其出处缺口由 SCLU_BAND_SPECS 的U 波段定义承接，本条不改判据口径，只改 action。",
+      "verify": "U_BAND_ASSUMPTIONS: tuple[str, ...] = (",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/core/bands.py",
@@ -150,10 +154,10 @@
       "symbol": "_u_spec / CL_BAND_SPECS / CLS_BAND_SPECS / CLU_BAND_SPECS / SCLU_BAND_SPECS",
       "fu4_lines": "297-328",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "同上，FU-2 预置波段表。本仓场景自带频段规格，故不需要预置表。",
-      "verify_absent": "SCLU_BAND_SPECS: tuple[BandSpec, ...]",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "同上，FU-2 预置波段表。本仓场景自带频段规格，故不需要预置表。★ WP-MERGE-FG-FLEX 相位守卫翻转：预置表已由合并带进来。按通例翻成正向不变量：存在 + 只定义一次（`SCLU_BAND_SPECS: tuple[BandSpec, ...]` 在 bands.py 内仅 1 处定义）+ 可达（模块级导出，sclu_span_report 与 tests 引用）。",
+      "verify": "SCLU_BAND_SPECS: tuple[BandSpec, ...]",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/core/bands.py",
@@ -161,10 +165,10 @@
       "symbol": "BandPlan.from_channels",
       "fu4_lines": "413-425",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "遗留 SpectrumGrid 粒度入口，非 flexgrid 接线所需。",
-      "verify_absent": "def from_channels(",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "遗留 SpectrumGrid 粒度入口，非 flexgrid 接线所需。★ WP-MERGE-FG-FLEX 相位守卫翻转：合并已把该入口带进来。按通例翻成正向不变量：存在 + 只定义一次（`def from_channels(` 在 bands.py 内仅 1 处定义；与 `from_connections` 是两个不同入口，锚点互不混淆）+ 可达（classmethod，由调用方按 SpectrumGrid 粒度调用）。",
+      "verify": "def from_channels(",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/core/bands.py",
@@ -172,10 +176,10 @@
       "symbol": "BandPlan.noise_figure_db_per_element / launch_power_profile_w / per_band_launch_power_w",
       "fu4_lines": "526-571",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "逐**信道**口径入口。J8 链路走逐连接口径（apply_launch_power）。noise_figure_db_per_element 还会把 BandSpec.amplifier 拉进评估口径。",
-      "verify_absent": "def noise_figure_db_per_element(",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "逐**信道**口径入口。J8 链路走逐连接口径（apply_launch_power）。noise_figure_db_per_element 还会把 BandSpec.amplifier 拉进评估口径。★ WP-MERGE-FG-FLEX 相位守卫翻转：逐信道口径的三个入口已由合并带进来，与既有的逐连接口径（apply_launch_power）并存，不是二选一。按通例翻成正向不变量：存在 + 只定义一次（`def noise_figure_db_per_element(` 在 bands.py 内仅 1 处定义）+ 可达（BandPlan 公有方法）。",
+      "verify": "def noise_figure_db_per_element(",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/core/bands.py",
@@ -183,10 +187,10 @@
       "symbol": "BandPlan.guard_report / sclu_span_report",
       "fu4_lines": "635-663, 680-728",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "FU-2 的保护间隔与 S+C+L+U 跨距口径报告，属该分支自有结论。",
-      "verify_absent": "def guard_report(",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "FU-2 的保护间隔与 S+C+L+U 跨距口径报告，属该分支自有结论。★ WP-MERGE-FG-FLEX 相位守卫翻转：两份报告已由合并带进来。按通例翻成正向不变量：存在 + 只定义一次（`def guard_report(` 在 bands.py 内仅 1 处定义；`sclu_span_report` 为模块级函数）+ 可达（两者都被 tests/ 与 hz_to_nm 的调用方实际调用）。",
+      "verify": "def guard_report(",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
@@ -228,8 +232,8 @@
       "fu4_lines": "n/a",
       "kind": "engineering",
       "action": "applied_new",
-      "rationale": "★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。",
-      "verify": "self.slots_per_channel,\n                self.channel_bandwidth_source,",
+      "rationale": "★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。⚠️ WP-MERGE-FG-FLEX：合并在透传序列里插入了 `ode_accel` / `raman_spectrum`，锚点随之改钉在 `slots_per_channel` 与 `ode_accel` 相邻的那两行上（透传事实未变，仍是同一处 `for_fiber` 调用）。",
+      "verify": "                self.slots_per_channel,\n                self.ode_accel,",
       "verified": true
     },
     {
@@ -239,14 +243,14 @@
       "fu4_lines": "1306, 1328-1330 (numba_kernels.py)",
       "kind": "physics",
       "action": "ported_adapted",
-      "rationale": "★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。",
+      "rationale": "★ 物理片段。fu4 的 _calc_span_noise_and_power_jit 接受逐连接 Rs 数组并据此算 ASE；本仓原先只吃标量，故 O2/O3 都显式拒绝（那时的裁定是『改冻结核 = 违反 J5』）。WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。⚠️ WP-MERGE-FG-FLEX：合并后的内核把 flexgrid 侧的 `b_hz_channels` 改名并入 `symbol_rate_hz`（内核侧收**一个**逐节点数组承载 P1 的 B_i），故锚点改钉在调用点 `symbol_rate_hz=self.channel_bandwidth_hz_channels` 上。**判据口径不动**：paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量；改的只是这个参数在合并后叫什么。",
       "paper_formulas": [
         "P1 (23)",
         "P1 (29)",
         "P1 (30)",
         "P1 (34)"
       ],
-      "verify": "b_hz_channels=self.channel_bandwidth_hz_channels,",
+      "verify": "symbol_rate_hz=self.channel_bandwidth_hz_channels,",
       "verified": true
     },
     {
@@ -256,7 +260,7 @@
       "fu4_lines": "n/a（fu4 用真 ODE，无此参数）",
       "kind": "physics",
       "action": "not_ported",
-      "rationale": "★ 物理片段。O2 已在 Python 侧按连接占用带算出 f_m_hz/f_M_hz，但冻结内核在核内用标量 Rs 重算二者，故该修正在本仓是**死代码**。让它生效需给内核加参数 = J5。见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。",
+      "rationale": "★ 物理片段。O2 已在 Python 侧按连接占用带算出 f_m_hz/f_M_hz，但冻结内核在核内用标量 Rs 重算二者，故该修正在本仓是**死代码**。让它生效需给内核加参数 = J5。见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。⚠️ WP-MERGE-FG-FLEX 复核结论：**未翻转**，维持 not_ported（不是留白，是有出处的复核）。锚点 `conn.centre_hz + conn.n_slots * conn.grid.slot_width_hz / 2` 确实在 isrs_gn.py 存在且只出现 1 次，但 (a) `git diff b69563a -- models/isrs_gn.py` 证明该段是 **O2 既有代码**，本次合并只在它上方加了两行注释，没有把新能力带进来——相位守卫的前提并未被推翻；(b) `f_m_hz` / `f_M_hz` 在整个 src/ 中仍**零读取方**（只有同一处 if/else 的 4 行赋值），依旧没有真正传给内核，「死代码」的结论今天仍成立。故按通例翻成 `ported` 会是假声明，不翻。翻转需要先给内核加逐连接带边参数，那需要单独的 J5 授权。",
       "verify_absent": null
     },
     {
@@ -287,10 +291,10 @@
       "symbol": "ROADMConfig.blocked_slot_set()",
       "fu4_lines": "102-111",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "实测本仓 src/ tests/ tools/ 中**零调用方**（死代码）。语义已由 isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。",
-      "verify_absent": "def blocked_slot_set(",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "实测本仓 src/ tests/ tools/ 中**零调用方**（死代码）。语义已由 isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。★ WP-MERGE-FG-FLEX 相位守卫翻转：方法已由合并带进来，且不再是死代码——tests/test_fg2_flexible_grid.py:737/743 实际调用它并断言返回值。按通例翻成正向不变量：存在 + 只定义一次（`def blocked_slot_set(` 在 elements.py 内仅 1 处定义）+ 可达（tests 直接调用）。语义仍与既有实现同源，翻转的是「本仓不存在该能力」这条相位守卫，不是判据口径。",
+      "verify": "def blocked_slot_set(",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/rwa/qot_checker.py",
@@ -364,10 +368,10 @@
       "symbol": "QoTValidator._roadm_terms",
       "fu4_lines": "80-105",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "纯重构：把既有 inline 逻辑抽成函数（PLAN §0 已断语义为零）。对 flexgrid 零价值。**故意不搬**，使 legacy 的装配算式保持逐字不变——J6 由构造即可证明，不必只靠测试反证。",
-      "verify_absent": "def _roadm_terms(",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "纯重构：把既有 inline 逻辑抽成函数（PLAN §0 已断语义为零）。对 flexgrid 零价值。**故意不搬**，使 legacy 的装配算式保持逐字不变——J6 由构造即可证明，不必只靠测试反证。★ WP-MERGE-FG-FLEX 相位守卫翻转：抽取已由合并带进来。按通例翻成正向不变量：存在 + 只定义一次（`def _roadm_terms(` 在 qot_checker.py 内仅 1 处定义；折叠逻辑的单一真源是模块级 `fold_roadm_terms`，本方法只是薄封装）+ 可达（qot_checker.py:671 的逐节点 booster 路径实际调用）。「legacy 装配算式逐字不变」这一原有判据口径不受本次翻转影响。",
+      "verify": "def _roadm_terms(",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/rwa/qot_checker.py",
@@ -375,10 +379,10 @@
       "symbol": "_H_PLANCK 常量提取",
       "fu4_lines": "17-19",
       "kind": "engineering",
-      "action": "not_ported",
-      "rationale": "纯命名提取，数值同（6.62607015e-34）。零 flexgrid 价值。",
-      "verify_absent": "_H_PLANCK",
-      "verified_absent": true
+      "action": "ported",
+      "rationale": "纯命名提取，数值同（6.62607015e-34）。零 flexgrid 价值。★ WP-MERGE-FG-FLEX 相位守卫翻转：常量提取已由合并带进来。按通例翻成正向不变量：存在 + 只定义一次（`_H_PLANCK = 6.62607015e-34` 在 qot_checker.py 内仅 1 处赋值定义；另 3 处是引用而非重复定义）+ 可达（tests/test_fg20_roadm_injection_behavior.py:50 直接 import 并断言其值）。",
+      "verify": "_H_PLANCK = 6.62607015e-34",
+      "verified": true
     },
     {
       "file": "src/network_nlo_eval/physics/qot_checker.py",
@@ -431,8 +435,7 @@
       "fu4_lines": "1-1480",
       "kind": "physics",
       "action": "not_ported",
-      "rationale": "★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。",
-      "verify_absent": null
+      "rationale": "★ J5 冻结文件（基线已推进到 WP-Q1 的 b69563a，见 WP_BASE）。两棵树在此**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。自 b69563a 起 diff 必须为空。⚠️ WP-MERGE-FG-FLEX 复核结论：**J5 已翻、本条 action 未翻**。合并确实把 fu4 的 RK4 ODE（`_calc_exact_power_profile_ode`，只定义 1 处，由同文件 :1431 实际调用）与 ode_accel 加速带进来了，因此 J5 已按通例从「相对 b69563a 的 diff 为空」翻成 sha256 绝对正向不变量（见 FROZEN_SHA256，取 FG 侧字节）。但本条 `kind == \"physics\"`：J7 的硬闸门要求任何被应用的物理片段自带非空 `paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 `paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 (23)/(29)/(30)/(34) 逐式改写（results/ode_dev_formula_map.json 里指向本文件的 P1 代码锚点现已全部匹配不上），无法诚实地给出论文公式号。故 action 暂留 not_ported，**待裁决**，不作假声明。"
     }
   ],
   "errors": []

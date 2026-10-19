@@ -270,7 +270,8 @@ class BandSpec:
         if self.low_nm >= self.high_nm:
             raise ValueError(
                 f"Band {self.name!r} must satisfy low_nm < high_nm (low_nm is the "
-                f"LONGER wavelength), got low_nm={self.low_nm} high_nm={self.high_nm}."
+                f"SHORTER wavelength, hence the HIGHER frequency), "
+                f"got low_nm={self.low_nm} high_nm={self.high_nm}."
             )
         if self.launch_power_w is not None and self.launch_power_w < 0:
             raise ValueError(

@@ -7,10 +7,30 @@
 1. **每段都有 ``kind``** —— 缺 ``kind`` 即失败；
 2. **没有 ``kind == "physics"`` 的片段被应用** —— 逐条断言（J7 硬要求）；
 3. **声明与现实一致** —— 每条 ``ported``/``applied`` 片段必须能在目标文件里
-   grep 到 ``contains`` 锚点；每条 ``not_ported`` 片段必须 grep **不到**。
+   grep 到 ``verify`` 锚点；每条 ``not_ported`` 片段的 ``verify_absent`` 必须
+   grep **不到**。
 
-第 3 条是关键：它让"我没有搬这段 FU-2 的资产"这句话变成可执行断言，而不是
+第 3 条是关键：它让"我有没有搬这段 FU-2 的资产"这句话变成可执行断言，而不是
 一句承诺。
+
+WP-MERGE-FG-FLEX 的相位守卫翻转
+--------------------------------
+
+本工具此前把三条**相位守卫**编进了代码——它们断言的是"当时决定不做某事"，而
+本次合并 ``wp/fg-integrate → flexgrid-dev`` 把那些资产**合法地**带了进来，前提
+消失。按通例，这些守卫一律**翻成正向不变量**，翻法只有一种：
+**X 存在 + X 只定义一次 + X 可达**。逐条对照：
+
+=========================  ==========================================  ==========================
+守卫（旧）                  新不变量                                     位置
+=========================  ==========================================  ==========================
+11 条片段 ``not_ported``   ``action: "ported"`` + ``verify`` 正向锚点   ``SEGMENTS``
+``git diff b69563a`` 空    ``sha256 == FROZEN_SHA256``（绝对）          ``check_frozen_kernel``
+``verify_absent`` grep 不到 ``verify`` grep 得到（``verify_absent`` 规则保留） ``--check``
+=========================  ==========================================  ==========================
+
+第 3 条里的 ``verify_absent`` 规则**本身保留**：将来若再新增"决定不移植"的片段，
+它仍然适用。
 
 用法::
 
@@ -20,6 +40,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -28,14 +49,30 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 OUT = REPO / "results" / "ode_dev_flexgrid_sync.json"
 
-#: J5 禁改文件。``--check`` 断言它相对**冻结基线** ``b69563a`` 的 diff 为空。
+#: J5 冻结内核。
 #:
-#: ⚠️ 基线推进记录：J5 最初锚在 ``46923a9``（WP-O3 起点）。WP-Q1 按 J2「论文提及且
-#: 与本仓不一致 ⇒ 改成论文」授权改动了本文件——P1 (23)/(29)/(30)/(34) 的 ``B_i`` /
-#: ``B_ℓ`` 本来就是**逐信道**量，本仓却是全局标量。改动落在提交 ``b69563a``，
-#: 故冻结基线随之推进到该提交；此后本文件继续受 J5 约束。
+#: ⚠️ 历史（原相位守卫，已作废）：J5 最初锚在 ``46923a9``（WP-O3 起点），WP-Q1 按 J2
+#: 「论文提及且与本仓不一致 ⇒ 改成论文」授权改动了本文件——P1 (23)/(29)/(30)/(34) 的
+#: ``B_i`` / ``B_ℓ`` 本来就是**逐信道**量，本仓却是全局标量。改动落在提交 ``b69563a``，
+#: 于是「相对冻结基线的 diff 为空」这条**相对**断言被顺理成章地立成了永久不变量。
 FROZEN = "src/network_nlo_eval/models/numba_kernels.py"
 WP_BASE = "b69563a"
+
+#: J5 冻结内核的**绝对**字节出处：``wp/fg-integrate @ 57c7221`` 的同名文件。
+#:
+#: ⚠️ 基线推进记录（WP-MERGE-FG-FLEX）：``numba_kernels.py`` 在两条线上各自独立演化，
+#: ``sha256`` 不同且**不可能同时成立**——
+#:   * ``b69563a`` / ``flexgrid-dev`` : ``6611c416…``（flexgrid 侧：保留 P1 解析倾斜闭式内核）
+#:   * ``wp/fg-integrate``            : ``7beece4e…``（FG 侧：RK4 ODE + NLI 张量化加速）
+#: 本次 WP-MERGE-FG-FLEX 的合并目的正是把 FG 侧并进来，原「不许碰内核」的前提已消失，
+#: 故 J5 由**相对**断言（diff 相对 ``b69563a`` 为空）翻成**绝对正向不变量**（sha256 等于
+#: 已核出处的常量）。取 FG 侧字节，**判据 V1（首要判据）** 要求合并树与 ``wp/fg-integrate``
+#: 逐位相同。
+#:
+#: 为什么必须翻而不是两条都满足：两条线的字节互斥。翻成绝对不变量还更强——它同时挡住
+#: 「被人悄悄改了一行」与「合并出第三份实现」两种情况。
+FROZEN_SHA256 = "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
+FROZEN_PROVENANCE_BRANCH = "wp/fg-integrate"
 
 B = "src/network_nlo_eval/core/bands.py"
 I = "src/network_nlo_eval/models/isrs_gn.py"
@@ -46,7 +83,11 @@ K = FROZEN
 
 # ---------------------------------------------------------------------------
 # 逐片段裁定。``kind`` 只有两种：engineering（纯接线/索引/校验）、
-# physics（触及 ASE/NLI/SRS/alpha 公式）。physics 一律 not_ported。
+# physics（触及 ASE/NLI/SRS/alpha 公式）。physics 默认 not_ported；例外必须是凭 J2
+# 「论文提及且与本仓不一致 ⇒ 改成论文」的**显式授权**，且自带非空 ``paper_formulas``。
+# ⚠️ 本闸门在 WP-MERGE-FG-FLEX 里**没有**被放宽：合并合法带进来的两条 physics 能力
+# （isrs_gn 频带边缘、整个 numba_kernels）因此仍留 not_ported 并附复核证据，见各自
+# ``rationale``。只有 engineering 片段参与了相位守卫翻转。
 # ---------------------------------------------------------------------------
 SEGMENTS: list[dict] = [
     # ================= core/bands.py（fu4 728 行 -> 本仓最小闭包）============
@@ -145,16 +186,23 @@ SEGMENTS: list[dict] = [
         "波段边界整体算反。",
         "verify": "SHORTER wavelength, hence the HIGHER frequency",
     },
-    # ---- bands.py 中刻意**不搬**的 FU-2 自有资产 ----
+    # ---- bands.py 中此前刻意**不搬**、现已由 WP-MERGE-FG-FLEX 并进来的 FU-2 自有资产 ----
+    # ⚠️ 相位守卫翻转：以下 6 条原本断言"本仓不搬 FU-2 资产"，本次合并把该能力合法地
+    # 带进来了，故一律翻成正向不变量——存在 + 只定义一次（`verify` 锚点在 bands.py 内
+    # 各只出现 1 次）+ 可达。
     {
         "file": B,
         "origin": "wp/fg-uwb-fid@a233002 core/bands.py",
         "symbol": "hz_to_nm",
         "fu4_lines": "127-143",
         "kind": "engineering",
-        "action": "not_ported",
-        "rationale": "只被未移植的 guard_report / sclu_span_report 使用；搬进来即死代码。",
-        "verify_absent": "def hz_to_nm(",
+        "action": "ported",
+        "rationale": "只被未移植的 guard_report / sclu_span_report 使用；搬进来即死代码。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：原「决定不搬」的前提已被本次合并合法作废——"
+        "guard_report / sclu_span_report 一并进来了，hz_to_nm 不再是死代码。按通例翻成"
+        "正向不变量：存在 + 只定义一次（`def hz_to_nm(` 在 bands.py 内仅 1 处定义）"
+        "+ 可达（guard_report / sclu_span_report 的实际调用方）。",
+        "verify": "def hz_to_nm(",
     },
     {
         "file": B,
@@ -162,10 +210,16 @@ SEGMENTS: list[dict] = [
         "symbol": "ITU-T G.694.1 波长常数 + U_BAND_ASSUMPTIONS",
         "fu4_lines": "146-178",
         "kind": "engineering",
-        "action": "not_ported",
+        "action": "ported",
         "rationale": "FU-2 的 S/C/L/U 波段表资产；含 4 条**假设**（U 波段 1660-1770 nm 无"
-        "ITU 出处、U 段 NF 6.5 dB 无出处）。与 flexgrid 接线无关。",
-        "verify_absent": "U_BAND_ASSUMPTIONS: tuple[str, ...] = (",
+        "ITU 出处、U 段 NF 6.5 dB 无出处）。与 flexgrid 接线无关。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：合并把 FG 侧波段表资产合法地带了进来，"
+        "原「决定不搬」的前提消失。按通例翻成正向不变量：存在 + 只定义一次"
+        "（`U_BAND_ASSUMPTIONS: tuple[str, ...] = (` 在 bands.py 内仅 1 处定义）"
+        "+ 可达（模块级导出，tests 与 SCLU_BAND_SPECS 均引用）。"
+        "那 4 条无 ITU 出处的**假设**随资产一并保留，其出处缺口由 SCLU_BAND_SPECS 的"
+        "U 波段定义承接，本条不改判据口径，只改 action。",
+        "verify": "U_BAND_ASSUMPTIONS: tuple[str, ...] = (",
     },
     {
         "file": B,
@@ -173,9 +227,12 @@ SEGMENTS: list[dict] = [
         "symbol": "_u_spec / CL_BAND_SPECS / CLS_BAND_SPECS / CLU_BAND_SPECS / SCLU_BAND_SPECS",
         "fu4_lines": "297-328",
         "kind": "engineering",
-        "action": "not_ported",
-        "rationale": "同上，FU-2 预置波段表。本仓场景自带频段规格，故不需要预置表。",
-        "verify_absent": "SCLU_BAND_SPECS: tuple[BandSpec, ...]",
+        "action": "ported",
+        "rationale": "同上，FU-2 预置波段表。本仓场景自带频段规格，故不需要预置表。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：预置表已由合并带进来。按通例翻成正向不变量："
+        "存在 + 只定义一次（`SCLU_BAND_SPECS: tuple[BandSpec, ...]` 在 bands.py 内仅 1 处"
+        "定义）+ 可达（模块级导出，sclu_span_report 与 tests 引用）。",
+        "verify": "SCLU_BAND_SPECS: tuple[BandSpec, ...]",
     },
     {
         "file": B,
@@ -183,9 +240,13 @@ SEGMENTS: list[dict] = [
         "symbol": "BandPlan.from_channels",
         "fu4_lines": "413-425",
         "kind": "engineering",
-        "action": "not_ported",
-        "rationale": "遗留 SpectrumGrid 粒度入口，非 flexgrid 接线所需。",
-        "verify_absent": "def from_channels(",
+        "action": "ported",
+        "rationale": "遗留 SpectrumGrid 粒度入口，非 flexgrid 接线所需。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：合并已把该入口带进来。按通例翻成正向不变量："
+        "存在 + 只定义一次（`def from_channels(` 在 bands.py 内仅 1 处定义；与 "
+        "`from_connections` 是两个不同入口，锚点互不混淆）+ 可达（classmethod，"
+        "由调用方按 SpectrumGrid 粒度调用）。",
+        "verify": "def from_channels(",
     },
     {
         "file": B,
@@ -194,10 +255,14 @@ SEGMENTS: list[dict] = [
         "per_band_launch_power_w",
         "fu4_lines": "526-571",
         "kind": "engineering",
-        "action": "not_ported",
+        "action": "ported",
         "rationale": "逐**信道**口径入口。J8 链路走逐连接口径（apply_launch_power）。"
-        "noise_figure_db_per_element 还会把 BandSpec.amplifier 拉进评估口径。",
-        "verify_absent": "def noise_figure_db_per_element(",
+        "noise_figure_db_per_element 还会把 BandSpec.amplifier 拉进评估口径。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：逐信道口径的三个入口已由合并带进来，"
+        "与既有的逐连接口径（apply_launch_power）并存，不是二选一。按通例翻成正向不变量："
+        "存在 + 只定义一次（`def noise_figure_db_per_element(` 在 bands.py 内仅 1 处定义）"
+        "+ 可达（BandPlan 公有方法）。",
+        "verify": "def noise_figure_db_per_element(",
     },
     {
         "file": B,
@@ -205,9 +270,13 @@ SEGMENTS: list[dict] = [
         "symbol": "BandPlan.guard_report / sclu_span_report",
         "fu4_lines": "635-663, 680-728",
         "kind": "engineering",
-        "action": "not_ported",
-        "rationale": "FU-2 的保护间隔与 S+C+L+U 跨距口径报告，属该分支自有结论。",
-        "verify_absent": "def guard_report(",
+        "action": "ported",
+        "rationale": "FU-2 的保护间隔与 S+C+L+U 跨距口径报告，属该分支自有结论。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：两份报告已由合并带进来。按通例翻成正向不变量："
+        "存在 + 只定义一次（`def guard_report(` 在 bands.py 内仅 1 处定义；"
+        "`sclu_span_report` 为模块级函数）+ 可达（两者都被 tests/ 与 hz_to_nm 的调用方"
+        "实际调用）。",
+        "verify": "def guard_report(",
     },
     # ================= models/isrs_gn.py =================
     {
@@ -253,8 +322,11 @@ SEGMENTS: list[dict] = [
         "action": "applied_new",
         "rationale": "★ **bug 修复**：O2 移植的 for_fiber 只传 (grid, fiber, Rs)，逐连接模式下"
         "子评估器会退回遗留分支并读 FlexibleGrid.wavelengths（不存在）→ AttributeError。"
-        "J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。",
-        "verify": "self.slots_per_channel,\n                self.channel_bandwidth_source,",
+        "J8 链路必经 for_fiber，不修则端到端跑不起来。遗留模式三者皆为默认值，行为不变。"
+        "⚠️ WP-MERGE-FG-FLEX：合并在透传序列里插入了 `ode_accel` / `raman_spectrum`，"
+        "锚点随之改钉在 `slots_per_channel` 与 `ode_accel` 相邻的那两行上（透传事实未变，"
+        "仍是同一处 `for_fiber` 调用）。",
+        "verify": "                self.slots_per_channel,\n                self.ode_accel,",
     },
     {
         "file": I,
@@ -268,9 +340,14 @@ SEGMENTS: list[dict] = [
         "WP-Q1 按 J2 授权改动冻结核：P1 (23)/(29)/(30)/(34) 的 B_i / B_l 本来就是逐信道量。"
         "落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，"
         "由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。"
-        "未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。",
+        "未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。"
+        "⚠️ WP-MERGE-FG-FLEX：合并后的内核把 flexgrid 侧的 `b_hz_channels` 改名并入 "
+        "`symbol_rate_hz`（内核侧收**一个**逐节点数组承载 P1 的 B_i），故锚点改钉在"
+        "调用点 `symbol_rate_hz=self.channel_bandwidth_hz_channels` 上。**判据口径不动**："
+        "paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量；"
+        "改的只是这个参数在合并后叫什么。",
         "paper_formulas": ["P1 (23)", "P1 (29)", "P1 (30)", "P1 (34)"],
-        "verify": "b_hz_channels=self.channel_bandwidth_hz_channels,",
+        "verify": "symbol_rate_hz=self.channel_bandwidth_hz_channels,",
     },
     {
         "file": I,
@@ -281,7 +358,14 @@ SEGMENTS: list[dict] = [
         "action": "not_ported",
         "rationale": "★ 物理片段。O2 已在 Python 侧按连接占用带算出 f_m_hz/f_M_hz，但冻结内核"
         "在核内用标量 Rs 重算二者，故该修正在本仓是**死代码**。让它生效需给内核加参数 = J5。"
-        "见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。",
+        "见 e2e 的 known_limitations.srs_band_edges_still_scalar_rs。"
+        "⚠️ WP-MERGE-FG-FLEX 复核结论：**未翻转**，维持 not_ported（不是留白，是有出处的复核）。"
+        "锚点 `conn.centre_hz + conn.n_slots * conn.grid.slot_width_hz / 2` 确实在 isrs_gn.py "
+        "存在且只出现 1 次，但 (a) `git diff b69563a -- models/isrs_gn.py` 证明该段是 **O2 既有"
+        "代码**，本次合并只在它上方加了两行注释，没有把新能力带进来——相位守卫的前提并未被推翻；"
+        "(b) `f_m_hz` / `f_M_hz` 在整个 src/ 中仍**零读取方**（只有同一处 if/else 的 4 行赋值），"
+        "依旧没有真正传给内核，「死代码」的结论今天仍成立。故按通例翻成 `ported` 会是假声明，"
+        "不翻。翻转需要先给内核加逐连接带边参数，那需要单独的 J5 授权。",
         "verify_absent": None,
     },
     # ================= network/elements.py =================
@@ -311,10 +395,15 @@ SEGMENTS: list[dict] = [
         "symbol": "ROADMConfig.blocked_slot_set()",
         "fu4_lines": "102-111",
         "kind": "engineering",
-        "action": "not_ported",
+        "action": "ported",
         "rationale": "实测本仓 src/ tests/ tools/ 中**零调用方**（死代码）。语义已由 "
-        "isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。",
-        "verify_absent": "def blocked_slot_set(",
+        "isrs_gn.roadm_blocks_node 与 slots.resolve_blocked_slots 覆盖。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：方法已由合并带进来，且不再是死代码——"
+        "tests/test_fg2_flexible_grid.py:737/743 实际调用它并断言返回值。按通例翻成正向不变量："
+        "存在 + 只定义一次（`def blocked_slot_set(` 在 elements.py 内仅 1 处定义）"
+        "+ 可达（tests 直接调用）。语义仍与既有实现同源，翻转的是"
+        "「本仓不存在该能力」这条相位守卫，不是判据口径。",
+        "verify": "def blocked_slot_set(",
     },
     # ================= rwa/qot_checker.py =================
     {
@@ -390,11 +479,16 @@ SEGMENTS: list[dict] = [
         "symbol": "QoTValidator._roadm_terms",
         "fu4_lines": "80-105",
         "kind": "engineering",
-        "action": "not_ported",
+        "action": "ported",
         "rationale": "纯重构：把既有 inline 逻辑抽成函数（PLAN §0 已断语义为零）。对 flexgrid "
         "零价值。**故意不搬**，使 legacy 的装配算式保持逐字不变——J6 由构造即可证明，"
-        "不必只靠测试反证。",
-        "verify_absent": "def _roadm_terms(",
+        "不必只靠测试反证。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：抽取已由合并带进来。按通例翻成正向不变量："
+        "存在 + 只定义一次（`def _roadm_terms(` 在 qot_checker.py 内仅 1 处定义；"
+        "折叠逻辑的单一真源是模块级 `fold_roadm_terms`，本方法只是薄封装）"
+        "+ 可达（qot_checker.py:671 的逐节点 booster 路径实际调用）。"
+        "「legacy 装配算式逐字不变」这一原有判据口径不受本次翻转影响。",
+        "verify": "def _roadm_terms(",
     },
     {
         "file": R,
@@ -402,9 +496,13 @@ SEGMENTS: list[dict] = [
         "symbol": "_H_PLANCK 常量提取",
         "fu4_lines": "17-19",
         "kind": "engineering",
-        "action": "not_ported",
-        "rationale": "纯命名提取，数值同（6.62607015e-34）。零 flexgrid 价值。",
-        "verify_absent": "_H_PLANCK",
+        "action": "ported",
+        "rationale": "纯命名提取，数值同（6.62607015e-34）。零 flexgrid 价值。"
+        "★ WP-MERGE-FG-FLEX 相位守卫翻转：常量提取已由合并带进来。按通例翻成正向不变量："
+        "存在 + 只定义一次（`_H_PLANCK = 6.62607015e-34` 在 qot_checker.py 内仅 1 处"
+        "赋值定义；另 3 处是引用而非重复定义）+ 可达"
+        "（tests/test_fg20_roadm_injection_behavior.py:50 直接 import 并断言其值）。",
+        "verify": "_H_PLANCK = 6.62607015e-34",
     },
     # ================= physics/qot_checker.py =================
     {
@@ -462,14 +560,36 @@ SEGMENTS: list[dict] = [
         "**不是同一个物理模型**：fu4 是 RK4 数值传播，本仓是 P1 的闭式 ECZ GN 模型"
         "（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。"
         "唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。"
-        "自 b69563a 起 diff 必须为空。",
-        "verify_absent": None,
+        "自 b69563a 起 diff 必须为空。"
+        "⚠️ WP-MERGE-FG-FLEX 复核结论：**J5 已翻、本条 action 未翻**。合并确实把 fu4 的 RK4 "
+        "ODE（`_calc_exact_power_profile_ode`，只定义 1 处，由同文件 :1431 实际调用）与 "
+        "ode_accel 加速带进来了，因此 J5 已按通例从「相对 b69563a 的 diff 为空」翻成 sha256 "
+        "绝对正向不变量（见 FROZEN_SHA256，取 FG 侧字节）。"
+        "但本条 `kind == \"physics\"`：J7 的硬闸门要求任何被应用的物理片段自带非空 "
+        "`paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 "
+        "`paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 "
+        "(23)/(29)/(30)/(34) 逐式改写（results/ode_dev_formula_map.json 里指向本文件的 "
+        "P1 代码锚点现已全部匹配不上），无法诚实地给出论文公式号。故 action 暂留 "
+        "not_ported，**待裁决**，不作假声明。",
     },
 ]
 
 
+def file_sha256(rel_path: str) -> str:
+    """返回目标文件的 sha256；文件缺失时返回空串。"""
+    path = REPO / rel_path
+    if not path.is_file():
+        return ""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def git_diff_empty(rel_path: str) -> tuple[bool, str]:
-    """断言 ``rel_path`` 相对本 WP 起点无 diff（J5 守卫）。"""
+    """断言 ``rel_path`` 相对 ``WP_BASE`` 无 diff。
+
+    ⚠️ 这条**相对**断言在 WP-MERGE-FG-FLEX 里不再是 J5 守卫本身（守卫已翻成
+    :data:`FROZEN_SHA256` 的绝对不变量），只作为 provenance 证据留档：两条线的字节
+    互斥，相对基线的 diff 不可能为空，但它记录了"相对 flexgrid-dev 侧究竟动了多少"。
+    """
     proc = subprocess.run(
         ["git", "diff", WP_BASE, "--", rel_path],
         capture_output=True,
@@ -509,20 +629,38 @@ def main() -> int:
                 errs.append(
                     f"[J7] physics 片段被应用且未给出 paper_formulas 授权: {seg['file']}::{seg['symbol']}"
                 )
-        # 声明与现实一致
-        if seg.get("verify"):
-            if seg["verify"] not in text:
-                errs.append(f"[J7] {seg['file']} 缺 {seg['symbol']} 的锚点 {seg['verify']!r}")
-            rec["verified"] = True
+        # 声明与现实一致（WP-MERGE-FG-FLEX 翻转后的口径）：
+        #   * 已应用片段（action != not_ported）→ ``verify`` 必须在源码里 grep **到**；
+        #   * 未移植片段（action == not_ported）→ ``verify_absent`` 必须 grep **不到**。
+        # 后半条规则**本身保留**：将来若再新增"决定不移植"的片段，它仍然适用。
+        if seg.get("action") != "not_ported":
+            anchor = seg.get("verify")
+            if not anchor:
+                errs.append(
+                    f"[J7] {seg['file']}::{seg['symbol']} 已应用却无 verify 正向锚点"
+                )
+            elif anchor not in text:
+                errs.append(f"[J7] {seg['file']} 缺 {seg['symbol']} 的锚点 {anchor!r}")
+            else:
+                rec["verified"] = True
         elif seg.get("verify_absent"):
             if seg["verify_absent"] in text:
-                errs.append(f"[J7] {seg['file']} 竟含声称未移植的 {seg['verify_absent']!r}")
-            rec["verified_absent"] = True
+                errs.append(
+                    f"[J7] {seg['file']} 竟含声称未移植的 {seg['verify_absent']!r}"
+                )
+            else:
+                rec["verified_absent"] = True
         records.append(rec)
 
-    frozen_ok, frozen_diff = git_diff_empty(FROZEN)
+    frozen_sha = file_sha256(FROZEN)
+    frozen_ok = frozen_sha == FROZEN_SHA256
     if not frozen_ok:
-        errs.append(f"[J5] {FROZEN} 相对 {WP_BASE} 的 diff 非空！")
+        errs.append(
+            f"[J5] {FROZEN} 的 sha256 = {frozen_sha or '<文件缺失>'}，"
+            f"不等于已核出处 {FROZEN_PROVENANCE_BRANCH} 的 {FROZEN_SHA256}"
+        )
+    # provenance 证据（非守卫）：相对 flexgrid-dev 侧基线的 diff 大小。
+    diff_empty, _diff = git_diff_empty(FROZEN)
 
     n_physics = sum(1 for s in SEGMENTS if s["kind"] == "physics")
     n_applied_physics = sum(1 for s in SEGMENTS if s["kind"] == "physics" and s["action"] != "not_ported")
@@ -540,7 +678,15 @@ def main() -> int:
             "n_not_ported": sum(1 for s in SEGMENTS if s["action"] == "not_ported"),
             "files_touched": sorted({s["file"] for s in SEGMENTS if s["action"] != "not_ported"}),
         },
-        "j5_frozen_kernel": {"file": FROZEN, "diff_vs_wp_base_empty": frozen_ok},
+        "j5_frozen_kernel": {
+            "file": FROZEN,
+            "frozen_sha256": FROZEN_SHA256,
+            "sha256_matches": frozen_ok,
+            "provenance_branch": FROZEN_PROVENANCE_BRANCH,
+            "flexgrid_side_sha256_baseline": WP_BASE,
+            # provenance 证据，不是守卫：相对 flexgrid-dev 侧基线的 diff 不可能为空
+            "diff_vs_wp_base_empty": diff_empty,
+        },
         "segments": records,
         "errors": errs,
     }
@@ -551,7 +697,8 @@ def main() -> int:
         print(f"wrote {OUT.relative_to(REPO)}")
         print(f"  片段 {len(SEGMENTS)} 条：engineering {doc['summary']['n_engineering']} / "
               f"physics {n_physics}；physics 被应用 {n_applied_physics} 条")
-        print(f"  J5 {FROZEN} diff 为空: {frozen_ok}")
+        print(f"  J5 {FROZEN} sha256 == {FROZEN_PROVENANCE_BRANCH} 的冻结字节: {frozen_ok}"
+              f"（{frozen_sha}）")
 
     if args.check:
         if not OUT.is_file():
@@ -567,7 +714,7 @@ def main() -> int:
                 print(f"  {e}")
             return 1
         print(f"OK  J7 复算通过：{len(SEGMENTS)} 段全有 kind，physics 应用数 = "
-              f"{n_applied_physics}，J5 diff 为空")
+              f"{n_applied_physics}，J5 sha256 == {FROZEN_SHA256[:12]}…（{FROZEN_PROVENANCE_BRANCH}）")
         return 0
 
     if errs:

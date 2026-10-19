@@ -341,3 +341,124 @@ class ConnectionSpec:
     def is_occupied(self) -> bool:
         """是否有发射功率（launch_power_w > 0）。未占用连接仍占数组槽位。"""
         return self.launch_power_w > 0
+
+
+# ---------------------------------------------------------------------------
+# §2.3 数据模型边界：业务层 → 物理层的**显式**转换
+# ---------------------------------------------------------------------------
+def slot_window_from_connection(spec: ConnectionSpec) -> tuple[int, int]:
+    """物理层连接 → 业务层槽窗口 ``(first_slot, n_slots)``。
+
+    这是 :func:`connection_spec_from_allocation` 的**逆方向**读法。两套「灵活栅格」
+    表示的边界（WP-MERGE-FG-FLEX 任务书 §2.3）：
+
+    ==========================  ==================================  ================
+    层                          拥有什么                               归属
+    ==========================  ==================================  ================
+    业务层                      到达 / 分配 / 释放的状态机            flexgrid（WP-M1）
+                              ``first_slot`` / ``n_slots``
+    物理层                      一条连接的频谱占位与速率              FG（FG-2）
+                              ``modulation`` / ``symbol_rate_hz`` /
+                              ``bit_rate_bps`` / ``roll_off``
+    ==========================  ==================================  ================
+
+    两边**都**要留，但**同一份状态不许在两处各维护一份**：槽窗口的真源在业务层，
+    物理层的 ``ConnectionSpec`` 由下面的转换函数**派生**。本函数只做投影，不缓存、
+    不写回，因此两侧不可能漂移。
+
+    Args:
+        spec: 物理层连接。
+
+    Returns:
+        ``(first_slot, n_slots)``——与业务层 ``AllocatedService`` 同名同义的槽窗口。
+    """
+    return (int(spec.first_slot), int(spec.n_slots))
+
+
+def connection_spec_from_allocation(
+    service: object,
+    grid: FlexibleGrid,
+    *,
+    modulation: str = "QPSK",
+    roll_off: float = 0.0,
+    symbol_rate_hz: float | None = None,
+    connection_id: int | None = None,
+) -> ConnectionSpec:
+    """业务层分配结果 → 物理层 :class:`ConnectionSpec`（两套灵活栅格表示的**唯一**转换口）。
+
+    真源分工（**禁止双写状态**）：
+
+    * ``first_slot`` / ``n_slots`` / ``bit_rate_gbps`` / ``launch_power_w``
+      **只从业务层对象读**，本函数不重新计算、也不缓存。
+    * ``modulation`` / ``roll_off`` / ``symbol_rate_hz`` **只由物理层参数决定**，
+      业务层不认识它们。
+
+    ``n_slots`` 的一致性由 :class:`ConnectionSpec` 的不变式 3 强制
+    （``n_slots == slots_for_rate(bit_rate_bps, bits_per_symbol(modulation),
+    roll_off, grid.slot_width_hz)``）。若业务层给的槽数与所选调制算出的需求不符，
+    本函数**抛错而不静默改写**——静默改写等于把槽窗口的真源偷偷搬回物理层。
+
+    Args:
+        service: 业务层已分配对象（鸭子类型：需有 ``service_id``、``bit_rate_gbps``、
+            ``n_slots``、``first_slot``、``launch_power_w``）。用鸭子类型而非直接 import
+            ``AllocatedService``，是为了让 ``core`` 层不反向依赖 ``simulation`` 层。
+        grid: 物理层的灵活栅格（提供 ``num_slots`` 与 ``slot_width_hz``）。
+        modulation: 调制格式，必须在 :data:`MODULATION_FORMATS` 中。
+        roll_off: RRC 滚降系数，``0 <= roll_off < 1``。
+        symbol_rate_hz: 符号率 (Hz)。``None`` 时由
+            ``bit_rate_bps / bits_per_symbol / (1 + roll_off)`` 派生（即 ``Rs(1+ro)=R/b``）。
+        connection_id: 物理层连接 id。``None`` 时取业务层的 ``service_id``。
+
+    Returns:
+        物理层 :class:`ConnectionSpec`。
+
+    Raises:
+        ValueError: 调制未知 / ``roll_off`` 越界 / 槽窗口越界 /
+            业务层 ``n_slots`` 与调制需求不符 / ``symbol_rate_hz`` 非法。
+    """
+    bits = bits_per_symbol(modulation)  # 先校验 modulation 在 MODULATION_FORMATS 内
+    if not (0 <= roll_off < 1):
+        raise ValueError(f"roll_off must satisfy 0 <= roll_off < 1, got {roll_off!r}.")
+
+    try:
+        bit_rate_gbps = float(getattr(service, "bit_rate_gbps"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "service must expose a numeric 'bit_rate_gbps' (业务层 ServiceRequest 字段)."
+        ) from exc
+    if bit_rate_gbps <= 0:
+        raise ValueError(f"bit_rate_gbps must be positive, got {bit_rate_gbps!r}.")
+
+    # 槽窗口的真源：业务层给什么就是什么，这里只读不写。
+    n_slots = int(getattr(service, "n_slots", 1))
+    first_slot = int(getattr(service, "first_slot", 0))
+    if first_slot < 0 or first_slot + n_slots > grid.num_slots:
+        raise ValueError(
+            f"Slot window [{first_slot}, {first_slot + n_slots}) is out of bounds for a grid of "
+            f"{grid.num_slots} slots (service_id={getattr(service, 'service_id', None)!r})."
+        )
+
+    if symbol_rate_hz is None:
+        symbol_rate_hz = (bit_rate_gbps * 1e9 / bits) / (1.0 + roll_off)
+    if symbol_rate_hz <= 0:
+        raise ValueError(f"symbol_rate_hz must be positive, got {symbol_rate_hz!r}.")
+
+    if connection_id is None:
+        connection_id = int(getattr(service, "service_id", 0))
+    if connection_id < 0:
+        raise ValueError(f"connection_id must be a non-negative integer, got {connection_id!r}.")
+
+    return ConnectionSpec(
+        grid=grid,
+        connection_id=int(connection_id),
+        first_slot=first_slot,
+        n_slots=n_slots,
+        bit_rate_bps=bit_rate_gbps * 1e9,
+        modulation=modulation,
+        symbol_rate_hz=float(symbol_rate_hz),
+        roll_off=float(roll_off),
+        launch_power_w=float(getattr(service, "launch_power_w", 0.0)),
+    )
+
+
+__all__ += ["connection_spec_from_allocation", "slot_window_from_connection"]

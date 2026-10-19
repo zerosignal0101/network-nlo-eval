@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -77,21 +78,41 @@ def test_guard1_j6_legacy_bit_exact_regression():
 
 
 # ---------------------------------------------------------------------------
-# 守卫 2（J5）：numba_kernels.py 的 diff 必须为空
+# 守卫 2（J5）：物理内核**字节冻结**在唯一的已核出处上
+#
+# ⚠️ 本守卫在 WP-MERGE-FG-FLEX 里被**翻成正向不变量**。它原本断言
+# ``git diff b69563a -- numba_kernels.py`` 为空，即"内核相对 WP-O2 起点一字未改"
+# ——这同样是一条**相位守卫**：它把"本 WP 不许碰内核"编码成了永久不变量，而本次
+# 合并的目的正是把 FG 的内核并进来，前提已消失。
+#
+# 为什么必须翻而不是两条都满足：``numba_kernels.py`` 在两条线上各自独立演化，
+# ``sha256`` 不同且不可能同时成立——
+#   * ``b69563a`` / ``flexgrid-dev`` : 6611c416…（flexgrid 侧：保留解析倾斜内核）
+#   * ``wp/fg-integrate``            : 7beece4e…（FG 侧：ODE + NLI 张量化）
+# 判据 V1（首要判据）要求合并树与 ``wp/fg-integrate`` 逐位相同，故取 FG 侧字节。
+#
+# 翻法（§2 通例：存在 + 只定义一次 + 可达）：不再是"diff 必须为空"这一**相对**断言，
+# 而是"内核的 sha256 必须等于已核出处的那个常量"这一**绝对**正向不变量——更强的
+# 是后者：它同时挡住"被人悄悄改了一行"和"合并出第三份实现"两种情况。
 # ---------------------------------------------------------------------------
-def test_guard2_j5_frozen_kernel_diff_is_empty():
-    """J5：物理内核相对本 WP 起点一字未改。"""
-    proc = subprocess.run(
-        ["git", "diff", WP_BASE, "--", FROZEN_KERNEL],
-        capture_output=True, text=True, cwd=str(REPO),
-    )
-    assert proc.stdout.strip() == "", (
-        f"J5 被破坏：{FROZEN_KERNEL} 相对 {WP_BASE} 的 diff 非空\n{proc.stdout[:2000]}"
+#: 冻结内核的已核出处字节（``wp/fg-integrate @ 57c7221``）。
+FROZEN_KERNEL_SHA256 = "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
+
+
+def test_guard2_j5_frozen_kernel_is_byte_frozen():
+    """J5：物理内核逐字节等于已核出处（`wp/fg-integrate` 的冻结内核）。"""
+    import hashlib
+
+    actual = hashlib.sha256((REPO / FROZEN_KERNEL).read_bytes()).hexdigest()
+    assert actual == FROZEN_KERNEL_SHA256, (
+        f"{FROZEN_KERNEL} 的 sha256 = {actual}，不等于已核出处的 {FROZEN_KERNEL_SHA256}。"
+        "物理内核只许整体取某一侧的字节，不许出现第三份实现，也不许局部手改。"
     )
 
     doc = _load("ode_dev_flexgrid_sync.json")
     assert doc["j5_frozen_kernel"]["file"] == FROZEN_KERNEL
-    assert doc["j5_frozen_kernel"]["diff_vs_wp_base_empty"] is True
+    assert doc["j5_frozen_kernel"]["frozen_sha256"] == FROZEN_KERNEL_SHA256
+    assert doc["j5_frozen_kernel"]["provenance_branch"] == "wp/fg-integrate"
 
 
 # ---------------------------------------------------------------------------
@@ -299,8 +320,15 @@ def test_guard7_bands_minimal_closure_has_three_access_points():
     assert [c.launch_power_w for c in powered] == [1.0e-3, 0.5e-3]
 
     # FU-2 资产**可达**（不是只有文本，方法真能调用）
-    assert set(plan.guard_report()) >= set(spec.name for spec in specs)
-    assert "bands" in sclu_span_report()
+    guards = plan.guard_report()
+    assert isinstance(guards, list) and guards
+    assert {g["higher_frequency_band"] for g in guards} <= {spec.name for spec in specs}
+    report = sclu_span_report()
+    # 真实导出面：跨距口径报告给出包络跨度 / 各带跨距 / 带间空隙（S+C+L+U 的 U–L 空隙）。
+    assert isinstance(report, dict)
+    for key in ("envelope_span_thz", "sum_of_band_spans_thz", "total_gap_thz", "u_l_gap_thz"):
+        assert key in report, f"sclu_span_report() 缺键 {key!r}"
+    assert report["total_gap_thz"] >= report["u_l_gap_thz"]
 
 
 # ---------------------------------------------------------------------------

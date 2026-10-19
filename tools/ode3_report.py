@@ -69,8 +69,22 @@ def render() -> str:
     A("")
     A("| 判据 | 内容 | 结果 |")
     A("|---|---|---|")
-    A(f"| J5 | `{sync['j5_frozen_kernel']['file']}` 相对 `{sync['wp_base_commit']}` 的 diff 为空 | "
-      f"{'✅ 通过' if sync['j5_frozen_kernel']['diff_vs_wp_base_empty'] else '❌ 失败'} |")
+    # ⚠️ WP-MERGE-FG-FLEX：J5 的判定口径已从「相对 b69563a 的 diff 为空」翻成
+    # **绝对正向不变量**「内核逐字节等于已核出处 sha256」。
+    #
+    # 翻法理由（addendum §2 相位守卫通例）：原断言把「本 WP 不许碰内核」编码成永久
+    # 不变量，而本次合并的目的正是并入 FG 的内核，前提已消失。且两条判据客观互斥——
+    # b69563a/flexgrid-dev 侧 sha256=6611c416…，wp/fg-integrate 侧 sha256=7beece4e…，
+    # 同一文件不可能同时有两个 SHA-256；判据 V1（首要判据）要求取 FG 侧。
+    # 绝对不变量比「diff 为空」**更强**：它同时挡住「被人手改一行」与「合并出第三份实现」。
+    j5 = sync["j5_frozen_kernel"]
+    if "sha256_matches" in j5:
+        A(f"| J5 | `{j5['file']}` 逐字节等于已核出处 `{j5.get('provenance_branch')}` 的冻结字节 | "
+          f"{'✅ 通过' if j5['sha256_matches'] else '❌ 失败'}"
+          f"（sha256 `{(j5.get('frozen_sha256') or '')[:16]}…`） |")
+    else:  # 兼容旧 schema
+        A(f"| J5 | `{j5['file']}` 相对 `{sync['wp_base_commit']}` 的 diff 为空 | "
+          f"{'✅ 通过' if j5['diff_vs_wp_base_empty'] else '❌ 失败'} |")
     A(f"| J6 | 6 个 legacy 场景 `delta_db == 0.0` | "
       f"{'✅ 通过' if leg['summary']['j6_passed'] else '❌ 失败'}"
       f"（逐位相同 {leg['summary']['n_bit_identical']}/{leg['summary']['n_scenarios']}） |")

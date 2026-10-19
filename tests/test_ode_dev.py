@@ -163,10 +163,24 @@ def test_guard4_capabilities_reachable():
     assert MultiBandISRSGN(grid, fiber, 32e9).k_bar == 0.0
 
     # (d) 任意功率输入路径可达（target_gain_db=None → 自动均衡）
+    #
+    # ⚠️ WP-MERGE-FG-FLEX（**已声明的测试改动**，旧文本 → 新文本见
+    # docs/wp_merge_fg_into_flex.md 的 V5）：
+    # 旧断言 `assert np.allclose(auto[0], power)` 依赖 flexgrid 侧"在跨段函数内部
+    # 施加 EDFA、`target_gain_db=None` 时把出纤功率自动均衡回入纤功率"的行为。
+    # 本次合并按判据 V1（首要判据）取回 `wp/fg-integrate` 的口径：
+    # `_calc_span_noise_and_power` 返回**光纤输出**，跨段后放大由调用方负责
+    # （RWA 层自己按 `NF·h·ν·B_i·(gain−1)` 计放大器 ASE，两处都算会重复计入）。
+    # 因此该断言改为钉合并后的真实契约：路径可达、读数有限、且出纤功率确实
+    # 是**衰减后**的光纤输出（不是入纤功率）。
     auto = MultiBandISRSGN(grid, fiber, 32e9)._calc_span_noise_and_power(
         power, 80e3, EDFAConfig(target_gain_db=None, noise_figure_db=5.0)
     )
-    assert np.allclose(auto[0], power)
+    assert np.all(np.isfinite(auto[0]))
+    assert np.all(auto[0] > 0.0) and np.all(auto[0] < power), (
+        "出纤功率应当是 80 km 损耗后的光纤输出，而不是入纤功率；"
+        "若这里等于入纤功率，说明跨段内又加回了 EDFA（会与调用方的 ASE 重复计入）"
+    )
 
 
 def test_guard4b_cached_tier_is_bit_identical_to_off():
