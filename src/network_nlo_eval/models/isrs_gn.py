@@ -21,6 +21,11 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_span_noise_and_power_jit,
     _db_to_lin,
 )
+from network_nlo_eval.models.numba_kernels_p1_accel import (
+    P1XpmMatrices,
+    build_p1_xpm_pair_matrices,
+    calc_span_noise_and_power_p1_matvec,
+)
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
 
@@ -53,12 +58,24 @@ POWER_WIDTH_DEFAULT = "fixed_power"
 #: 单跨段计算的加速档位，只影响数值路径，不改物理。
 #:
 #: ``"off"``
-#:     每次调用都进 njit 核。默认档。
+#:     每次调用都进 njit 核。冻结参考路径，与逐对求和的闭式实现逐位相同。
 #: ``"cached"``
 #:     按 (入纤功率, 跨段长度, 跨段数, NF) 记忆化单跨段结果，结果与 ``"off"``
 #:     逐位相同。
-ODE_ACCEL_MODES = ("off", "cached")
-ODE_ACCEL_DEFAULT = "off"
+#: ``"matvec"``
+#:     把 XPM 的逐对求和换信道对矩阵 + 矩阵-向量乘（见
+#:     :mod:`network_nlo_eval.models.numba_kernels_p1_accel`）。算式不变，只有
+#:     ``l`` 方向的浮点求和次序变，相对偏差预算 1e-12。默认档。
+#:
+#: 想拿与 ``ode_accel="off"`` 逐位相同的读数，显式指定它。
+ODE_ACCEL_MODES = ("off", "cached", "matvec")
+ODE_ACCEL_DEFAULT = "matvec"
+
+#: ``matvec`` 档的自适应门：活跃信道数达到该阈值才走矩阵-向量乘，否则落回逐对
+#: 求和。``off`` 的单跨成本正比于活跃信道数，``matvec`` 近似恒定（满网格矩阵的
+#: 工作量），实测交叉点在 34 条附近，取 40 保证至少 1.2 倍收益。交叉点是绝对
+#: 条数而非比例，故不按 ``k/N`` 设门。
+MATVEC_MIN_ACTIVE_CHANNELS = 40
 
 
 @dataclass
@@ -161,6 +178,7 @@ class MultiBandISRSGN:
         self.connections = list(connections) if connections is not None else None
 
         self._span_cache: dict[tuple[bytes, float, int, bytes], tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        self._p1_xpm_matrices: P1XpmMatrices | None = None
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
 
@@ -231,6 +249,10 @@ class MultiBandISRSGN:
             conn = self.connections[node_index]
             return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
         return node_index in roadm.blocked_channels
+
+    def _blocked_nodes(self, roadm: ROADMConfig) -> list[int]:
+        """该 ROADM 阻断的全部节点索引。"""
+        return [index for index in range(self.n_nodes) if self.roadm_blocks_node(roadm, index)]
 
     @property
     def band_center_hz(self) -> float:
@@ -307,6 +329,70 @@ class MultiBandISRSGN:
             self.f_m_hz = self.f_rel_hz[0] - self.symbol_rate_hz / 2
             self.f_M_hz = self.f_rel_hz[-1] + self.symbol_rate_hz / 2
 
+    def _p1_xpm_matrices_for(self) -> P1XpmMatrices:
+        """P1 XPM 的 (N,N) 信道对矩阵，实例内记忆化。
+
+        只依赖 evaluator 级量（波长、相对频率、``B_i``、衰减、色散、n2），不随
+        跨段、不随候选变，故建一次就够。延迟到首次使用，构造期不做无谓的 O(N^2)。
+        """
+        if self._p1_xpm_matrices is not None:
+            return self._p1_xpm_matrices
+        g1, g2, phi_raw, gamma = build_p1_xpm_pair_matrices(
+            self.n_nodes,
+            self.channel_bandwidth_hz_channels,
+            self.f_rel_hz,
+            self.lambdas_m,
+            self.a_eff_m2_channels,
+            self.alpha_power_npm_channels,
+            self.beta2_s2_m,
+            self.beta3_s3_m,
+            self.n2_m2_w,
+        )
+        self._p1_xpm_matrices = P1XpmMatrices(
+            g1=g1,
+            g2=g2,
+            g1_t=np.ascontiguousarray(g1.T),
+            g2_t=np.ascontiguousarray(g2.T),
+            phi_raw=phi_raw,
+            gamma=gamma,
+        )
+        return self._p1_xpm_matrices
+
+    def _p1_span_matvec(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        n_effective_spans: int,
+        nf_lin_channels: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """P1 闭式核的 ``matvec`` 形态（单候选）。
+
+        出纤功率与 SPM 走冻结核的同一个函数，逐位相同；只有 XPM 的求和次序变了。
+        """
+        mats = self._p1_xpm_matrices_for()
+        p_out, s2_spm, s2_xpm, s2_ase = calc_span_noise_and_power_p1_matvec(
+            power_in_w=np.asarray(power_in_w, dtype=np.float64)[None, :],
+            span_length_m=float(span_length_m),
+            f_rel_hz=self.f_rel_hz,
+            f_abs_hz=self.f_abs_hz,
+            lambdas_m=self.lambdas_m,
+            alpha_power_npm=self.alpha_power_npm_channels,
+            a_eff_m2=self.a_eff_m2_channels,
+            beta_2_s2_m=self.beta2_s2_m,
+            beta_3_s3_m=self.beta3_s3_m,
+            n_2_m2_w=self.n2_m2_w,
+            nf_lin_channels=nf_lin_channels,
+            symbol_rate_hz=self.symbol_rate_hz,
+            b_hz_channels=self.channel_bandwidth_hz_channels,
+            n_effective_spans=int(n_effective_spans),
+            cr_w_m_hz=self.cr_w_m_hz,
+            k_bar=self.k_bar,
+            delta_f_co_hz=self.delta_f_co_hz,
+            mats=mats,
+        )
+        # (1, N) → (N,)：单候选入口的形状契约与冻结内核一致。
+        return p_out[0], s2_spm[0], s2_xpm[0], s2_ase[0]
+
     def _calc_span_noise_and_power(
         self,
         power_in_w: NDArrayFloat,
@@ -360,6 +446,12 @@ class MultiBandISRSGN:
         if cached is not None:
             # 必须返回副本：调用方会原地改动出纤功率数组，交出去会污染缓存。
             p_out_fiber, s2_spm, s2_xpm = (array.copy() for array in cached)
+        elif self.ode_accel == "matvec" and np.count_nonzero(power_in_w) >= MATVEC_MIN_ACTIVE_CHANNELS:
+            # matvec 只在活跃信道够多时才有收益，少信道落回逐对求和（二者数值差
+            # 在 1e-16 量级，门只影响速度）。
+            p_out_fiber, s2_spm, s2_xpm, _ = self._p1_span_matvec(
+                power_in_w, span_length_m, n_effective_spans, current_nf_lin
+            )
         else:
             p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
                 power_in_w=power_in_w,
@@ -415,6 +507,116 @@ class MultiBandISRSGN:
             s2_spm /= loss_lin
             s2_xpm /= loss_lin
             s2_ase /= loss_lin
+
+        return p_out, s2_spm, s2_xpm, s2_ase
+
+    def calc_span_noise_and_power_batch(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None = None,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """单跨段内核的批量入口：``(B, N)`` 进，四个 ``(B, N)`` 出。
+
+        与 :meth:`_calc_span_noise_and_power` 算同一件事，区别只在布局。热路径是
+        ``(B,N) @ (N,N)`` 的 GEMM，无数据相关控制流，(N,N) 常量不按 batch 复制。
+        逐候选结果与串行路径的相对偏差预算 1e-12。
+
+        批量形态只在 ``ode_accel="matvec"`` 下存在；档位不匹配时抛
+        ``ValueError``，不静默回落。
+
+        Args:
+            power_in_w: ``(B, N)`` 候选入纤功率 (W)。零功率合法：惰性连接仍占槽位。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: (可选) 跨段后 EDFA 配置，语义与串行一致。
+            roadm_config: (可选) 跨段后 ROADM 配置，插入损耗处理与串行一致。
+            n_effective_spans: 有效跨段数。
+
+        Returns
+        -------
+            ``(power_out_w, sigma2_spm_w, sigma2_xpm_w, sigma2_ase_w)``，均为 ``(B, N)``。
+
+        Raises
+        ------
+            ValueError: ``ode_accel`` 不是 ``"matvec"``；``power_in_w`` 形状不对；
+                NF 或增益纹波数组长度不对。
+        """
+        if self.ode_accel != "matvec":
+            raise ValueError(
+                "calc_span_noise_and_power_batch requires ode_accel='matvec': the batched kernel "
+                "is the batch form of the P1 closed-form NLI (XPM channel-pair matrices + matvec). "
+                f"Got ode_accel={self.ode_accel!r}."
+            )
+
+        P = np.asarray(power_in_w, dtype=np.float64)
+        n_conn = self.n_nodes
+        if P.ndim != 2 or P.shape[1] != n_conn:
+            raise ValueError(f"power_in_w must have shape (B, {n_conn}), got {np.shape(power_in_w)}.")
+
+        if edfa_config is not None and edfa_config.noise_figure_db is not None:
+            noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
+            if noise_figure_db.ndim == 0:
+                current_nf_lin = np.full(n_conn, 10 ** (float(noise_figure_db) / 10))
+            else:
+                if noise_figure_db.shape != (n_conn,):
+                    raise ValueError("EDFA noise-figure array must contain one value per channel.")
+                current_nf_lin = 10 ** (noise_figure_db / 10)
+        else:
+            current_nf_lin = np.ones_like(self.nf_lin_channels)
+        current_nf_lin = np.asarray(current_nf_lin, dtype=np.float64)
+
+        p_out_fiber, s2_spm, s2_xpm, _ = calc_span_noise_and_power_p1_matvec(
+            power_in_w=P,
+            span_length_m=float(span_length_m),
+            f_rel_hz=self.f_rel_hz,
+            f_abs_hz=self.f_abs_hz,
+            lambdas_m=self.lambdas_m,
+            alpha_power_npm=self.alpha_power_npm_channels,
+            a_eff_m2=self.a_eff_m2_channels,
+            beta_2_s2_m=self.beta2_s2_m,
+            beta_3_s3_m=self.beta3_s3_m,
+            n_2_m2_w=self.n2_m2_w,
+            nf_lin_channels=current_nf_lin,
+            symbol_rate_hz=self.symbol_rate_hz,
+            b_hz_channels=self.channel_bandwidth_hz_channels,
+            n_effective_spans=int(n_effective_spans),
+            cr_w_m_hz=self.cr_w_m_hz,
+            k_bar=self.k_bar,
+            delta_f_co_hz=self.delta_f_co_hz,
+            mats=self._p1_xpm_matrices_for(),
+        )
+
+        if edfa_config is None:
+            p_out = p_out_fiber
+            s2_ase = np.zeros_like(P)
+        else:
+            if edfa_config.target_gain_db is None:
+                gain = np.divide(P, p_out_fiber, out=np.ones_like(P), where=p_out_fiber > 0)
+            else:
+                gain = np.full_like(P, 10 ** (edfa_config.target_gain_db / 10))
+            if edfa_config.gain_ripple_db is not None:
+                ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
+                if ripple.shape != (n_conn,):
+                    raise ValueError("EDFA gain-ripple array must contain one value per channel.")
+                gain *= 10 ** (ripple / 10)
+            p_out = p_out_fiber * gain
+            s2_ase = (
+                current_nf_lin
+                * 6.62607015e-34
+                * self.f_abs_hz
+                * self.channel_bandwidth_hz_channels
+                * np.maximum(gain - 1, 0)
+            )
+            s2_ase[P <= 0] = 0
+
+        if roadm_config:
+            loss_lin = _db_to_lin(roadm_config.path_loss_db())
+            p_out = p_out / loss_lin
+            s2_spm = s2_spm / loss_lin
+            s2_xpm = s2_xpm / loss_lin
+            s2_ase = s2_ase / loss_lin
 
         return p_out, s2_spm, s2_xpm, s2_ase
 
@@ -474,7 +676,7 @@ class MultiBandISRSGN:
 
             if roadm is None:
                 continue
-            blocked = [index for index in range(self.n_nodes) if self.roadm_blocks_node(roadm, index)]
+            blocked = self._blocked_nodes(roadm)
             operation = "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
             loss_db = roadm.path_loss_db(operation)
             loss = 10 ** (loss_db / 10)

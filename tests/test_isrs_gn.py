@@ -216,3 +216,52 @@ def test_unknown_accel_mode_is_rejected() -> None:
     """未知加速档位显式报错。"""
     with pytest.raises(ValueError, match="ode_accel"):
         MultiBandISRSGN(SpectrumGrid(4, CHANNEL_SPACING_HZ, 193.1e12), _fiber(), 50e9, ode_accel="fast")
+
+
+def _wide_evaluator(ode_accel: str, num_channels: int = 48) -> MultiBandISRSGN:
+    """足够宽、能真正触发 matvec 门的遗留栅格评估器。"""
+    return MultiBandISRSGN(
+        SpectrumGrid(num_channels, CHANNEL_SPACING_HZ, 193.1e12), _fiber(), 50e9, ode_accel=ode_accel
+    )
+
+
+def test_matvec_tier_matches_pairwise_tier() -> None:
+    """Matvec 档只重排 XPM 求和次序：功率与 SPM 逐位相同，XPM 在预算内。"""
+    power = np.full(48, 1e-3)
+    edfa = EDFAConfig(target_gain_db=17.0, noise_figure_db=5.5)
+    off = _wide_evaluator("off")._calc_span_noise_and_power(power, 80e3, edfa)
+    matvec = _wide_evaluator("matvec")._calc_span_noise_and_power(power, 80e3, edfa)
+
+    for index in (0, 1, 3):
+        assert np.array_equal(off[index].view(np.int64), matvec[index].view(np.int64))
+    relative = np.abs(off[2] - matvec[2]) / np.abs(off[2])
+    assert float(relative.max()) <= 1e-12
+
+
+def test_matvec_gate_skips_narrow_grids() -> None:
+    """活跃信道不足阈值时不建 (N,N) 矩阵，直接走逐对求和。"""
+    evaluator = _wide_evaluator("matvec", num_channels=8)
+    evaluator._calc_span_noise_and_power(np.full(8, 1e-3), 80e3, None)
+    assert evaluator._p1_xpm_matrices is None
+
+
+def test_batch_matches_serial_candidate_by_candidate() -> None:
+    """批量入口的每个候选与串行路径对同一候选的结果一致；零功率候选合法。"""
+    evaluator = _wide_evaluator("matvec")
+    edfa = EDFAConfig(target_gain_db=17.0, noise_figure_db=5.5)
+    batch_input = np.vstack([np.full(48, 1e-3), np.full(48, 2e-3), np.zeros(48)])
+    batch = evaluator.calc_span_noise_and_power_batch(batch_input, 80e3, edfa)
+
+    for index in range(batch_input.shape[0]):
+        serial = evaluator._calc_span_noise_and_power(batch_input[index], 80e3, edfa)
+        for component in (0, 1, 3):
+            assert np.array_equal(batch[component][index].view(np.int64), serial[component].view(np.int64))
+        relative = np.abs(batch[2][index] - serial[2]) / np.maximum(np.abs(serial[2]), 1e-30)
+        assert float(relative.max()) <= 1e-12
+
+
+def test_batch_requires_matvec_tier() -> None:
+    """批量核只在 matvec 档存在，其余档位显式报错而不静默回落。"""
+    evaluator = _wide_evaluator("off")
+    with pytest.raises(ValueError, match="matvec"):
+        evaluator.calc_span_noise_and_power_batch(np.full((2, 48), 1e-3), 80e3)
