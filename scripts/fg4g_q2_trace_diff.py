@@ -192,6 +192,13 @@ def main() -> int:
         # env.py 用默认参数构造 evaluator（不传 ode_accel），因此这里改的是
         # 实例属性：下游 for_fiber 会把它透传给每个子 evaluator。
         env.evaluator.ode_accel = args.force_accel
+        # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：被强制的是 FG 的加速档（``"off"`` /
+        # ``"matvec"``），它们属于 **P2** 那套物理。构造器里的 ``nli_model`` 默认
+        # 是 ``"p1_closed"``，而 P1 档**没有** matvec——只改 ``ode_accel`` 会让
+        # ``for_fiber`` 透传出一对不匹配的组合并抛错。故这里**一起**把 NLI 物理
+        # 档位钉到 ``"p2_gn"``：被比较的本来就是 FG 那套物理（Q2 分歧是 FG 侧
+        # 的编排问题）。
+        env.evaluator.nli_model = "p2_gn"
         if args.force_accel == "off":
             # FG-15: ``off`` 是结构上只认 legacy 的冻结参照路径（在核内逐对重建
             # legacy 折线），而 FG-15 起全局默认谱档是 ``tabular``。两者**必须**

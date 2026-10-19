@@ -15,8 +15,13 @@ import numpy as np
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models import numba_kernels as nk
-from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.models import numba_kernels_p2 as nk
+from network_nlo_eval.models.isrs_gn import (
+    NLI_MODEL_DEFAULT,
+    RAMAN_SPECTRUM_DEFAULT,
+    RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL,
+    MultiBandISRSGN,
+)
 from network_nlo_eval.network.elements import FiberSpanConfig
 from network_nlo_eval.physics import raman_spectrum as rs
 
@@ -177,6 +182,7 @@ def _evaluator(raman_spectrum: str, ode_accel: str = "matvec") -> MultiBandISRSG
         symbol_rate_hz=50e9,
         raman_spectrum=raman_spectrum,
         ode_accel=ode_accel,
+        nli_model="p2_gn",
     )
 
 
@@ -190,8 +196,18 @@ def test_default_tier_is_tabular() -> None:
 
     下面两行仍在同一档上核对 G 矩阵，确保换底没有顺手改坏 legacy 的数值：
     ``_evaluator("legacy")`` 是**显式**取 legacy，不是靠默认。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：拉曼谱默认档现在是**按 NLI 物理档位解析**的
+    ——``p2_gn`` 档默认 ``"tabular"``（FG-15 的裁决不变），``p1_closed`` 档默认
+    ``"legacy"``（P1 核只有 legacy 折线）。常量 ``RAMAN_SPECTRUM_DEFAULT`` 本身
+    一个字没动。构造签名的**最后一个**默认参数现在是 ``nli_model``，
+    故 ``__defaults__[-1]`` 不再是拉曼档位。
     """
-    assert MultiBandISRSGN.__init__.__defaults__[-1] == "tabular"
+    assert RAMAN_SPECTRUM_DEFAULT == "tabular"
+    assert RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL["p2_gn"] == "tabular"
+    assert RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL["p1_closed"] == "legacy"
+    assert MultiBandISRSGN.__init__.__defaults__[-1] == NLI_MODEL_DEFAULT
+    assert MultiBandISRSGN.__init__.__defaults__[-1] == "p1_closed"
     ev = _evaluator("legacy")
     assert ev.raman_spectrum == "legacy"
     assert np.allclose(ev._g_gain, nk.raman_g_pair_matrices(ev.f_abs_hz, ev.cr_w_m_hz)[0])

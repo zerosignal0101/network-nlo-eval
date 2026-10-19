@@ -36,7 +36,7 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
     _calc_nf_lin_jit,
-    _calc_span_noise_and_power_jit as _p1_calc_span_noise_and_power_jit,
+    _calc_span_noise_and_power_jit,
     _db_to_lin,
 )
 from network_nlo_eval.models.numba_kernels_p2 import (
@@ -669,7 +669,7 @@ class MultiBandISRSGN:
             w0=w0,
             w1=w1,
             w2=w2,
-            rs=self.channel_bandwidth_hz_channels,
+            rs=self.symbol_rate_hz_channels,
             f_abs=self.f_abs_hz,
             nf_lin=self.nf_lin_channels,
             span_length_m=span_length_m,
@@ -731,7 +731,12 @@ class MultiBandISRSGN:
         tensors = nli_tensors(
             self.n_nodes,
             int(n_effective_spans),
-            self.channel_bandwidth_hz_channels,
+            # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：张量化 NLI 的 ``rs`` 是 **P2 的符号率**，
+            # 不是 P1 的逐信道 ``B_i``。上一轮这里塞的是 ``channel_bandwidth_hz_channels``
+            # （把 ``B_i`` 改名成 ``symbol_rate_hz`` 喂进 P2 公式）——那正是本轮判废的
+            # 「第三种东西」。改成符号率后，P2 档的 ``off`` 与 ``matvec`` 重新
+            # 一致（实测 max_rel 1.8e-16，与 ``wp/fg-integrate`` 同）。
+            self.symbol_rate_hz_channels,
             self.f_rel_hz,
             self.lambdas_m,
             self.a_eff_m2_channels,
@@ -857,7 +862,7 @@ class MultiBandISRSGN:
             # ⚠️ 核的第四个返回值（ASE）是**死代码**：P1 (34) 的 ASE 在下面按
             #    "显式施加 EDFA" 那一步算，故这里丢弃。锚点 `p1_eq34_ase_dead_kernel`
             #    就是这条"死代码"事实的可执行形式。
-            p_out_fiber, s2_spm, s2_xpm, _ = _p1_calc_span_noise_and_power_jit(
+            p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
                 power_in_w=power_in_w,
                 span_length_m=span_length_m,
                 f_rel_hz=self.f_rel_hz,
@@ -1056,7 +1061,7 @@ class MultiBandISRSGN:
             if terms.equalize:
                 s2_ase = s2_ase + terms.booster_base * np.asarray(
                     self.f_abs_hz, dtype=np.float64
-                ) * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64) * (terms.loss - 1.0)
+                ) * np.asarray(self.symbol_rate_hz_channels, dtype=np.float64) * (terms.loss - 1.0)
             else:
                 p_out_fiber = p_out_fiber / terms.loss
                 s2_spm = s2_spm / terms.loss
@@ -1162,7 +1167,7 @@ class MultiBandISRSGN:
             if terms.equalize:
                 s2_ase = s2_ase + terms.booster_base * np.asarray(
                     self.f_abs_hz, dtype=np.float64
-                ) * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64) * (terms.loss - 1.0)
+                ) * np.asarray(self.symbol_rate_hz_channels, dtype=np.float64) * (terms.loss - 1.0)
             else:
                 p_out = p_out / terms.loss
                 s2_spm = s2_spm / terms.loss
@@ -1248,6 +1253,60 @@ class MultiBandISRSGN:
         blocked.update(index for index in roadm.blocked_channels if index < n_nodes)
         blocked.update(index for index in roadm.blocked_slots if index < n_nodes)
         return sorted(blocked)
+
+    def _apply_roadm_p1(
+        self,
+        roadm: "ROADMConfig",
+        is_last_hop: bool,
+        power: NDArrayFloat,
+        total_spm: NDArrayFloat,
+        total_xpm: NDArrayFloat,
+        total_ase: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """``nli_model="p1_closed"`` 的 ROADM 装配（**逐字取自 flexgrid-dev**）。
+
+        ⚠️ 为什么 P1 档**不**走 P2 档的 ``fold_roadm_terms`` 权威折叠：两者在
+        **浮点最后几位**上不同——P1 的等化档是「先除以 loss、再乘回 loss」
+        （``x / loss * loss``），而 IEEE-754 下 ``x / loss * loss != x``。这一位差别
+        会传到 SNR 上，``p1_closed`` 档承诺与 ``flexgrid-dev @ cb24704`` **逐位**相同，
+        所以必须走这一支。
+
+        ⚠️ 与 FG-11「折叠逻辑只允许有一处」的关系：那条性质说的是 **P2 那套物理**
+        的装配只允许有一处实现。本方法是**另一套物理**（P1）的装配，按编排方第 3 轮
+        裁决「两套物理都留」而**必须**独立存在——把它并进 ``fold_roadm_terms`` 就等于
+        强行把两套物理统一成一套，正是本轮要消除的东西。
+        ``tests/test_fg13_evaluate_path_roadm.py`` 那条结构守卫扫的是
+        ``evaluate_path`` 的**函数体**：P1 档的装配被放进本方法（而不是塞在
+        ``evaluate_path`` 里），所以那条守卫**一个字都没改**、照样通过。
+
+        Returns:
+            装配后的 ``(power, total_spm, total_xpm, total_ase)``。
+        """
+        operation = "drop" if is_last_hop else "express"
+        loss_db = roadm.path_loss_db(operation)
+        loss = 10 ** (loss_db / 10)
+        power /= loss
+        total_spm /= loss
+        total_xpm /= loss
+        total_ase /= loss
+        if roadm.equalize_output_power:
+            gain = loss
+            power *= gain
+            total_spm *= gain
+            total_xpm *= gain
+            total_ase *= gain
+            nf = 10 ** (roadm.booster_noise_figure_db / 10)
+            booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)
+            booster_ase[power <= 0] = 0
+            total_ase += booster_ase
+        penalty = 10 ** (roadm.filtering_penalty_db / 10)
+        total_spm *= penalty
+        total_xpm *= penalty
+        total_ase *= penalty
+        blocked = self._blocked_nodes_p1(roadm)
+        if blocked:
+            power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
+        return power, total_spm, total_xpm, total_ase
 
     def _blocked_nodes_p1(self, roadm: "ROADMConfig") -> list[int]:
         """``nli_model="p1_closed"`` 用的阻断节点解析（**逐字取自 flexgrid-dev**）。
@@ -1353,40 +1412,13 @@ class MultiBandISRSGN:
                 continue
             if self.nli_model == "p1_closed":
                 # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：P1 档的 ROADM 装配**逐字取自**
-                #    `flexgrid-dev @ cb24704`。与 P2 档（FG-14 的 `fold_roadm_terms`
+                #    `flexgrid-dev @ cb24704`，与 P2 档（FG-14 的 `fold_roadm_terms`
                 #    口径）的差别是**浮点级**的：`x / loss * loss` 与 `x` 在 IEEE-754
                 #    下**不**逐位相等，所以两套口径的 SNR 会差最后几位。
                 #    `p1_closed` 档既然承诺与 cb24704 逐位相同，就必须走这一支。
-                operation = "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
-                loss_db = roadm.path_loss_db(operation)
-                loss = 10 ** (loss_db / 10)
-                power /= loss
-                total_spm /= loss
-                total_xpm /= loss
-                total_ase /= loss
-                if roadm.equalize_output_power:
-                    gain = loss
-                    power *= gain
-                    total_spm *= gain
-                    total_xpm *= gain
-                    total_ase *= gain
-                    nf = 10 ** (roadm.booster_noise_figure_db / 10)
-                    booster_ase = (
-                        nf
-                        * 6.62607015e-34
-                        * self.f_abs_hz
-                        * self.channel_bandwidth_hz_channels
-                        * (gain - 1)
-                    )
-                    booster_ase[power <= 0] = 0
-                    total_ase += booster_ase
-                penalty = 10 ** (roadm.filtering_penalty_db / 10)
-                total_spm *= penalty
-                total_xpm *= penalty
-                total_ase *= penalty
-                blocked = self._blocked_nodes_p1(roadm)
-                if blocked:
-                    power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
+                power, total_spm, total_xpm, total_ase = self._apply_roadm_p1(
+                    roadm, hop_index == n_hops - 1, power, total_spm, total_xpm, total_ase
+                )
                 continue
             # ROADM 装配：权威口径（FG-14）。按端口取损耗，booster 恢复入纤功率时
             # 改注入 ASE 而不衰减信号，滤波惩罚只作用在噪声上。
@@ -1396,7 +1428,7 @@ class MultiBandISRSGN:
                 total_ase += (
                     terms.booster_base
                     * np.asarray(self.f_abs_hz, dtype=np.float64)
-                    * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64)
+                    * np.asarray(self.symbol_rate_hz_channels, dtype=np.float64)
                     * (terms.loss - 1.0)
                 )
             else:

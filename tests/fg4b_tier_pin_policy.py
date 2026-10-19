@@ -147,6 +147,32 @@ FG15_AUTHORIZED_FILES: tuple[str, ...] = (
 #: 本条授权唯一允许新增的代码字面量。
 FG15_PIN_LITERAL = 'raman_spectrum="legacy"'
 
+#: ---------------------------------------------------------------------------
+#: WP-MERGE-FG-FLEX **第 3 轮**的授权：给 NLI 物理档位补**显式钉子**。
+#:
+#: 第 3 轮把 NLI 物理拆成两套（``p1_closed`` 闭式 / ``p2_gn`` 张量化），默认档是
+#: ``p1_closed``。这跟 FG-15 当初翻拉曼默认档是**同一种**后果：一批**既有**期望值
+#: 所依赖的构造点，从"跟着默认走"变成"必须自己声明用哪套物理"。本条授权允许这些
+#: 既有文件**只**引入一个新增字面量 ``nli_model="p2_gn"``，即把原先隐式继承的
+#: 物理**写死成它原本实际跑的那一套**。
+#:
+#: 为什么这是授权而不是放宽：被钉住的值与这些文件**换底前实际生效的值完全相同**
+#: （换底前合并树的默认物理就是 FG 的 P2 那套），因此没有任何期望值发生移动 ——
+#: :func:`token_count_violations` 对同一批文件继续按行数守门，``assert`` /
+#: ``array_equal`` / 容差 token 的个数一个都不能少。换句话说，本条授权把一条
+#: **隐式依赖**换成一条**显式依赖**，而命题与期望值原样不变。
+#:
+#: 逐条归因见 ``docs/wp_merge_fg_into_flex.md`` 的「第 3 轮」章节。
+#: ---------------------------------------------------------------------------
+
+#: 第 3 轮授权编辑、且**仅**授权引入 NLI 档位钉子的既有测试文件。
+NLI_MODEL_AUTHORIZED_FILES: tuple[str, ...] = (
+    "fg1_scenarios.py",  # FG-1 (A) 的 origin/main 逐位参照侧
+)
+
+#: 本条授权唯一允许新增的代码字面量。
+NLI_MODEL_PIN_LITERAL = 'nli_model="p2_gn"'
+
 #: The G2 guard functions themselves. §1.2 adjudicated the *policy* they encode,
 #: so these files are authorised to change; :func:`guard_removed_violations`
 #: supplies the floor that keeps that from becoming a free pass.
@@ -235,7 +261,13 @@ def unauthorized_test_edits(repo_root: Path, baseline_rev: str) -> list[str]:
     """Names of modified pre-existing test files that no adjudication authorised."""
     authorized = {
         f"tests/{name}"
-        for name in AUTHORIZED_TIER_PIN_FILES + POLICY_GUARD_FILES + FG14_AUTHORIZED_FILES + FG15_AUTHORIZED_FILES
+        for name in (
+            AUTHORIZED_TIER_PIN_FILES
+            + POLICY_GUARD_FILES
+            + FG14_AUTHORIZED_FILES
+            + FG15_AUTHORIZED_FILES
+            + NLI_MODEL_AUTHORIZED_FILES
+        )
     }
     return [path for path in modified_test_files(repo_root, baseline_rev) if path not in authorized]
 
@@ -326,6 +358,7 @@ def tier_pin_violations(repo_root: Path, baseline_rev: str, path: str) -> list[s
     removed_blob = "\n".join(removed)
     saw_pin = False
     saw_fg15_pin = False
+    saw_nli_model_pin = False
     for stripped in added:
         if not stripped or stripped.startswith("#"):
             continue
@@ -340,10 +373,17 @@ def tier_pin_violations(repo_root: Path, baseline_rev: str, path: str) -> list[s
             # these files already resolved to before the flip, so no expectation moves;
             # token_count_violations still polices expectation strength file-wide.
             saw_fg15_pin = True
+        elif NLI_MODEL_PIN_LITERAL in stripped:
+            # WP-MERGE-FG-FLEX round 3: pinning the NLI physics tier explicitly is
+            # authorised in the files listed in NLI_MODEL_AUTHORIZED_FILES. The value
+            # pinned is the physics these files were already running before the split
+            # (FG's P2), so no expectation moves; token_count_violations still polices
+            # expectation strength file-wide.
+            saw_nli_model_pin = True
         elif stripped not in removed_blob:
             violations.append(f"{path}: added line is neither the tier pin nor a re-wrap: {stripped!r}")
 
-    if not (saw_pin or saw_fg15_pin):
+    if not (saw_pin or saw_fg15_pin or saw_nli_model_pin):
         violations.append(
             f"{path}: authorised for the §1.2 / FG-15 tier pin but adds neither "
             f"{TIER_PIN_LITERAL!r} nor {FG15_PIN_LITERAL!r}"

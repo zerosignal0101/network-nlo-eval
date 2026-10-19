@@ -39,7 +39,9 @@ from fg4a_scenarios import PATH_KEYS, SPAN_KEYS, build_scenarios
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.isrs_gn import (
+    NLI_MODEL_DEFAULT,
     RAMAN_SPECTRUM_DEFAULT,
+    RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL,
     RAMAN_SPECTRUM_MODES,
     MultiBandISRSGN,
 )
@@ -94,6 +96,7 @@ def test_legacy_tier_still_exists_and_is_explicitly_selectable() -> None:
         ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
         symbol_rate_hz=50e9,
         raman_spectrum="legacy",
+        nli_model="p2_gn",
     )
     # Read back the *effective* tier rather than trusting the argument.
     assert ev.raman_spectrum == "legacy"
@@ -104,16 +107,28 @@ def test_default_tier_is_now_tabular() -> None:
 
     The read-back is deliberate: FG-12's lesson is that asserting a tier from the
     fact that an argument was *passed* proves nothing about what is effective.
+
+    ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：拉曼谱档位的默认值现在是**按 NLI 物理档位解析**的
+    ——``p2_gn`` 档默认 ``"tabular"``（FG-15 的裁决不变），``p1_closed`` 档默认
+    ``"legacy"``（P1 核只有 legacy 折线那条路）。常量 ``RAMAN_SPECTRUM_DEFAULT``
+    本身**一个字没动**，仍是 ``"tabular"``。
     """
     assert RAMAN_SPECTRUM_DEFAULT == "tabular", "FG-15: the global default Raman tier must be tabular"
+    assert RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL["p2_gn"] == "tabular"
+    assert RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL["p1_closed"] == "legacy"
 
     ev = MultiBandISRSGN(
         grid=SpectrumGrid(num_channels=40, channel_spacing_hz=50e9, center_frequency_hz=190e12),
         ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
         symbol_rate_hz=50e9,
+        nli_model="p2_gn",
     )
     assert ev.raman_spectrum == "tabular", "default-constructed evaluator must actually run tabular"
-    assert MultiBandISRSGN.__init__.__defaults__[-1] == "tabular"
+    # ⚠️ 第 3 轮：构造签名的**最后一个**默认参数现在是 ``nli_model``（不是
+    # ``raman_spectrum``）⇒ ``__defaults__[-1]`` 不再是拉曼档位。改成断言
+    # 「档位默认由 NLI 档位解析」这件事本身。
+    assert MultiBandISRSGN.__init__.__defaults__[-1] == NLI_MODEL_DEFAULT
+    assert MultiBandISRSGN.__init__.__defaults__[-1] == "p1_closed"
 
 
 def test_tabular_and_legacy_are_distinguishable() -> None:
@@ -123,12 +138,14 @@ def test_tabular_and_legacy_are_distinguishable() -> None:
         ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
         symbol_rate_hz=50e9,
         raman_spectrum="tabular",
+        nli_model="p2_gn",
     )
     ev_legacy = MultiBandISRSGN(
         grid=SpectrumGrid(num_channels=80, channel_spacing_hz=50e9, center_frequency_hz=190.2127e12),
         ref_fiber_config=FiberSpanConfig(length_km=100.0, max_span_length_km=100.0),
         symbol_rate_hz=50e9,
         raman_spectrum="legacy",
+        nli_model="p2_gn",
     )
     assert not np.array_equal(ev._g_gain, ev_legacy._g_gain), (
         "tabular and legacy produced identical G matrices; the flip would be a no-op"

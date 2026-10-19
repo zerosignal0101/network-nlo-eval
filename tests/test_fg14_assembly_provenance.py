@@ -34,13 +34,19 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_PATH = REPO_ROOT / "results" / "fg1_golden_main.json"
 RECORD_PATH = REPO_ROOT / "results" / "fg14_assembly_divergence.json"
-KERNEL_PATH = REPO_ROOT / "src" / "network_nlo_eval" / "models" / "numba_kernels.py"
+KERNEL_PATH = REPO_ROOT / "src" / "network_nlo_eval" / "models" / "numba_kernels_p2.py"
 
 #: 提交 c621cda（FG-13）时这两份文件的 sha256。阶段 0 **零物理变化**，
 #: 所以它们到阶段 0 结束必须一模一样；阶段 1 也不许变。
+#:
+#: ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：FG 的内核现在住在 ``numba_kernels_p2.py``
+#: （**同字节、只换文件名**——sha256 与下表一字不差）。守卫**改指向**那份文件，
+#: **不是放宽**：断言的 sha256 一个字符都没动，被守的仍是 FG 的那份字节。
+#: 合并树另有一份 P1 内核（``numba_kernels.py``，sha256 6611c416…），它是**另一套
+#: 物理**，由 ``tests/test_ode3_flexgrid_sync.py`` 的 J5 守卫单独守住。
 FROZEN_SHA256 = {
     "results/fg1_golden_main.json": "4f4d9060ca273f337e71927ac0f116d9e2bf666ed9867102e81c230200a03794",
-    "src/network_nlo_eval/models/numba_kernels.py": (
+    "src/network_nlo_eval/models/numba_kernels_p2.py": (
         "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
     ),
 }
@@ -96,12 +102,15 @@ def test_fg14_main_provenance_golden_is_byte_frozen() -> None:
 
 
 def test_fg14_ode_kernel_is_byte_frozen() -> None:
-    """``numba_kernels.py``（含 ``_calc_exact_power_profile_ode``）逐字节未变。
+    """``numba_kernels_p2.py``（含 ``_calc_exact_power_profile_ode``）逐字节未变。
 
     这是命题 (A) 的物理侧支点：FG-11 复核过 ``off ≡ matvec ≤ 1.8e-15``，
     FG-14 只动 ROADM 装配那一段，内核必须一个字节都不动。
+
+    ⚠️ WP-MERGE-FG-FLEX 第 3 轮：守卫**改指向** ``numba_kernels_p2.py``（FG 的内核
+    同字节搬了家），断言值一字未改。
     """
-    assert _sha256(KERNEL_PATH) == FROZEN_SHA256["src/network_nlo_eval/models/numba_kernels.py"], (
+    assert _sha256(KERNEL_PATH) == FROZEN_SHA256["src/network_nlo_eval/models/numba_kernels_p2.py"], (
         "ODE 内核被改动了 —— FG-14 只授权动装配层，触碰内核超出授权范围。"
     )
 

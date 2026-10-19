@@ -61,7 +61,7 @@ from fg4a_scenarios import (
 )
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models import numba_kernels as nk
+from network_nlo_eval.models import numba_kernels_p2 as nk
 from network_nlo_eval.models.isrs_gn import ODE_ACCEL_DEFAULT, ODE_ACCEL_MODES, MultiBandISRSGN, MultiSpanOpticalPath
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 
@@ -548,6 +548,7 @@ def test_f4b_6_end_to_end_path_with_roadm_and_tilt() -> None:
             # legacy-only reference path, and this test compares that reference
             # against the accelerated path on the same spectrum.
             raman_spectrum="legacy",
+            nli_model="p2_gn",
         )
         optical_path = MultiSpanOpticalPath(
             fiber_configs=[

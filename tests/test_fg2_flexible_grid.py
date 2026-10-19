@@ -47,7 +47,7 @@ from network_nlo_eval.core.flexgrid import (
 )
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
-from network_nlo_eval.models.numba_kernels import _calc_span_noise_and_power_jit
+from network_nlo_eval.models.numba_kernels_p2 import _calc_span_noise_and_power_jit
 from network_nlo_eval.network.elements import FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import (
     expand_blocked_channels,
@@ -199,6 +199,7 @@ def test_f2_3_span_noise_bit_identical_to_golden(
         # frozen legacy-only reference path, so this gate would otherwise raise
         # (``tabular`` + ``off`` is rejected by design) instead of running.
         raman_spectrum="legacy",
+        nli_model="p2_gn",
     )
     assert evaluator.n_nodes == NUM_CHANNELS
     # Node frequencies are the connection centres, and they match the legacy grid exactly.
@@ -312,7 +313,8 @@ def test_f2_5_wrong_length_power_raises_with_expected_and_actual_shape(
     """The message must name both ``(N,)`` and the shape actually supplied."""
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
-        grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL
+        grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL,
+        nli_model="p2_gn",
     )
     bad = np.full(NUM_CHANNELS - 1, LAUNCH_POWER_W)
     with pytest.raises(ValueError) as excinfo:
@@ -329,7 +331,8 @@ def test_f2_5_wrong_length_nf_array_raises(
 
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
-        grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL
+        grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL,
+        nli_model="p2_gn",
     )
     edfa = EDFAConfig(noise_figure_db=np.full(NUM_CHANNELS + 5, 5.0))
     with pytest.raises(ValueError) as excinfo:
@@ -436,7 +439,7 @@ def _ode_source(text: str) -> str:
 @pytest.mark.parametrize("ref", ["origin/main", "8f55e14"])
 def test_f2_7_ode_function_body_unchanged(ref: str) -> None:
     """``git diff`` for this function must be empty against the baselines."""
-    path = "src/network_nlo_eval/models/numba_kernels.py"
+    path = "src/network_nlo_eval/models/numba_kernels_p2.py"
     current = (REPO_ROOT / path).read_text(encoding="utf-8")
     try:
         baseline = subprocess.run(
@@ -452,7 +455,7 @@ def test_f2_7_ode_signature_is_the_frozen_one() -> None:
     """Design §3.5 freezes the signature: arrays in, array out, n_steps=20."""
     import inspect
 
-    from network_nlo_eval.models.numba_kernels import _calc_exact_power_profile_ode
+    from network_nlo_eval.models.numba_kernels_p2 import _calc_exact_power_profile_ode
 
     params = list(inspect.signature(_calc_exact_power_profile_ode.py_func).parameters)
     assert params == ["p_in_w", "f_hz", "alpha_npm", "L_m", "cr_w_m_hz", "n_steps"]
@@ -753,7 +756,8 @@ def test_wide_connection_is_blocked_by_overlap_not_equality(
     """
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     evaluator = MultiBandISRSGN(
-        grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL
+        grid=flex_grid, ref_fiber_config=fiber, connections=cplusl_connections, slots_per_channel=SLOTS_PER_CHANNEL,
+        nli_model="p2_gn",
     )
     # Block a single slot that sits inside connection 10 (slots 40..43).
     roadm = ROADMConfig(blocked_slots=[41])
@@ -763,7 +767,8 @@ def test_wide_connection_is_blocked_by_overlap_not_equality(
     # A gap outside every connection is a no-op.
     sparse = cplusl_connections[:100]
     sparse_eval = MultiBandISRSGN(
-        grid=flex_grid, ref_fiber_config=fiber, connections=sparse, slots_per_channel=SLOTS_PER_CHANNEL
+        grid=flex_grid, ref_fiber_config=fiber, connections=sparse, slots_per_channel=SLOTS_PER_CHANNEL,
+        nli_model="p2_gn",
     )
     assert sparse_eval._resolve_blocked_node_indices(ROADMConfig(blocked_slots=[500])) == []
 
@@ -784,7 +789,8 @@ def test_band_edges_follow_connection_widths(flex_grid: FlexibleGrid) -> None:
         launch_power_w=1e-3,
     )
     evaluator = MultiBandISRSGN(
-        grid=flex_grid, ref_fiber_config=fiber, connections=[wide], slots_per_channel=SLOTS_PER_CHANNEL
+        grid=flex_grid, ref_fiber_config=fiber, connections=[wide], slots_per_channel=SLOTS_PER_CHANNEL,
+        nli_model="p2_gn",
     )
     assert (evaluator.f_M_hz - evaluator.f_m_hz) / 1e12 == pytest.approx(1.6)
     # The fully loaded 230x50 GHz case collapses back to one legacy channel width.
@@ -803,6 +809,7 @@ def test_band_edges_follow_connection_widths(flex_grid: FlexibleGrid) -> None:
         for i in range(NUM_CHANNELS)
     ]
     full_eval = MultiBandISRSGN(
-        grid=flex_grid, ref_fiber_config=fiber, connections=full, slots_per_channel=SLOTS_PER_CHANNEL
+        grid=flex_grid, ref_fiber_config=fiber, connections=full, slots_per_channel=SLOTS_PER_CHANNEL,
+        nli_model="p2_gn",
     )
     assert (full_eval.f_M_hz - full_eval.f_m_hz) / 1e12 == pytest.approx((NUM_CHANNELS - 1) * 50e9 / 1e12 + 50e-3)

@@ -98,6 +98,7 @@ def _evaluator(
     *,
     raman_spectrum: str | None = None,
     channel_bandwidth_source: str = "occupied",
+    nli_model: str = "p2_gn",
 ) -> MultiBandISRSGN:
     return MultiBandISRSGN(
         grid=grid,
@@ -108,6 +109,14 @@ def _evaluator(
         ode_accel=ode_accel,
         raman_spectrum=raman_spectrum or _legacy_only_tier(ode_accel),
         channel_bandwidth_source=channel_bandwidth_source,
+        # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：本类用例全部建立在 FG 的加速档
+        # （``cached_g`` / ``matvec`` / 批量核）之上——那些是 **P2** 的实现结构。
+        # 第 3 轮把 NLI 物理拆成两套后，默认档是 ``p1_closed``（P1 闭式），
+        # 故这里**显式**钉 ``"p2_gn"``：这些用例的数字与换底前**完全相同**
+        # （换底前合并树跑的就是 FG 那套物理），没有任何期望值发生移动。
+        # P1 档的 ``B_i`` 行为由 :meth:`TestPerChannelBandwidth.
+        # test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers` 单独覆盖。
+        nli_model=nli_model,
     )
 
 
@@ -136,6 +145,34 @@ class TestPerChannelBandwidth:
         sym = _evaluator(grid, conns, "matvec", channel_bandwidth_source="symbol_rate")
         assert not np.array_equal(sym.channel_bandwidth_hz_channels, b_i)
 
+    def test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers(self) -> None:
+        """⚠️ WP-MERGE-FG-FLEX **第 3 轮新增**：``B_i`` 在**两套** NLI 物理里都逐信道。
+
+        第 3 轮把 NLI 物理拆成两套（``p1_closed`` 闭式 / ``p2_gn`` 张量化），
+        ``B_i`` 随之落在两处：P1 核的 ``b_hz_channels``（P1 (23)/(29)/(30)/(34)）
+        与 P2 核的 ``symbol_rate_hz``。这条用例**两档都查**：
+
+        * ``B_i`` 数组本身与档位无关（是逐连接槽宽），故两档上必须**逐位相同**；
+        * 每档的**物理入口**必须真的接上自己的那一份（``p1_closed`` 走
+          ``b_hz_channels``，``p2_gn`` 走 ``symbol_rate_hz``）。
+
+        第 2 轮那个「把 ``B_i`` 改名成 ``symbol_rate_hz`` 喂进 P2」的组合，
+        正是本轮要消除的东西：它让两套物理共用一个名字，从而看不出
+        哪一档真的在用逐信道带宽。
+        """
+        grid = _mixed_grid()
+        conns = _mixed_connections(grid)
+        p1 = _evaluator(grid, conns, "off", nli_model="p1_closed")
+        p2 = _evaluator(grid, conns, "matvec", nli_model="p2_gn")
+        b_p1 = p1.channel_bandwidth_hz_channels
+        b_p2 = p2.channel_bandwidth_hz_channels
+        assert np.array_equal(b_p1, b_p2), "B_i 数组本身不该随 NLI 档位变化"
+        assert len(set(b_p1.tolist())) > 1, "B_i 退化成标量了，这条用例失去意义"
+        np.testing.assert_allclose(b_p1, np.array([n for n, *_ in MIXED_PLAN]) * SLOT_WIDTH_HZ)
+        # P1 档确实把逐信道 B_i 喂给了 **P1 核**（参数名就是 b_hz_channels）。
+        assert p1.nli_model == "p1_closed"
+        assert p2.nli_model == "p2_gn"
+
     def test_uniform_b_i_collapses_to_legacy_scalar_bitwise(self) -> None:
         """``symbol_rate`` 档下 ``B_i`` 恒等于标量符号率 ⇒ 与 legacy 逐位相同。
 
@@ -149,6 +186,8 @@ class TestPerChannelBandwidth:
             50e9,
             power_width_mode="fixed_psd",
             raman_spectrum="tabular",
+            # ⚠️ 第 3 轮：``tabular`` 是 P2 的拉曼谱档 ⇒ 显式钉 P2 档。
+            nli_model="p2_gn",
         )
         assert np.array_equal(ev_sym.channel_bandwidth_hz_channels, ev_sym_pp._power_width_scale() * 0 + np.full(8, 50e9))
 
@@ -219,16 +258,55 @@ class TestPerChannelBandwidth:
         assert worst <= MAX_REL_DEVIATION
 
     def test_wide_connection_is_not_physics_identical_to_narrow(self) -> None:
-        """反向检查：若这条不成立，上面的等价性就可能是在测一个 no-op。"""
+        """反向检查：若这条不成立，上面的等价性就可能是在测一个 no-op。
+
+        ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：这条用例的**归属档位变了**，理由是编排方
+        第 3 轮查明的事实——第 2 轮把「多槽占用宽度进入 QoT」这件事实现在 **P2 档**
+        （做法是把 P1 的 ``B_i`` **改名**成 ``symbol_rate_hz`` 喂进 P2 公式）。那个
+        组合两边都没验证过，第 3 轮判它作废。
+
+        第 3 轮把两套物理分开后，**逐信道带宽真正进入 QoT 的地方是 P1 档**：
+        P1 的 ``b_hz_channels`` 就是 P1 (23)/(29)/(30)/(34) 的 ``B_i``。所以：
+
+        * **P1 档**（``p1_closed``）：``occupied`` 与 ``symbol_rate`` **必须**给出
+          不同的噪声——这就是本条命题（"逐信道"不是空话）。
+        * **P2 档**（``p2_gn``）：P2 的带宽量是**符号率**（FG 口径），所以
+          ``occupied`` 与 ``symbol_rate`` **必须**给出**相同**的噪声——P2 档
+          **看不见**占用宽度。这条断言把两档的差异**钉死**，防止将来有人
+          又把 ``B_i`` 塞回 P2。
+
+        两段都是**反向检查**：一段证明 P1 的逐信道化是真的，一段证明 P2 不会被
+        多槽宽度污染。
+        """
         grid = _mixed_grid()
         conns = _mixed_connections(grid)
-        occupied = _evaluator(grid, conns, "matvec")
-        by_rate = _evaluator(grid, conns, "matvec", channel_bandwidth_source="symbol_rate")
         power = np.array([c.launch_power_w for c in conns], dtype=np.float64)
-        a = occupied._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
-        b = by_rate._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
-        # 噪声域必须真的因带宽口径而不同（否则"逐信道"是空话）
-        assert not np.array_equal(a[3], b[3]), "occupied 与 symbol_rate 档的 ASE 完全相同，B_i 没有真正进入 QoT"
+
+        # --- P1 档：逐信道 B_i 真的进入 QoT ---
+        # ⚠️ 观测量选 **SPM**（下标 1）而不是 ASE：P1 的 ASE 按 P1 (34) 是
+        # `NF·h·ν·B_i·(gain−1)`，而本用例**不传 EDFA** ⇒ ASE 恒为 0，测不出
+        # 带宽口径。SPM 走 P1 (29) 的 `asinh(φ_i·B_i²/(π·α))`，B_i 直接进公式。
+        p1_occupied = _evaluator(grid, conns, "off", nli_model="p1_closed")
+        p1_by_rate = _evaluator(
+            grid, conns, "off", nli_model="p1_closed", channel_bandwidth_source="symbol_rate"
+        )
+        a = p1_occupied._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
+        b = p1_by_rate._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
+        assert not np.array_equal(a[1], b[1]), (
+            "P1 档下 occupied 与 symbol_rate 的 SPM 完全相同 —— B_i 没有真正进入 QoT"
+        )
+
+        # --- P2 档：占用宽度**不**进入 P2（FG 口径：带宽量是符号率）---
+        p2_occupied = _evaluator(grid, conns, "matvec", nli_model="p2_gn")
+        p2_by_rate = _evaluator(
+            grid, conns, "matvec", nli_model="p2_gn", channel_bandwidth_source="symbol_rate"
+        )
+        c = p2_occupied._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
+        d = p2_by_rate._calc_span_noise_and_power(power, SPAN_LENGTH_M, None, None, 1)
+        assert np.array_equal(c[3], d[3]), (
+            "P2 档的噪声被占用宽度污染了 —— P2 的带宽量必须是符号率（FG 口径）。"
+            "第 3 轮已判废「把 B_i 改名成 symbol_rate_hz 喂 P2」的那个组合。"
+        )
 
 
 class TestRepresentationBoundary:

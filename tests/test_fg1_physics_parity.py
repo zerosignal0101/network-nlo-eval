@@ -75,6 +75,7 @@ def _pipeline_result(scenario):
         #   2. even if it did not raise, no tabular number may ever be written into a
         #      file claiming ``origin/main`` provenance (FG-13's rule).
         raman_spectrum="legacy",
+        nli_model="p2_gn",
     )
     fibers = [scenario.fiber(hop).model_copy(update={"max_span_length_km": hop.span_km}) for hop in scenario.hops]
     edfas = [scenario.edfa(hop) for hop in scenario.hops]
@@ -100,7 +101,7 @@ def test_kernel_uses_ode_and_not_the_analytic_tilt_variant() -> None:
     The reconciliation direction is one-way: the pipeline must call main's
     RK4 power evolution, never the analytic ``r_f``/``L_eff`` model.
     """
-    from network_nlo_eval.models import numba_kernels as kernels
+    from network_nlo_eval.models import numba_kernels_p2 as kernels
 
     assert hasattr(kernels, "_calc_exact_power_profile_ode")
     assert hasattr(kernels, "_calc_dp_dz")

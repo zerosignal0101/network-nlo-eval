@@ -406,8 +406,16 @@ def test_for_fiber_propagates_raman_spectrum():
     grid = SpectrumGrid(num_channels=40, channel_spacing_hz=50e9, center_frequency_hz=190e12)
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
     for mode in ("legacy", "tabular"):
-        evaluator = MultiBandISRSGN(grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, raman_spectrum=mode)
+        evaluator = MultiBandISRSGN(
+            grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, raman_spectrum=mode,
+            # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：拉曼谱两档（legacy / tabular）都是 **P2**
+            # 的能力（P1 核只有 legacy 那条合成折线，没有 G 矩阵），故显式钉 P2 档。
+            nli_model="p2_gn",
+        )
         assert evaluator.for_fiber(fiber).raman_spectrum == mode
+        # 第 3 轮补的断言：``for_fiber`` 也必须**透传 NLI 物理档位**——
+        # 否则子评估器会悄悄换档（默认档已是 p1_closed）。
+        assert evaluator.for_fiber(fiber).nli_model == "p2_gn"
 
 
 def test_evaluate_path_actually_reaches_tabular_spectrum():
@@ -424,7 +432,12 @@ def test_evaluate_path_actually_reaches_tabular_spectrum():
     power = np.full(grid.num_channels, 1e-3)
     snrs = {}
     for mode in ("legacy", "tabular"):
-        evaluator = MultiBandISRSGN(grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, raman_spectrum=mode)
+        evaluator = MultiBandISRSGN(
+            grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, raman_spectrum=mode,
+            # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：同 ``test_for_fiber_propagates_raman_spectrum``，
+            # 拉曼谱档位是 P2 的能力，显式钉 P2 档。
+            nli_model="p2_gn",
+        )
         snrs[mode] = evaluator.evaluate_path(path, power).snr_db
     delta = snrs["tabular"] - snrs["legacy"]
     assert np.any(np.abs(delta) > 1e-3), "evaluate_path must differ between legacy and tabular"
@@ -440,6 +453,9 @@ def test_legacy_path_still_bit_identical_for_fiber():
         # 透传"——子评估器必须与父评估器**同档**。若跟着全局默认走，命题会被
         # 悄悄换成"默认档透传"，而测试名与文档都在说 legacy。
         raman_spectrum="legacy",
+        # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：``_g_gain`` 是 P2 拉曼 G 矩阵（P1 核没有），
+        # 显式钉 P2 档。
+        nli_model="p2_gn",
     )
     child = evaluator.for_fiber(fiber)
     assert child.raman_spectrum == "legacy"

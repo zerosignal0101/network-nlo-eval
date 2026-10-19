@@ -59,7 +59,8 @@ _N_CH = 3
 def _evaluator() -> MultiBandISRSGN:
     """一个最小、确定性的评估器（默认 ``ode_accel="matvec"``）。"""
     grid = SpectrumGrid(_N_CH, 50e9, 193.1e12)
-    return MultiBandISRSGN(grid, FiberSpanConfig(length_km=100.0), symbol_rate_hz=32e9)
+    return MultiBandISRSGN(grid, FiberSpanConfig(length_km=100.0), symbol_rate_hz=32e9,
+        nli_model="p2_gn",)
 
 
 def _run_serial(ev: MultiBandISRSGN, power: np.ndarray, roadm: ROADMConfig | None):

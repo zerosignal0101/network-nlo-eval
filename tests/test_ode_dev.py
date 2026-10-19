@@ -110,13 +110,50 @@ def test_guard3_legacy_bitwise_matches_sum_of_fixes():
 
 
 # ---------------------------------------------------------------------------
+# 守卫 4b：NLI 物理档位与加速档位**不匹配**时必须显式报错（第 3 轮新增）
+# ---------------------------------------------------------------------------
+def test_guard4b_incompatible_ode_accel_is_rejected():
+    """⚠️ WP-MERGE-FG-FLEX **第 3 轮新增**：不匹配的组合必须**显式**报错。
+
+    ``"cached_g"`` / ``"matvec"`` 是 **P2** 的实现结构（P1 核里没有拉曼 G 矩阵、
+    没有去分支 matvec、也没有张量化 NLI）。给 ``p1_closed`` 配这些档位，如果
+    静默跑成 ``"off"``，调用方就**以为**自己拿到了加速——那是最坏的一种错：
+    数字对、账对不上、没人知道加速其实没生效。
+
+    所以这里断言**显式拒绝**：构造期抛 ``ValueError``。
+    """
+    from network_nlo_eval.core.spectrum import SpectrumGrid
+    from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+    from network_nlo_eval.network.elements import FiberSpanConfig
+
+    fiber = FiberSpanConfig(length_km=80.0)
+    grid = SpectrumGrid(8, 50e9, 193.1e12)
+    for mode in ("cached_g", "matvec"):
+        with pytest.raises(ValueError, match="nli_model"):
+            MultiBandISRSGN(
+                grid, fiber, 32e9, ode_accel=mode, raman_spectrum="tabular",
+                nli_model="p1_closed",
+            )
+    # 反向：P1 档只有 legacy 谱，tabular 必须显式拒绝。
+    with pytest.raises(ValueError, match="raman_spectrum"):
+        MultiBandISRSGN(
+            grid, fiber, 32e9, ode_accel="off", raman_spectrum="tabular",
+            nli_model="p1_closed",
+        )
+
+
+# ---------------------------------------------------------------------------
 # 守卫 4：能力存在性守卫（只测可达，不测物理）
 # ---------------------------------------------------------------------------
 def test_guard4_capabilities_reachable():
     import network_nlo_eval.core.flexgrid as flexgrid  # noqa: F401  可导入
     from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
     from network_nlo_eval.core.spectrum import SpectrumGrid
-    from network_nlo_eval.models.isrs_gn import ODE_ACCEL_MODES, MultiBandISRSGN
+    from network_nlo_eval.models.isrs_gn import (
+        ODE_ACCEL_MODES,
+        ODE_ACCEL_MODES_BY_NLI_MODEL,
+        MultiBandISRSGN,
+    )
     from network_nlo_eval.network.elements import (
         EDFAConfig,
         FiberSpanConfig,
@@ -128,16 +165,30 @@ def test_guard4_capabilities_reachable():
     fiber = FiberSpanConfig(length_km=80.0)
     grid = SpectrumGrid(8, 50e9, 193.1e12)
     power = np.full(8, 1e-3)
-    for mode in ODE_ACCEL_MODES:
-        # WP-MERGE-FG-FLEX（已声明的测试改动，见 docs/wp_merge_fg_into_flex.md V5）：
-        # 合并后 ``ode_accel`` 是两侧并集，``"off"`` / ``"cached"`` 是 legacy-only
-        # 的冻结路径，**必须**显式配 ``raman_spectrum="legacy"``（FG-15 的口径是
-        # "显式拒绝而非静默回退"）。此前这里不传该参数，是因为 Raman 档位当时还不存在。
-        ev = MultiBandISRSGN(
-            grid, fiber, 32e9, ode_accel=mode, raman_spectrum=_raman_tier_for(mode)
-        )
-        out = ev._calc_span_noise_and_power(power, 80e3, EDFAConfig(target_gain_db=17.0))
-        assert np.all(np.isfinite(out[3]))
+    # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**（已声明的测试改动，见 docs/wp_merge_fg_into_flex.md
+    # V5'）：``ode_accel`` 档位现在**按 NLI 物理档位分组**
+    # （``ODE_ACCEL_MODES_BY_NLI_MODEL``）——``"cached_g"`` / ``"matvec"`` 是 **P2**
+    # 的实现结构（P1 核里没有拉曼 G 矩阵、没有去分支 matvec，也没有张量化 NLI）。
+    #
+    # 这条守卫的命题是「**每个能力档位都可达**」，所以这里走**笛卡尔积**：
+    # 每个 NLI 档位 × 该档位支持的每个 ``ode_accel`` 档位，全部构造一次并跑一遍
+    # 跨段计算。这比换底前（只按并集档位各跑一次）**多跑**了几个组合
+    # （P1 档的 off/cached、P2 档的 off/cached），覆盖是**扩大**的。
+    #
+    # 另见 :func:`test_guard4b_incompatible_ode_accel_is_rejected`：**不匹配**的
+    # 组合必须显式报错，不许静默回退。
+    for nli_model, modes in ODE_ACCEL_MODES_BY_NLI_MODEL.items():
+        for mode in modes:
+            # WP-MERGE-FG-FLEX（已声明的测试改动，见 docs/wp_merge_fg_into_flex.md V5）：
+            # 合并后 ``ode_accel`` 是两侧并集，``"off"`` / ``"cached"`` 是 legacy-only
+            # 的冻结路径，**必须**显式配 ``raman_spectrum="legacy"``（FG-15 的口径是
+            # "显式拒绝而非静默回退"）。此前这里不传该参数，是因为 Raman 档位当时还不存在。
+            ev = MultiBandISRSGN(
+                grid, fiber, 32e9, ode_accel=mode, raman_spectrum=_raman_tier_for(mode),
+                nli_model=nli_model,
+            )
+            out = ev._calc_span_noise_and_power(power, 80e3, EDFAConfig(target_gain_db=17.0))
+            assert np.all(np.isfinite(out[3]))
     with pytest.raises(ValueError):
         MultiBandISRSGN(grid, fiber, 32e9, ode_accel="not_a_mode")
 
@@ -164,21 +215,33 @@ def test_guard4_capabilities_reachable():
 
     # (d) 任意功率输入路径可达（target_gain_db=None → 自动均衡）
     #
-    # ⚠️ WP-MERGE-FG-FLEX（**已声明的测试改动**，旧文本 → 新文本见
-    # docs/wp_merge_fg_into_flex.md 的 V5）：
-    # 旧断言 `assert np.allclose(auto[0], power)` 依赖 flexgrid 侧"在跨段函数内部
-    # 施加 EDFA、`target_gain_db=None` 时把出纤功率自动均衡回入纤功率"的行为。
-    # 本次合并按判据 V1（首要判据）取回 `wp/fg-integrate` 的口径：
-    # `_calc_span_noise_and_power` 返回**光纤输出**，跨段后放大由调用方负责
-    # （RWA 层自己按 `NF·h·ν·B_i·(gain−1)` 计放大器 ASE，两处都算会重复计入）。
-    # 因此该断言改为钉合并后的真实契约：路径可达、读数有限、且出纤功率确实
-    # 是**衰减后**的光纤输出（不是入纤功率）。
-    auto = MultiBandISRSGN(grid, fiber, 32e9)._calc_span_noise_and_power(
+    # ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：这条断言按 NLI 物理档位**拆成两段**。
+    #
+    # 第 2 轮把旧断言 `assert np.allclose(auto[0], power)`（flexgrid 侧口径：
+    # 跨段函数**内部**施加 EDFA，`target_gain_db=None` 时把出纤功率自动均衡回
+    # 入纤功率）改成了 FG 侧口径的 `auto[0] < power`（跨段函数返回**光纤输出**，
+    # 跨段后放大由调用方负责，否则与调用方的 ASE 重复计入）。
+    #
+    # 第 3 轮查明：那是**两套不同物理**各自的契约，不能二选一：
+    #   * ``p1_closed``（P1 闭式，flexgrid-dev @ cb24704）：跨段函数**内部**施加
+    #     EDFA ⇒ 出纤功率被自动均衡回入纤功率（**旧断言原样恢复**）。
+    #   * ``p2_gn``（P2 Eq. 21，wp/fg-integrate @ 57c7221）：跨段函数返回**光纤
+    #     输出**，放大由调用方负责 ⇒ 出纤功率**小于**入纤功率。
+    # 两段都在这里断言，谁都不被抹掉。
+    p1_auto = MultiBandISRSGN(grid, fiber, 32e9, nli_model="p1_closed")._calc_span_noise_and_power(
         power, 80e3, EDFAConfig(target_gain_db=None, noise_figure_db=5.0)
     )
-    assert np.all(np.isfinite(auto[0]))
-    assert np.all(auto[0] > 0.0) and np.all(auto[0] < power), (
-        "出纤功率应当是 80 km 损耗后的光纤输出，而不是入纤功率；"
+    assert np.all(np.isfinite(p1_auto[0]))
+    assert np.allclose(p1_auto[0], power), (
+        "P1 档下跨段函数内部施加 EDFA：target_gain_db=None 时出纤功率应被自动均衡回入纤功率"
+    )
+
+    p2_auto = MultiBandISRSGN(grid, fiber, 32e9, nli_model="p2_gn")._calc_span_noise_and_power(
+        power, 80e3, EDFAConfig(target_gain_db=None, noise_figure_db=5.0)
+    )
+    assert np.all(np.isfinite(p2_auto[0]))
+    assert np.all(p2_auto[0] > 0.0) and np.all(p2_auto[0] < power), (
+        "P2 档下出纤功率应当是 80 km 损耗后的光纤输出，而不是入纤功率；"
         "若这里等于入纤功率，说明跨段内又加回了 EDFA（会与调用方的 ASE 重复计入）"
     )
 

@@ -58,21 +58,28 @@ OUT = REPO / "results" / "ode_dev_flexgrid_sync.json"
 FROZEN = "src/network_nlo_eval/models/numba_kernels.py"
 WP_BASE = "b69563a"
 
-#: J5 冻结内核的**绝对**字节出处：``wp/fg-integrate @ 57c7221`` 的同名文件。
+#: J5 冻结内核的**绝对**字节出处：``flexgrid-dev`` 侧（``b69563a`` / ``cb24704``）的
+#: 同名文件。
 #:
-#: ⚠️ 基线推进记录（WP-MERGE-FG-FLEX）：``numba_kernels.py`` 在两条线上各自独立演化，
-#: ``sha256`` 不同且**不可能同时成立**——
-#:   * ``b69563a`` / ``flexgrid-dev`` : ``6611c416…``（flexgrid 侧：保留 P1 解析倾斜闭式内核）
-#:   * ``wp/fg-integrate``            : ``7beece4e…``（FG 侧：RK4 ODE + NLI 张量化加速）
-#: 本次 WP-MERGE-FG-FLEX 的合并目的正是把 FG 侧并进来，原「不许碰内核」的前提已消失，
-#: 故 J5 由**相对**断言（diff 相对 ``b69563a`` 为空）翻成**绝对正向不变量**（sha256 等于
-#: 已核出处的常量）。取 FG 侧字节，**判据 V1（首要判据）** 要求合并树与 ``wp/fg-integrate``
-#: 逐位相同。
+#: ⚠️ 基线推进记录（WP-MERGE-FG-FLEX **第 3 轮**）：两份内核是**两套不同物理**，
+#: 各占一个文件、各守一个出处：
 #:
-#: 为什么必须翻而不是两条都满足：两条线的字节互斥。翻成绝对不变量还更强——它同时挡住
-#: 「被人悄悄改了一行」与「合并出第三份实现」两种情况。
-FROZEN_SHA256 = "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
-FROZEN_PROVENANCE_BRANCH = "wp/fg-integrate"
+#:   * ``numba_kernels.py``    ``6611c416…`` —— P1 (23)/(29)/(30)/(34) 闭式，
+#:     逐信道 ``B_i``（flexgrid 侧）。**第 3 轮已恢复**回这份字节。
+#:   * ``numba_kernels_p2.py`` ``7beece4e…`` —— P2 Eq. 21 张量化，符号率口径
+#:     （FG 侧）。**同字节、只换文件名**，由 FG-14 的字节冻结守卫单独守。
+#:
+#: 第 2 轮曾把 ``numba_kernels.py`` 整份换成 FG 的字节并把 J5 翻成那条字节的 sha256；
+#: 第 3 轮改判后**两套都留**，本守卫回到 P1 那份，并把「相对 ``b69563a`` 的 diff 为空」
+#: 这条**相对**断言**恢复成同时成立**（P1 那份的字节确实就等于 ``b69563a``）。
+#: 相对断言 + 绝对不变量**两条同时成立**，比任一条单独存在都强。
+FROZEN_SHA256 = "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
+FROZEN_PROVENANCE_BRANCH = "flexgrid-dev"
+
+#: 第二份冻结内核：FG 的 P2 内核（第 3 轮同字节搬进 ``numba_kernels_p2.py``）。
+FROZEN_P2 = "src/network_nlo_eval/models/numba_kernels_p2.py"
+FROZEN_P2_SHA256 = "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
+FROZEN_P2_PROVENANCE_BRANCH = "wp/fg-integrate"
 
 B = "src/network_nlo_eval/core/bands.py"
 I = "src/network_nlo_eval/models/isrs_gn.py"
@@ -80,6 +87,7 @@ E = "src/network_nlo_eval/network/elements.py"
 R = "src/network_nlo_eval/rwa/qot_checker.py"
 P = "src/network_nlo_eval/physics/qot_checker.py"
 K = FROZEN
+K2 = FROZEN_P2
 
 # ---------------------------------------------------------------------------
 # 逐片段裁定。``kind`` 只有两种：engineering（纯接线/索引/校验）、
@@ -341,13 +349,17 @@ SEGMENTS: list[dict] = [
         "落地口径不是照抄 fu4 的 Rs 数组，而是引入逐信道**信道带宽** b_hz_channels，"
         "由 channel_bandwidth_source（symbol_rate / occupied）决定取值——fu4 没有这个区分。"
         "未移植 fu4 的任何 ODE / phi_kurtosis / ASE 增益因子。"
-        "⚠️ WP-MERGE-FG-FLEX：合并后的内核把 flexgrid 侧的 `b_hz_channels` 改名并入 "
-        "`symbol_rate_hz`（内核侧收**一个**逐节点数组承载 P1 的 B_i），故锚点改钉在"
-        "调用点 `symbol_rate_hz=self.channel_bandwidth_hz_channels` 上。**判据口径不动**："
-        "paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、不许退回标量；"
-        "改的只是这个参数在合并后叫什么。",
+        "⚠️ WP-MERGE-FG-FLEX **第 3 轮**：上一轮把 flexgrid 侧的 `b_hz_channels` **改名**并入 "
+        "`symbol_rate_hz`（内核侧收**一个**逐节点数组承载 P1 的 B_i），锚点因此改钉在"
+        "调用点 `symbol_rate_hz=self.channel_bandwidth_hz_channels` 上——那个组合是"
+        "「P2 的 GN 模型 + 占用带宽当符号率」，**两边都没验证过**。"
+        "第 3 轮改判为**两套物理都留、显式档位区分**：P1 档的调用点回到 "
+        "`b_hz_channels=self.channel_bandwidth_hz_channels`（P1 核的参数名就是 "
+        "`b_hz_channels`），P2 档则回到 FG 口径的 `symbol_rate_hz=self.symbol_rate_hz_channels`。"
+        "**判据口径不动**：paper_formulas 仍是 P1 (23)/(29)/(30)/(34)，B_i 仍是逐信道量、"
+        "不许退回标量；改的只是它现在住在**哪个档位、叫什么名字**。",
         "paper_formulas": ["P1 (23)", "P1 (29)", "P1 (30)", "P1 (34)"],
-        "verify": "symbol_rate_hz=self.channel_bandwidth_hz_channels,",
+        "verify": "b_hz_channels=self.channel_bandwidth_hz_channels,",
     },
     {
         "file": I,
@@ -561,16 +573,32 @@ SEGMENTS: list[dict] = [
         "（ODE 线按 O2 裁定以 P1/P2 为准）。fu4 的 RK4 / ode_accel / phi_kurtosis 一律不移植。"
         "唯一被授权的改动是 WP-Q1 对 B_i / B_l 的逐信道化（P1 (23)/(29)/(30)/(34)）。"
         "自 b69563a 起 diff 必须为空。"
-        "⚠️ WP-MERGE-FG-FLEX 复核结论：**J5 已翻、本条 action 未翻**。合并确实把 fu4 的 RK4 "
-        "ODE（`_calc_exact_power_profile_ode`，只定义 1 处，由同文件 :1431 实际调用）与 "
-        "ode_accel 加速带进来了，因此 J5 已按通例从「相对 b69563a 的 diff 为空」翻成 sha256 "
-        "绝对正向不变量（见 FROZEN_SHA256，取 FG 侧字节）。"
-        "但本条 `kind == \"physics\"`：J7 的硬闸门要求任何被应用的物理片段自带非空 "
+        "⚠️ WP-MERGE-FG-FLEX **第 3 轮**复核结论：J5 已**恢复**为「相对 b69563a 的 diff 为空」"
+        "**且**「sha256 == 6611c416…」的绝对正向不变量，**两条同时成立**——因为本轮把"
+        "本文件恢复成 flexgrid-dev 的冻结字节（P1 闭式那一份）。"
+        "FG 的 RK4 ODE（`_calc_exact_power_profile_ode`）与 ode_accel 加速**整份搬到**"
+        "`numba_kernels_p2.py`（同字节，只换文件名），由那里的 J5 记录单独守。"
+        "本条 `kind == \"physics\"`：J7 的硬闸门要求任何被应用的物理片段自带非空 "
         "`paper_formulas`（J2「论文提及且与本仓不一致 ⇒ 改成论文」的授权）；判据口径要求 "
         "`paper_formulas` 一律不动，而合并带入的 FG 内核是 RK4 数值传播、**并非**按 P1 "
-        "(23)/(29)/(30)/(34) 逐式改写（results/ode_dev_formula_map.json 里指向本文件的 "
-        "P1 代码锚点现已全部匹配不上），无法诚实地给出论文公式号。故 action 暂留 "
+        "(23)/(29)/(30)/(34) 逐式改写，无法诚实地给出论文公式号。故 action 暂留 "
         "not_ported，**待裁决**，不作假声明。",
+    },
+    # ============ models/numba_kernels_p2.py（第 3 轮新增的 FG 内核副本）============
+    {
+        "file": K2,
+        "origin": "wp/fg-integrate@57c7221 models/numba_kernels.py",
+        "symbol": "整个文件（FG 的 RK4 ODE + NLI 张量化 + 拉曼 G 矩阵 + 批量张量）",
+        "fu4_lines": "1-1480",
+        "kind": "physics",
+        "action": "not_ported",
+        "rationale": "★ 第 3 轮新增：FG 的冻结内核**同字节**搬进本文件（只换文件名，"
+        "sha256 仍为 7beece4e…），由 `j5_frozen_kernel_p2` 记录单独守。"
+        "它承载的是 **P2 Eq. 21** 那套物理（符号率口径），与 P1 闭式是**两套不同物理**；"
+        "本轮按编排方裁决把两套都保留、用 `nli_model` 档位区分，谁都不许被另一套替换。"
+        "本条 `kind == \"physics\"` 且 action 留 not_ported：与上面同源的理由——"
+        "FG 的 RK4 数值传播不是按 P1 (23)/(29)/(30)/(34) 逐式改写的，"
+        "J7 要求被应用的物理片段自带论文公式号授权，这里给不出诚实的一组，故不作假声明。",
     },
 ]
 
@@ -659,8 +687,24 @@ def main() -> int:
             f"[J5] {FROZEN} 的 sha256 = {frozen_sha or '<文件缺失>'}，"
             f"不等于已核出处 {FROZEN_PROVENANCE_BRANCH} 的 {FROZEN_SHA256}"
         )
-    # provenance 证据（非守卫）：相对 flexgrid-dev 侧基线的 diff 大小。
+    # provenance 证据（守卫）：相对 flexgrid-dev 侧基线 ``b69563a`` 的 diff 为空。
+    # ⚠️ 第 3 轮恢复 P1 字节后，这条**相对**断言**重新成立**（P1 那份字节就等于
+    #    ``b69563a``）⇒ 相对断言与绝对不变量**两条同时成立**。
     diff_empty, _diff = git_diff_empty(FROZEN)
+    if not diff_empty:
+        errs.append(
+            f"[J5] {FROZEN} 相对 WP_BASE {WP_BASE} 的 diff 不为空 —— "
+            f"P1 内核必须与已核出处逐字节相同。"
+        )
+
+    # 第二份冻结内核（FG 的 P2）：同字节搬进 numba_kernels_p2.py，单独守。
+    frozen_p2_sha = file_sha256(FROZEN_P2)
+    frozen_p2_ok = frozen_p2_sha == FROZEN_P2_SHA256
+    if not frozen_p2_ok:
+        errs.append(
+            f"[J5] {FROZEN_P2} 的 sha256 = {frozen_p2_sha or '<文件缺失>'}，"
+            f"不等于已核出处 {FROZEN_P2_PROVENANCE_BRANCH} 的 {FROZEN_P2_SHA256}"
+        )
 
     n_physics = sum(1 for s in SEGMENTS if s["kind"] == "physics")
     n_applied_physics = sum(1 for s in SEGMENTS if s["kind"] == "physics" and s["action"] != "not_ported")
@@ -684,8 +728,15 @@ def main() -> int:
             "sha256_matches": frozen_ok,
             "provenance_branch": FROZEN_PROVENANCE_BRANCH,
             "flexgrid_side_sha256_baseline": WP_BASE,
-            # provenance 证据，不是守卫：相对 flexgrid-dev 侧基线的 diff 不可能为空
+            # 相对断言**重新成立**（第 3 轮恢复 P1 字节）：与绝对不变量同时成立。
             "diff_vs_wp_base_empty": diff_empty,
+        },
+        "j5_frozen_kernel_p2": {
+            "file": FROZEN_P2,
+            "frozen_sha256": FROZEN_P2_SHA256,
+            "sha256_matches": frozen_p2_ok,
+            "provenance_branch": FROZEN_P2_PROVENANCE_BRANCH,
+            "note": "FG 的 P2 内核：第 3 轮同字节搬进 numba_kernels_p2.py（只换文件名）。",
         },
         "segments": records,
         "errors": errs,

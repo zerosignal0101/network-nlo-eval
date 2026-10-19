@@ -2,465 +2,186 @@
   "wp": "O3+Q1",
   "purpose": "接线插入导致物理行行号下移；只重排行号，不改 contains。证据为累计口径（幂等重跑不会把它抹成 0）。",
   "target": "tools/ode_formula_map.py",
-  "n_relocated": 19,
+  "n_relocated": 25,
   "n_relocated_this_run": 0,
-  "n_unfixable": 32,
+  "n_unfixable": 0,
   "relocations": [
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm(",
-      "old_line": 300,
-      "new_line": 424,
-      "delta": 124
-    },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)",
       "old_line": 169,
-      "new_line": 282,
+      "new_line": 390,
       "delta": 113
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "phi_il = (",
       "old_line": 482,
-      "new_line": 937,
+      "new_line": 482,
       "delta": 455
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_noise = total_spm + total_xpm + total_ase",
-      "old_line": 1027,
-      "new_line": 1030,
-      "delta": 3
+      "old_line": 1408,
+      "new_line": 1446,
+      "delta": 38
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])",
-      "old_line": 1030,
-      "new_line": 1033,
-      "delta": 3
+      "old_line": 1411,
+      "new_line": 1449,
+      "delta": 38
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "G_i = p_in_w[i] / p_out_w[i]",
       "old_line": 575,
-      "new_line": 1326,
+      "new_line": 575,
       "delta": 751
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "if wavel_nm < 1460:  # E-band",
       "old_line": 528,
-      "new_line": 1289,
+      "new_line": 528,
       "delta": 761
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "nf_lin[i] = _db_to_lin(7.0)",
       "old_line": 531,
-      "new_line": 1292,
+      "new_line": 531,
       "delta": 761
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "nf_lin[i] = _db_to_lin(5.5)",
       "old_line": 533,
-      "new_line": 1294,
+      "new_line": 533,
       "delta": 761
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= transfer",
-      "old_line": 993,
-      "new_line": 996,
-      "delta": 3
+      "old_line": 1343,
+      "new_line": 1402,
+      "delta": 59
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "wavel_nm < 1460",
       "old_line": 528,
-      "new_line": 1289,
+      "new_line": 528,
       "delta": 761
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0",
-      "old_line": 1025,
-      "new_line": 1028,
-      "delta": 3
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.delta_f_co_hz = 15e12",
       "old_line": 170,
-      "new_line": 283,
+      "new_line": 391,
       "delta": 113
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "alpha_dbkm = alpha_2 * (lambda_nm - lambda_ref_nm) ** 2",
       "old_line": 91,
-      "new_line": 78,
+      "new_line": 91,
       "delta": -13
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "return (2 * PI / lambda_i_m) * (2 * n2 / (a_eff_i_m2 + a_eff_l_m2))",
       "old_line": 133,
-      "new_line": 120,
+      "new_line": 133,
       "delta": -13
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
       "contains": "epsilon_n_span: float = 0.05",
       "old_line": 291,
-      "new_line": 740,
+      "new_line": 291,
       "delta": 449
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "symbol_rate_hz=self.channel_bandwidth_hz_channels,",
-      "old_line": 722,
-      "new_line": 725,
-      "delta": 3
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "p_out_fiber, s2_spm, s2_xpm, s2_ase = _calc_span_noise_and_power_jit(",
-      "old_line": 704,
-      "new_line": 707,
-      "delta": 3
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= terms.filtering_penalty",
       "old_line": 1020,
-      "new_line": 1023,
+      "new_line": 1439,
       "delta": 3
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,",
+      "old_line": 876,
+      "new_line": 881,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))",
+      "old_line": 893,
+      "new_line": 898,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain *= 10 ** (ripple / 10)",
+      "old_line": 898,
+      "new_line": 903,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum(",
+      "old_line": 902,
+      "new_line": 907,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain - 1, 0",
+      "old_line": 903,
+      "new_line": 908,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(",
+      "old_line": 860,
+      "new_line": 865,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)",
+      "old_line": 891,
+      "new_line": 896,
+      "delta": 5
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)",
+      "old_line": 1374,
+      "new_line": 1299,
+      "delta": -75
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "total_spm *= penalty",
+      "old_line": 1378,
+      "new_line": 1303,
+      "delta": -75
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "s2_ase = np.zeros_like(power_in_w)",
+      "old_line": 888,
+      "new_line": 893,
+      "delta": 5
     }
   ],
   "superseded": [],
-  "unfixable": [
-    {
-      "id": "p1_eq18_raman_profile",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 213,
-      "contains": "r_f[i] = p_total_w * fi",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq18_raman_profile",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 215,
-      "contains": "r_f[i] = 0.0",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq18_raman_profile",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 218,
-      "contains": "0.5 * (f_M_hz**2 - delta_f_co_hz**2)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq18_raman_profile",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 221,
-      "contains": "0.5 * (f_m_hz**2 - delta_f_co_hz**2)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq20_span_power",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 253,
-      "contains": "L_eff_array = (1 - np.exp(-alpha_power_npm * length_m)) / alpha_power_npm",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq20_span_power",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 261,
-      "contains": "p_out_w[i] = (",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq20_span_power",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 263,
-      "contains": "* np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f[i] - alpha_power_npm[i] * length_m)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq20_span_power",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 264,
-      "contains": "* p_total_in",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq22_preemphasis",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 259,
-      "contains": "np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 319,
-      "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_i_m * r_fi)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 326,
-      "contains": "(4 / 9)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 329,
-      "contains": "(gamma_ii**2 * PI) / (phi_i * 3 * alpha_i_npm**2)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 333,
-      "contains": "asinh_1 = np.arcsinh((phi_i * b_i_hz**2) / (PI * alpha_i_npm))",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 334,
-      "contains": "asinh_2 = np.arcsinh((phi_i * b_i_hz**2) / (2 * PI * alpha_i_npm))",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 336,
-      "contains": "term_bracket = ((t_i - alpha_i_npm**2) / alpha_i_npm) * asinh_1",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq29_spm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 455,
-      "contains": "phi_i = 1.5 * PI**2 * (beta_2_s2_m + 2 * PI * f_rel_hz[i] * beta_3_s3_m)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq30_xpm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 381,
-      "contains": "term_exp = np.exp(2 * cr_w_m_hz * k_bar * l_eff_l_m * r_fl)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq30_xpm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 387,
-      "contains": "pre_factor = (p_l_w**2 / b_l_hz) * (gamma_il**2 / (phi_il * 3 * alpha_l_npm**2)) * term_exp",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq30_xpm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 389,
-      "contains": "atan_1 = np.arctan((phi_il * b_i_hz) / alpha_l_npm)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq30_xpm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 390,
-      "contains": "atan_2 = np.arctan((phi_il * b_i_hz) / (2 * alpha_l_npm))",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq30_xpm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 392,
-      "contains": "term_bracket = ((t_l - alpha_l_npm**2) / alpha_l_npm) * atan_1",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq30_xpm",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 486,
-      "contains": "(beta_2_s2_m + PI * beta_3_s3_m * (f_rel_hz[l_idx] + f_rel_hz[i]))",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq31_t_factor",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 641,
-      "contains": "t_factors = (2.0 * alpha_power_npm - cr_w_m_hz * r_f_values) ** 2",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq34_ase",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 435,
-      "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq34_ase",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 440,
-      "contains": "gain *= 10 ** (ripple / 10)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq34_ase",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 444,
-      "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum(",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_eq34_ase",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 445,
-      "contains": "gain - 1, 0",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p1_nf_per_band",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/numba_kernels.py",
-      "old_line": 529,
-      "contains": "nf_lin[i] = _db_to_lin(6.0)",
-      "occurrences": 2,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 2 次，无法唯一确定行号"
-    },
-    {
-      "id": "p2_eq05_lumped_ase",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 433,
-      "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "p2_eq05_lumped_ase",
-      "class": "physics",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 445,
-      "contains": "gain - 1, 0",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    },
-    {
-      "id": "eng_booster_ase",
-      "class": "engineering",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 763,
-      "contains": ") * np.asarray(self.channel_bandwidth_hz_channels, dtype=np.float64) * (terms.loss - 1.0)",
-      "occurrences": 2,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 2 次，无法唯一确定行号"
-    },
-    {
-      "id": "eng_numeric_guards",
-      "class": "engineering",
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "old_line": 430,
-      "contains": "s2_ase = np.zeros_like(power_in_w)",
-      "occurrences": 0,
-      "new_line": null,
-      "error": "contains 在目标文件里出现 0 次，无法唯一确定行号"
-    }
-  ]
+  "unfixable": []
 }

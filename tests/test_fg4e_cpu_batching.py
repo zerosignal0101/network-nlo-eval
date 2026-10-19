@@ -224,6 +224,7 @@ def _flexgrid_evaluator_with_kurtosis(phi_kurtosis: float):
         connections=connections,
         slots_per_channel=_scen.SLOTS_PER_CHANNEL,
         ode_accel="matvec",
+        nli_model="p2_gn",
     )
 
 

@@ -80,28 +80,34 @@ def test_guard1_j6_legacy_bit_exact_regression():
 # ---------------------------------------------------------------------------
 # 守卫 2（J5）：物理内核**字节冻结**在唯一的已核出处上
 #
-# ⚠️ 本守卫在 WP-MERGE-FG-FLEX 里被**翻成正向不变量**。它原本断言
-# ``git diff b69563a -- numba_kernels.py`` 为空，即"内核相对 WP-O2 起点一字未改"
-# ——这同样是一条**相位守卫**：它把"本 WP 不许碰内核"编码成了永久不变量，而本次
-# 合并的目的正是把 FG 的内核并进来，前提已消失。
+# ⚠️ WP-MERGE-FG-FLEX **第 3 轮**改判：上一轮把本守卫翻成了"sha256 == FG 那份字节"
+# （7beece4e…），因为当时合并树把 ``numba_kernels.py`` 整份换成了 FG 的字节。
+# 第 3 轮查明那是**两套不同物理**被当成一套，改判为**两套都留、档位区分**：
+#   * ``numba_kernels.py``    → 恢复 flexgrid-dev 的 P1 闭式字节（6611c416…）
+#   * ``numba_kernels_p2.py`` → FG 的 P2 字节（7beece4e…），**同字节、只换文件名**
 #
-# 为什么必须翻而不是两条都满足：``numba_kernels.py`` 在两条线上各自独立演化，
-# ``sha256`` 不同且不可能同时成立——
-#   * ``b69563a`` / ``flexgrid-dev`` : 6611c416…（flexgrid 侧：保留解析倾斜内核）
-#   * ``wp/fg-integrate``            : 7beece4e…（FG 侧：ODE + NLI 张量化）
-# 判据 V1（首要判据）要求合并树与 ``wp/fg-integrate`` 逐位相同，故取 FG 侧字节。
+# 本守卫因此**同时**断言两条：
+#   1. **绝对**不变量：``numba_kernels.py`` 的 sha256 == 6611c416…（P1 的已核出处）；
+#   2. **相对**断言恢复：``git diff b69563a -- numba_kernels.py`` 为空
+#      （P1 那份字节本就等于 ``b69563a``，故这条**重新成立**）。
+# 相对 + 绝对两条同时成立，比任一条单独存在都强：既挡住"被人悄悄改了一行"，
+# 也挡住"合并出第三份实现"。
 #
-# 翻法（§2 通例：存在 + 只定义一次 + 可达）：不再是"diff 必须为空"这一**相对**断言，
-# 而是"内核的 sha256 必须等于已核出处的那个常量"这一**绝对**正向不变量——更强的
-# 是后者：它同时挡住"被人悄悄改了一行"和"合并出第三份实现"两种情况。
+# ⚠️ 另见 :func:`test_guard2b_j5_frozen_p2_kernel_is_byte_frozen`：FG 那份 P2
+# 内核由独立的守卫守，**没有**被放掉。
 # ---------------------------------------------------------------------------
-#: 冻结内核的已核出处字节（``wp/fg-integrate @ 57c7221``）。
-FROZEN_KERNEL_SHA256 = "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
+#: 冻结内核的已核出处字节（``flexgrid-dev`` / ``b69563a`` 的 P1 闭式内核）。
+FROZEN_KERNEL_SHA256 = "6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4"
+
+#: 第二份冻结内核（FG 的 P2）：同字节，只换文件名。
+FROZEN_KERNEL_P2 = "src/network_nlo_eval/models/numba_kernels_p2.py"
+FROZEN_KERNEL_P2_SHA256 = "7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205"
 
 
 def test_guard2_j5_frozen_kernel_is_byte_frozen():
-    """J5：物理内核逐字节等于已核出处（`wp/fg-integrate` 的冻结内核）。"""
+    """J5：P1 物理内核逐字节等于已核出处（``flexgrid-dev`` 的冻结内核）。"""
     import hashlib
+    import subprocess
 
     actual = hashlib.sha256((REPO / FROZEN_KERNEL).read_bytes()).hexdigest()
     assert actual == FROZEN_KERNEL_SHA256, (
@@ -109,10 +115,38 @@ def test_guard2_j5_frozen_kernel_is_byte_frozen():
         "物理内核只许整体取某一侧的字节，不许出现第三份实现，也不许局部手改。"
     )
 
+    # 相对断言**恢复**（第 3 轮恢复 P1 字节 ⇒ 与 b69563a 逐字节相同）。
+    diff = subprocess.run(
+        ["git", "diff", WP_BASE, "--", FROZEN_KERNEL],
+        capture_output=True, text=True, cwd=str(REPO), check=True,
+    ).stdout
+    assert diff.strip() == "", f"{FROZEN_KERNEL} 相对 {WP_BASE} 的 diff 非空:\n{diff}"
+
     doc = _load("ode_dev_flexgrid_sync.json")
     assert doc["j5_frozen_kernel"]["file"] == FROZEN_KERNEL
     assert doc["j5_frozen_kernel"]["frozen_sha256"] == FROZEN_KERNEL_SHA256
-    assert doc["j5_frozen_kernel"]["provenance_branch"] == "wp/fg-integrate"
+    assert doc["j5_frozen_kernel"]["provenance_branch"] == "flexgrid-dev"
+    assert doc["j5_frozen_kernel"]["diff_vs_wp_base_empty"] is True
+
+
+def test_guard2b_j5_frozen_p2_kernel_is_byte_frozen():
+    """J5（第二份）：FG 的 P2 内核逐字节等于已核出处（``wp/fg-integrate``）。
+
+    第 3 轮把 FG 的内核**同字节**搬进 ``numba_kernels_p2.py``。本守卫确保
+    "只换文件名"这件事真的成立——文件内容一个字节都没动。
+    """
+    import hashlib
+
+    actual = hashlib.sha256((REPO / FROZEN_KERNEL_P2).read_bytes()).hexdigest()
+    assert actual == FROZEN_KERNEL_P2_SHA256, (
+        f"{FROZEN_KERNEL_P2} 的 sha256 = {actual}，不等于已核出处的 {FROZEN_KERNEL_P2_SHA256}。"
+        "FG 的 P2 内核只许换文件名，不许出现第三份实现，也不许局部手改。"
+    )
+
+    doc = _load("ode_dev_flexgrid_sync.json")
+    assert doc["j5_frozen_kernel_p2"]["file"] == FROZEN_KERNEL_P2
+    assert doc["j5_frozen_kernel_p2"]["frozen_sha256"] == FROZEN_KERNEL_P2_SHA256
+    assert doc["j5_frozen_kernel_p2"]["provenance_branch"] == "wp/fg-integrate"
 
 
 # ---------------------------------------------------------------------------

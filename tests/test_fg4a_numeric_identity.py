@@ -368,7 +368,7 @@ def test_f4a_5_g_cache_is_reused_not_rebuilt() -> None:
     increments ``hits``.
     """
     from network_nlo_eval.core.spectrum import SpectrumGrid
-    from network_nlo_eval.models import numba_kernels as nk
+    from network_nlo_eval.models import numba_kernels_p2 as nk
     from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
     from network_nlo_eval.network.elements import FiberSpanConfig
 
@@ -376,7 +376,8 @@ def test_f4a_5_g_cache_is_reused_not_rebuilt() -> None:
     fiber = FiberSpanConfig(length_km=100.0, max_span_length_km=100.0)
 
     def build() -> MultiBandISRSGN:
-        return MultiBandISRSGN(grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, ode_accel="matvec")
+        return MultiBandISRSGN(grid=grid, ref_fiber_config=fiber, symbol_rate_hz=50e9, ode_accel="matvec",
+            nli_model="p2_gn",)
 
     before = nk.g_cache_stats()
     first = build()
@@ -402,7 +403,7 @@ def test_f4a_5_cached_matrices_are_read_only() -> None:
     every later span on that grid, so the cache returns read-only views.
     """
     from network_nlo_eval.core.spectrum import SpectrumGrid
-    from network_nlo_eval.models import numba_kernels as nk
+    from network_nlo_eval.models import numba_kernels_p2 as nk
 
     grid = SpectrumGrid(num_channels=32, channel_spacing_hz=50e9, center_frequency_hz=190.2127e12)
     g_gain, g_loss = nk.raman_g_pair_matrices(grid.frequencies, 0.028 / 1e3 / 1e12)
@@ -419,7 +420,7 @@ def test_f4a_g_split_matrices_partition_the_reference_g() -> None:
     entries only where the frequency is higher, loss entries only where it is
     lower and equal to ``(f_k/f_i) * G[i, k]``, and the diagonal left at zero.
     """
-    from network_nlo_eval.models import numba_kernels as nk
+    from network_nlo_eval.models import numba_kernels_p2 as nk
 
     f = 190.0e12 + np.arange(8) * 50e9
     cr = 0.028 / 1e3 / 1e12
@@ -449,7 +450,7 @@ def test_f4a_frozen_ode_body_is_still_byte_identical() -> None:
     and a branchless matvec), so the original must remain untouched. Re-asserted
     here so an FG-4a regression cannot silently break the FG-2 guarantee.
     """
-    path = "src/network_nlo_eval/models/numba_kernels.py"
+    path = "src/network_nlo_eval/models/numba_kernels_p2.py"
     current = (REPO_ROOT / path).read_text(encoding="utf-8")
     try:
         baseline = subprocess.run(
@@ -477,7 +478,7 @@ def test_f4a_frozen_ode_body_is_still_byte_identical() -> None:
 
 def test_f4a_frozen_dp_dz_is_still_byte_identical() -> None:
     """``_calc_dp_dz`` is the bit-exact reference for optimisation 2; do not touch it."""
-    from network_nlo_eval.models.numba_kernels import _calc_dp_dz
+    from network_nlo_eval.models.numba_kernels_p2 import _calc_dp_dz
 
     source = Path(sys.modules[_calc_dp_dz.__module__].__file__).read_text(encoding="utf-8")
     start = source.index("def _calc_dp_dz(")

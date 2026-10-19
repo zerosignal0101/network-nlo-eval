@@ -165,6 +165,9 @@ def _legacy_evaluator(
         ref_fiber_config=fiber,
         symbol_rate_hz=SYMBOL_RATE_HZ,
         phi_kurtosis=phi_kurtosis,
+        # WP-MERGE-FG-FLEX 第 3 轮：FG-4a 的金标准是 **P2 Eq. 21** 那套物理，
+        # 必须显式钉在 ``p2_gn`` 档（默认档已是 P1 闭式，两套物理数字本就不同）。
+        nli_model="p2_gn",
         ode_accel=ode_accel,
         raman_spectrum=raman_spectrum,
     )
@@ -272,6 +275,8 @@ def _flexgrid_evaluator(ode_accel: str, raman_spectrum: str = RAMAN_SPECTRUM_PIN
         phi_kurtosis=PHI_KURTOSIS_GAUSSIAN,
         connections=connections,
         slots_per_channel=SLOTS_PER_CHANNEL,
+        # WP-MERGE-FG-FLEX 第 3 轮：同 _legacy_evaluator，显式钉在 P2 档。
+        nli_model="p2_gn",
         ode_accel=ode_accel,
         raman_spectrum=raman_spectrum,
     )
