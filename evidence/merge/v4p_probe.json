@@ -609,62 +609,62 @@
   },
   "V3pp_speedup": {
     "note": "pair_matrix_build_s \u662f (N,N) \u5bf9\u77e9\u9635\u7684**\u4e00\u6b21\u6027**\u6784\u5efa\u6210\u672c\uff08evaluator \u7ea7\uff0c\u8de8\u8de8\u6bb5/\u8de8\u5019\u9009\u590d\u7528\uff09\u3002serial_matvec_s / batch_matvec_s \u90fd\u662f**\u70ed\u8def\u5f84**\u8bfb\u6570\uff08\u6784\u5efa\u5df2\u644a\u9500\uff09\uff1bcold_first_call_s \u662f**\u51b7\u542f\u52a8**\u9996\u6b21\u8c03\u7528\u7684\u8bfb\u6570\uff08\u542b\u6784\u5efa\uff09\u3002",
-    "pair_matrix_build_s": 7.73109495639801e-05,
+    "pair_matrix_build_s": 7.933005690574646e-05,
     "rows": [
       {
-        "batch_matvec_s": 6.035296246409416e-05,
-        "batch_speedup": 4.059105603863989,
+        "batch_matvec_s": 6.0369959101080894e-05,
+        "batch_speedup": 4.096225418165971,
         "batch_width": 8,
-        "cold_first_call_s": 0.0001450760755687952,
-        "end_to_end_speedup": 11.395082827316426,
+        "cold_first_call_s": 0.00013585411943495274,
+        "end_to_end_speedup": 11.372544709144693,
         "n_channels": 68,
-        "serial_matvec_s": 0.0002449790481477976,
-        "serial_off_s": 0.0006877270061522722,
-        "tier_speedup_serial": 2.807289077788243
+        "serial_matvec_s": 0.0002472889609634876,
+        "serial_off_s": 0.000686560058966279,
+        "tier_speedup_serial": 2.7763473803735623
       },
       {
-        "batch_matvec_s": 0.0001252859365195036,
-        "batch_speedup": 3.8771787347681377,
+        "batch_matvec_s": 0.00013425899669528008,
+        "batch_speedup": 3.656373669442527,
         "batch_width": 16,
-        "cold_first_call_s": 0.00011123111471533775,
-        "end_to_end_speedup": 10.97194939964579,
+        "cold_first_call_s": 0.00011072983033955097,
+        "end_to_end_speedup": 10.217781346355945,
         "n_channels": 68,
-        "serial_matvec_s": 0.00048575596883893013,
-        "serial_off_s": 0.001374630955979228,
-        "tier_speedup_serial": 2.829879701251878
+        "serial_matvec_s": 0.0004909010604023933,
+        "serial_off_s": 0.0013718290720134974,
+        "tier_speedup_serial": 2.7945123420369153
       },
       {
-        "batch_matvec_s": 0.00020077405497431755,
-        "batch_speedup": 5.009900060070647,
+        "batch_matvec_s": 0.0001821999903768301,
+        "batch_speedup": 5.528166503310361,
         "batch_width": 32,
-        "cold_first_call_s": 0.00013376888819038868,
-        "end_to_end_speedup": 14.201566011610566,
+        "cold_first_call_s": 0.0001318741124123335,
+        "end_to_end_speedup": 15.52421017119826,
         "n_channels": 68,
-        "serial_matvec_s": 0.0010058579500764608,
-        "serial_off_s": 0.0028513059951364994,
-        "tier_speedup_serial": 2.834700461352178
+        "serial_matvec_s": 0.0010072318837046623,
+        "serial_off_s": 0.002828510943800211,
+        "tier_speedup_serial": 2.8082023509787732
       },
       {
-        "batch_matvec_s": 0.00033534993417561054,
-        "batch_speedup": 6.152985072036225,
+        "batch_matvec_s": 0.0003312618937343359,
+        "batch_speedup": 6.276670890853616,
         "batch_width": 68,
-        "cold_first_call_s": 0.00014426489360630512,
-        "end_to_end_speedup": 17.40565722684659,
+        "cold_first_call_s": 0.00012826314195990562,
+        "end_to_end_speedup": 17.618413237941212,
         "n_channels": 68,
-        "serial_matvec_s": 0.0020634031388908625,
-        "serial_off_s": 0.005836986005306244,
-        "tier_speedup_serial": 2.8288151235651355
+        "serial_matvec_s": 0.00207922188565135,
+        "serial_off_s": 0.0058363089337944984,
+        "tier_speedup_serial": 2.8069678248727072
       },
       {
-        "batch_matvec_s": 0.0007203270215541124,
-        "batch_speedup": 5.958725262066061,
+        "batch_matvec_s": 0.0006386931054294109,
+        "batch_speedup": 6.90208029699989,
         "batch_width": 142,
-        "cold_first_call_s": 0.00012885895557701588,
-        "end_to_end_speedup": 17.271051506231373,
+        "cold_first_call_s": 0.000128620071336627,
+        "end_to_end_speedup": 19.44252079531461,
         "n_channels": 68,
-        "serial_matvec_s": 0.004292230820283294,
-        "serial_off_s": 0.012440805090591311,
-        "tier_speedup_serial": 2.8984473602401
+        "serial_matvec_s": 0.004408311098814011,
+        "serial_off_s": 0.01241780398413539,
+        "tier_speedup_serial": 2.8169073610699145
       }
     ]
   },
@@ -680,9 +680,9 @@
     "blas_version": "2025",
     "cpu_affinity": 20,
     "cpu_count": 20,
-    "loadavg_15m": 1.4638671875,
-    "loadavg_1m": 3.12890625,
-    "loadavg_5m": 1.970703125,
+    "loadavg_15m": 1.421875,
+    "loadavg_1m": 1.59033203125,
+    "loadavg_5m": 1.73974609375,
     "mkl_max_threads": 12,
     "numba_threading_layer": "default",
     "thread_env": {
@@ -696,7 +696,7 @@
   "n_channels": 68,
   "probe": "v4p_probe",
   "provenance": {
-    "phys_commit": "3d57a5ed2dbf247ab235a8ad3a36f0714f2a48ea",
+    "phys_commit": "57733a623b9a4e5d6e8b27fb06da54fdd0bf48d6",
     "phys_tree": "/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/__init__.py",
     "python": "3.12.14"
   },

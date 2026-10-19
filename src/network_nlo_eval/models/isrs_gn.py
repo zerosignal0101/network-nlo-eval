@@ -226,7 +226,7 @@ ODE_ACCEL_MODES_BY_NLI_MODEL: dict[str, tuple[str, ...]] = {
 #: ``docs/wp_merge_fg_into_flex.md`` 的「第 4 轮」章节：
 #:
 #: * **延迟**（N=68、混合 n_slots、loadavg 1.5–3.1、20 核、MKL 12 线程）：
-#:   串行 2.7–2.9x、批量 3.9–6.9x、端到端 11.0–18.8x（三轮实测的**区间**）。
+#:   串行 2.7–2.9x、批量 3.7–6.9x、端到端 10.2–19.9x（四轮实测的**区间**）。
 #: * **精度**：只有 ``sigma2_xpm_w`` 漂移（max_rel 1.269e-15，max 11 ULP，
 #:   相对 1e-12 预算有 ~790 倍余量）；出纤功率 / SPM / ASE 与 ``off`` 档
 #:   **逐位相同**。
