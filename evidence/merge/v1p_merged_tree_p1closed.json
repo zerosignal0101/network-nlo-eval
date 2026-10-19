@@ -5843,7 +5843,7 @@
   "nli_model_requested": "p1_closed",
   "probe": "v1p_p1_probe",
   "provenance": {
-    "phys_commit": "9a03b81e7542ccc4bac3cf4d86a2000dfcabe30c",
+    "phys_commit": "bae4ac67793cb8b974a3bc8a3792f6029a6e1bfd",
     "phys_tree": "/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/__init__.py",
     "python": "3.12.14"
   },
