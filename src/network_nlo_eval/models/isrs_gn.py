@@ -221,10 +221,26 @@ ODE_ACCEL_MODES_BY_NLI_MODEL: dict[str, tuple[str, ...]] = {
 #: 生产默认，``tests/test_fg4b_nli_vectorization.py`` 断言它等于 ``"matvec"``，
 #: 本轮不动那个常量。
 #:
-#: ``p1_closed`` 档的默认档由**第 4 轮**按实测决定（延迟 vs 精度），
-#: 读数依据见 ``docs/wp_merge_fg_into_flex.md`` 的「第 4 轮」章节。
+#: ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：``p1_closed`` 档的默认档由 ``"off"`` 改成
+#: ``"matvec"``。这是**按实测**（延迟 vs 精度）做的裁决，读数依据见
+#: ``docs/wp_merge_fg_into_flex.md`` 的「第 4 轮」章节：
+#:
+#: * **延迟**（N=68、混合 n_slots、loadavg 0.87/1.08/0.99、MKL 12 线程）：
+#:   串行 2.70x、批量 6.66x (B=68) / 7.32x (B=142)、端到端 18.0x / 19.9x。
+#: * **精度**：只有 ``sigma2_xpm_w`` 漂移（max_rel 1.269e-15，max 11 ULP，
+#:   相对 1e-12 预算有 ~790 倍余量）；出纤功率 / SPM / ASE 与 ``off`` 档
+#:   **逐位相同**。
+#: * **代价**（如实记）：默认档的读数**不再与 ``cb24704`` 逐位相同**——
+#:   逐位相同的是**显式指定**的 ``"off"`` 档。V1' 的 5752 项对照因此**钉在
+#:   ``ode_accel="off"``**（任务书 V1'' 的原文也正是「``p1_closed`` 的 **off 档**」）。
+#: * **先例**：FG-4a 已经把生产默认档定成加速档 ``"matvec"``（同一 1e-12 预算），
+#:   并把逐位对照的测试**钉在** ``"off"``；FG-15 对拉曼档做的是同一件事。
+#:   第 3 轮给 ``p1_closed`` 定 ``"off"`` 的**原因**是「本轮不做 P1 核的加速
+#:   （另立一轮）」——那个原因在本轮已经消失。
+#: * **冷启动**：(N,N) 对矩阵的一次性构建 0.074 ms（evaluator 级，跨跨段/跨候选
+#:   复用）。**第一次**调用比 ``off`` 略慢（多付一次构建），第二次起就反超。
 ODE_ACCEL_DEFAULT_BY_NLI_MODEL: dict[str, str] = {
-    "p1_closed": "off",
+    "p1_closed": "matvec",
     "p2_gn": ODE_ACCEL_DEFAULT,
 }
 
@@ -325,15 +341,19 @@ class MultiBandISRSGN:
             connections: (可选) 灵活栅格连接列表。给定后进入**逐连接模式**：
                 全部逐连接数组按连接中心频率计算。为 None 时保持遗留行为，数值逐位不变。
             ode_accel: 加速档位，见 :data:`ODE_ACCEL_MODES`。**给 ``None`` 时由
-                :attr:`nli_model` 解析**：``"p1_closed"`` → ``"off"``（P1 的冻结
-                参考路径，P1 核本轮没有加速档）；``"p2_gn"`` → ``"matvec"``。
+                :attr:`nli_model` 解析**：``"p1_closed"`` → ``"matvec"``（**第 4 轮**改判；
+                P1 闭式核自己的加速档：XPM 信道对矩阵 + 矩阵-向量乘）；
+                ``"p2_gn"`` → ``"matvec"``。
                 ⚠️ 合并后的并集档位见 :data:`ODE_ACCEL_MODES`：``"off"`` 是 FG-2 与
                 WP-O2 共同的冻结参考路径；``"cached"``（flexgrid 侧跨段记忆化）；
-                ``"cached_g"`` 与基线逐位相等；``"matvec"``（``p2_gn`` 档默认）用
-                去分支两次 matvec，相对偏差 <= 1e-12。
-                ⚠️ **档位与物理必须匹配**：给 ``"p1_closed"`` 配 ``"cached_g"`` 或
-                ``"matvec"`` 会抛 ``ValueError``——P1 核里没有拉曼 G 矩阵、没有
-                去分支 matvec，硬跑等于**静默**把加速请求丢掉。
+                ``"cached_g"`` 与基线逐位相等；``"matvec"``（两档的默认）用
+                去分支 matvec，相对偏差 <= 1e-12。
+                ⚠️ **档位与物理必须匹配**：给 ``"p1_closed"`` 配 ``"cached_g"`` 会抛
+                ``ValueError``——P1 核走的是**解析**出纤功率，没有拉曼 G 矩阵可缓存，
+                硬跑等于**静默**把加速请求丢掉。
+                ⚠️ **第 4 轮**：``"p1_closed"`` **现在有** ``"matvec"`` 档了
+                （``models/numba_kernels_p1_accel.py``，P1 自己的实现，不动 P1 算式）。
+                想拿**与 ``cb24704`` 逐位相同**的读数，显式配 ``ode_accel="off"``。
             slots_per_channel: (可选) 每**遗留信道**占用的槽数，仅用于把 ROADM 的
                 ``blocked_channels`` 展开成 ``blocked_slots``。遗留模式下不影响任何数值。
             raman_spectrum: FG-U1 拉曼增益谱档位，见 :data:`RAMAN_SPECTRUM_MODES`。

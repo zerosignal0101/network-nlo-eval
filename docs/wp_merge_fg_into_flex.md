@@ -459,6 +459,12 @@ FG-4a 自己的文档写明 `matvec` 档**按设计**重排浮点求和，该预
 > 本章是**第 3 轮**（编排方裁决）的交付。第 1、2 轮的章节（§0–§7）**原样保留**，
 > 不追改：第 2 轮结束时那些读数在当时是真的。本章只说明**第 3 轮改了什么、
 > 为什么改、实测读数是多少**。
+>
+> ⚠️ **第 4 轮的追改说明**（历史陈述保留，但**当前状态以 §9 为准**）：
+> 第 3 轮给 `p1_closed` 定的默认加速档是 `"off"`，**原因**是「本轮不做 P1 核的
+> 加速（另立一轮）」。**第 4 轮**（§9）补上了 P1 的 `matvec` 档，那个原因消失，
+> 默认档按实测裁决改成了 **`"matvec"`**。本章与 §8.4 里的「off 档」读数**仍然是
+> 真的**——它们说的是**冻结参考路径**这个档位，而那个档位**一个字没动**。
 
 ### 8.1 第 3 轮改判的来由（**是判据错了，不是执行错了**）
 
@@ -740,3 +746,274 @@ PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python -m pytest -q -p no:randomly
 9. **`p1_closed` 与 `p2_gn` 的拉曼谱档位不共用**：P1 核的拉曼模型是**固定的**
    （legacy 折线），没有 tabular 这条路。所以「P1 档 + `raman_spectrum="tabular"`」
    是**显式拒绝**而不是静默降级——与 FG-15 的「显式拒绝而非静默回退」同一口径。
+
+---
+
+# 9. 第 4 轮：把加速结构移植到 **P1 闭式核**上
+
+本轮只做一件事：**在 P1 闭式核上实现加速，不碰 P2**。
+`p2_gn` 档的行为一字未动（它的 6364 项 0 不一致照旧，§9.4 V1''）。
+
+## 9.1 为什么 P1 的 XPM 不能整块收成一次 matvec
+
+FG 侧 P2 Eq. 21 的 XPM 在张量化后是 `l` 方向**线性**的
+（`gamma_sq[i,l] * u_k[b,l]`），所以能整块收成 GEMM。
+**P1 (30) 不是**：
+
+```
+term(i,l) = (P_l²/B_l)·exp(2·Cr·k̄·L_eff_l·r_fl) · (gamma_il²/(phi_il·3·alpha_l²))
+            · [ c1_l·atan(phi_il·B_i/alpha_l) + c2_l·atan(phi_il·B_i/(2·alpha_l)) ]
+```
+
+`atan` 的自变量 `phi_il·B_i/alpha_l` **同时含信道对量 `phi_il` 与逐信道量 `B_i`、
+`alpha_l`**，而 `atan` 是非线性函数 ⇒ 这一项**写不成** `f(i)·g(l)`。
+任务书 §1.1 明文允许这种「分段」：**矩阵化能矩阵化的部分，剩余部分保持逐对循环**。
+
+本轮的分段是这样切的（细节在 `models/numba_kernels_p1_accel.py` 的模块 docstring）：
+
+```
+term(i,l) = G1[i,l]·w1[l] + G2[i,l]·w2[l]
+
+G1[i,l] = (gamma_il²/(phi_il·3·alpha_l²))·atan(phi_il·B_i/alpha_l)      ← evaluator 级 (N,N)
+G2[i,l] = (gamma_il²/(phi_il·3·alpha_l²))·atan(phi_il·B_i/(2·alpha_l))  ← evaluator 级 (N,N)
+w1[l]   = (P_l²/B_l)·exp(2·Cr·k̄·L_eff_l·r_fl)·c1_l                     ← 逐候选 (N,)
+w2[l]   = (P_l²/B_l)·exp(2·Cr·k̄·L_eff_l·r_fl)·c2_l                     ← 逐候选 (N,)
+```
+
+⇒ `l` 方向的求和降成**两次矩阵-向量乘**；`G1`/`G2` 只依赖信道几何
+（波长、频率、带宽、衰减、色散），是 **evaluator 级**常量，**构建一次、跨跨段与跨候选复用**。
+
+**唯一没有矩阵化的是原实现逐对做的 `max(·, 0)` 截断**。它不是「忘了做」，
+而是**在数学上挡路**，本轮用「符号论证 + 少量逐对回退」处理（§9.2）。
+
+## 9.2 逐对 `max(·, 0)` 截断的处理：符号论证，而不是「拍脑袋安全」
+
+把求和项按符号摊开（`A_il = |gamma_il²/(phi_il·3·alpha_l²)| >= 0`，
+`A1_il = |atan(phi_il·B_i/alpha_l)|`，`A2_il = |atan(phi_il·B_i/(2·alpha_l))|`）：
+
+```
+result(i,l) = v_l · A_il · Q_il ,   Q_il = c1_l·A1_il + c2_l·A2_il
+```
+
+`sign(result) = sign(Q_il)`，所以截断**当且仅当** `Q_il < 0` 时才真的生效。
+又 `A1_il >= A2_il`（`atan` 单调）且 `A1_il <= 2·A2_il`（`atan` 在 `[0,inf)` 上凹且
+`atan(0)=0` ⇒ `atan(2y) <= 2·atan(y)`），于是得到**逐通道 O(1) 的充分判据**：
+
+| 条件 | 判据 | 理由 |
+|---|---|---|
+| `c1 >= 0` 且 `c2 >= 0` | 恒安全 | 两项都非负 |
+| `c1 >= 0` 且 `c2 < 0` | `c1 + c2 >= 0` | `G1·c1 + G2·c2 >= G1·(c1+c2)`（`G2 <= G1`） |
+| `c1 < 0` 且 `c2 >= 0` | `2·c1 + c2 >= 0` | `G1·c1 + G2·c2 >= G2·(2·c1+c2)`（`G1 <= 2·G2`） |
+| 两者都负 | **不安全** | `Q < 0`，截断一定生效 |
+
+> ⚠️ **这一版判据是第一版的修正**。第一版写成「`c1 >= 0` **且** `c2 >= 0` 才安全」，
+> 实测发现**全部 68 个通道都落进不安全分支**（`c2_l < 0` 出现在 `t_l > 4·alpha_l²`
+> 那一侧，即 `f_rel < 0` 的半边），于是矩阵化**一次都没生效**、全部退回逐对实现
+> （结果反而逐位相同，但**没有加速**）。改成上表的「bracket 符号」判据后，
+> 68/142 信道、混合与均匀两档**全部通道都安全**，矩阵化才真正走通。
+> 这条修正记在这里，因为它正是「逐位相同但没有加速」这种假成功的来源。
+
+判据不满足的通道**不多不少**地走**原实现逐对算**：直接调用冻结核里的
+`_calc_xpm_variance_term_jit`（**逐位相同**，包括 `max(·,0)` 本身），加回 GEMV 的结果。
+**这不是「静默回落」**：它只影响个别通道**对**的求和项，且走的是**同一个冻结核函数**。
+
+**实测**：68 与 142 信道、混合与均匀两档、批宽 8/16/32/68/142，
+**安全通道数 = 全部**（回退分支**一次都没触发**）。回退分支仍然必须存在——
+否则那是个「在别的参数下悄悄算错」的实现。
+
+## 9.3 出纤功率的公共子表达式消除（恒等变换，不是改算式）
+
+XPM 之外，P1 的**出纤功率**也是 O(N²)，且是加速后的**最大剩余成本**：
+
+```
+denom_i = Σ_j p_in[j]·exp( (-(1-k_bar)·_SRS_CR·L_eff[i]) · r_f[j] )
+```
+
+`u_i = (-(1-k_bar)·_SRS_CR)·L_eff[i]` 只依赖**逐信道衰减**。在 `p1_closed` 的
+**默认**衰减口径（常数衰减）下全部 `alpha_i` 相等 ⇒ 全部 `u_i` **逐位相等**
+⇒ 那 N 条指数向量**是同一条**。
+
+本轮据此把指数向量的条数从 N 降到「不同 `u` 的个数」（默认口径下 = 1），
+指数计算量 **O(N²) → O(N)**。**这是恒等变换，不是改算式**：`u_i` 逐位相等
+⇒ `exp(u_i·r_f[j])` 的输入逐位相同 ⇒ 输出逐位相同。
+实测**出纤功率与冻结核逐位相同**（§9.4 V2''）。
+
+`u` 互不相等的场合（`use_attenuation_polynomial=True` 的波长多项式衰减）
+自动退回逐 `i` 计算，代价与冻结核相同——**不更差**。
+
+## 9.4 判据实测读数（V1''–V5''）
+
+探针：`evidence/merge/v4p_probe.py`（新增）。
+
+```bash
+cd /home/zsig/Documents/gits/wt/merge-fg-into-flex
+PYTHONPATH=$PWD/src:$PWD/tests ~/miniconda3/envs/rl/bin/python \
+  evidence/merge/v4p_probe.py --out evidence/merge/v4p_probe.json
+```
+
+### V1'' —— 公式不动（**通过**）
+
+| 项 | 读数 |
+|---|---|
+| 冻结核 `models/numba_kernels.py` 的 sha256 | `6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4` |
+| 与 `flexgrid-dev @ cb24704` 的字节是否相同 | **是**（`diff` 空） |
+| `b_hz_channels[i]` 出现次数 | **4** |
+| `b_hz_channels[l_idx]` 出现次数 | **1** |
+| P1 的 `asinh` / `atan` 参数形式 | **逐字仍在**（4 条字面量，见 `tests/test_p1_closed_accel.py`） |
+| `p1_closed` 的 **off 档** vs `cb24704` | **5752 项 / 0 不一致**（sha256 相同） |
+| `p2_gn` vs `wp/fg-integrate @ 57c7221` | **6364 项 / 0 不一致**（sha256 相同，**本轮未动**） |
+
+> ⚠️ 5752 项那一对**现在显式钉在 `ode_accel="off"`**（§9.5 默认档裁决）。
+> 探针 `evidence/merge/v1p_p1_probe.py` 在两棵树上都传 `ode_accel="off"`
+> （`flexgrid-dev` 的 `ODE_ACCEL_MODES` 含 `"off"`、默认也是 `"off"`）⇒ **对等对照**，
+> 没有任何一侧被静默换档。任务书 V1'' 的原文也正是「`p1_closed` 的 **off 档**」。
+
+### V2'' —— 加速正确性（**通过**；预算 1e-12 **未放宽**）
+
+两种构造：`mixed_n_slots`（`B_i` 真非均匀 = `[1.25e10, 2.50e10, 3.75e10, 5.00e10]`）
+与 `uniform`（`B_i` 恒为 `1.25e10`）。N = 68。
+
+**`matvec ≡ off`**（单候选）：
+
+| 构造 | 逐位? | max_rel | max ULP | 结论 |
+|---|---|---:|---:|---|
+| mixed_n_slots | **否** | `1.269e-15` | 11 | ✅ 预算内（余量 ~790x） |
+| uniform | **否** | `1.288e-15` | 7 | ✅ 预算内 |
+
+**`batch ≡ serial`**（逐批宽 max_rel）：
+
+| 批宽 B | mixed_n_slots | uniform | max ULP（mixed） | 结论 |
+|---:|---:|---:|---:|---|
+| 8 | `1.375e-15` | `1.154e-15` | 12 | ✅ |
+| 16 | `6.230e-16` | `4.898e-16` | 4 | ✅ |
+| 32 | `1.307e-15` | `1.483e-15` | 11 | ✅ |
+| 68 | `7.572e-16` | `6.153e-16` | 6 | ✅ |
+| 142 | `7.572e-16` | `7.602e-16` | 6 | ✅ |
+
+**逐项拆开**（mixed，B=68）：`p_out` / `sigma2_spm` / `sigma2_ase` 与 `off` 档
+**逐位相同**（max_rel = 0、max ULP = 0）；**只有 `sigma2_xpm_w` 漂移**
+（`max_rel 1.269e-15`、max 11 ULP）。漂移**只来自 XPM 的 `l` 方向求和次序**
+（成对求和 → GEMM 累加），与 FG 侧 `matvec` 档的成因**同类**
+（FG 侧实测 `2.851e-16`）。
+
+### V3'' —— 收益（**全部为正**；带 loadavg 与线程数）
+
+**计时上下文**（没有这两个数的倍率不算证据）：
+
+| 项 | 读数 |
+|---|---|
+| loadavg（1/5/15 min） | **1.69 / 1.55 / 1.25** |
+| CPU 核数 / 进程亲和度 | **20 / 20** |
+| MKL 线程数 | **12** |
+| BLAS 实现 | `mkl-sdl` 2025 |
+| numba threading layer | `default` |
+| (N,N) 对矩阵的一次性构建 | **0.077 ms**（evaluator 级，跨跨段/跨候选复用） |
+
+N = 68，混合 n_slots。`serial_off` = 逐候选跑 `off` 档；`serial_matvec` = 逐候选跑
+`matvec` 档；`batch_matvec` = 一次批量调用。
+
+| 批宽 B | serial_off (ms) | serial_matvec (ms) | batch_matvec (ms) | 档位倍率（单候选串行 vs matvec） | 批量倍率（批量 vs 串行） | 端到端（批量 vs off 串行） | 冷启动首次调用 (ms) |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 0.690 | 0.254 | 0.062 | **2.72x** | **4.13x** | **11.22x** | 0.124 |
+| 16 | 1.381 | 0.500 | 0.122 | **2.76x** | **4.10x** | **11.32x** | 0.118 |
+| 32 | 2.824 | 1.036 | 0.186 | **2.73x** | **5.55x** | **15.15x** | 0.134 |
+| 68 | 5.953 | 2.196 | 0.333 | **2.71x** | **6.60x** | **17.88x** | 0.127 |
+| 142 | 12.262 | 4.503 | 0.652 | **2.72x** | **6.91x** | **18.82x** | 0.130 |
+
+> ⚠️ **收益为负的那一点，照实报**：**冷启动的第一次调用比 `off` 慢**——
+> 0.118–0.134 ms vs `off` 的单候选 0.086 ms（= 0.690/8），即 **~1.4–1.5x 慢**。
+> 原因是要多付一次 (N,N) 对矩阵的构建（0.077 ms）。
+> **第二次调用起就反超**（构建摊销），第 3 个候选起已是净收益。
+> ⇒ 对**只算一个候选**的调用方，加速档**不划算**；对跨段、跨候选的调用方才划算。
+> 本报告**不把最好看的点单独摘出来**。
+
+### V4'' —— 套件（**2 failed / 612 passed / 2 skipped**）
+
+```
+2 failed, 612 passed, 2 skipped in 38.21s
+```
+
+那 2 个 failed 仍是**基线既有的环境问题**（`ModuleNotFoundError: No module named
+'fu4_scenarios_legacy'`），与本轮无关。**skip = 2**（未超过 2）。
+passed 从基线的 590 涨到 612（本轮新增 21 条守卫 + 1 条改写的守卫）。
+
+### V5'' —— 声明（逐条旧 → 新）
+
+**新增函数**（全部在 `models/numba_kernels_p1_accel.py`，新文件）：
+
+| 新函数 | 作用 |
+|---|---|
+| `build_p1_xpm_pair_matrices` | 构建 P1 XPM 的 (N,N) 对矩阵 `G1`/`G2` + `phi_raw`/`gamma`（evaluator 级常量） |
+| `calc_span_noise_and_power_p1_matvec` | P1 闭式核的 (B,N) 加速形态（XPM 降成两次 matvec） |
+| `_p1_span_pre_nli_batch_jit` | NLI 之前的跨段物理（拉曼剖面、出纤功率 + CSE、t 因子） |
+| `_p1_xpm_weights_jit` | 逐候选权重 `w1`/`w2` 与**逐对安全掩码** |
+| `_p1_spm_jit` | SPM 批量形态（调用**同一个**冻结核函数 ⇒ 逐位相同） |
+| `_p1_xpm_clamp_correction_jit` | 少数不安全通道对的**原实现逐对回退**（逐位相同） |
+| `_p1_xpm_gemv` | `w1 @ G1ᵀ + w2 @ G2ᵀ` |
+| `P1XpmMatrices` | (N,N) 常量包（`g1`/`g2`/连续转置/`phi_raw`/`gamma`） |
+
+**新增档位**：
+
+| 档位 | 之前 | 现在 |
+|---|---|---|
+| `p1_closed` 的 `ode_accel` | `("off", "cached")` | `("off", "cached", "matvec")` |
+| `p1_closed` 的批量入口 | **显式抛 `ValueError`** | **可用**（按 `nli_model` 分派到 P1 自己的批量核） |
+| `p2_gn` 的 `ode_accel` | `("off","cached","cached_g","matvec")` | **不变** |
+
+**默认档选择依据**（本轮唯一的裁决）：
+
+| | 读数 |
+|---|---|
+| **取** | `p1_closed` 的默认 `ode_accel` = **`"matvec"`**（原为 `"off"`） |
+| **延迟** | 单候选串行 **2.71–2.76x**；批量 **4.10–6.91x**；端到端 **11.22–18.82x** |
+| **精度** | 只有 `sigma2_xpm_w` 漂移：`max_rel 1.269e-15`（~790x 余量，预算 1e-12 **未放宽**）；`p_out`/`spm`/`ase` **逐位相同** |
+| **代价（如实记）** | 默认档的读数**不再与 `cb24704` 逐位相同**；逐位相同的是**显式指定**的 `"off"` 档 |
+| **先例** | FG-4a 已把生产默认档定成加速档 `"matvec"`（同一 1e-12 预算），并把逐位对照的测试**钉在** `"off"`；FG-15 对拉曼档同一手法 |
+| **为什么第 3 轮是 `"off"`** | 第 3 轮自己的注释写着「本轮**不做** P1 核的加速（另立一轮）」——那个**原因**在本轮已经消失 |
+
+**被改动的守卫**（逐条旧 → 新）：
+
+| # | 位置 | 旧 | 新 | 为什么 |
+|---:|---|---|---|---|
+| 1 | `tools/ode_formula_map.py` | 19 条 `isrs_gn.py` 代码锚点的行号 | 按 `contains` 字面量**逐条重新定位**（`tools/ode3_relocate_anchors.py --write` 复算「0 条待修」） | 本轮在 `isrs_gn.py` 插入代码 ⇒ 行号下移。**`contains` 字符串一个字没动**（物理代码未改） |
+| 2 | `tools/ode3_capability.py` | 「ode_accel: matvec / cached_g 加速档」= `fu4_only`（物理缺口） | 改判为 **`both`**，证据改写 | 合并后本仓已有这些档，且**冻结核未被改动**；加速全在另立的新模块里 |
+| 3 | `tools/ode3_capability.py` | — | **新增**一条「P1 闭式核的 matvec 档 + 批量入口」= `ode_dev_only` | 第 4 轮新增的能力 |
+| 4 | `tests/test_ode_dev.py` `guard4b` | `p1_closed` + `("cached_g","matvec")` 都必须抛错 | `cached_g` **仍抛**；`matvec` **现在合法**（配 legacy）；`tabular` **仍抛** | `p1_closed` 有了自己的 matvec 档。**命题没变**（「没有的能力不许静默回落」），变的是「哪些组合算不匹配」 |
+| 5 | `tests/test_ode_dev.py` `_raman_tier_for` | 按 `ode_accel` 判 | 额外按 `nli_model` 判（`p1_closed` 只有 `legacy`） | `p1_closed` 的拉曼谱口径与 `ode_accel` 无关 |
+| 6 | `tests/test_ode_dev.py` | — | **新增** `guard4b_p1_matvec_tier_is_reachable_and_not_a_silent_off` | 盯住 `matvec` 不许退化成静默的 `off`（用**可观测差异**判，不是「构造成功」） |
+| 7 | `evidence/merge/v1p_p1_probe.py` | 跟默认档走 | **显式钉** `ode_accel="off"` | 探针的命题是「冻结参考路径逐位相同」；两棵树都支持 `"off"` ⇒ 对等对照 |
+| 8 | `results/ode_dev_formula_map.json` / `ode_dev_anchor_relocation.json` / `ode_dev_capability_matrix.json` / `docs/ode3_flexgrid_sync.md` | 旧行号/旧能力矩阵 | 由工具重新生成 | 派生产物 |
+
+**没被改动的**：冻结核 `models/numba_kernels.py`（sha256 仍是 `6611c416…`）、
+`models/numba_kernels_p2.py`、P2 档的**任何**行为、`MAX_REL_DEVIATION = 1e-12`、
+18 条物理公式号、任何 `skip`。
+
+## 9.5 第 4 轮我没做什么 / 没跑完什么
+
+1. **`verify_candidates` 在本仓里不存在**。任务书 §1.3 说的「`verify_candidates`
+   对 `p1_closed` 可用」，本仓全文 grep 不到这个符号（`grep -rn "verify_candidates"`
+   无命中）。⇒ 本轮把该判据**落到实际存在的批量入口**
+   `MultiBandISRSGN.calc_span_noise_and_power_batch` 上（它就是 FG-4e 建的库内批量入口，
+   `batch_kernels.py` 的批量核就是给它用的）。**如果编排方指的是别处的入口，请指出，
+   我按那个入口重测**——但批量核本身（`calc_span_noise_and_power_batch`）已经通了。
+2. **P1 档的 XPM 有一处**没有**完全**矩阵化：逐对 `max(·, 0)` 截断的**判定**是 O(1) 充分判据
+   （§9.2），不是逐对精确判定。判据不满足时走原实现逐对算（逐位相同）。
+   实测**回退分支一次都没触发**，但它**不是**「已被证明不可能触发」——只是在本轮
+   实测的参数下没触发。
+3. **没有重测 FG 的既有基准**（`results/fg4e_speedup_ab.json` 等）。本轮只测了
+   **P1 档**的新加速路径；P2 档的读数**一字未动**。
+4. **规模维度**：只测到 N = 68（任务书点名的批宽 B = 8/16/32/68/142）。
+   N = 142 的信道数**没有**单独测（批宽 142 ≠ 信道数 142）。`B_i` 非均匀性、
+   ROADM 路径、跨段路径**有**既有测试覆盖（套件 612 passed），但**没有**为本轮
+   单独出一份 A/B 基准表。
+5. **下游 RL 仓 `wp/fg-rt`** 那条第 3 轮记下的未闭合项（构造 evaluator 时显式传
+   `raman_spectrum="tabular"`，而 P1 档没有 tabular 谱 ⇒ 构造期抛 `ValueError`）
+   **本轮仍未闭合**。⚠️ 但**本轮把默认档改成了 `matvec`**，`p1_closed` 的默认拉曼谱
+   仍是 `"legacy"`，所以那条 RL 路径**仍然**需要显式 `nli_model="p2_gn"`。
+   该仓**不在本轮范围**，我只读它。
+6. **没有删任何测试、没有加 `skip` / `xfail`、没有放宽任何阈值、没有伪造公式号。**
+   `MAX_REL_DEVIATION = 1e-12` 原样沿用；`results/ode_dev_formula_map.json` 的
+   **18 条物理公式号一条没动**（只重排了 `isrs_gn.py` 那几条**代码锚点的行号**，
+   `contains` 字面量一字未改）。
+7. **`flexgrid-dev` / `wp/fg-integrate` 两棵树全程只读**；没有 push；
+   `wp/fg-rt` 只被读取。合并树没有 detached HEAD。

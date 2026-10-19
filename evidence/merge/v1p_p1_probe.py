@@ -25,6 +25,18 @@ flexgrid-dev 的 **P1 (29)/(30)/(34) 闭式**（逐信道 ``B_i``）是**两套�
 
 ⚠️ **档位必须显式给**：合并树支持 ``nli_model`` 参数，本探针会检查签名里有没有它；
 有就必须给 ``--nli-model``，不给直接报错——绝不静默测到另一个档位去。
+
+⚠️ WP-MERGE-FG-FLEX **第 4 轮**：本探针现在**显式钉** ``ode_accel="off"``。
+
+为什么：第 4 轮给 ``p1_closed`` 档加了 ``"matvec"`` 加速档，并把该档的**默认**
+加速档改成了 ``"matvec"``（按实测裁决，见报告第 4 轮章节）。本探针要回答的命题
+是「**P1 闭式核的冻结参考路径**与 ``flexgrid-dev @ cb24704`` 逐位相同」——任务书
+V1'' 的原文也正是「``p1_closed`` 的 **off 档**」。若继续跟着默认档走，测到的就会是
+加速档的读数（``sigma2_xpm_w`` 末位差 ~1e-15），那**不是**本探针的命题。
+
+两棵树都支持 ``ode_accel="off"``（``flexgrid-dev`` 的 ``ODE_ACCEL_MODES`` 含
+``"off"``，默认也是 ``"off"``），所以这是一个**对等**的对照：两边都测各自的冻结
+参考路径。**没有**任何一侧被静默换档。
 """
 
 from __future__ import annotations
@@ -158,7 +170,7 @@ def _build_evaluator(*, nli_model: str | None, length_km: float, ode_accel: str 
 
 
 def _span_case(name: str, nli_model: str | None, *, power, span_length_m, nf_db, n_effective_spans):
-    ev = _build_evaluator(nli_model=nli_model, length_km=100.0, ode_accel=None)
+    ev = _build_evaluator(nli_model=nli_model, length_km=100.0, ode_accel="off")
     p_out, s2_spm, s2_xpm, s2_ase = ev._calc_span_noise_and_power(
         power, span_length_m, _edfa(nf_db), None, n_effective_spans
     )
@@ -179,7 +191,7 @@ def _path_case(name: str, nli_model: str | None):
     from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
     from network_nlo_eval.network.elements import ROADMConfig
 
-    ev = _build_evaluator(nli_model=nli_model, length_km=100.0, ode_accel=None)
+    ev = _build_evaluator(nli_model=nli_model, length_km=100.0, ode_accel="off")
     optical_path = MultiSpanOpticalPath(
         fiber_configs=[
             _fiber(160.0, max_span_length_km=80.0),
