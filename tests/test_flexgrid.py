@@ -9,6 +9,7 @@ from network_nlo_eval.core.flexgrid import (
     ConnectionSpec,
     FlexibleGrid,
     bits_per_symbol,
+    connection_spec_from_allocation,
     slots_for_rate,
 )
 
@@ -216,3 +217,58 @@ def test_connection_bandwidth_follows_slot_count() -> None:
     ]
     assert widths == [pytest.approx(n * SLOT_WIDTH_HZ) for n in (1, 2, 3, 4)]
     assert np.all(np.diff(widths) > 0)
+
+
+class _Allocation:
+    """业务层分配对象的最小鸭子类型替身。"""
+
+    def __init__(self, service_id: int, bit_rate_gbps: float, n_slots: int, first_slot: int) -> None:
+        self.service_id = service_id
+        self.bit_rate_gbps = bit_rate_gbps
+        self.n_slots = n_slots
+        self.first_slot = first_slot
+        self.launch_power_w = 1e-3
+
+
+def test_conversion_from_allocation_keeps_the_slot_window() -> None:
+    """槽窗口从业务层原样取，物理层只补调制与符号率。"""
+    grid = _grid()
+    spec = connection_spec_from_allocation(_Allocation(7, 100.0, 4, 2), grid)
+
+    assert (spec.first_slot, spec.n_slots) == (2, 4)
+    assert spec.connection_id == 7
+    assert spec.bit_rate_bps == 100e9
+    assert spec.launch_power_w == 1e-3
+    assert spec.symbol_rate_hz == pytest.approx(50e9)
+    assert spec.centre_hz == grid.centre_hz(2, 4)
+
+
+def test_conversion_derives_symbol_rate_from_roll_off() -> None:
+    """无符号率输入时按 Rs(1+ro) = R/b 派生，槽数随之满足不变式。"""
+    grid = _grid()
+    spec = connection_spec_from_allocation(_Allocation(1, 100.0, 5, 0), grid, roll_off=0.1)
+
+    assert spec.symbol_rate_hz == pytest.approx(50e9 / 1.1)
+    assert spec.n_slots == slots_for_rate(100e9, bits_per_symbol("QPSK"), 0.1, grid.slot_width_hz)
+
+
+def test_conversion_rejects_slot_count_that_contradicts_the_modulation() -> None:
+    """业务层槽数与调制需求不符时报错，不静默改写槽数。"""
+    grid = _grid()
+    with pytest.raises(ValueError, match="slots_for_rate requires"):
+        connection_spec_from_allocation(_Allocation(1, 100.0, 2, 0), grid)
+
+
+def test_conversion_rejects_out_of_bounds_window() -> None:
+    """槽窗口越出栅格时在构造前报错。"""
+    grid = _grid()
+    with pytest.raises(ValueError, match="out of bounds"):
+        connection_spec_from_allocation(_Allocation(1, 100.0, 4, grid.num_slots - 2), grid)
+
+
+def test_converted_spec_drives_the_physics_evaluator() -> None:
+    """转换结果可直接作为逐连接评估器的输入，槽窗口与占用带宽一致。"""
+    grid = _grid()
+    spec = connection_spec_from_allocation(_Allocation(3, 200.0, 4, 4), grid, modulation="16QAM")
+    assert spec.occupied_bandwidth_hz == 4 * grid.slot_width_hz
+    assert spec.is_occupied
