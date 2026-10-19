@@ -39,11 +39,11 @@
   ],
   "probe": "v3p_probe",
   "provenance": {
-    "phys_commit": "2f95e62217bac02875423fff247eb3bb34019886",
+    "phys_commit": "7f12b494979a0f95664e43288d5d1e61788b4b24",
     "phys_tree": "/home/zsig/Documents/gits/wt/merge-fg-into-flex/src/network_nlo_eval/__init__.py",
     "python": "3.12.14"
   },
-  "readings_sha256": "a40554c57b80edd8bfac5d51b24a018031400e8caab4600b6f724973d93fc41f",
+  "readings_sha256": "172e7aeda0259520eada80e95ff2a7d50bef59e8a174f4f7a0536d730161eecd",
   "results": [
     {
       "bitwise": true,
@@ -54,15 +54,16 @@
       "requirement": "bit-exact"
     },
     {
-      "bitwise": false,
-      "error": "calc_span_noise_and_power_batch is only available for nli_model='p2_gn': the batched kernel is the batch form of the P2 tensorised NLI. Got nli_model='p1_closed'; the P1 tier has no batch path yet.",
+      "bitwise": true,
+      "error": null,
       "id": "p1_closed:batch==serial",
-      "max_rel": null,
+      "max_rel": 0.0,
       "nli_model": "p1_closed",
-      "note": "P1 \u6863\u6682\u65e0\u6279\u91cf\u8def\u5f84\uff1a\u6279\u91cf\u6838\u662f P2 \u7684\u5b9e\u73b0\u7ed3\u6784\uff08\u6279\u91cf\u6c42\u503c P2 \u7684\u5f20\u91cf\u5316 NLI\uff09\uff0cP1 \u7684 NLI \u662f\u95ed\u5f0f\u3001\u6ca1\u6709\u5bf9\u5e94\u6279\u91cf\u5f62\u5f0f\u3002\u6279\u91cf\u5165\u53e3\u5bf9 p1_closed **\u663e\u5f0f\u629b ValueError**\uff08\u4e0d\u662f\u9759\u9ed8\u9000\u56de\u4e32\u884c\uff09\u3002\u672c\u8f6e\u8303\u56f4\u660e\u786e P1 \u6838\u7684\u52a0\u901f\u53e6\u7acb\u4e00\u8f6e\u3002\u21d2 \u672c\u6761**\u8bb0\u4e3a\u672a\u8fbe\u6210**\uff0c\u4e0d\u5047\u88c5\u3002",
-      "passed": false,
+      "note": "\u7b2c 4 \u8f6e\u8d77 P1 \u6863**\u6709**\u81ea\u5df1\u7684\u6279\u91cf\u8def\u5f84\uff08models/numba_kernels_p1_accel.py\uff09\uff0c\u8981\u6c42 ode_accel='matvec'\uff1b\u914d 'off' \u4f1a**\u663e\u5f0f\u629b ValueError**\uff08\u4e0d\u8bb8\u9759\u9ed8\u9000\u56de\u4e32\u884c\uff09\u3002\u672c\u6761\u73b0\u5728\u5b9e\u6d4b batch \u2261 serial\u3002",
+      "off_tier_error": "calc_span_noise_and_power_batch requires ode_accel='matvec': the batched kernel is the batch form of the P1 closed-form NLI (XPM channel-pair matrices + matvec). Got ode_accel='off'.",
+      "passed": true,
       "requirement": "bit-exact",
-      "status": "unavailable"
+      "status": "available"
     },
     {
       "bitwise": false,

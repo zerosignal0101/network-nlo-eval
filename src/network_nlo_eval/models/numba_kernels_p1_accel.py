@@ -82,7 +82,7 @@ from typing import Any, TypeVar
 import numpy as np
 
 from network_nlo_eval.core.constants import H_PLANCK, PI
-from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.numba_kernels import (
     _EPSILON,
     _SRS_CR,
@@ -484,7 +484,7 @@ def _p1_xpm_clamp_correction_jit(
     l_eff_m: NDArrayFloat,
     cr_w_m_hz: float,
     k_bar: float,
-    safe: NDArrayFloat,
+    safe: NDArrayBool,
 ) -> NDArrayFloat:
     """``safe`` 为 False 的那些对：改用**冻结核的逐对实现**算出来加回。
 

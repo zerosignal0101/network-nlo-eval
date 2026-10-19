@@ -110,7 +110,13 @@ def _evaluator(grid, conns, ode_accel, *, nli_model, raman_spectrum=None, bandwi
     from network_nlo_eval.network.elements import FiberSpanConfig
 
     if raman_spectrum is None:
-        raman_spectrum = "legacy" if ode_accel in ("off", "cached") else "tabular"
+        # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：``p1_closed`` 档的拉曼谱**只有** legacy
+        # （它走 P1 核里的 legacy 合成折线，没有 tabular 那条路）——这与
+        # ``ode_accel`` 选哪个**无关**，``p1_closed`` + ``"matvec"`` 也必须配 legacy。
+        if nli_model == "p1_closed":
+            raman_spectrum = "legacy"
+        else:
+            raman_spectrum = "legacy" if ode_accel in ("off", "cached") else "tabular"
     return MultiBandISRSGN(
         grid=grid,
         ref_fiber_config=FiberSpanConfig(length_km=80.0, max_span_length_km=80.0),
@@ -175,15 +181,34 @@ def measure() -> dict[str, Any]:
         }
     )
 
-    # ---- P1 档：batch ≡ serial（要求**逐位**；P1 暂无批量 ⇒ 如实记未达成）----
+    # ---- P1 档：batch ≡ serial（要求**逐位**；第 4 轮起 P1 **有**批量路径了）----
+    # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：第 3 轮这里记的是「P1 档暂无批量路径」
+    #    （当时批量核确实只是 P2 的实现结构）。第 4 轮给 P1 补上了**自己的**批量
+    #    实现（``models/numba_kernels_p1_accel.py``），所以本条现在**实测**。
+    #    批量入口要求 ``ode_accel="matvec"``（P1 自己的加速档）；配 ``"off"``
+    #    会**显式抛错**（不许静默退回串行）——下面把两种都记下来。
     p1_batch_status: str
     p1_batch_error: str | None = None
-    p1_batch = None
+    p1_batch: dict[str, Any] | None = None
+    p1_off_tier_error: str | None = None
     try:
-        ev_p1 = _evaluator(grid, conns, "off", nli_model="p1_closed")
-        ev_p1.calc_span_noise_and_power_batch(
+        ev_p1_off = _evaluator(grid, conns, "off", nli_model="p1_closed")
+        ev_p1_off.calc_span_noise_and_power_batch(
             np.ascontiguousarray(power[None, :]), SPAN_LENGTH_M, None, None, 1
         )
+        p1_off_tier_error = None
+    except ValueError as exc:
+        p1_off_tier_error = str(exc)
+
+    try:
+        ev_p1 = _evaluator(grid, conns, "matvec", nli_model="p1_closed")
+        batch_out = ev_p1.calc_span_noise_and_power_batch(
+            np.ascontiguousarray(power[None, :]), SPAN_LENGTH_M, None, None, 1
+        )
+        serial_out = ev_p1._calc_span_noise_and_power(
+            power, SPAN_LENGTH_M, None, None, 1
+        )
+        p1_batch = _pair(tuple(np.asarray(o)[None, :] for o in serial_out), batch_out)
         p1_batch_status = "available"
     except ValueError as exc:
         p1_batch_status = "unavailable"
@@ -195,14 +220,15 @@ def measure() -> dict[str, Any]:
             "nli_model": "p1_closed",
             "status": p1_batch_status,
             "error": p1_batch_error,
-            "bitwise": p1_batch is not None,
-            "max_rel": None,
-            "passed": False,
+            "off_tier_error": p1_off_tier_error,
+            **({"bitwise": p1_batch["bitwise"], "max_rel": p1_batch["max_rel"]}
+               if p1_batch is not None
+               else {"bitwise": False, "max_rel": None}),
+            "passed": bool(p1_batch is not None and p1_batch["bitwise"]),
             "note": (
-                "P1 档暂无批量路径：批量核是 P2 的实现结构（批量求值 P2 的张量化 NLI），"
-                "P1 的 NLI 是闭式、没有对应批量形式。批量入口对 p1_closed **显式抛 "
-                "ValueError**（不是静默退回串行）。本轮范围明确 P1 核的加速另立一轮。"
-                "⇒ 本条**记为未达成**，不假装。"
+                "第 4 轮起 P1 档**有**自己的批量路径（models/numba_kernels_p1_accel.py），"
+                "要求 ode_accel='matvec'；配 'off' 会**显式抛 ValueError**"
+                "（不许静默退回串行）。本条现在实测 batch ≡ serial。"
             ),
         }
     )
@@ -276,7 +302,13 @@ def main() -> int:
     print(f"B_i = {payload['b_i']['values']}")
     for row in payload["results"]:
         if row.get("status"):
-            print(f"  {row['id']:32s} status={row['status']:12s} passed={row['passed']}  (未达成)")
+            # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：``status`` 那一支不再一律是「未达成」
+            # ——P1 档的批量路径**已经有了**（第 4 轮），所以标签按 ``passed`` 给。
+            tag = "" if row["passed"] else "  (未达成)"
+            extra = ""
+            if row.get("max_rel") is not None:
+                extra = f" bitwise={row['bitwise']!s:5s} max_rel={row['max_rel']:.3e}"
+            print(f"  {row['id']:32s} status={row['status']:12s} passed={row['passed']}{extra}{tag}")
         else:
             print(f"  {row['id']:32s} bitwise={row['bitwise']!s:5s} max_rel={row['max_rel']:.3e} "
                   f"passed={row['passed']}")
