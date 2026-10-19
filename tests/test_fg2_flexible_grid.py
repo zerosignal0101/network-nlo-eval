@@ -439,14 +439,17 @@ def _ode_source(text: str) -> str:
 @pytest.mark.parametrize("ref", ["origin/main", "8f55e14"])
 def test_f2_7_ode_function_body_unchanged(ref: str) -> None:
     """``git diff`` for this function must be empty against the baselines."""
-    path = "src/network_nlo_eval/models/numba_kernels_p2.py"
-    current = (REPO_ROOT / path).read_text(encoding="utf-8")
+    current_path = "src/network_nlo_eval/models/numba_kernels_p2.py"
+    # 历史修订里这个模块叫 numba_kernels.py（第 3 轮拆档改名）。
+    # 比对时「当前」读新名、「基线」读旧名；否则 git show 取不到，守卫会静默退化成 skip。
+    history_path = "src/network_nlo_eval/models/numba_kernels.py"
+    current = (REPO_ROOT / current_path).read_text(encoding="utf-8")
     try:
         baseline = subprocess.run(
-            ["git", "show", f"{ref}:{path}"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+            ["git", "show", f"{ref}:{history_path}"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
         ).stdout
     except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover - depends on checkout
-        pytest.skip(f"cannot read {ref}:{path}: {exc}")
+        pytest.skip(f"cannot read {ref}:{history_path}: {exc}")
 
     assert _ode_source(current) == _ode_source(baseline), f"_calc_exact_power_profile_ode changed vs {ref}"
 

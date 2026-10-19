@@ -450,18 +450,21 @@ def test_f4a_frozen_ode_body_is_still_byte_identical() -> None:
     and a branchless matvec), so the original must remain untouched. Re-asserted
     here so an FG-4a regression cannot silently break the FG-2 guarantee.
     """
-    path = "src/network_nlo_eval/models/numba_kernels_p2.py"
-    current = (REPO_ROOT / path).read_text(encoding="utf-8")
+    current_path = "src/network_nlo_eval/models/numba_kernels_p2.py"
+    # 历史修订里这个模块叫 numba_kernels.py（第 3 轮拆档改名）。
+    # 「当前」读新名、「基线」读旧名；否则 git show 取不到，守卫会静默退化成 skip。
+    history_path = "src/network_nlo_eval/models/numba_kernels.py"
+    current = (REPO_ROOT / current_path).read_text(encoding="utf-8")
     try:
         baseline = subprocess.run(
-            ["git", "show", f"{BASELINE_REV}:{path}"],
+            ["git", "show", f"{BASELINE_REV}:{history_path}"],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             check=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover
-        pytest.skip(f"cannot read {BASELINE_REV}:{path}: {exc}")
+        pytest.skip(f"cannot read {BASELINE_REV}:{history_path}: {exc}")
 
     def ode_source(text: str) -> str:
         start = text.index("def _calc_exact_power_profile_ode")
