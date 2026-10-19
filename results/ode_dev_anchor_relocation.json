@@ -2,7 +2,7 @@
   "wp": "O3+Q1",
   "purpose": "接线插入导致物理行行号下移；只重排行号，不改 contains。证据为累计口径（幂等重跑不会把它抹成 0）。",
   "target": "tools/ode_formula_map.py",
-  "n_relocated": 25,
+  "n_relocated": 22,
   "n_relocated_this_run": 0,
   "n_unfixable": 0,
   "relocations": [
@@ -10,7 +10,7 @@
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)",
       "old_line": 169,
-      "new_line": 390,
+      "new_line": 407,
       "delta": 113
     },
     {
@@ -24,14 +24,14 @@
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_noise = total_spm + total_xpm + total_ase",
       "old_line": 1446,
-      "new_line": 1470,
+      "new_line": 1712,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])",
       "old_line": 1449,
-      "new_line": 1473,
+      "new_line": 1715,
       "delta": 24
     },
     {
@@ -66,7 +66,7 @@
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= transfer",
       "old_line": 1402,
-      "new_line": 1426,
+      "new_line": 1668,
       "delta": 24
     },
     {
@@ -80,7 +80,7 @@
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "self.delta_f_co_hz = 15e12",
       "old_line": 170,
-      "new_line": 391,
+      "new_line": 408,
       "delta": 113
     },
     {
@@ -108,80 +108,84 @@
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= terms.filtering_penalty",
       "old_line": 1020,
-      "new_line": 1463,
+      "new_line": 1705,
       "delta": 3
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,",
-      "old_line": 881,
-      "new_line": 905,
-      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))",
       "old_line": 898,
-      "new_line": 922,
-      "delta": 24
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "gain *= 10 ** (ripple / 10)",
-      "old_line": 903,
-      "new_line": 927,
+      "new_line": 1032,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum(",
       "old_line": 907,
-      "new_line": 931,
-      "delta": 24
-    },
-    {
-      "file": "src/network_nlo_eval/models/isrs_gn.py",
-      "contains": "gain - 1, 0",
-      "old_line": 908,
-      "new_line": 932,
+      "new_line": 1041,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(",
       "old_line": 865,
-      "new_line": 889,
+      "new_line": 999,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)",
       "old_line": 896,
-      "new_line": 920,
+      "new_line": 1030,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)",
       "old_line": 1299,
-      "new_line": 1323,
+      "new_line": 1565,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= penalty",
       "old_line": 1303,
-      "new_line": 1327,
+      "new_line": 1569,
       "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "s2_ase = np.zeros_like(power_in_w)",
       "old_line": 893,
-      "new_line": 917,
+      "new_line": 1027,
       "delta": 24
     }
   ],
-  "superseded": [],
+  "superseded": [
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,",
+      "old_line": 881,
+      "new_line": 905,
+      "delta": 24,
+      "reason": "contains 在目标文件里出现 3 次，不再唯一"
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain *= 10 ** (ripple / 10)",
+      "old_line": 903,
+      "new_line": 927,
+      "delta": 24,
+      "reason": "contains 在目标文件里出现 2 次，不再唯一"
+    },
+    {
+      "file": "src/network_nlo_eval/models/isrs_gn.py",
+      "contains": "gain - 1, 0",
+      "old_line": 908,
+      "new_line": 932,
+      "delta": 24,
+      "reason": "contains 在目标文件里出现 2 次，不再唯一"
+    }
+  ],
   "unfixable": []
 }

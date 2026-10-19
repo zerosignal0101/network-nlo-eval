@@ -37,8 +37,18 @@ LEGACY_SCENARIOS = {
 LEGACY_ONLY_ACCEL = ("off", "cached")
 
 
-def _raman_tier_for(ode_accel: str) -> str:
-    """返回该 ``ode_accel`` 档位可用的 Raman 谱档位（legacy-only 档显式配 legacy）。"""
+def _raman_tier_for(ode_accel: str, nli_model: str = "p2_gn") -> str:
+    """返回该 ``(nli_model, ode_accel)`` 组合可用的 Raman 谱档位。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：``p1_closed`` 档的拉曼谱**只有** ``"legacy"``
+    （它走的是 P1 核里的 legacy 合成折线，没有 tabular 闭式增益谱那条路）——
+    这与 ``ode_accel`` 选哪个**无关**：``p1_closed`` + ``"matvec"`` 也必须配
+    ``"legacy"``。第 4 轮给 ``p1_closed`` 加了 ``"matvec"`` 档之后，这条区分
+    才变得必要（之前 ``p1_closed`` 只有 off/cached，两者都已在
+    ``LEGACY_ONLY_ACCEL`` 里，按档位判就够用）。
+    """
+    if nli_model == "p1_closed":
+        return "legacy"
     return "legacy" if ode_accel in LEGACY_ONLY_ACCEL else "tabular"
 
 
@@ -113,14 +123,23 @@ def test_guard3_legacy_bitwise_matches_sum_of_fixes():
 # 守卫 4b：NLI 物理档位与加速档位**不匹配**时必须显式报错（第 3 轮新增）
 # ---------------------------------------------------------------------------
 def test_guard4b_incompatible_ode_accel_is_rejected():
-    """⚠️ WP-MERGE-FG-FLEX **第 3 轮新增**：不匹配的组合必须**显式**报错。
+    """⚠️ WP-MERGE-FG-FLEX **第 3 轮新增 / 第 4 轮修订**：不匹配的组合必须**显式**报错。
 
-    ``"cached_g"`` / ``"matvec"`` 是 **P2** 的实现结构（P1 核里没有拉曼 G 矩阵、
-    没有去分支 matvec、也没有张量化 NLI）。给 ``p1_closed`` 配这些档位，如果
-    静默跑成 ``"off"``，调用方就**以为**自己拿到了加速——那是最坏的一种错：
-    数字对、账对不上、没人知道加速其实没生效。
+    这条守卫的命题是「**没有的能力不许静默回落**」——给一个档位配它**没有**的
+    加速结构，如果静默跑成 ``"off"``，调用方就**以为**自己拿到了加速：那是最坏的
+    一种错，数字对、账对不上、没人知道加速其实没生效。
 
-    所以这里断言**显式拒绝**：构造期抛 ``ValueError``。
+    ⚠️ **第 4 轮修订**：``"matvec"`` **不再是** P2 独有的了——第 4 轮给
+    ``p1_closed`` 档补上了**自己的** matvec 实现（P1 闭式核的 XPM 信道对矩阵 +
+    矩阵-向量乘，``models/numba_kernels_p1_accel.py``）。所以：
+
+    * ``p1_closed`` + ``"cached_g"`` ⇒ **仍然**必须显式拒绝（``cached_g`` 是 FG 侧
+      拉曼 G 矩阵缓存，P1 核走的是**解析**出纤功率，没有拉曼 G 矩阵可缓存）；
+    * ``p1_closed`` + ``"matvec"`` ⇒ **现在合法**（配 ``legacy`` 谱）；
+    * ``p1_closed`` + ``raman_spectrum="tabular"`` ⇒ **仍然**必须显式拒绝。
+
+    ⇒ 命题**没变**，只是「哪些组合算不匹配」的集合变了。**没有**任何一档被
+    改成静默回落。
     """
     from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
@@ -128,18 +147,66 @@ def test_guard4b_incompatible_ode_accel_is_rejected():
 
     fiber = FiberSpanConfig(length_km=80.0)
     grid = SpectrumGrid(8, 50e9, 193.1e12)
-    for mode in ("cached_g", "matvec"):
-        with pytest.raises(ValueError, match="nli_model"):
-            MultiBandISRSGN(
-                grid, fiber, 32e9, ode_accel=mode, raman_spectrum="tabular",
-                nli_model="p1_closed",
-            )
+    # ``cached_g`` 仍然只属于 p2_gn：P1 核没有拉曼 G 矩阵（G 缓存无处可缓存）。
+    with pytest.raises(ValueError, match="nli_model"):
+        MultiBandISRSGN(
+            grid, fiber, 32e9, ode_accel="cached_g", raman_spectrum="legacy",
+            nli_model="p1_closed",
+        )
     # 反向：P1 档只有 legacy 谱，tabular 必须显式拒绝。
     with pytest.raises(ValueError, match="raman_spectrum"):
         MultiBandISRSGN(
             grid, fiber, 32e9, ode_accel="off", raman_spectrum="tabular",
             nli_model="p1_closed",
         )
+    with pytest.raises(ValueError, match="raman_spectrum"):
+        MultiBandISRSGN(
+            grid, fiber, 32e9, ode_accel="matvec", raman_spectrum="tabular",
+            nli_model="p1_closed",
+        )
+
+
+def test_guard4b_p1_matvec_tier_is_reachable_and_not_a_silent_off():
+    """⚠️ WP-MERGE-FG-FLEX **第 4 轮新增**：``p1_closed`` 的 ``matvec`` 档必须**真的**是加速档。
+
+    第 3 轮把 ``p1_closed`` + ``"matvec"`` 记成「P1 档没有这个能力」。第 4 轮
+    补上了它，所以这条守卫要反过来盯住一件事：**别让它退化成静默的 ``"off"``**。
+
+    判据是**可观测的差异**而不是"构造成功"：``p1_closed`` 的 ``matvec`` 档把 XPM
+    的 ``l`` 方向求和从成对循环换成矩阵-向量乘 ⇒ 与 ``off`` 档**非逐位相等**
+    （但仍在 1e-12 预算内，见 V2''）。如果哪天有人把 ``matvec`` 悄悄改回 ``off``，
+    这个差异会**归零** ⇒ 守卫立刻响。
+
+    同时守住「P1 的算式没被动过」：出纤功率与 SPM 必须与 ``off`` 档**逐位相同**。
+    """
+    from network_nlo_eval.core.spectrum import SpectrumGrid
+    from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+    from network_nlo_eval.network.elements import FiberSpanConfig
+
+    fiber = FiberSpanConfig(length_km=80.0)
+    grid = SpectrumGrid(8, 50e9, 193.1e12)
+    power = np.full(8, 1e-3)
+
+    off = MultiBandISRSGN(
+        grid, fiber, 32e9, ode_accel="off", raman_spectrum="legacy", nli_model="p1_closed"
+    )
+    mv = MultiBandISRSGN(
+        grid, fiber, 32e9, ode_accel="matvec", raman_spectrum="legacy", nli_model="p1_closed"
+    )
+    a = off._calc_span_noise_and_power(power, 80e3, None)
+    b = mv._calc_span_noise_and_power(power, 80e3, None)
+
+    # 出纤功率与 SPM 逐位相同（走冻结核的同一个函数）。
+    assert np.array_equal(a[0], b[0]), "P1 matvec 的出纤功率必须与 off 逐位相同"
+    assert np.array_equal(a[1], b[1]), "P1 matvec 的 SPM 必须与 off 逐位相同"
+    # XPM 非逐位（求和次序变了）——这正是「它真的走了加速路径」的证据。
+    assert not np.array_equal(a[2], b[2]), (
+        "P1 matvec 的 XPM 必须与 off 非逐位相等；若逐位相等，说明它退化成了 off"
+    )
+    # 且仍在 1e-12 预算内。
+    denom = np.maximum(np.abs(a[2]), 1e-300)
+    max_rel = float(np.max(np.abs(a[2] - b[2]) / denom))
+    assert max_rel <= 1e-12, f"P1 matvec 的 XPM 相对偏差 {max_rel:.3e} 超出 1e-12 预算"
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +251,7 @@ def test_guard4_capabilities_reachable():
             # 的冻结路径，**必须**显式配 ``raman_spectrum="legacy"``（FG-15 的口径是
             # "显式拒绝而非静默回退"）。此前这里不传该参数，是因为 Raman 档位当时还不存在。
             ev = MultiBandISRSGN(
-                grid, fiber, 32e9, ode_accel=mode, raman_spectrum=_raman_tier_for(mode),
+                grid, fiber, 32e9, ode_accel=mode, raman_spectrum=_raman_tier_for(mode, nli_model),
                 nli_model=nli_model,
             )
             out = ev._calc_span_noise_and_power(power, 80e3, EDFAConfig(target_gain_db=17.0))

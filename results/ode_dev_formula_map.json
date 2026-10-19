@@ -54,7 +54,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 553,
+          "line": 570,
           "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("
         }
       ],
@@ -153,7 +153,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 390,
+          "line": 407,
           "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"
         },
         {
@@ -181,7 +181,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 905,
+          "line": 1015,
           "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,"
         },
         {
@@ -431,12 +431,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1470,
+          "line": 1712,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1473,
+          "line": 1715,
           "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"
         }
       ],
@@ -459,22 +459,22 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 922,
+          "line": 1032,
           "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 927,
+          "line": 1037,
           "contains": "gain *= 10 ** (ripple / 10)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 931,
+          "line": 1041,
           "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum("
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 932,
+          "line": 1042,
           "contains": "gain - 1, 0"
         }
       ],
@@ -507,7 +507,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 889,
+          "line": 999,
           "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("
         }
       ],
@@ -596,12 +596,12 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 920,
+          "line": 1030,
           "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 932,
+          "line": 1042,
           "contains": "gain - 1, 0"
         }
       ],
@@ -624,7 +624,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1470,
+          "line": 1712,
           "contains": "total_noise = total_spm + total_xpm + total_ase"
         }
       ],
@@ -675,7 +675,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1426,
+          "line": 1668,
           "contains": "total_spm *= transfer"
         }
       ],
@@ -689,7 +689,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1323,
+          "line": 1565,
           "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"
         }
       ],
@@ -703,7 +703,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1327,
+          "line": 1569,
           "contains": "total_spm *= penalty"
         }
       ],
@@ -765,7 +765,7 @@
         },
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 917,
+          "line": 1027,
           "contains": "s2_ase = np.zeros_like(power_in_w)"
         }
       ],
@@ -779,7 +779,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 1332,
+          "line": 1574,
           "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"
         }
       ],
@@ -793,7 +793,7 @@
       "code": [
         {
           "file": "src/network_nlo_eval/models/isrs_gn.py",
-          "line": 391,
+          "line": 408,
           "contains": "self.delta_f_co_hz = 15e12"
         }
       ],

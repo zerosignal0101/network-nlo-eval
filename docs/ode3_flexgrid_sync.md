@@ -107,7 +107,7 @@
 
 ## 3. 能力矩阵（`fu4` vs `ode-dev`）
 
-共 19 条：双方都有 8、仅 `fu4` 有 8（其中**涉物理** 4）、仅 `ode-dev` 有 2、`ode-dev` 更优 1。
+共 20 条：双方都有 9、仅 `fu4` 有 7（其中**涉物理** 3）、仅 `ode-dev` 有 3、`ode-dev` 更优 1。
 
 | 能力 | 文件 | 状态 | 涉物理 | 证据 |
 |---|---|---|:---:|---|
@@ -126,7 +126,8 @@
 | QoTValidator._roadm_terms（把 inline 装配抽成函数） | `rwa/qot_checker.py` | `fu4_only` | 否 | 纯重构（PLAN §0 已证语义为零）。故意不搬，使 legacy 装配算式保持逐字不变。 |
 | 逐连接异构符号率（symbol_rate_hz 数组参数） | `models/numba_kernels.py` | `fu4_only` | **是** | ★ 物理缺口。fu4 核接受 (N,) Rs 并据此算 ASE；本仓冻结核只吃标量。改它 = 改 numba_kernels.py = 违反 J5。O2 已显式拒绝，O3 沿用。证据：e2e.probes.heterogeneous_rs。 |
 | SRS 频带边界按真实连接占用带（f_m_hz/f_M_hz） | `models/numba_kernels.py` | `fu4_only` | **是** | ★ 物理缺口。本仓 Python 侧已按占用带算出 f_m_hz/f_M_hz，但冻结核在核内用标量 Rs 重算，故该修正是死代码。让它生效需给内核加参数 = J5。证据：e2e.known_limitations.srs_band_edges_still_scalar_rs。 |
-| ode_accel: matvec / cached_g 加速档 | `models/numba_kernels.py` | `fu4_only` | **是** | ★ 物理缺口（求和次序改变 ⇒ 非逐位相等）。需改冻结内核，WP-O3 §8 明确列为不做。fu4 侧 NLI 张量公式出处是其 docstring 的 'Eq. 21'，P1/P2 均无此式，O2 已按 J1/J3 拒绝。 |
+| ode_accel: matvec / cached_g 加速档 | `models/numba_kernels.py` | `both` | **是** | ⚠️ WP-MERGE-FG-FLEX **第 2/4 轮改判**：本条原记 fu4_only（「需改冻结内核，WP-O3 §8 明确列为不做」）。合并后本仓已有 matvec / cached_g（p2_gn 档，来自 wp/fg-integrate），第 4 轮又给 p1_closed 档补上 matvec（models/numba_kernels_p1_accel.py）。⚠️ **冻结核 numba_kernels.py 仍未被改动**（字节仍是 6611c416…）：加速**全部**在另立的新模块里，off 档继续以冻结核为基准。仍标 involves_physics=True：加速重排浮点求和 ⇒ 非逐位相等（实测 max_rel ~2e-15，预算 1e-12 不放宽）。 |
+| P1 闭式核的 matvec 档 + 批量入口（XPM 信道对矩阵 + 矩阵-向量乘） | `models/numba_kernels_p1_accel.py` | `ode_dev_only` | **是** | WP-MERGE-FG-FLEX **第 4 轮新增**（fu4 侧没有）。把 P1 (30) 的 XPM 「与信道对相关」的部分预计算成 (N,N) 矩阵，l 方向求和降成矩阵-向量乘；P1 的**算式一个字未改**（常数与 asinh/atan 参数形式逐字不变，冻结核未动）。仍标 involves_physics=True：XPM 的求和次序变了 ⇒ 与 off 档非逐位相等（实测 max_rel 1.3e-15 ~ 2.1e-15，预算 1e-12 不放宽）；出纤功率与 SPM 仍逐位相同。 |
 | phi_kurtosis（64QAM 峰度进入 XPM） | `models/numba_kernels.py` | `fu4_only` | **是** | 本仓闭式 ECZ 模型无此参数；引入它等于改变 NLI 模型，按 J1 需 P1/P2 公式号支撑，O2 未取得，故不移植。 |
 | numba 缺失时的 njit 降级垫片 | `models/numba_kernels.py` | `ode_dev_only` | 否 | 本仓独有：ImportError 时 njit 退化为恒等装饰器，让无 JIT 的最小环境也能跑统计模型。O2 已带（ecz-dev 既有）。 |
 | 闭式 ECZ GN 模型（按 P1 公式号逐条可 grep） | `models/numba_kernels.py` | `ode_dev_only` | **是** | 本仓物理底：P1 §II.B 扩展 CZ / §III 闭式 GN。fu4 走的是 RK4 真 ODE 传播。两棵树内核**不是同一个物理模型**，故 numba_kernels.py 的 diff 恒非空——J5 要求的是本 WP 相对自身起点的 diff 为空。 |
@@ -167,7 +168,7 @@ O2 移植的 `MultiBandISRSGN.for_fiber` 只传 `(grid, fiber_config, Rs)`，逐
 
 ### 6.2 O2 公式锚点行号漂移
 
-在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **25** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
+在 `models/isrs_gn.py` 插入接线后，O2 `formula_map` 里 **22** 条代码锚点的**行号**下移，导致 J1 守卫失败。这些锚点指向的**物理代码一字未改**（`git diff` 只删了 3 行，全是工程接线）。`tools/ode3_relocate_anchors.py` 只重排行号、**不动 `contains` 字符串**——若物理真被改写，它会因匹配不上而报错退出。未自动修正 0 条。
 
 ### 6.3 `BandSpec` 波长/频率 docstring 反了
 

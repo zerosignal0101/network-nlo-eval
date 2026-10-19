@@ -67,7 +67,7 @@ FORMULAS: list[dict] = [
             {"file": E, "line": 29, "contains": "reference_wavelength_nm: float = Field(1550.0"},
             {"file": K, "line": 91, "contains": "alpha_dbkm = alpha_2 * (lambda_nm - lambda_ref_nm) ** 2"},
             {"file": K, "line": 92, "contains": "return alpha_dbkm / (NP_TO_DB * 1000)"},
-            {"file": G, "line": 553, "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("},
+            {"file": G, "line": 570, "contains": "self.alpha_power_npm_channels = _calc_fiber_attenuation_npm("},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -139,7 +139,7 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "C_r L_eff(L) r(f) -> (1 − k_bar) C_r L_eff(L) r(f)",
         "code": [
-            {"file": G, "line": 390, "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"},
+            {"file": G, "line": 407, "contains": "self.k_bar = min(sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0)"},
             {"file": K, "line": 259, "contains": "np.exp(-(1 - k_bar) * _SRS_CR * L_eff_array[i] * r_f)"},
         ],
         "conforms": True,
@@ -163,7 +163,7 @@ FORMULAS: list[dict] = [
                          "G(0,f_i+f_1) G(0,f_i+f_1+f_2) G(0,f_i+f_2) df_1 df_2, "
                          "with B_i the channel bandwidth",
         "code": [
-            {"file": G, "line": 905, "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,"},
+            {"file": G, "line": 1015, "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,"},
             {"file": K, "line": 459, "contains": "b_hz_channels[i],  # P1 (29) 的 B_i = COI 自己的信道带宽"},
             {"file": K2, "line": 1126, "contains": "spm_pre = ((16.0 / 27.0) * (gamma_ii_sq * p_cube / (symbol_rate_hz**2))) * (big_t * big_t)"},
             {"file": K, "line": 504, "contains": "sigma_xpm_2[i] = (32.0 / 27.0) * p_in_w[i] * n_span * xpm_sum_term"},
@@ -304,8 +304,8 @@ FORMULAS: list[dict] = [
         },
         "paper_formula": "SNR(f_i) = P / (sigma^2_ASE(f_i) + sigma^2_NLI(f_i))",
         "code": [
-            {"file": G, "line": 1470, "contains": "total_noise = total_spm + total_xpm + total_ase"},
-            {"file": G, "line": 1473, "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"},
+            {"file": G, "line": 1712, "contains": "total_noise = total_spm + total_xpm + total_ase"},
+            {"file": G, "line": 1715, "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -326,10 +326,10 @@ FORMULAS: list[dict] = [
         "paper_formula": "sigma^2_ASE(f_i) = h f_i F(f_i) B_i G(f_i) N, "
                          "G(f_i),F(f_i) = gain & NF of **each line amplifier + DGE**",
         "code": [
-            {"file": G, "line": 922, "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"},
-            {"file": G, "line": 927, "contains": "gain *= 10 ** (ripple / 10)"},
-            {"file": G, "line": 931, "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum("},
-            {"file": G, "line": 932, "contains": "gain - 1, 0"},
+            {"file": G, "line": 1032, "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))"},
+            {"file": G, "line": 1037, "contains": "gain *= 10 ** (ripple / 10)"},
+            {"file": G, "line": 1041, "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum("},
+            {"file": G, "line": 1042, "contains": "gain - 1, 0"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -354,7 +354,7 @@ FORMULAS: list[dict] = [
         "code": [
             {"file": K, "line": 575, "contains": "G_i = p_in_w[i] / p_out_w[i]"},
             {"file": K, "line": 578, "contains": "n_span * nf_lin[i] * H_PLANCK * f_abs_hz[i] * max((G_i - 1.0), 0.0) * b_hz_channels[i]"},
-            {"file": G, "line": 889, "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("},
+            {"file": G, "line": 999, "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit("},
         ],
         "conforms": False,
         "verdict": "dead_code_violates_eq34",
@@ -426,8 +426,8 @@ FORMULAS: list[dict] = [
         "paper_formula": "P'_ASE,i = 2(G_i − 1) n_sp,i h f_i B_i, n_sp,i ≈ (G_i NF − 1)/(2(G_i−1)), "
                          "G_i = P_i(L)/P_i(0) 为**放大器**在信道 i 上的增益",
         "code": [
-            {"file": G, "line": 920, "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"},
-            {"file": G, "line": 932, "contains": "gain - 1, 0"},
+            {"file": G, "line": 1030, "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)"},
+            {"file": G, "line": 1042, "contains": "gain - 1, 0"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -452,7 +452,7 @@ FORMULAS: list[dict] = [
         "paper_formula": "SNR_i^-1 ≈ SNR_TRX,i^-1 + SNR_ASE,i^-1 + SNR_NLI,i^-1 "
                          "= (P_i / (kappa_i P_i + P_ASE,i'' + eta_n(f_i) P_i^3))^-1",
         "code": [
-            {"file": G, "line": 1470, "contains": "total_noise = total_spm + total_xpm + total_ase"},
+            {"file": G, "line": 1712, "contains": "total_noise = total_spm + total_xpm + total_ase"},
         ],
         "conforms": True,
         "verdict": "keep_ecz",
@@ -507,7 +507,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_span_noise_accumulation",
         "quantity": "逐跨段噪声累积（按信号传递比缩放已有噪声 + 累加本跨段噪声）",
         "class": "engineering",
-        "code": [{"file": G, "line": 1426, "contains": "total_spm *= transfer"}],
+        "code": [{"file": G, "line": 1668, "contains": "total_spm *= transfer"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 用 (24) 的跨段求和与 (34) 的 ×N 表达多跨段；(29)(30) 用 N^{1+eps} / N。"
                       "「已有噪声按信号传递比缩放」这一递推写法是 P1 未规定的实现细节，"
@@ -517,7 +517,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_booster_ase",
         "quantity": "ROADM 均衡 booster 引入的 ASE",
         "class": "engineering",
-        "code": [{"file": G, "line": 1323, "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"}],
+        "code": [{"file": G, "line": 1565, "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 (34) 的 G/F 是「每级线路放大器 + DGE」，ROADM booster 属线路放大器，"
                       "故沿用同一 (34) 形式是合理的；论文未单独给出 booster 的 NF/增益口径，"
@@ -527,7 +527,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_filtering_penalty",
         "quantity": "级联滤波统计模型 SNR 惩罚（只乘噪声）",
         "class": "engineering",
-        "code": [{"file": G, "line": 1327, "contains": "total_spm *= penalty"}],
+        "code": [{"file": G, "line": 1569, "contains": "total_spm *= penalty"}],
         "verdict": "keep_ecz",
         "paper_note": "P2 (1) 允许把实现代价作为独立可加项（SNR_TRX 项）；P1 没有这一项。"
                       "论文未提及具体口径，保留 ecz 实现。",
@@ -558,7 +558,7 @@ ENGINEERING: list[dict] = [
             {"file": K2, "line": 1041, "contains": "abs_phi_base = max(abs(phi_base), _EPSILON)"},
             {"file": K, "line": 341, "contains": "return max(result, 0.0)"},
             {"file": K2, "line": 1127, "contains": "sigma_spm_2 = np.where(p_in_w > 0, np.maximum(spm_pre * spm_sum, 0.0), 0.0)"},
-            {"file": G, "line": 917, "contains": "s2_ase = np.zeros_like(power_in_w)"},
+            {"file": G, "line": 1027, "contains": "s2_ase = np.zeros_like(power_in_w)"},
         ],
         "verdict": "keep_ecz",
         "paper_note": "纯数值防护，论文无对应式。",
@@ -567,7 +567,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_blocked_channels",
         "quantity": "被阻断信道清零",
         "class": "engineering",
-        "code": [{"file": G, "line": 1332, "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"}],
+        "code": [{"file": G, "line": 1574, "contains": "power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0"}],
         "verdict": "keep_ecz",
         "paper_note": "网络层语义，论文无对应式。",
     },
@@ -575,7 +575,7 @@ ENGINEERING: list[dict] = [
         "id": "eng_delta_f_co_value",
         "quantity": "三角近似的截断频率 df_co = 15 THz",
         "class": "engineering",
-        "code": [{"file": G, "line": 391, "contains": "self.delta_f_co_hz = 15e12"}],
+        "code": [{"file": G, "line": 408, "contains": "self.delta_f_co_hz = 15e12"}],
         "verdict": "keep_ecz",
         "paper_note": "P1 §II-B 引入 df_co 作为拟合参数但**未给数值**；§II-B 正文只说"
                       "「约 15 THz 之外拉曼增益迅速归零」。保留 ecz 取值。",

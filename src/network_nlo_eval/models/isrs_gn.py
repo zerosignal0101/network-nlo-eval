@@ -39,6 +39,11 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_span_noise_and_power_jit,
     _db_to_lin,
 )
+from network_nlo_eval.models.numba_kernels_p1_accel import (
+    P1XpmMatrices,
+    build_p1_xpm_pair_matrices,
+    calc_span_noise_and_power_p1_matvec,
+)
 from network_nlo_eval.models.numba_kernels_p2 import (
     _calc_span_noise_and_power_jit as _p2_calc_span_noise_and_power_jit,
     g_cache_stats,
@@ -189,14 +194,24 @@ NLI_MODEL_DEFAULT = "p1_closed"
 
 #: 各 NLI 档位**允许**的 ``ode_accel`` 取值。
 #:
-#: ``"p1_closed"`` 只有 ``("off", "cached")``：P1 核里**没有**拉曼 G 矩阵、没有
-#: 去分支 matvec、没有张量化 NLI——那三样都是 FG 的**实现结构**，不是 P1 的物理。
-#: 本轮**不做** P1 核的加速（另立一轮），故这里显式只留 P1 已有的两档。
+#: ``"p1_closed"`` 三档：``"off"``（冻结参考）、``"cached"``（跨段记忆化）、
+#: ``"matvec"``（**第 4 轮新增**：P1 XPM 的信道对矩阵 + 矩阵-向量乘）。
+#: ⚠️ 第 4 轮之前这里是**两档**，注释写着「P1 核里没有拉曼 G 矩阵、没有去分支
+#: matvec、没有张量化 NLI——那三样都是 FG 的**实现结构**，不是 P1 的物理。
+#: 本轮**不做** P1 核的加速（另立一轮）」。**第 4 轮就是那一轮**：
+#: P1 侧的 ``matvec`` 是**新实现**（``models/numba_kernels_p1_accel.py``），
+#: 它**不动 P1 的算式**——P1 (23)/(29)/(30)/(34) 的常数与 ``asinh``/``atan``
+#: 参数形式逐字不变，``numba_kernels.py`` 仍是 ``6611c416…`` 的冻结内核，
+#: ``"off"`` 档继续以它为基准。
+#:
+#: ⚠️ ``"cached_g"`` 仍然**只属于** ``"p2_gn"``：G 矩阵缓存是 FG 侧拉曼 ODE 的
+#: 结构，P1 核里**没有**拉曼 ODE（``p1_closed`` 走的是解析出纤功率），
+#: 给它配 ``"cached_g"`` 会静默跑成别的档——那是最坏的一种错。
 #:
 #: ``"p2_gn"`` 四档全在：``"off"``（冻结参考）、``"cached"``（跨段记忆化）、
 #: ``"cached_g"``（G 缓存）、``"matvec"``（默认）。
 ODE_ACCEL_MODES_BY_NLI_MODEL: dict[str, tuple[str, ...]] = {
-    "p1_closed": ("off", "cached"),
+    "p1_closed": ("off", "cached", "matvec"),
     "p2_gn": ("off", "cached", "cached_g", "matvec"),
 }
 
@@ -204,8 +219,10 @@ ODE_ACCEL_MODES_BY_NLI_MODEL: dict[str, tuple[str, ...]] = {
 #:
 #: ⚠️ ``ODE_ACCEL_DEFAULT``（= ``"matvec"``）**保持不变**——它仍是 ``p2_gn`` 档的
 #: 生产默认，``tests/test_fg4b_nli_vectorization.py`` 断言它等于 ``"matvec"``，
-#: 本轮不动那个常量。``p1_closed`` 档没有 matvec 可选，其默认落在 ``"off"``
-#: （P1 的冻结参考路径）。
+#: 本轮不动那个常量。
+#:
+#: ``p1_closed`` 档的默认档由**第 4 轮**按实测决定（延迟 vs 精度），
+#: 读数依据见 ``docs/wp_merge_fg_into_flex.md`` 的「第 4 轮」章节。
 ODE_ACCEL_DEFAULT_BY_NLI_MODEL: dict[str, str] = {
     "p1_closed": "off",
     "p2_gn": ODE_ACCEL_DEFAULT,
@@ -651,6 +668,14 @@ class MultiBandISRSGN:
         self._batch_constants_key: tuple[Any, ...] | None = None
         self._batch_constants_value: Any | None = None
 
+        # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：P1 XPM 的 (N,N) 信道对矩阵。
+        #
+        # 它只依赖**信道几何**（波长、频率、带宽、逐信道衰减、色散、n2）——
+        # 这些全是 **evaluator 级**量，不随跨段、不随候选变 ⇒ 一次构建、整批复用。
+        # 与 FG 侧 ``_g_gain`` / ``_nli_cache`` 同一套「构建期常量」结构。
+        # 延迟到首次调用再建（构造期不做无谓的 O(N^2) 工作）。
+        self._p1_xpm_matrices: P1XpmMatrices | None = None
+
     def _batch_constants_for_span(
         self, n_effective_spans: int, span_length_m: float
     ) -> "BatchSpanConstants":
@@ -776,6 +801,79 @@ class MultiBandISRSGN:
         self._nli_cache_value = tensors
         return tensors
 
+    def _p1_xpm_matrices_for(self) -> P1XpmMatrices:
+        """P1 XPM 的 (N,N) 信道对矩阵（实例内记忆化，跨跨段/跨候选复用）。
+
+        ⚠️ WP-MERGE-FG-FLEX **第 4 轮**。与 FG 侧的 ``_g_gain`` / ``_nli_cache``
+        同一套结构：**构建期算一次的热路径常量**。
+
+        它只依赖 evaluator 级量（``lambdas_m`` / ``f_rel_hz`` / ``B_i`` /
+        ``alpha`` / ``beta2`` / ``beta3`` / ``n2``），**不随跨段、不随候选变**，
+        所以缓存键就是 evaluator 本身——建一次就够。
+
+        与 ``off`` 档的关系：``off`` 档的每一对都在**热路径**里现算 ``gamma_il`` /
+        ``phi_il`` / 两个 ``arctan``；本档把它们**提前**到构建期，热路径只剩
+        矩阵-向量乘。**P1 的算式一个字没改**。
+        """
+        if self._p1_xpm_matrices is not None:
+            return self._p1_xpm_matrices
+        g1, g2, phi_raw, gamma = build_p1_xpm_pair_matrices(
+            self.n_nodes,
+            self.channel_bandwidth_hz_channels,
+            self.f_rel_hz,
+            self.lambdas_m,
+            self.a_eff_m2_channels,
+            self.alpha_power_npm_channels,
+            self.beta2_s2_m,
+            self.beta3_s3_m,
+            self.n2_m2_w,
+        )
+        self._p1_xpm_matrices = P1XpmMatrices(
+            g1=g1,
+            g2=g2,
+            g1_t=np.ascontiguousarray(g1.T),
+            g2_t=np.ascontiguousarray(g2.T),
+            phi_raw=phi_raw,
+            gamma=gamma,
+        )
+        return self._p1_xpm_matrices
+
+    def _p1_span_matvec(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        n_effective_spans: int,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """P1 闭式核的 ``matvec`` 形态（单候选）。
+
+        ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：这是 ``off`` 档那个冻结内核的**加速替身**，
+        不是第二条物理。出纤功率与 SPM **逐位相同**（同一个冻结核函数），
+        只有 XPM 的求和次序变了。
+        """
+        mats = self._p1_xpm_matrices_for()
+        p_out, s2_spm, s2_xpm, s2_ase = calc_span_noise_and_power_p1_matvec(
+            power_in_w=np.asarray(power_in_w, dtype=np.float64)[None, :],
+            span_length_m=float(span_length_m),
+            f_rel_hz=self.f_rel_hz,
+            f_abs_hz=self.f_abs_hz,
+            lambdas_m=self.lambdas_m,
+            alpha_power_npm=self.alpha_power_npm_channels,
+            a_eff_m2=self.a_eff_m2_channels,
+            beta_2_s2_m=self.beta2_s2_m,
+            beta_3_s3_m=self.beta3_s3_m,
+            n_2_m2_w=self.n2_m2_w,
+            nf_lin_channels=self.nf_lin_channels,
+            symbol_rate_hz=self.symbol_rate_hz,
+            b_hz_channels=self.channel_bandwidth_hz_channels,
+            n_effective_spans=int(n_effective_spans),
+            cr_w_m_hz=self.cr_w_m_hz,
+            k_bar=self.k_bar,
+            delta_f_co_hz=self.delta_f_co_hz,
+            mats=mats,
+        )
+        # (1, N) → (N,)：单候选入口的形状契约与冻结内核一致。
+        return p_out[0], s2_spm[0], s2_xpm[0], s2_ase[0]
+
     @property
     def g_cache_hits(self) -> int:
         """FG-4a 证据：G 缓存命中次数（跨调用复用的直接计数）。"""
@@ -882,6 +980,18 @@ class MultiBandISRSGN:
         if cached is not None:
             # 纯 memoization：返回的就是上一次算出来的那些数组，逐位相等。
             p_out_fiber, s2_spm, s2_xpm = cached
+        elif self.ode_accel == "matvec":
+            # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：``matvec`` 档走 **P1 自己的**加速实现
+            #    （``models/numba_kernels_p1_accel.py``）。
+            #
+            #    与 ``off`` 档的关系：
+            #    * **出纤功率与 SPM 逐位相同**（走冻结核的同一个函数）；
+            #    * **只有 XPM 的求和次序**变了（成对求和 → 矩阵-向量乘），
+            #      实测 max_rel ~1e-15（预算 1e-12，**不放宽**）。
+            #    * P1 的**算式一个字没改**——``numba_kernels.py`` 仍是 ``6611c416…``。
+            p_out_fiber, s2_spm, s2_xpm, _ = self._p1_span_matvec(
+                power_in_w, span_length_m, n_effective_spans
+            )
         else:
             # ⚠️ 核的第四个返回值（ASE）是**死代码**：P1 (34) 的 ASE 在下面按
             #    "显式施加 EDFA" 那一步算，故这里丢弃。锚点 `p1_eq34_ase_dead_kernel`
@@ -1146,16 +1256,25 @@ class MultiBandISRSGN:
         Raises:
             ValueError: ``ode_accel`` 不是 ``"matvec"``；``power_in_w`` 不是
                 ``(B, N)`` 或 N 与本 evaluator 不符；NF 覆盖数组长度不对；
-                ``nli_model`` 不是 ``"p2_gn"``（P1 档**暂无批量路径**）。
+                ``nli_model`` 不在 ``("p2_gn", "p1_closed")`` 里。
         """
-        # ⚠️ WP-MERGE-FG-FLEX 第 3 轮：批量入口是 **P2 的实现结构**（张量化 NLI +
-        #    GEMM），P1 核**没有**对应的批量路径。本轮不做 P1 核的加速
-        #    （另立一轮），故这里**显式拒绝**，而不是悄悄退回串行。
+        # ⚠️ WP-MERGE-FG-FLEX **第 4 轮**：P1 档**现在有**批量路径了。
+        #
+        # 第 3 轮这里**显式拒绝** ``p1_closed``（而不是悄悄退回串行）——那是对的，
+        # 因为当时批量核确实只是 P2 的实现结构。第 4 轮给 P1 补上了**自己的**
+        # 批量实现（``models/numba_kernels_p1_accel.py``），所以现在按
+        # :attr:`nli_model` **分派**，两套物理各走各的批量核。
+        #
+        # ⚠️ 仍然**没有**静默回落：档位不匹配时照样抛 ``ValueError``。
+        if self.nli_model == "p1_closed":
+            return self._calc_span_noise_and_power_batch_p1(
+                power_in_w, span_length_m, edfa_config, roadm_config, n_effective_spans
+            )
         if self.nli_model != "p2_gn":
             raise ValueError(
-                "calc_span_noise_and_power_batch is only available for nli_model='p2_gn': "
-                "the batched kernel is the batch form of the P2 tensorised NLI. "
-                f"Got nli_model={self.nli_model!r}; the P1 tier has no batch path yet."
+                "calc_span_noise_and_power_batch is only available for nli_model='p2_gn' "
+                "or 'p1_closed': the batched kernel is the batch form of the tier's own "
+                f"NLI physics. Got nli_model={self.nli_model!r}."
             )
         P = np.asarray(power_in_w, dtype=np.float64)
         n_conn = self.n_nodes
@@ -1197,6 +1316,129 @@ class MultiBandISRSGN:
                 s2_spm = s2_spm / terms.loss
                 s2_xpm = s2_xpm / terms.loss
                 s2_ase = s2_ase / terms.loss
+
+        return p_out, s2_spm, s2_xpm, s2_ase
+
+    def _calc_span_noise_and_power_batch_p1(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """``nli_model="p1_closed"`` 的**批量**入口（第 4 轮新增）。
+
+        与 :meth:`_calc_span_noise_and_power_p1` 算同一件事，区别只在布局：
+        这里一次评估 B 个候选，形状是 ``(B, N)`` 进、四个 ``(B, N)`` 出。
+
+        与 P2 的批量入口**不共用**任何物理函数：P1 的 NLI 是闭式，P2 的是张量化。
+
+        ⚠️ **不是静默回落**：档位不匹配时**抛** ``ValueError``。
+
+        P1 侧的「显式施加 EDFA」与「ROADM 折叠」两步都按**逐候选**做，
+        语义与串行入口 :meth:`_calc_span_noise_and_power_p1` **逐项一致**
+        （含 P1 档特有的 NF 默认值口径：未指定 NF 时取全 1，不是 P2 档的
+        ``self.nf_lin_channels``）。
+
+        Args:
+            power_in_w: ``(B, N)`` 候选入纤功率 (W)。零功率合法。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: (可选) 跨段后 EDFA 配置。
+            roadm_config: (可选) 跨段后 ROADM 配置。
+            n_effective_spans: 有效跨段数。
+
+        Returns:
+            四个 ``(B, N)`` 数组。
+
+        Raises:
+            ValueError: ``ode_accel`` 不是 ``"matvec"``；``power_in_w`` 形状不对；
+                NF 覆盖数组长度不对。
+        """
+        if self.ode_accel != "matvec":
+            raise ValueError(
+                "calc_span_noise_and_power_batch requires ode_accel='matvec': the batched "
+                "kernel is the batch form of the P1 closed-form NLI (XPM channel-pair "
+                f"matrices + matvec). Got ode_accel={self.ode_accel!r}."
+            )
+
+        P = np.asarray(power_in_w, dtype=np.float64)
+        n_conn = self.n_nodes
+        if P.ndim != 2 or P.shape[1] != n_conn:
+            raise ValueError(
+                f"power_in_w must have shape (B, {n_conn}), got {np.shape(power_in_w)}."
+            )
+
+        # --- 1. NF：P1 档口径（未指定时取全 1 = NF 0 dB）---
+        if edfa_config is not None and edfa_config.noise_figure_db is not None:
+            noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
+            if noise_figure_db.ndim == 0:
+                current_nf_lin = np.full(n_conn, 10 ** (float(noise_figure_db) / 10))
+            else:
+                if noise_figure_db.shape != (n_conn,):
+                    raise ValueError(
+                        "EDFA noise-figure array must contain one value per channel "
+                        f"({n_conn},); got {noise_figure_db.shape}."
+                    )
+                current_nf_lin = 10 ** (noise_figure_db / 10)
+        else:
+            current_nf_lin = np.ones_like(self.nf_lin_channels)
+        current_nf_lin = np.asarray(current_nf_lin, dtype=np.float64)
+
+        # --- 2. P1 闭式核的批量形态 ---
+        mats = self._p1_xpm_matrices_for()
+        p_out_fiber, s2_spm, s2_xpm, _ = calc_span_noise_and_power_p1_matvec(
+            power_in_w=P,
+            span_length_m=float(span_length_m),
+            f_rel_hz=self.f_rel_hz,
+            f_abs_hz=self.f_abs_hz,
+            lambdas_m=self.lambdas_m,
+            alpha_power_npm=self.alpha_power_npm_channels,
+            a_eff_m2=self.a_eff_m2_channels,
+            beta_2_s2_m=self.beta2_s2_m,
+            beta_3_s3_m=self.beta3_s3_m,
+            n_2_m2_w=self.n2_m2_w,
+            nf_lin_channels=current_nf_lin,
+            symbol_rate_hz=self.symbol_rate_hz,
+            b_hz_channels=self.channel_bandwidth_hz_channels,
+            n_effective_spans=int(n_effective_spans),
+            cr_w_m_hz=self.cr_w_m_hz,
+            k_bar=self.k_bar,
+            delta_f_co_hz=self.delta_f_co_hz,
+            mats=mats,
+        )
+
+        # --- 3. 显式应用 EDFA（与串行入口同式，逐候选）---
+        if edfa_config is None:
+            p_out = p_out_fiber
+            s2_ase = np.zeros_like(P)
+        else:
+            if edfa_config.target_gain_db is None:
+                gain = np.divide(P, p_out_fiber, out=np.ones_like(P), where=p_out_fiber > 0)
+            else:
+                gain = np.full_like(P, 10 ** (edfa_config.target_gain_db / 10))
+            if edfa_config.gain_ripple_db is not None:
+                ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
+                if ripple.shape != (n_conn,):
+                    raise ValueError("EDFA gain-ripple array must contain one value per channel.")
+                gain *= 10 ** (ripple / 10)
+            p_out = p_out_fiber * gain
+            s2_ase = (
+                current_nf_lin
+                * 6.62607015e-34
+                * self.f_abs_hz
+                * self.channel_bandwidth_hz_channels
+                * np.maximum(gain - 1, 0)
+            )
+            s2_ase[P <= 0] = 0
+
+        # --- 4. ROADM 损耗（P1 档口径：除以 path_loss_db）---
+        if roadm_config:
+            loss_lin = _db_to_lin(roadm_config.path_loss_db())
+            p_out = p_out / loss_lin
+            s2_spm = s2_spm / loss_lin
+            s2_xpm = s2_xpm / loss_lin
+            s2_ase = s2_ase / loss_lin
 
         return p_out, s2_spm, s2_xpm, s2_ase
 

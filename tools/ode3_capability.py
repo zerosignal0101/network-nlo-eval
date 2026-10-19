@@ -166,11 +166,26 @@ CAPABILITIES: list[dict] = [
     {
         "capability": "ode_accel: matvec / cached_g 加速档",
         "file": "src/network_nlo_eval/models/numba_kernels.py",
-        "status": "fu4_only",
+        "status": "both",
         "involves_physics": True,
-        "evidence": "★ 物理缺口（求和次序改变 ⇒ 非逐位相等）。需改冻结内核，"
-        "WP-O3 §8 明确列为不做。fu4 侧 NLI 张量公式出处是其 docstring 的 'Eq. 21'，"
-        "P1/P2 均无此式，O2 已按 J1/J3 拒绝。",
+        "evidence": "⚠️ WP-MERGE-FG-FLEX **第 2/4 轮改判**：本条原记 fu4_only"
+        "（「需改冻结内核，WP-O3 §8 明确列为不做」）。合并后本仓已有 matvec / cached_g"
+        "（p2_gn 档，来自 wp/fg-integrate），第 4 轮又给 p1_closed 档补上 matvec"
+        "（models/numba_kernels_p1_accel.py）。⚠️ **冻结核 numba_kernels.py 仍未被改动**"
+        "（字节仍是 6611c416…）：加速**全部**在另立的新模块里，off 档继续以冻结核为基准。"
+        "仍标 involves_physics=True：加速重排浮点求和 ⇒ 非逐位相等（实测 max_rel ~2e-15，"
+        "预算 1e-12 不放宽）。",
+    },
+    {
+        "capability": "P1 闭式核的 matvec 档 + 批量入口（XPM 信道对矩阵 + 矩阵-向量乘）",
+        "file": "src/network_nlo_eval/models/numba_kernels_p1_accel.py",
+        "status": "ode_dev_only",
+        "involves_physics": True,
+        "evidence": "WP-MERGE-FG-FLEX **第 4 轮新增**（fu4 侧没有）。把 P1 (30) 的 XPM "
+        "「与信道对相关」的部分预计算成 (N,N) 矩阵，l 方向求和降成矩阵-向量乘；"
+        "P1 的**算式一个字未改**（常数与 asinh/atan 参数形式逐字不变，冻结核未动）。"
+        "仍标 involves_physics=True：XPM 的求和次序变了 ⇒ 与 off 档非逐位相等"
+        "（实测 max_rel 1.3e-15 ~ 2.1e-15，预算 1e-12 不放宽）；出纤功率与 SPM 仍逐位相同。",
     },
     {
         "capability": "phi_kurtosis（64QAM 峰度进入 XPM）",
