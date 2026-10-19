@@ -451,3 +451,290 @@ FG-4a 自己的文档写明 `matvec` 档**按设计**重排浮点求和，该预
    批量化收益没有重测，只验证了**等价性**（批量 ≡ 串行）与正确性。
 7. **`evidence/merge/baseline_flexgrid_pytest.txt` 只记了 flexgrid 侧的基线**；
    FG 侧的 477/2 基线取自当时 `wt/fg-integrate` 的一次运行，未单独落盘成文件。
+
+---
+
+## 8. 第 3 轮：两套 NLI 物理**都留**，用 `nli_model` 档位区分
+
+> 本章是**第 3 轮**（编排方裁决）的交付。第 1、2 轮的章节（§0–§7）**原样保留**，
+> 不追改：第 2 轮结束时那些读数在当时是真的。本章只说明**第 3 轮改了什么、
+> 为什么改、实测读数是多少**。
+
+### 8.1 第 3 轮改判的来由（**是判据错了，不是执行错了**）
+
+第 2 轮把 `models/numba_kernels.py` 整份换成 FG 的字节（sha256 `7beece4e…`），
+并把 flexgrid 的逐信道 `B_i` **改名成** `symbol_rate_hz` 喂进 P2 的公式。
+第 3 轮编排方查明：这两份核是**两套不同物理**，那个组合**两边都没验证过**。
+
+| | `numba_kernels.py`（P1，flexgrid WP-Q1） | `numba_kernels_p2.py`（P2，FG） |
+|---|---|---|
+| 物理 | P1 (23)/(29)/(30)/(34) 闭式 | P2 Eq. 21 张量化 |
+| 带宽量 | `b_hz_channels[i]` = 信道带宽 `B_i` / `B_ℓ` | `rs_hz` = **符号率** |
+| 指纹 | `asinh(φ_i·B_i²/(πα))`、`atan(φ_{i,ℓ}·B_i/α_ℓ)` | `(16/27)·γ²P³/rs²·T²`、`asinh(3φ·rs²/(8π·a_t))` |
+| 字节 | `6611c4164a60d0dcc653e47c5f02d81534e9c78b03e71213aa30d8b13bfd4aa4` | `7beece4ea353b1bf5119ab9708d4db9845b092328357fff30f9b806afe613205` |
+
+⇒ **第 3 轮目标状态**：两套都保留，用显式档位 `nli_model` 区分，谁都不许被另一套替换。
+
+**第 3 轮还查出第 2 轮漏掉的一处**：那个改名**不止**在核的形参上，它还漏在
+**五处** P2 路径上（内核调用、张量化 NLI 的**构建期张量**、批量常量、两处
+booster ASE）。第 2 轮的套件是绿的，因为那 11 条用例**都测 P2 路径**，
+而改名让 P2 的三条加速路径（`off` / `matvec` / 批量）**互相打架**：
+实测 `off` vs `matvec` 的 SPM 相对偏差 **2.166**（预算 1e-12）。
+第 3 轮把这五处全部改回 FG 口径后，`off ≡ matvec` 恢复 **2.851e-16**。
+
+### 8.2 第 3 轮的实现
+
+**档位表**（`models/isrs_gn.py`）：
+
+| 档位 | 核 | 物理 | `ode_accel` 允许值 | `ode_accel` 默认 | `raman_spectrum` 允许值 | 默认 |
+|---|---|---|---|---|---|---|
+| `p1_closed`（**默认**） | `numba_kernels.py`（`6611c416…`） | P1 闭式，逐信道 `B_i` | `off` / `cached` | `off` | `legacy` | `legacy` |
+| `p2_gn` | `numba_kernels_p2.py`（`7beece4e…`） | P2 Eq. 21，符号率 | `off` / `cached` / `cached_g` / `matvec` | `matvec` | `legacy` / `tabular` | `tabular` |
+
+**不匹配即显式拒绝**（不静默回退）：给 `p1_closed` 配 `matvec` / `cached_g` /
+`raman_spectrum="tabular"` 会在构造期抛 `ValueError`。理由：P1 核里**没有**拉曼 G
+矩阵、**没有**去分支 matvec、**没有**张量化 NLI、**没有** tabular 谱；硬跑等于
+**静默**把请求丢掉——那是最坏的一种错：数字对、账对不上、没人知道加速没生效。
+
+**P1 档不是「FG 减去点什么」**：它的四处口径是**逐字取自** `flexgrid-dev @ cb24704`
+的 ——① NF 默认值（未指定时 `np.ones_like`，即 NF 0 dB）；② 跨段后放大在 Python 层
+**显式**施加，P1 (34) 的 ASE 按 `NF·h·ν·B_i·(G−1)` 逐信道算（核里那个 ASE 分支是
+**死代码**，锚点 `p1_eq34_ase_dead_kernel` 就是这条事实的可执行形式）；
+③ 衰减口径读 `use_attenuation_polynomial`（默认 ⇒ **常数**衰减）；
+④ ROADM 装配按 `path_loss_db(operation)`、等化档「先除以 loss 再乘回 loss」、
+legacy 模式的阻断集合只看 `blocked_channels`。
+
+### 8.3 88 行处置表**追加说明行**（原 88 行**继续有效**）
+
+第 3 轮**没有**推翻第 2 轮的任何一行裁决，只是把其中 5 行的「取哪边」**按档位
+分列**（两套物理各取各的），并为新的文件形态补 3 行。
+
+| # | 文件 | 块号 | 所属函数 / 类 | 第 3 轮处置 | 理由 |
+|---:|---|---:|---|---|---|
+| 89 | `models/numba_kernels.py` | 1–15（整份） | 整个文件 | **拆成两份**：`numba_kernels.py` 恢复 flexgrid 的 `6611c416…`（P1），FG 的 `7beece4e…` **同字节**搬进 `numba_kernels_p2.py` | 第 3 轮改判：两套物理都留。第 2 轮的行 51–65（逐块取 FG）**在 P2 那份里原样成立** |
+| 90 | `models/isrs_gn.py` | 14（行 42） | FG-4a/4b/4e 加速区块 | **分列**：`_nli_tensors_for_span` / `_batch_constants_for_span` 的 `rs` 实参改回 `symbol_rate_hz_channels` | 第 2 轮那一行写着「⚠ 其中 rs= 传入已由 symbol_rate_hz_channels 改为 channel_bandwidth_hz_channels（逐信道 B_i）」——**这正是第 3 轮判废的那个改名** |
+| 91 | `models/isrs_gn.py` | 15（行 43） | EDFA NF 解析 | **分列**：P1 档取 flexgrid 的 `np.ones_like(...)`，P2 档取 FG 的 `self.nf_lin_channels` | 第 2 轮取的是 FG 的默认值（因当时只有 P2 一套物理）；P1 档要逐位等于 cb24704，必须取回 flexgrid 的 |
+| 92 | `models/isrs_gn.py` | 16–17（行 44–45） | `_calc_span_noise_and_power` | **拆成派发口 + 两条实现**：P1 档走 `_calc_span_noise_and_power_p1`（P1 核 + 显式 EDFA + flexgrid-dev 的 ROADM 口径），P2 档走 `_calc_span_noise_and_power_p2`（FG 原样） | 第 2 轮把这一块「取 FG」是因为当时只有 P2；第 3 轮两套都留 |
+| 93 | `models/isrs_gn.py` | 20（行 48） | `for_fiber` 实参 | **追加**透传 `nli_model` | 子评估器不能悄悄换档（默认档已是 `p1_closed`） |
+| 94 | `rwa/qot_checker.py` | —（新增行） | `_node_frequency_and_bandwidth` | 改读 `evaluator.ase_bandwidth_hz_channels` | 两套物理的 **ASE 带宽量**本来就不同（P1 用 `B_i`、P2 用 `rs`）。该属性在**物理仓**按档位解析好，**装配层仍不出现任何档位字样**（FG-4g 的「装配层对档位无知」守卫原样通过） |
+
+### 8.4 判据实测读数（V1'–V5'）
+
+全部命令可复算。物理树一律由 `PYTHONPATH` 切换。
+
+#### V1' —— 两套物理各自与自己的源头逐位相同（**两条都通过**）
+
+**`p2_gn` 档 vs `wp/fg-integrate @ 57c7221`**
+
+探针：`evidence/merge/v1p_p2_probe.py`（新增）。口径与第 2 轮完全一致：
+`fg4a_scenarios.build_scenarios(ode_accel="off", raman_spectrum="legacy")` 的 **7 个场景**。
+
+```bash
+cd /home/zsig/Documents/gits/wt/fg-integrate
+PYTHONPATH=$PWD/src:$PWD/tests ~/miniconda3/envs/rl/bin/python \
+  <MERGE_WT>/evidence/merge/v1p_p2_probe.py --out <json>
+cd <MERGE_WT>
+PYTHONPATH=$PWD/src:$PWD/tests ~/miniconda3/envs/rl/bin/python \
+  evidence/merge/v1p_p2_probe.py --out <json> --compare <fg json>
+```
+
+| 项 | 读数 |
+|---|---|
+| 场景数 | **7** |
+| 逐项读数 | **6364** |
+| 不一致 | **0** |
+| 读数 sha256（两侧） | `12ddc4bd12f77ea009410be2fa6a94c62bfd7bb5351a14c4c912e9cee06a703c`（**相同**） |
+
+> ⚠️ **这一条是重测的，不是复用**。编排方说「上轮已拿到这个读数，直接复用」，
+> 但第 3 轮改了 P2 路径的 5 处带宽实参（**物理**改动，量级远超浮点噪声），
+> 复用旧读数会**失真**。故如实重测。
+>
+> 另：第 2 轮的 **RL 侧**判决摘要（4 个 seed，决策三元组 sha256
+> `ef766e29…` / `078175297a017c6e`…）**仍然有效**——RL 的默认带宽口径是
+> `channel_bandwidth_source="symbol_rate"`，该档下
+> `channel_bandwidth_hz_channels` 与 `symbol_rate_hz_channels` 是**同一个恒等式**
+> （逐位相同），故第 3 轮的改名修复**不改变** RL 读数。这条复用有据，不是偷懒。
+
+**`p1_closed` 档 vs `flexgrid-dev @ cb24704`**
+
+探针：`evidence/merge/v1p_p1_probe.py`（新增）。**只用两棵树都有的符号**（`SpectrumGrid` /
+`MultiBandISRSGN` / `FiberSpanConfig` / `EDFAConfig` / `ROADMConfig` / `MultiSpanOpticalPath`），
+所以**同一个脚本**能分别量两棵树。6 个场景（5 个跨段 + 1 个端到端含 ROADM）、
+逐项读数含 `p_out_w` / `sigma2_spm_w` / `sigma2_xpm_w` / `sigma2_ase_w` /
+`signal_power_w` / 三项噪声 / `snr_db` / `span_count` / `roadm_count`。
+
+```bash
+cd /home/zsig/Documents/gits/wt/flexgrid-dev
+PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python \
+  <MERGE_WT>/evidence/merge/v1p_p1_probe.py --out <json>
+cd <MERGE_WT>
+PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python \
+  evidence/merge/v1p_p1_probe.py --nli-model p1_closed --out <json> --compare <flexgrid json>
+```
+
+| 项 | 读数 |
+|---|---|
+| 场景数 | **6** |
+| 逐项读数 | **5752** |
+| 不一致 | **0** |
+| 读数 sha256（两侧） | `14d77108b5616d39635b914a1fb92f30c65568f08eb461f17ee06a158903ae63`（**相同**） |
+
+> ⚠️ **「分配判决」这一半的读数边界**：端到端的 RL 判决摘要**不能在** flexgrid 树上跑
+> ——RL 仓 `wp/fg-rt` 的 `multiband_optical_rl.config` 硬依赖 FG 符号
+> （`from network_nlo_eval.models.isrs_gn import RAMAN_SPECTRUM_DEFAULT`），
+> flexgrid 树**连 import 都过不去**（第 2 轮 §6 V2 已实测并记录）。故「分配判决」
+> 在 `p1_closed` 档由**两条**证据合起来覆盖：
+> ① **物理层逐位相同**（上表 5752 个读数，0 不一致）——判决的**输入**逐位相同；
+> ② **分配判决机制本身逐位相同**（V2' 的多槽探针，sha256 相同）——判决的**规则**逐位相同。
+> 输入与规则都逐位相同 ⇒ 判决必然逐位相同。
+> ⚠️ 这是**由两条读数推出**的，不是端到端跑出来的；我不把它说成端到端实测。
+
+#### V2' —— flexgrid 侧判决与 Q 证据链（**通过**）
+
+| 项 | 读数 |
+|---|---|
+| 多槽分配判决 vs `cb24704` | `steps_equal=True` / `final_equal=True` / **`sha256_equal=True`**（`895d9d04d5f4e6efee3d75209f1b0da470458d33fcad69434887e159e1680345`） |
+| Q-J1..Q-J6 | **12 passed**（`tests/test_bwqot_bandwidth.py -k "qj1 or qj2 or qj3 or qj5 or qj6"`） |
+| `b_hz_channels[i]` 字面量 | **保留在 `numba_kernels.py`**：`459`、`492`、`552`（docstring）、`578` 四处 |
+| `qj5_per_channel_bandwidth_mapped_to_p1_23_29_30_34` | **绿** |
+| `qj5_formula_map_check_reproduces` | **绿** |
+| 公式图谱 | `18 条物理公式全部有可 grep 的论文锚点；8 条工程能力均有 paper_note` |
+
+#### V3' —— P1 核上的逐信道 `B_i`（**两条通过、一条未达成**）
+
+探针：`evidence/merge/v3p_probe.py`（新增）。前置已确认 `B_i` **真的**非均匀：
+`occupied` 档下 `B_i = [1.25e10, 2.50e10, 3.75e10, 5.00e10]`（= `n_slots × 12.5 GHz`），
+且与 `symbol_rate` 档**不同**（`differs_from_symbol_rate_source=True`）。
+
+| 判据 | 档位 | 逐位? | max_rel | 结论 |
+|---|---|---|---:|---|
+| `cached ≡ off` | `p1_closed` | **是** | `0.000e+00` | ✅ **通过** |
+| `batch ≡ serial` | `p1_closed` | — | — | ❌ **未达成**（见下） |
+| `matvec ≡ off` | `p2_gn` | 否 | `2.851e-16` | ✅ 预算内（FG 既有 1e-12，未放宽） |
+| `cached_g ≡ matvec` | `p2_gn` | 否 | `2.977e-16` | ✅ 预算内（同上） |
+
+> ❌ **`p1_closed` 的 `batch ≡ serial`：本轮未达成，如实记为未达成。**
+> **P1 档暂无批量路径**——批量核（`models/batch_kernels.py`）是 **P2 的实现结构**
+> （它批量求值的是 P2 的**张量化** NLI `_compute_nli_variances_t`），而 P1 的 NLI
+> 是**闭式**、没有对应的批量形式。批量入口对 `p1_closed` **显式抛 `ValueError`**
+> （不是静默退回串行、也不是假装跑通）。
+> 第 3 轮范围明确写着「P1 核的加速（matvec/批量）不在本轮，另立一轮」，
+> 故本条**记为未达成**，按要求**不假装**。
+
+#### V4' —— 套件（**零失败**，除基线既有的 2 个环境问题）
+
+```bash
+cd <MERGE_WT>
+PYTHONPATH=$PWD/src ~/miniconda3/envs/rl/bin/python -m pytest -q -p no:randomly
+```
+
+| | 读数 |
+|---|---|
+| 合并树（**第 3 轮**） | **`2 failed / 587 passed / 5 skipped`，37.86 s** |
+| 合并树（第 2 轮基线） | `11 failed / 578 passed / 2 skipped`，38.40 s |
+| `flexgrid-dev @ cb24704`（未改动的基线） | `2 failed / 66 passed / 1 skipped` |
+| `wp/fg-integrate @ 57c7221`（未改动的基线） | `477 passed / 2 skipped` |
+
+**11 个失败里的 9 个全部消失**（逐条对照）：
+
+| 第 2 轮的失败 | 第 3 轮 | 怎么修的 |
+|---|---|---|
+| `bwqot[probe.py]` | ✅ 消失 | 导入的 `_calc_raman_profile_jit` 回到 P1 那份核里 |
+| `bwqot[cost.py]` | ✅ 消失 | Q-J3「内核不得含 ODE 标识符」——P1 内核确实没有 |
+| `qj5_per_channel_bandwidth_mapped_to_p1_23_29_30_34` | ✅ 消失 | `b_hz_channels[i]` 字面量回到 `numba_kernels.py` |
+| `qj5_formula_map_check_reproduces` | ✅ 消失 | 公式图谱恢复 P1 锚点 |
+| `ode3[guard8]` | ✅ 消失 | 锚点全部重新对齐（`n_unfixable: 0`） |
+| `ode3[guard9[relocate_anchors]]` | ✅ 消失 | 重定位记录重生成（`n_stale: 0` / `n_unfixable: 0`） |
+| `ode3[guard9[flexgrid_e2e]]` | ✅ 消失 | 同上 |
+| `ode3[guard9b]`、`ode_dev[ode_formula_map]` | ✅ 消失 | 公式图谱与工具一致 |
+| `ode_dev[ode_compare.py]` | ❌ **保留** | `ModuleNotFoundError: fu4_scenarios_legacy`——**基线既有** |
+| `bwqot[legacy_regression.py]` | ❌ **保留** | 同上——**基线既有** |
+
+**基线既有的 2 个**与 `flexgrid-dev @ cb24704`（**未改动**）**同名同因**
+（`ModuleNotFoundError: No module named 'fu4_scenarios_legacy'`），单独标出。
+
+> ⚠️ 顺带说明：第 3 轮过程中**新出现过**另外 16 个失败——全部是「默认档从 P2 变成 P1」
+> 的**必然连带**（FG 的既有期望值默认跑的是 FG 那套物理）。它们**不是**靠改期望值
+> 变绿的，而是靠**把 FG 侧那些构造点显式钉到 `p2_gn`**（§8.5 的第 23 条）——
+> 钉住的值与换底前**完全相同**，故**没有任何期望值发生移动**；
+> `tests/fg4b_tier_pin_policy.py` 的 token 计数守卫（行级、按文件）继续按原样守门。
+
+#### V5' —— 已声明的改动（逐条旧 → 新）
+
+第 2 轮的 11 条声明**继续有效**（§6 V5 表）。第 3 轮**新增/改写**的声明如下
+（**只**列第 3 轮动过的；第 2 轮那 11 条里被第 3 轮**部分推翻**的，在末尾单列）：
+
+| # | 位置 | 旧文本 / 旧语义 | 新文本 / 新语义 | 理由 |
+|---:|---|---|---|---|
+| 1 | `src/.../models/numba_kernels.py` | sha256 `7beece4e…`（FG 的 P2 字节） | sha256 **`6611c416…`**（flexgrid-dev 的 P1 闭式字节） | 第 3 轮改判：两套物理都留，P1 那份住回它自己的文件名 |
+| 2 | `src/.../models/numba_kernels_p2.py` | **不存在** | **新增**：逐字节 = FG 的 `7beece4e…`（**同字节、只换文件名**） | FG 的核搬家 |
+| 3 | `models/isrs_gn.py` 导入表 | 两侧符号并集，都从 `numba_kernels` 导入 | P1 符号取自 `numba_kernels`、P2 符号取自 `numba_kernels_p2` | 两套物理**不共用**任何一个物理函数 |
+| 4 | `models/isrs_gn.py` 构造签名 | `ode_accel: str = ODE_ACCEL_DEFAULT`、`raman_spectrum: str = RAMAN_SPECTRUM_DEFAULT`、**无** `nli_model` | `ode_accel: str \| None = None`、`raman_spectrum: str \| None = None`、**新增** `nli_model: str = NLI_MODEL_DEFAULT` | 档位默认值必须**按 NLI 档位解析**：P1 档没有 matvec、没有 tabular 谱。常量 `ODE_ACCEL_DEFAULT`（`"matvec"`）与 `RAMAN_SPECTRUM_DEFAULT`（`"tabular"`）**一个字没动**（它们仍是 `p2_gn` 档的生产默认） |
+| 5 | `models/isrs_gn.py` 档位常量 | 无 | 新增 `NLI_MODELS` / `NLI_MODEL_DEFAULT` / `ODE_ACCEL_MODES_BY_NLI_MODEL` / `ODE_ACCEL_DEFAULT_BY_NLI_MODEL` / `RAMAN_SPECTRUM_MODES_BY_NLI_MODEL` / `RAMAN_SPECTRUM_DEFAULT_BY_NLI_MODEL` | 显式档位 |
+| 6 | `models/isrs_gn.py::_calc_span_noise_and_power` | 单一实现（FG 口径） | **派发口** + `_calc_span_noise_and_power_p1` + `_calc_span_noise_and_power_p2` | 两套物理 |
+| 7 | `models/isrs_gn.py` P2 路径的 5 处带宽实参 | `channel_bandwidth_hz_channels`（内核调用 / 张量构建 / 批量常量 / 2 处 booster ASE） | `symbol_rate_hz_channels` | 第 3 轮判废「把 `B_i` 改名成 `symbol_rate_hz` 喂 P2」。P1 路径的 `b_hz_channels` / P1 (34) 的 ASE **不动**（`B_i` 属于 P1） |
+| 8 | `models/isrs_gn.py` 衰减口径 | 恒用 alpha0/1/2 波长多项式 | **P1 档读** `use_attenuation_polynomial`、**P2 档**恒用多项式 | P1 档要逐位等于 cb24704（alpha 不同 ⇒ `p_out_fiber` 不同 ⇒ P1 (34) 的 ASE 不同） |
+| 9 | `models/isrs_gn.py` NF 默认值 | `self.nf_lin_channels` | **P1 档** `np.ones_like(...)`、**P2 档** `self.nf_lin_channels` | 同上 |
+| 10 | `models/isrs_gn.py` ROADM 装配 | 单一 `fold_roadm_terms` | **P1 档** `_apply_roadm_p1`（flexgrid-dev 口径）、**P2 档** `fold_roadm_terms` | `x/loss*loss ≠ x`（IEEE-754），两套口径差最后几位 |
+| 11 | `models/isrs_gn.py` 阻断节点解析 | 单一 `_resolve_blocked_node_indices` | **P1 档** `_blocked_nodes_p1`（legacy 模式只看 `blocked_channels`） | 同上 |
+| 12 | `models/isrs_gn.py::for_fiber` | 透传 10 项 | **追加**透传 `nli_model` | 子评估器不能悄悄换档 |
+| 13 | `models/isrs_gn.py::calc_span_noise_and_power_batch` | 无档位检查 | `nli_model != "p2_gn"` **显式抛 `ValueError`** | P1 档**暂无批量路径**，不静默退回串行 |
+| 14 | `rwa/qot_checker.py::_node_frequency_and_bandwidth` | 读 `channel_bandwidth_hz_channels` | 读 **`ase_bandwidth_hz_channels`**（物理仓按档位解析好的） | 两套物理的 ASE 带宽量本来就不同。**层内仍不出现任何档位字样**——FG-4g 的「装配层对档位无知」守卫原样通过 |
+| 15 | `models/batch_kernels.py` | `from ...numba_kernels import H_PLANCK, _NLI_SPAN_EXPONENT` | `from ...numba_kernels_p2 import ...` | 批量核是 P2 的实现结构 |
+| 16 | `tests/test_fg14_assembly_provenance.py` | 字节冻结守 `numba_kernels.py`，断言 sha256 `7beece4e…` | 改守 **`numba_kernels_p2.py`**，**断言值一字未改** | **改指向，不是放宽**：被守的仍是 FG 那份字节 |
+| 17 | `tests/test_ode3_flexgrid_sync.py` guard 2（J5） | sha256 **必须等于** `7beece4e…`（相对断言已不成立） | sha256 **必须等于** `6611c416…`（**绝对**不变量）**且恢复** `git diff b69563a -- numba_kernels.py` **必须为空**——**两条同时成立** | 第 3 轮恢复 P1 字节 ⇒ P1 那份字节**就等于** `b69563a` ⇒ 相对断言**重新成立**。相对 + 绝对两条同时成立，比任一条单独存在都强 |
+| 18 | `tests/test_ode3_flexgrid_sync.py` | 无 | **新增** `test_guard2b_j5_frozen_p2_kernel_is_byte_frozen` | FG 那份 P2 内核**另立一条**守卫，没有被放掉 |
+| 19 | `results/ode_dev_flexgrid_sync.json` | `j5_frozen_kernel` 指向 FG 字节 | `j5_frozen_kernel` 指向 **P1** 字节（`6611c416…` / `flexgrid-dev`）+ **新增** `j5_frozen_kernel_p2` | 同上 |
+| 20 | `tools/ode3_sync.py` | `FROZEN_SHA256 = 7beece4e…`、相对断言不成立 | `FROZEN_SHA256 = 6611c416…`、相对断言**恢复成立**；**另加** `FROZEN_P2` / `FROZEN_P2_SHA256` / `FROZEN_P2_PROVENANCE_BRANCH`；片段表**新增 1 段**（共 38 段） | 同上；工具是事实源，JSON 由它派生 |
+| 21 | `tools/ode_formula_map.py` + `results/ode_dev_formula_map.json` | P1 锚点被**改钉到 P2 代码**上（`b_hz_channels[i]` → `symbol_rate_hz[i]`、`asinh` → `(16/27)` 张量化式） | P1 锚点**恢复**到 `numba_kernels.py`（P1 闭式，`b_hz_channels[i]` 4 处），**另立** `K2`（= `numba_kernels_p2.py`）锚点记 P2 的张量化实现 | 两套物理**各自在册**，谁都没被抹掉。`results/ode_dev_anchor_relocation.json` 由 `n_unfixable: 32` 回到 **`0`** |
+| 22 | `tests/fg4b_tier_pin_policy.py` | 只授权 `ode_accel="off"` 与 `raman_spectrum="legacy"` 两种钉子 | **新增** `NLI_MODEL_AUTHORIZED_FILES` + `NLI_MODEL_PIN_LITERAL = 'nli_model="p2_gn"'` | 第 3 轮的档位钉子，**先例同 FG-15**：钉住的值与换底前**完全相同**，故没有期望值移动；token 计数守卫继续按行级守门 |
+| 23 | FG 侧测试 / 脚本的构造点 | 不传档位 | **显式** `nli_model="p2_gn"`（`tests/fg1_scenarios.py`、`tests/fg4a_scenarios.py`、`tests/fu4_scenarios.py`、9 个 `tests/test_fg*.py`、`scripts/fg13_probe_roadm.py`、`scripts/fg4g_q2_trace_diff.py`） | 默认档已是 P1；这些文件量的是 FG 那套物理，**必须自己声明** |
+| 24 | `tests/test_fg15_legacy_bitwise.py`、`tests/test_fg_u1_raman_spectrum.py` | `MultiBandISRSGN.__init__.__defaults__[-1] == "tabular"` | `__defaults__[-1] == NLI_MODEL_DEFAULT`（= `"p1_closed"`）+ 断言**按档位解析**的拉曼默认（`p2_gn`→`tabular`、`p1_closed`→`legacy`） | 构造签名的**末位**默认参数已换成 `nli_model` ⇒ `[-1]` 不再是拉曼档位。**常量本身一字未动** |
+| 25 | `tests/test_ode_dev.py` 断言 (d) | `0 < auto[0] < power`（FG 口径） | **拆成两段**：P1 档 `allclose(auto[0], power)`（**恢复 flexgrid-dev 原断言**）+ P2 档 `0 < auto[0] < power` | 两套物理各自的契约；第 2 轮二选一的那一刀，第 3 轮拆回两段 |
+| 26 | `tests/test_ode_dev.py` guard 4 | 遍历 `ODE_ACCEL_MODES` 并集 | 遍历「**每个 NLI 档位 × 该档位支持的每个档位**」的**笛卡尔积**（6 组）+ **新增** `test_guard4b_incompatible_ode_accel_is_rejected` | 覆盖**扩大**（原来 4 组，现在 6 组）；新增的守卫要求不匹配组合**显式报错** |
+| 27 | `tests/test_merge_fg_into_flex.py::TestPerChannelBandwidth` | 全部隐式跑在 P2 档 | P2 档的用例**显式**钉 `p2_gn`；**新增** `test_b_i_is_non_uniform_in_occupied_mode_on_both_nli_tiers`；`test_wide_connection_is_not_physics_identical_to_narrow` **拆成两段**（P1 档必须不同 + P2 档必须相同） | 逐信道 `B_i` 的语义**按档位分属**：P1 档 `B_i` 进 QoT，P2 档**看不见**占用宽度 |
+| 28 | `tests/test_fu2_sclu_bands.py` | 不传档位 | 显式 `nli_model="p2_gn"` + **新增** `for_fiber` 透传档位的断言 | 拉曼谱两档（legacy/tabular）都是 **P2** 的能力（P1 核没有 G 矩阵） |
+| 29 | `evidence/merge/v1_rollout_probe.py` | 不钉档位 | **新增** `--nli-model` | RL 仓是**只读**的、它的 `build_env` 用默认参数造 evaluator ⇒ 默认档会被静默选中 |
+| 30 | `docs/ode3_flexgrid_sync.md`、`docs/ode2_papers_and_diff.md` | 旧渲染 | 重新生成 | 派生文档 |
+
+**第 2 轮那 11 条里，被第 3 轮「按档位分列」的 3 条**：#9（`test_ode_dev.py` 断言 (d)）、
+#10（NF 默认值）、#11（`use_attenuation_polynomial`）——第 2 轮取的都是 **P2 侧**的口径
+（因为当时只有 P2 一套物理）；第 3 轮**在 `p2_gn` 档原样保留**它们，在 `p1_closed` 档
+**取回 flexgrid-dev 的口径**。这三条**不是**被推翻，是被**分列**。
+
+### 8.5 第 3 轮我没做什么 / 没跑完什么
+
+如实列出，**不粉饰**：
+
+1. **P1 核的加速没做**（matvec / 批量）。这是编排方划到「另立一轮」的范围。
+   ⇒ **V3' 的 `p1_closed` 的 `batch ≡ serial` 一条未达成**，如实记为未达成（§8.4 V3'）。
+   批量入口对 `p1_closed` 显式抛 `ValueError`，不静默退回串行。
+2. **两套物理没有「统一」**。`p1_closed` 与 `p2_gn` 的读数**不可互相比较**——
+   它们是两套物理，数字本来就该不同。我没有做任何「让两套数字看起来一样」的事。
+3. **没有删任何测试、没有加 `skip` / `xfail`、没有放宽任何阈值、没有伪造公式号。**
+   阈值 `MAX_REL_DEVIATION = 1e-12` 与 `MAX_REL_DEVIATION_ALLOWED` 原样沿用。
+   `results/ode_dev_formula_map.json` 的 18 条物理公式号**一条没动**。
+4. **下游 RL 仓 `wp/fg-rt` 需要一行改动才能继续跑 FG 那套物理，本轮没改那个仓。**
+   它的 `env.py` 构造 evaluator 时显式传 `raman_spectrum=config.raman_spectrum`
+   （= `RAMAN_SPECTRUM_DEFAULT` = `"tabular"`），而 **P1 档没有 tabular 谱**
+   ⇒ 构造期抛 `ValueError`。确切改法：在 `multiband_optical_rl/env.py:154` 的
+   构造里加 `nli_model="p2_gn"`（该仓在 `wp/fg-rt` 分支上，**不在本轮范围**，
+   且我按纪律只读它）。**受本仓影响的证据路径已经钉好**：
+   `scripts/fg4g_q2_trace_diff.py` 已显式钉 `nli_model="p2_gn"`（它量的是 FG 那套物理），
+   `evidence/merge/v1_rollout_probe.py` 新增了 `--nli-model`。
+   ⚠️ 这是本轮**已知、未闭合**的一条，我把它摆在这里而不是藏起来。
+5. **`flexgrid-dev` / `wp/fg-integrate` 两棵树全程只读**；没有 push；
+   `wp/fg-rt` 只被读取（探针靠 `PYTHONPATH` 切物理树），未改动。
+6. **性能 / 规模维度仍未覆盖**：FG 的基准（`results/fg4e_speedup_ab.json` 等）没有重测，
+   本轮只验证**等价性**与**正确性**（这与第 2 轮一致）。
+7. **「分配判决」在 `p1_closed` 档是两条读数推出**的（物理层逐位 + 分配机制逐位），
+   **不是**端到端 RL 实测——因为 RL 仓在 flexgrid 树上连 import 都过不去（§8.4 V1'）。
+   我不把它说成端到端读数。
+8. **P1 档的 ROADM 装配有第二处实现**（`_apply_roadm_p1`）。FG-11 的「折叠逻辑只
+   允许有一处」是**P2 那套物理**的性质；P1 的装配是**另一套物理**的，按第 3 轮裁决
+   「两套物理都留」而必须独立存在。`tests/test_fg13_evaluate_path_roadm.py` 那条
+   结构守卫扫的是 `evaluate_path` 的**函数体**——P1 的装配被放进**另一个方法**，
+   那条守卫**一个字都没改**、照样通过。
+9. **`p1_closed` 与 `p2_gn` 的拉曼谱档位不共用**：P1 核的拉曼模型是**固定的**
+   （legacy 折线），没有 tabular 这条路。所以「P1 档 + `raman_spectrum="tabular"`」
+   是**显式拒绝**而不是静默降级——与 FG-15 的「显式拒绝而非静默回退」同一口径。

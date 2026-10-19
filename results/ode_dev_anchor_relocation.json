@@ -23,16 +23,16 @@
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_noise = total_spm + total_xpm + total_ase",
-      "old_line": 1408,
-      "new_line": 1446,
-      "delta": 38
+      "old_line": 1446,
+      "new_line": 1470,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "snr[active] = 10 * np.log10(power[active] / total_noise[active])",
-      "old_line": 1411,
-      "new_line": 1449,
-      "delta": 38
+      "old_line": 1449,
+      "new_line": 1473,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
@@ -65,9 +65,9 @@
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= transfer",
-      "old_line": 1343,
-      "new_line": 1402,
-      "delta": 59
+      "old_line": 1402,
+      "new_line": 1426,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/numba_kernels.py",
@@ -108,78 +108,78 @@
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= terms.filtering_penalty",
       "old_line": 1020,
-      "new_line": 1439,
+      "new_line": 1463,
       "delta": 3
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "b_hz_channels=self.channel_bandwidth_hz_channels,",
-      "old_line": 876,
-      "new_line": 881,
-      "delta": 5
+      "old_line": 881,
+      "new_line": 905,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))",
-      "old_line": 893,
-      "new_line": 898,
-      "delta": 5
+      "old_line": 898,
+      "new_line": 922,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain *= 10 ** (ripple / 10)",
-      "old_line": 898,
-      "new_line": 903,
-      "delta": 5
+      "old_line": 903,
+      "new_line": 927,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "s2_ase = current_nf_lin * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * np.maximum(",
-      "old_line": 902,
-      "new_line": 907,
-      "delta": 5
+      "old_line": 907,
+      "new_line": 931,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain - 1, 0",
-      "old_line": 903,
-      "new_line": 908,
-      "delta": 5
+      "old_line": 908,
+      "new_line": 932,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(",
-      "old_line": 860,
-      "new_line": 865,
-      "delta": 5
+      "old_line": 865,
+      "new_line": 889,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)",
-      "old_line": 891,
-      "new_line": 896,
-      "delta": 5
+      "old_line": 896,
+      "new_line": 920,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)",
-      "old_line": 1374,
-      "new_line": 1299,
-      "delta": -75
+      "old_line": 1299,
+      "new_line": 1323,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "total_spm *= penalty",
-      "old_line": 1378,
-      "new_line": 1303,
-      "delta": -75
+      "old_line": 1303,
+      "new_line": 1327,
+      "delta": 24
     },
     {
       "file": "src/network_nlo_eval/models/isrs_gn.py",
       "contains": "s2_ase = np.zeros_like(power_in_w)",
-      "old_line": 888,
-      "new_line": 893,
-      "delta": 5
+      "old_line": 893,
+      "new_line": 917,
+      "delta": 24
     }
   ],
   "superseded": [],

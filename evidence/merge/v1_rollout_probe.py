@@ -56,14 +56,23 @@ def _provenance() -> dict[str, Any]:
     }
 
 
-def _rollout(seed: int) -> list[dict[str, Any]]:
+def _rollout(seed: int, nli_model: str | None = None) -> list[dict[str, Any]]:
     """跑完一个 episode，逐步记录决策三元组 (action, channel, allocated)。
 
     与 `tools/fg11_rollout_trace.py::_rollout` 逐步同构，只把 seeds 换成本判据的
     0..3。多出的 `n_slots` 读数用于 V2 的多槽分配口径（若该 env 未暴露槽位，
     则该键缺省——不影响 V1 的逐位比较）。
+
+    ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：NLI 物理变成两套（``p1_closed`` / ``p2_gn``），
+    而 RL 仓是**只读**的、它的 ``build_env`` 用默认参数造 evaluator ⇒ 默认档
+    （现在是 ``p1_closed``）会被静默选中。这里用 ``nli_model`` **显式**把
+    evaluator 钉到要测的那一档（改的是实例属性，``for_fiber`` 会把它透传给
+    每个子 evaluator）。
     """
     env = build_env(ASSET, seed=seed, **EPISODE_KW)
+    if nli_model is not None:
+        env.evaluator.nli_model = nli_model
+        env.evaluator._fiber_evaluator_cache.clear()
     policy = KSPFirstFitPolicy()
     env.reset(seed=seed)
     steps: list[dict[str, Any]] = []
@@ -96,13 +105,14 @@ def _rollout(seed: int) -> list[dict[str, Any]]:
     return steps
 
 
-def capture() -> dict[str, Any]:
+def capture(nli_model: str | None = None) -> dict[str, Any]:
     return {
         "schema": "wp-merge-fg-flex/v1-rollout-probe/v1",
         "policy": "KSPFirstFitPolicy (deterministic rule policy)",
         "episode_kwargs": EPISODE_KW,
         "seeds": list(SEEDS),
-        "episodes": [{"seed": s, "steps": _rollout(s)} for s in SEEDS],
+        "nli_model_requested": nli_model,
+        "episodes": [{"seed": s, "steps": _rollout(s, nli_model)} for s in SEEDS],
         "provenance": _provenance(),
     }
 
@@ -129,9 +139,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True, help="写出轨迹 JSON")
     parser.add_argument("--compare", type=Path, help="与该轨迹逐 seed 比对")
+    parser.add_argument(
+        "--nli-model",
+        default=None,
+        choices=("p1_closed", "p2_gn"),
+        help="NLI 物理档位（改 evaluator 实例属性）。合并树默认档已是 p1_closed；"
+        "与 wp/fg-integrate 比较必须显式给 p2_gn。",
+    )
     args = parser.parse_args(argv)
 
-    trace = capture()
+    trace = capture(args.nli_model)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(trace, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {args.out}")

@@ -1,0 +1,20 @@
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E           FATAL wp/fg-uwb-fid: Traceback (most recent call last):
+E           File "<string>", line 7, in <module>
+E           File "/home/zsig/Documents/gits/wt/merge-fg-into-flex/scripts_shared/compat_run.py", line 24, in <module>
+E             import fu4_scenarios_legacy as fs
+E         ModuleNotFoundError: No module named 'fu4_scenarios_legacy'
+E         
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/zsig/miniconda3/envs/rl/bin/python', '/home/zsig/Documents/gits/wt/merge-fg-into-flex/to...in <module>\n    import fu4_scenarios_legacy as fs\nModuleNotFoundError: No module named \'fu4_scenarios_legacy\'\n\n').returncode
+
+tests/test_ode_dev.py:340: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_bwqot_bandwidth.py::test_q_evidence_tools_check_reproduces[bwqot_legacy_regression.py]
+FAILED tests/test_ode_dev.py::test_tools_check_reproduces[ode_compare.py] - A...
+2 failed, 587 passed, 5 skipped in 37.86s

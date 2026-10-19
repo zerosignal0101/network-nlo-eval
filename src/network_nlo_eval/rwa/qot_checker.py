@@ -343,24 +343,28 @@ class QoTValidator:
         return terms.loss, terms.filtering_penalty, terms.booster_nf
 
     def _node_frequency_and_bandwidth(self, channel_idx: int) -> tuple[float, float]:
-        """返回该节点（连接）的 ``(中心频率 Hz, 信道带宽 B_i Hz)``。
+        """返回该节点（连接）的 ``(中心频率 Hz, ASE 带宽 Hz)``。
 
         必须走 ``gn_evaluator`` 的**逐节点**数组，不能用
         ``spectrum_grid.frequencies``：灵活栅格下 ``channel_idx`` 索引的是
         连接（ODE 节点），与固定栅格的信道索引不是同一个索引空间。
 
-        遗留模式下 ``f_abs_hz is spectrum_grid.frequencies`` 且
-        ``channel_bandwidth_hz_channels`` 全等于标量 ``symbol_rate_hz``，故这条路
-        在 legacy 下逐位等价。
+        ⚠️ WP-MERGE-FG-FLEX **第 3 轮**：第二返回值读
+        :attr:`ase_bandwidth_hz_channels` —— 那是**物理仓那边按 NLI 档位解析好的**
+        逐节点数组（P1 (34) 用信道带宽 ``B_i``；P2 Eq. 21 用符号率）。
 
-        ⚠️ WP-Q1：第二返回值是 P1 (34) 里的 ``B_i``（"bandwidth of the COI"），
-        故读 :attr:`channel_bandwidth_hz_channels` 而非 ``symbol_rate_hz_channels``。
-        两者在 ``channel_bandwidth_source="occupied"`` 下不同。
+        ⚠️ **本层对档位无知**：这里读的是一个**已解析好的**数组，层内**不出现**
+        任何档位的名字——FG-4g 在 `tests/test_fg4g_matvec_attribution.py` 里有一条
+        守卫就是逐字扫本文件、要求它对加速档位无知的。「换档位不应改变 SNR」的
+        结构性保证因此仍然成立。
+
+        遗留模式下 ``f_abs_hz is spectrum_grid.frequencies`` 且两个带宽来源
+        逐位相等，故这条路在 legacy 下逐位等价。
         """
         evaluator = self.gn_evaluator
         return (
             float(evaluator.f_abs_hz[channel_idx]),
-            float(evaluator.channel_bandwidth_hz_channels[channel_idx]),
+            float(evaluator.ase_bandwidth_hz_channels[channel_idx]),
         )
 
     def _node_frequency_and_rate(self, channel_idx: int) -> tuple[float, float]:

@@ -459,6 +459,30 @@ class MultiBandISRSGN:
             )
         return values
 
+    @property
+    def ase_bandwidth_hz_channels(self) -> NDArrayFloat:
+        """本档位下 **ASE 用的**逐节点带宽 (Hz)。
+
+        两套物理的 ASE 带宽量**本来就不同**：
+
+        * ``"p1_closed"``：P1 (34) 的 ASE 是 ``NF·h·ν·B_i·(G−1)`` ⇒ 取
+          :attr:`channel_bandwidth_hz_channels`（信道带宽 ``B_i``）。
+        * ``"p2_gn"``：P2 Eq. 21 的 ASE 用**符号率** ⇒ 取
+          :attr:`symbol_rate_hz_channels`。
+
+        ⚠️ **档位只活在本模块**（`models/isrs_gn.py`），**不进 SNR 装配层**：
+        装配层（``rwa/qot_checker.py``）只读**这个已解析好的**逐节点数组，
+        它自己**不知道**也不需要知道当前是哪套物理。这样「换档位不应改变 SNR」
+        的结构性保证仍然成立（`tests/test_fg4g_matvec_attribution.py::
+        test_fg4g_qot_gate_is_blind_to_ode_accel` 守的就是这一条）。
+
+        遗留模式（``channel_bandwidth_source="symbol_rate"``）下两个来源**逐位
+        相同**，故本属性在 legacy 下与直接读任一个都一样。
+        """
+        if self.nli_model == "p1_closed":
+            return self.channel_bandwidth_hz_channels
+        return self.symbol_rate_hz_channels
+
     def _power_width_scale(self) -> NDArrayFloat:
         """``fixed_psd`` 口径下的逐节点功率缩放因子 (无量纲)。
 
