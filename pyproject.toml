@@ -26,6 +26,7 @@ scipy = "^1.17.1"
 numba = "^0.64.0"
 networkx = "^3.6.1"
 pydantic = "2.12.5"
+tqdm = "^4.66.0"
 
 [tool.poetry.group.dev.dependencies]
 Pygments = ">=2.10.0"
