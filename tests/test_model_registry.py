@@ -135,3 +135,33 @@ def test_route_model_requires_a_kernel() -> None:
     model = RouteModel(SpectrumGrid(4, 50e9, 193.1e12), _fiber(), symbol_rate_hz=50e9)
     with pytest.raises(NotImplementedError):
         model.kernel_for(_fiber())
+
+
+@pytest.mark.parametrize("model_name", sorted(available_models()))
+def test_model_output_does_not_depend_on_call_history(model_name: str) -> None:
+    """同一 (path, power) 必须给出逐位相同的 SNR，不管之前调过什么。
+
+    QoT 引擎在一次路由搜索里会对同一模型反复评估不同路径和功率。任何跨调用累积的
+    状态都会让"同一个问题得到不同答案"，而且这种 bug 在单点测试里看不出来：
+    它只在扫码或复用实例时出现。真实出现过一次（cGN 功率键缓存），这里把它钉死。
+    """
+    from network_nlo_eval.benchmarks.cases import build_case, build_path, launch_profile
+    from network_nlo_eval.benchmarks.runner import make_model
+
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+
+    def snr(model: object, power_dbm: float) -> np.ndarray:
+        result = model.evaluate_path(path, launch_profile(case, power_dbm))
+        return np.asarray(result.snr_db, dtype=float)
+
+    fresh = snr(make_model(model_name, case), -4.0)
+
+    reused = make_model(model_name, case)
+    snr(reused, 0.0)
+    snr(reused, 4.0)
+    after = snr(reused, -4.0)
+    again = snr(reused, -4.0)
+
+    assert np.array_equal(fresh, after), f"{model_name}: 先调 0/+4 dBm 改变了 -4 dBm 的结果"
+    assert np.array_equal(after, again), f"{model_name}: 同一输入连调两次结果不同"
