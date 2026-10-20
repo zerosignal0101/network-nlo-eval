@@ -4,7 +4,6 @@ ISRS-GN = Inter-channel Stimulated Raman Scattering - Generalized Noise。
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -12,6 +11,14 @@ from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.models.base import (
+    ElementOutput,
+    ModelInfo,
+    MultiSpanOpticalPath,
+    PathQoTResult,
+    SpanFiberOutput,
+    register_model,
+)
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -26,6 +33,7 @@ from network_nlo_eval.models.numba_kernels_p1_accel import (
     build_p1_xpm_pair_matrices,
     calc_span_noise_and_power_p1_matvec,
 )
+from network_nlo_eval.models.route import accumulate_route, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
 
@@ -78,40 +86,19 @@ ODE_ACCEL_DEFAULT = "matvec"
 MATVEC_MIN_ACTIVE_CHANNELS = 40
 
 
-@dataclass
-class MultiSpanOpticalPath:
-    """定义一条光路，包含多个跨段及其对应的配置。"""
-
-    fiber_configs: list[FiberSpanConfig]
-    edfa_configs: list[EDFAConfig]
-    roadm_configs: list[ROADMConfig] | None = None
-    # 实际路径中的每个 link_key, 方便关联到 network_state
-    link_keys: list[tuple[int, int]] = field(default_factory=list)
-    node_path: list[int] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        """验证所有逐跳配置长度一致."""
-        count = len(self.fiber_configs)
-        if count == 0 or len(self.edfa_configs) != count:
-            raise ValueError("Optical path requires matching non-empty fiber and EDFA config lists.")
-        if self.roadm_configs is not None and len(self.roadm_configs) != count:
-            raise ValueError("ROADM config count must match the number of route links.")
-        if self.link_keys and len(self.link_keys) != count:
-            raise ValueError("Link key count must match the number of route links.")
-
-
-@dataclass(frozen=True)
-class PathQoTResult:
-    """统计物理层沿路径计算的逐信道结果."""
-
-    signal_power_w: NDArrayFloat
-    spm_noise_w: NDArrayFloat
-    xpm_noise_w: NDArrayFloat
-    ase_noise_w: NDArrayFloat
-    snr_db: NDArrayFloat
-    span_count: int
-    roadm_count: int
-
+#: 本模型在注册表里的静态描述。``family`` 标 ``"gn"``：ECZ-SRS 三角近似 + 闭式 GN。
+ECZ_MODEL_INFO = ModelInfo(
+    name="ecz",
+    summary="ECZ-SRS triangular SRS approximation with closed-form GN (SPM/XPM).",
+    family="gn",
+    reference="Lasagni et al., 'A Generalized Raman Scattering Model for Real-Time SNR "
+    "Estimation of Multi-Band Systems', JLT 2023, doi:10.1109/jlt.2023.3250751",
+    options=(
+        ("ode_accel", "'off' | 'cached' | 'matvec'; single-span acceleration tier."),
+        ("channel_bandwidth_source", "'symbol_rate' | 'occupied'; per-node B_i definition."),
+        ("power_width_mode", "'fixed_power' | 'fixed_psd'; launch-power normalisation."),
+    ),
+)
 
 class MultiBandISRSGN:
     """多波段 ISRS-GN 模型评估器。
@@ -177,7 +164,7 @@ class MultiBandISRSGN:
 
         self.connections = list(connections) if connections is not None else None
 
-        self._span_cache: dict[tuple[bytes, float, int, bytes], tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        self._span_cache: dict[tuple[bytes, float, int], tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
         self._p1_xpm_matrices: P1XpmMatrices | None = None
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
@@ -213,7 +200,7 @@ class MultiBandISRSGN:
             )
         return values
 
-    def _power_width_scale(self) -> NDArrayFloat:
+    def power_width_scale(self) -> NDArrayFloat:
         """``fixed_psd`` 口径下的逐节点功率缩放因子。
 
         恒定功率谱密度时 ``P_i_eff = P_i × B_i / symbol_rate_hz``；``B_i`` 均匀时
@@ -222,6 +209,9 @@ class MultiBandISRSGN:
         if self.power_width_mode == "fixed_power":
             return np.ones(self.n_nodes, dtype=np.float64)
         return self.channel_bandwidth_hz_channels / float(self.symbol_rate_hz)
+
+    # 兼容旧调用名。
+    _power_width_scale = power_width_scale
 
     def roadm_blocks_node(self, roadm: ROADMConfig, node_index: int) -> bool:
         """判断某节点（连接）是否被该 ROADM 阻断。
@@ -250,9 +240,12 @@ class MultiBandISRSGN:
             return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
         return node_index in roadm.blocked_channels
 
-    def _blocked_nodes(self, roadm: ROADMConfig) -> list[int]:
+    def blocked_nodes(self, roadm: ROADMConfig) -> list[int]:
         """该 ROADM 阻断的全部节点索引。"""
         return [index for index in range(self.n_nodes) if self.roadm_blocks_node(roadm, index)]
+
+    # 兼容旧调用名。
+    _blocked_nodes = blocked_nodes
 
     @property
     def band_center_hz(self) -> float:
@@ -418,39 +411,65 @@ class MultiBandISRSGN:
             - sigma2_xpm_w: 产生的 XPM 噪声方差 (W)。
             - sigma2_ase_w: 产生的 ASE 噪声方差 (W)。
         """
-        # 1. 处理放大器噪声系数 (NF)
-        # 如果 edfa_config 提供了全频段的 NF 数组则使用之，否则使用预计算的默认值
-        if edfa_config is not None:
-            if edfa_config.noise_figure_db is not None:
-                noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
-                if noise_figure_db.ndim == 0:
-                    current_nf_lin = np.full_like(self.nf_lin_channels, 10 ** (float(noise_figure_db) / 10))
-                else:
-                    if noise_figure_db.shape != (self.n_nodes,):
-                        raise ValueError("EDFA noise-figure array must contain one value per channel.")
-                    current_nf_lin = 10 ** (noise_figure_db / 10)
-        else:
-            current_nf_lin = np.ones_like(self.nf_lin_channels)
+        # 1. 光纤物理核（放大器与 ROADM 在下一步统一施加）。
+        fiber_output = self.span_fiber_output(power_in_w, span_length_m, n_effective_spans)
 
-        # 2. 调用 JIT 内核 (热路径)；cached 档按输入记忆化单跨段结果。
-        cached = None
+        # 2. 放大器 ASE 与 ROADM 损耗：与所有模型共用同一份实现。
+        element = apply_amplifier_and_roadm(
+            power_in_w=power_in_w,
+            fiber_output=fiber_output,
+            edfa_config=edfa_config,
+            roadm_config=roadm_config,
+            nf_lin=self._resolve_nf(edfa_config),
+            f_abs_hz=self.f_abs_hz,
+            bandwidth_hz=self.channel_bandwidth_hz_channels,
+        )
+        return element.power_out_w, element.spm_noise_w, element.xpm_noise_w, element.ase_noise_w
+
+    def _resolve_nf(self, edfa_config: EDFAConfig | None) -> NDArrayFloat:
+        """跨段放大器的线性噪声系数，语义见 :func:`resolve_noise_figure`。"""
+        return resolve_noise_figure(edfa_config, self.nf_lin_channels, self.n_nodes)
+
+    def span_fiber_output(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        n_effective_spans: int = 1,
+    ) -> SpanFiberOutput:
+        """单跨光纤物理核：出纤功率与 SPM/XPM，不含放大器。
+
+        ``cached`` 档按 ``(入纤功率, 跨段长度, 跨段数)`` 记忆化；``matvec`` 档在活跃
+        信道数达到 :data:`MATVEC_MIN_ACTIVE_CHANNELS` 时走矩阵-向量乘，否则落回逐对
+        求和。噪声系数不进入本核，也不进入缓存键：ASE 只在放大器一层产生。
+
+        Args:
+            power_in_w: 各信道入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            n_effective_spans: 有效跨段数，用于 NLI 累积修正。
+
+        Returns
+        -------
+            出纤功率与 SPM/XPM 噪声，均为与输入不共享内存的新数组。
+        """
         if self.ode_accel == "cached":
             cache_key = (
                 power_in_w.tobytes(),
                 float(span_length_m),
                 int(n_effective_spans),
-                current_nf_lin.tobytes(),
             )
             cached = self._span_cache.get(cache_key)
+            if cached is not None:
+                # 必须返回副本：调用方会原地改动出纤功率数组，交出去会污染缓存。
+                p_out_fiber, s2_spm, s2_xpm = (array.copy() for array in cached)
+                return SpanFiberOutput(p_out_fiber, s2_spm, s2_xpm)
+        else:
+            cache_key = None
 
-        if cached is not None:
-            # 必须返回副本：调用方会原地改动出纤功率数组，交出去会污染缓存。
-            p_out_fiber, s2_spm, s2_xpm = (array.copy() for array in cached)
-        elif self.ode_accel == "matvec" and np.count_nonzero(power_in_w) >= MATVEC_MIN_ACTIVE_CHANNELS:
+        if self.ode_accel == "matvec" and np.count_nonzero(power_in_w) >= MATVEC_MIN_ACTIVE_CHANNELS:
             # matvec 只在活跃信道够多时才有收益，少信道落回逐对求和（二者数值差
             # 在 1e-16 量级，门只影响速度）。
             p_out_fiber, s2_spm, s2_xpm, _ = self._p1_span_matvec(
-                power_in_w, span_length_m, n_effective_spans, current_nf_lin
+                power_in_w, span_length_m, n_effective_spans, self.nf_lin_channels
             )
         else:
             p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
@@ -464,7 +483,7 @@ class MultiBandISRSGN:
                 beta2_s2_m=self.beta2_s2_m,
                 beta3_s3_m=self.beta3_s3_m,
                 n2_m2_w=self.n2_m2_w,
-                nf_lin_channels=current_nf_lin,
+                nf_lin_channels=self.nf_lin_channels,
                 symbol_rate_hz=self.symbol_rate_hz,
                 b_hz_channels=self.channel_bandwidth_hz_channels,
                 n_effective_spans=n_effective_spans,
@@ -472,43 +491,23 @@ class MultiBandISRSGN:
                 k_bar=self.k_bar,
                 delta_f_co_hz=self.delta_f_co_hz,
             )
-            if self.ode_accel == "cached":
-                self._span_cache[cache_key] = (p_out_fiber.copy(), s2_spm.copy(), s2_xpm.copy())
+        if cache_key is not None:
+            self._span_cache[cache_key] = (p_out_fiber.copy(), s2_spm.copy(), s2_xpm.copy())
+        return SpanFiberOutput(p_out_fiber, s2_spm, s2_xpm)
 
-        # 3. 显式应用 EDFA；edfa_config 为 None 时不产生 ASE。
-        if edfa_config is None:
-            p_out = p_out_fiber
-            s2_ase = np.zeros_like(power_in_w)
-        else:
-            if edfa_config.target_gain_db is None:
-                gain = np.divide(power_in_w, p_out_fiber, out=np.ones_like(power_in_w), where=p_out_fiber > 0)
-            else:
-                gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))
-            if edfa_config.gain_ripple_db is not None:
-                ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
-                if ripple.shape != (self.n_nodes,):
-                    raise ValueError("EDFA gain-ripple array must contain one value per channel.")
-                gain *= 10 ** (ripple / 10)
-            p_out = p_out_fiber * gain
-            # ASE 的 B_i 取逐信道数组；遗留模式下它恒等于标量 symbol_rate_hz。
-            s2_ase = (
-                current_nf_lin
-                * 6.62607015e-34
-                * self.f_abs_hz
-                * self.channel_bandwidth_hz_channels
-                * np.maximum(gain - 1, 0)
-            )
-            s2_ase[power_in_w <= 0] = 0
-
-        # 4. ROADM 损耗同等衰减信号和已生成噪声。
-        if roadm_config:
-            loss_lin = _db_to_lin(roadm_config.path_loss_db())
-            p_out /= loss_lin
-            s2_spm /= loss_lin
-            s2_xpm /= loss_lin
-            s2_ase /= loss_lin
-
-        return p_out, s2_spm, s2_xpm, s2_ase
+    def span_step(
+        self,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+    ) -> ElementOutput:
+        """路由层单跨步进：光纤 + 放大器（ROADM 由路由层统一处理）。"""
+        evaluator = self.for_fiber(fiber_config)
+        p_out, spm, xpm, ase = evaluator._calc_span_noise_and_power(
+            power_in_w, span_length_m, edfa_config, None, n_effective_spans=1
+        )
+        return ElementOutput(p_out, spm, xpm, ase)
 
     def calc_span_noise_and_power_batch(
         self,
@@ -641,71 +640,14 @@ class MultiBandISRSGN:
         return self._fiber_evaluator_cache[key]
 
     def evaluate_path(self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat) -> PathQoTResult:
-        """按拓扑顺序评估光纤、跨段 EDFA、ROADM 和 booster."""
-        power = np.asarray(power_in_w, dtype=np.float64).copy()
-        if power.shape != (self.n_nodes,) or np.any(power < 0):
-            raise ValueError("power_in_w must be a non-negative vector with one value per channel.")
-        # 功率归一化口径在此显式生效；fixed_power 为逐位 no-op。
-        power = power * self._power_width_scale()
-        total_spm = np.zeros_like(power)
-        total_xpm = np.zeros_like(power)
-        total_ase = np.zeros_like(power)
-        span_count = 0
-        roadm_configs = optical_path.roadm_configs or [None] * len(optical_path.fiber_configs)
+        """按拓扑顺序评估光纤、跨段 EDFA、ROADM 和 booster。
 
-        for hop_index, (fiber, edfa, roadm) in enumerate(
-            zip(optical_path.fiber_configs, optical_path.edfa_configs, roadm_configs, strict=True)
-        ):
-            evaluator = self.for_fiber(fiber)
-            remaining_km = fiber.length_km
-            while remaining_km > 1e-12:
-                span_km = min(remaining_km, fiber.max_span_length_km)
-                previous_power = power
-                power, spm, xpm, ase = evaluator._calc_span_noise_and_power(
-                    power, span_km * 1e3, edfa, n_effective_spans=1
-                )
-                transfer = np.divide(power, previous_power, out=np.zeros_like(power), where=previous_power > 0)
-                total_spm *= transfer
-                total_xpm *= transfer
-                total_ase *= transfer
-                total_spm += spm
-                total_xpm += xpm
-                total_ase += ase
-                span_count += 1
-                remaining_km -= span_km
+        路由累积（跨段切分、放大器、ROADM、SNR）由
+        :func:`network_nlo_eval.models.route.accumulate_route` 统一实现，本模型只提供
+        单跨步进 :meth:`span_step`。换模型不会改变后处理语义。
+        """
+        return accumulate_route(self, optical_path, power_in_w)
 
-            if roadm is None:
-                continue
-            blocked = self._blocked_nodes(roadm)
-            operation = "drop" if hop_index == len(optical_path.fiber_configs) - 1 else "express"
-            loss_db = roadm.path_loss_db(operation)
-            loss = 10 ** (loss_db / 10)
-            power /= loss
-            total_spm /= loss
-            total_xpm /= loss
-            total_ase /= loss
-            if roadm.equalize_output_power:
-                gain = loss
-                power *= gain
-                total_spm *= gain
-                total_xpm *= gain
-                total_ase *= gain
-                nf = 10 ** (roadm.booster_noise_figure_db / 10)
-                booster_ase = nf * 6.62607015e-34 * self.f_abs_hz * self.channel_bandwidth_hz_channels * (gain - 1)
-                booster_ase[power <= 0] = 0
-                total_ase += booster_ase
-            penalty = 10 ** (roadm.filtering_penalty_db / 10)
-            total_spm *= penalty
-            total_xpm *= penalty
-            total_ase *= penalty
-            if blocked:
-                power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
 
-        total_noise = total_spm + total_xpm + total_ase
-        snr = np.full_like(power, -np.inf)
-        active = (power > 0) & (total_noise > 0)
-        snr[active] = 10 * np.log10(power[active] / total_noise[active])
-        snr[(power > 0) & (total_noise == 0)] = np.inf
-        return PathQoTResult(
-            power, total_spm, total_xpm, total_ase, snr, span_count, sum(roadm is not None for roadm in roadm_configs)
-        )
+# 注册为可选的 QoT 模型实现；构造函数签名即 ``create_model`` 的透传参数。
+register_model(ECZ_MODEL_INFO, MultiBandISRSGN)
