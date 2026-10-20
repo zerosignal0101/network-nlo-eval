@@ -101,6 +101,8 @@ def apply_amplifier_and_roadm(
     power_out_fiber = fiber_output.power_out_w
     spm = fiber_output.spm_noise_w
     xpm = fiber_output.xpm_noise_w
+    amp_spm = getattr(fiber_output, "nli_amplitude_spm", None)
+    amp_xpm = getattr(fiber_output, "nli_amplitude_xpm", None)
 
     if edfa_config is None:
         power_out = power_out_fiber
@@ -123,6 +125,11 @@ def apply_amplifier_and_roadm(
         power_out = power_out_fiber * gain
         ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
         ase[power_in_w <= 0] = 0
+        if amp_spm is not None:
+            # 噪声功率被放大 gain 倍，振幅只放大 sqrt(gain)。
+            amp_root = np.sqrt(gain)
+            amp_spm = amp_spm * amp_root
+            amp_xpm = amp_xpm * amp_root
 
     if roadm_config is not None:
         loss_lin = 10 ** (roadm_config.path_loss_db() / 10)
@@ -130,8 +137,14 @@ def apply_amplifier_and_roadm(
         spm /= loss_lin
         xpm /= loss_lin
         ase /= loss_lin
+        if amp_spm is not None:
+            amp_root = np.sqrt(1.0 / loss_lin)
+            amp_spm = amp_spm * amp_root
+            amp_xpm = amp_xpm * amp_root
 
-    return ElementOutput(power_out, spm, xpm, ase)
+    if amp_spm is None:
+        return ElementOutput(power_out, spm, xpm, ase)
+    return ElementOutput(power_out, spm, xpm, ase, amp_spm, amp_xpm)
 
 
 def accumulate_route(
@@ -167,6 +180,11 @@ def accumulate_route(
     total_spm = np.zeros_like(power)
     total_xpm = np.zeros_like(power)
     total_ase = np.zeros_like(power)
+    # 相干档：模型给了复振幅就按 |Σ a_k|² 累加，否则走原来的功率相加。
+    # None 表示尚未判定（路径上还没有跨段）。
+    coherent: bool | None = None
+    amp_spm = np.zeros_like(power, dtype=np.complex128)
+    amp_xpm = np.zeros_like(power, dtype=np.complex128)
     span_count = 0
     roadm_configs = optical_path.roadm_configs or [None] * len(optical_path.fiber_configs)
     hop_count = len(optical_path.fiber_configs)
@@ -181,12 +199,32 @@ def accumulate_route(
             step = model.span_step(fiber, edfa, power, span_km * 1e3)
             power = step.power_out_w
             transfer = np.divide(power, previous_power, out=np.zeros_like(power), where=previous_power > 0)
-            total_spm *= transfer
-            total_xpm *= transfer
-            total_ase *= transfer
-            total_spm += step.spm_noise_w
-            total_xpm += step.xpm_noise_w
-            total_ase += step.ase_noise_w
+            step_amp = getattr(step, "nli_amplitude_spm", None)
+            if step_amp is None:
+                if coherent:
+                    raise TypeError(
+                        "model returned a coherent NLI amplitude for an earlier span "
+                        "and a power-only result for a later one; a model must pick one convention."
+                    )
+                coherent = False
+                total_spm *= transfer
+                total_xpm *= transfer
+                total_ase *= transfer
+                total_spm += step.spm_noise_w
+                total_xpm += step.xpm_noise_w
+                total_ase += step.ase_noise_w
+            else:
+                if coherent is False:
+                    raise TypeError(
+                        "model returned a power-only NLI result for an earlier span "
+                        "and a coherent amplitude for a later one; a model must pick one convention."
+                    )
+                coherent = True
+                amp_root = np.sqrt(transfer)
+                amp_spm = amp_spm * amp_root + step_amp
+                amp_xpm = amp_xpm * amp_root + step.nli_amplitude_xpm
+                total_ase *= transfer
+                total_ase += step.ase_noise_w
             span_count += 1
             remaining_km -= span_km
 
@@ -197,14 +235,24 @@ def accumulate_route(
         loss_db = roadm.path_loss_db(operation)
         loss = 10 ** (loss_db / 10)
         power /= loss
-        total_spm /= loss
-        total_xpm /= loss
+        if coherent:
+            amp_root = np.sqrt(1.0 / loss)
+            amp_spm *= amp_root
+            amp_xpm *= amp_root
+        else:
+            total_spm /= loss
+            total_xpm /= loss
         total_ase /= loss
         if roadm.equalize_output_power:
             gain = loss
             power *= gain
-            total_spm *= gain
-            total_xpm *= gain
+            if coherent:
+                amp_root = np.sqrt(gain)
+                amp_spm *= amp_root
+                amp_xpm *= amp_root
+            else:
+                total_spm *= gain
+                total_xpm *= gain
             total_ase *= gain
             nf = 10 ** (roadm.booster_noise_figure_db / 10)
             booster_ase = (
@@ -213,11 +261,23 @@ def accumulate_route(
             booster_ase[power <= 0] = 0
             total_ase += booster_ase
         penalty = 10 ** (roadm.filtering_penalty_db / 10)
-        total_spm *= penalty
-        total_xpm *= penalty
+        if coherent:
+            amp_root = np.sqrt(penalty)
+            amp_spm *= amp_root
+            amp_xpm *= amp_root
+        else:
+            total_spm *= penalty
+            total_xpm *= penalty
         total_ase *= penalty
         if blocked:
             power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
+            if coherent:
+                amp_spm[blocked] = 0
+                amp_xpm[blocked] = 0
+
+    if coherent:
+        total_spm = np.abs(amp_spm) ** 2
+        total_xpm = np.abs(amp_xpm) ** 2
 
     total_noise = total_spm + total_xpm + total_ase
     snr = np.full_like(power, -np.inf)

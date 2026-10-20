@@ -23,7 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
 
 if TYPE_CHECKING:
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
@@ -92,11 +92,20 @@ class SpanFiberOutput:
         power_out_w: 出纤功率 (W)，含光纤损耗与 SRS/ISRS 功率转移，不含放大。
         spm_noise_w: 本跨产生的 SPM（或论文口径的 SCI）噪声功率 (W)。
         xpm_noise_w: 本跨产生的 XPM（或论文口径的 XCI）噪声功率 (W)。
+        nli_amplitude_spm: 可选的 SPM 复振幅，``|amp|**2`` 必须等于 ``spm_noise_w``。
+        nli_amplitude_xpm: 可选的 XPM 复振幅，``|amp|**2`` 必须等于 ``xpm_noise_w``。
+
+    振幅的参考面是**本跨出纤处**：路由层负责把它按后续跨的功率传输因子（取
+    ``sqrt``）送到接收端。跨间相位必须由模型自己写进振幅，否则相干累加无从谈起。
+    给出振幅时，跨与跨之间按复数相加（``|Σ a_k|²``）；不给时按功率相加（``Σ|a_k|²``），
+    后者是既有七个模型的行为，逐位不变。
     """
 
     power_out_w: NDArrayFloat
     spm_noise_w: NDArrayFloat
     xpm_noise_w: NDArrayFloat
+    nli_amplitude_spm: NDArrayComplex | None = None
+    nli_amplitude_xpm: NDArrayComplex | None = None
 
 
 @dataclass(frozen=True)
@@ -109,12 +118,16 @@ class ElementOutput:
         spm_noise_w: 本跨 SPM/SCI 噪声 (W)，随信号一起被放大与损耗。
         xpm_noise_w: 本跨 XPM/XCI 噪声 (W)。
         ase_noise_w: 本跨放大器 ASE (W)。
+        nli_amplitude_spm: 可选的 SPM 复振幅（已含放大器增益与 ROADM 损耗的幅度因子）。
+        nli_amplitude_xpm: 可选的 XPM 复振幅。二者与 ``*_noise_w`` 的模方一一对应。
     """
 
     power_out_w: NDArrayFloat
     spm_noise_w: NDArrayFloat
     xpm_noise_w: NDArrayFloat
     ase_noise_w: NDArrayFloat
+    nli_amplitude_spm: NDArrayComplex | None = None
+    nli_amplitude_xpm: NDArrayComplex | None = None
 
 
 @runtime_checkable
