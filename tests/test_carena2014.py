@@ -4,7 +4,7 @@
 （2014 Eq. (10)-(12)）、**论文积分式的求积收敛**（节点数翻倍时 ``kappa`` 的相对
 变化 < 1e-3）、``kappa2/kappa1`` 的比值结构、与论文 Fig. 1(a) 的对照
 （SMF、32 GBd、PM-QPSK、100 km 跨段的 SCI 归一化系数与 GN→EGN 残余差）、
-c_80ch 上完整 EGN 的总 NLI 低于 GN 骨架、调制格式排序、MCI 的符号与量级，
+c_57ch 上完整 EGN 的总 NLI 低于 GN 骨架、调制格式排序、MCI 的符号与量级，
 以及性能上限。
 """
 
@@ -174,7 +174,7 @@ def test_model_is_registered() -> None:
 
 def test_model_is_constructible_from_the_registry() -> None:
     """注册表工厂能直接构造出模型实例。"""
-    model = create_model("carena2014", grid_for(build_case("c_80ch")), _fiber(), symbol_rate_hz=64e9)
+    model = create_model("carena2014", grid_for(build_case("c_57ch")), _fiber(), symbol_rate_hz=64e9)
     assert isinstance(model, Carena2014Model)
 
 
@@ -208,7 +208,7 @@ def test_table1_is_consistent_with_the_moment_definitions() -> None:
 
 def test_unknown_modulation_format_is_rejected() -> None:
     """表里没有的调制格式直接报错，不做外推。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     with pytest.raises(KeyError, match="modulation format"):
         make_model("carena2014", case, modulation_format="qam1024")
 
@@ -394,8 +394,8 @@ def test_mci_kappas_are_positive_and_vanish_for_asymmetric_channels() -> None:
 # 模型层行为
 # ---------------------------------------------------------------------------
 def test_egn_total_nli_is_below_the_gn_skeleton() -> None:
-    """c_80ch 上完整 EGN 的总 NLI 必须低于 GN 骨架（SNR 更高）。"""
-    case = build_case("c_80ch")
+    """c_57ch 上完整 EGN 的总 NLI 必须低于 GN 骨架（SNR 更高）。"""
+    case = build_case("c_57ch")
     gain = _snr("carena2014", case) - _snr("ecz", case)
     assert np.all(gain > 0.0)
     assert float(np.min(gain)) > 0.05
@@ -404,7 +404,7 @@ def test_egn_total_nli_is_below_the_gn_skeleton() -> None:
 
 def test_gain_is_ordered_by_the_excess_kurtosis() -> None:
     """Phi_a 越负（QPSK）增益越大，64QAM 最小。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     gn = _snr("ecz", case)
     gains = {
         fmt: float(np.median(_snr("carena2014", case, modulation_format=fmt) - gn))
@@ -415,7 +415,7 @@ def test_gain_is_ordered_by_the_excess_kurtosis() -> None:
 
 def test_per_span_value_times_n_equals_the_link_level_total() -> None:
     """逐跨等效值乘以跨数，必须还原链路级总量（冻结路由层是非相干逐跨相加）。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     power = launch_profile(case, 0.0)
@@ -427,7 +427,7 @@ def test_per_span_value_times_n_equals_the_link_level_total() -> None:
 
 def test_ten_span_nli_grows_at_least_linearly_with_spans() -> None:
     """10 跨的 NLI 至少按跨数线性增长；EGN 修正比随跨数增大（论文的残余差收敛）。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     power = launch_profile(case, 0.0)
@@ -447,7 +447,7 @@ def test_ten_span_nli_grows_at_least_linearly_with_spans() -> None:
 
 def test_path_evaluation_uses_the_link_level_span_count() -> None:
     """路径评估的跨数被正确传给核（1 跨与 10 跨给出不同 SNR）。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     model = make_model("carena2014", case)
     power = launch_profile(case, 0.0)
     snr1 = np.median(model.evaluate_path(_path(1, case.edfa_noise_figure_db), power).snr_db)
@@ -459,7 +459,7 @@ def test_xci_neighbour_window_convergence() -> None:
     """XCI 近邻窗口翻倍时 SNR 的变化很小（远处信道因 |mu| 衰减而可截断）。"""
     from network_nlo_eval.models import carena2014 as module
 
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     path = build_path(case)
     power = launch_profile(case, 0.0)
     original = module.XCI_NEIGHBOR_SPAN
@@ -496,7 +496,7 @@ def test_wideband_edge_channels_are_finite_and_positive(case_name: str) -> None:
 # ---------------------------------------------------------------------------
 def test_kernel_rejects_bad_inputs() -> None:
     """功率长度不符、跨长非正都要报错。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     power = launch_profile(case, 0.0)
@@ -508,7 +508,7 @@ def test_kernel_rejects_bad_inputs() -> None:
 
 def test_kernel_is_a_span_kernel() -> None:
     """核实现了冻结的单跨协议。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     assert isinstance(kernel, Carena2014SpanKernel)
@@ -517,7 +517,7 @@ def test_kernel_is_a_span_kernel() -> None:
 
 def test_kernel_does_not_mutate_its_inputs() -> None:
     """核不能就地改写入纤功率数组（路由层会复用它）。"""
-    case = build_case("c_80ch")
+    case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     power = launch_profile(case, 0.0)
