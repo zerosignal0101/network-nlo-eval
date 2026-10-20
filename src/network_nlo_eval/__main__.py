@@ -8,7 +8,7 @@ import networkx as nx
 import numpy as np
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.models.base import create_model, describe_models
 from network_nlo_eval.models.numba_kernels import _dbm_to_w
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.state import NetworkState
@@ -29,6 +29,12 @@ from network_nlo_eval.simulation.traffic import generate_services
 def main() -> None:
     """Network NLO Eval."""
     pass
+
+
+@main.command(name="models")
+def list_models() -> None:
+    """List the registered QoT models as JSON."""
+    click.echo(json.dumps(describe_models(), ensure_ascii=False, indent=2))
 
 
 def _load_topology(topology_file: Path) -> NetworkTopology:
@@ -93,6 +99,13 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
     default=None,
     help="Enable flexible-grid slot allocation with this slot width (e.g. 12.5).",
 )
+@click.option(
+    "--qot-model",
+    "qot_model",
+    default="ecz",
+    show_default=True,
+    help="Registered QoT model used for SNR checks (see 'network-nlo-eval models').",
+)
 def simulate(
     topology_file: Path,
     service_num: int,
@@ -104,6 +117,7 @@ def simulate(
     center_freq_thz: float,
     max_ksp_paths: int,
     slot_width_ghz: float | None,
+    qot_model: str,
 ) -> None:
     """Run a dynamic RWA simulation."""
     click.echo(f"Starting simulation with topology: {topology_file}")
@@ -127,11 +141,15 @@ def simulate(
         center_frequency_hz=center_freq_thz * 1e12,
     )
 
-    # 物理层快速评估模型
-    gn_evaluator = MultiBandISRSGN(
-        grid=spectrum_grid,
-        ref_fiber_config=network_topology.get_default_fiber_config(),  # Use the default fiber config as reference
-    )
+    # 物理层快速评估模型：由注册表选择，默认 ECZ。
+    try:
+        gn_evaluator = create_model(
+            qot_model,
+            spectrum_grid,
+            network_topology.get_default_fiber_config(),
+        )
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # QoT 验证器
     qot_validator = QoTValidator(
@@ -239,6 +257,13 @@ def simulate(
 @click.option("--num-channels", type=int, default=80, show_default=True)
 @click.option("--channel-spacing-ghz", type=float, default=50.0, show_default=True)
 @click.option("--center-freq-thz", type=float, default=193.1, show_default=True)
+@click.option(
+    "--qot-model",
+    "qot_model",
+    default="ecz",
+    show_default=True,
+    help="Registered QoT model for the statistical side (see 'network-nlo-eval models').",
+)
 @click.option("--waveform/--statistical-only", default=False, help="Also run the numerical waveform engine.")
 @click.option("--num-symbols", type=int, default=1024, show_default=True)
 @click.option("-o", "--output-file", type=click.Path(dir_okay=False, path_type=Path))
@@ -250,6 +275,7 @@ def compare(
     num_channels: int,
     channel_spacing_ghz: float,
     center_freq_thz: float,
+    qot_model: str,
     waveform: bool,
     num_symbols: int,
     output_file: Path | None,
@@ -265,7 +291,8 @@ def compare(
             raise ValueError("Channel index is outside the configured spectrum grid.")
         launch_profile = np.zeros(num_channels, dtype=np.float64)
         launch_profile[list(active_channels)] = _dbm_to_w(launch_power_dbm)
-        result = TopologyQoTComparator(topology, grid).evaluate(
+        gn_evaluator = create_model(qot_model, grid, topology.get_default_fiber_config())
+        result = TopologyQoTComparator(topology, grid, gn_evaluator=gn_evaluator).evaluate(
             path, launch_profile, run_waveform=waveform, num_symbols=num_symbols
         )
         payload = result.to_dict()
@@ -278,6 +305,66 @@ def compare(
         else:
             click.echo(output)
     except (ImportError, KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@main.command()
+@click.option("--case", "case_name", required=True, help="Benchmark case (see benchmarks.cases.BENCH_CASES).")
+@click.option("--model", "models", multiple=True, required=True, help="Registered QoT model; repeat for several.")
+@click.option("--reference", default=None, help="Reference model for accuracy deltas, e.g. 'numerical'.")
+@click.option("--power-step-db", type=float, default=1.0, show_default=True, help="Launch-power sweep step.")
+@click.option("--reps", type=int, default=25, show_default=True, help="Warm timing repetitions.")
+@click.option("-o", "--output-file", type=click.Path(dir_okay=False, path_type=Path))
+def bench(
+    case_name: str,
+    models: tuple[str, ...],
+    reference: str | None,
+    power_step_db: float,
+    reps: int,
+    output_file: Path | None,
+) -> None:
+    """Run a benchmark case across models and report accuracy plus speed."""
+    from network_nlo_eval.benchmarks.cases import build_case
+    from network_nlo_eval.benchmarks.runner import accuracy_vs_reference, run_case
+
+    try:
+        case = build_case(case_name)
+        powers = tuple(np.arange(-4.0, 6.0 + 1e-9, power_step_db))
+        runs = {}
+        for name in models:
+            run = run_case(name, case.name, powers_dbm=powers, reps=reps)
+            runs[name] = run
+        payload = {
+            "case": {
+                "name": case.name,
+                "bands": case.bands,
+                "num_channels": case.num_channels,
+                "channel_spacing_ghz": case.channel_spacing_hz / 1e9,
+                "symbol_rate_ghz": case.symbol_rate_hz / 1e9,
+                "span_count": case.span_count,
+                "span_length_km": case.span_length_km,
+                "edfa_noise_figure_db": case.edfa_noise_figure_db,
+                "total_power_dbm": case.total_power_dbm,
+                "powers_dbm": list(powers),
+            },
+            "runs": {name: run.to_dict() for name, run in runs.items()},
+            "accuracy": {},
+        }
+        if reference is not None:
+            if reference not in runs:
+                raise click.ClickException(f"--reference {reference!r} must also be passed via --model.")
+            for name, run in runs.items():
+                if name == reference:
+                    continue
+                payload["accuracy"][name] = accuracy_vs_reference(run, runs[reference])
+        echo_payload = json.dumps(payload, ensure_ascii=False, indent=2)
+        if output_file is not None:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(echo_payload + "\n", encoding="utf-8")
+            click.echo(f"Benchmark saved to: {output_file}")
+        else:
+            click.echo(echo_payload)
+    except (ImportError, KeyError, TypeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
 

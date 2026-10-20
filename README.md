@@ -5,7 +5,8 @@ Physical-layer transmission quality (QoT) evaluation for multi-band WDM optical 
 ## Features
 
 - **Multi-band spectrum** — configurable WDM grid (C+L+S bands) with arbitrary channel count, spacing, and center frequency.
-- **ISRS-GN model** — Inter-channel Stimulated Raman Scattering Generalized Noise (ISRS-GN) evaluator, computing per-channel SPM, XPM, and ASE noise variances, accelerated with Numba JIT kernels.
+- **Pluggable QoT models** — a registry (`--qot-model`) selects among QoT implementations that share one route layer: single-span kernel, then amplifier/ROADM/SNR accumulation. The built-in `ecz` model is the ISRS-GN evaluator (ECZ-SRS triangular SRS approximation, closed-form SPM/XPM), accelerated with Numba JIT kernels.
+- **Benchmark harness** — `network-nlo-eval bench` runs canonical multi-band cases and reports per-channel SNR, accuracy against a reference model, and warm-call latency/throughput.
 - **Network element modeling** — Validated per-link fiber/EDFA overrides and detailed per-node ROADMs: super-Gaussian passband/order, express/add/drop loss, blocked channels, booster NF/equalization, and Raman-pump definitions.
 - **Topology management** — NetworkX-based topology loader supporting arbitrary fiber network topologies with per-link length and per-node element configs.
 - **QoT-aware RWA** — K-Shortest Paths (KSP) with First-Fit wavelength allocation, validated against physical-layer SNR degradation on both new and existing services.
@@ -42,6 +43,14 @@ $ network-nlo-eval simulate --topology-file assets/example_pan_europe_network.js
     --service-num 500 --avg-arrival-interval 10 --avg-holding-time 400 \
     --num-channels 80 --channel-spacing-ghz 50 --center-freq-thz 193.1 \
     --max-ksp-paths 5 --output-dir results
+```
+
+List the available QoT models and run a benchmark case:
+
+```console
+$ network-nlo-eval models
+$ network-nlo-eval bench --case escl_479ch --model ecz --reference ecz \
+    --output-file results/bench.json
 ```
 
 Compare an analytical route result, optionally adding the numerical waveform run:
