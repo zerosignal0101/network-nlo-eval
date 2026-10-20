@@ -74,6 +74,7 @@ class ModelRun:
         qps: 热调用吞吐 (次/秒)。
         peak_kib: 热调用期间的 ``tracemalloc`` 峰值 (KiB)。
         span_count: 物理跨段数。
+        reps_used: 实际做的热调用次数（慢模型会自动下调）。
     """
 
     model: str
@@ -86,6 +87,7 @@ class ModelRun:
     qps: float
     peak_kib: float
     span_count: int
+    reps_used: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """JSON 兼容表示；``snr_db`` 保留完整精度。"""
@@ -100,10 +102,13 @@ class ModelRun:
             "qps": self.qps,
             "peak_kib": self.peak_kib,
             "span_count": self.span_count,
+            "reps_used": self.reps_used,
         }
 
 
-def time_calls(model: Any, path: Any, power: NDArrayFloat, *, reps: int = 25) -> tuple[float, float, float, float]:
+def time_calls(
+    model: Any, path: Any, power: NDArrayFloat, *, reps: int = 25, budget_s: float = 3.0
+) -> tuple[float, float, float, float, int]:
     """测量冷/热调用耗时与内存峰值。
 
     计时与内存分两趟测：``tracemalloc`` 自身有可观开销，混在计时段里会把延迟
@@ -113,18 +118,25 @@ def time_calls(model: Any, path: Any, power: NDArrayFloat, *, reps: int = 25) ->
         model: 模型实例。
         path: 光路。
         power: 入纤功率谱 ``(N,)``。
-        reps: 热调用次数。
+        reps: 热调用次数上限。
+        budget_s: 热调用的时间预算 (s)。单次调用越慢，重复次数自动下调，避免
+            数值基准这类慢模型把一次基准跑成十几分钟；下调后的实际次数会在返回值
+            里报出来，不会悄悄改变统计口径。
 
     Returns
     -------
-        ``(cold_ms, warm_median_ms, warm_p95_ms, peak_kib)``。
+        ``(cold_ms, warm_median_ms, warm_p95_ms, peak_kib, reps_used)``。
     """
     started = time.perf_counter()
     model.evaluate_path(path, power)
     cold_ms = (time.perf_counter() - started) * 1e3
 
     samples: list[float] = []
-    for _ in range(reps):
+    started = time.perf_counter()
+    model.evaluate_path(path, power)
+    first_ms = (time.perf_counter() - started) * 1e3
+    reps_used = max(3, min(reps, int(budget_s * 1e3 / max(first_ms, 1e-3))))
+    for _ in range(reps_used):
         started = time.perf_counter()
         model.evaluate_path(path, power)
         samples.append((time.perf_counter() - started) * 1e3)
@@ -135,7 +147,7 @@ def time_calls(model: Any, path: Any, power: NDArrayFloat, *, reps: int = 25) ->
     tracemalloc.stop()
 
     timings = np.asarray(samples, dtype=np.float64)
-    return cold_ms, float(np.median(timings)), float(np.percentile(timings, 95)), peak / 1024.0
+    return cold_ms, float(np.median(timings)), float(np.percentile(timings, 95)), peak / 1024.0, reps_used
 
 
 def sweep_snr(model: Any, case: BenchCase, powers_dbm: tuple[float, ...] = POWER_SWEEP_DBM) -> NDArrayFloat:
@@ -181,7 +193,9 @@ def run_case(
     # 先测速再扫功率：cold 必须是该实例的第一次调用，才包含 JIT 编译与惰性
     # (N, N) 常量构建。测速用中间功率点，避开极低功率下 SNR 为 +inf 的分支差异。
     probe = powers_dbm[len(powers_dbm) // 2]
-    cold_ms, median_ms, p95_ms, peak_kib = time_calls(model, build_path(case), launch_profile(case, probe), reps=reps)
+    cold_ms, median_ms, p95_ms, peak_kib, reps_used = time_calls(
+        model, build_path(case), launch_profile(case, probe), reps=reps
+    )
     snr = sweep_snr(model, case, powers_dbm)
     return ModelRun(
         model=model_name,
@@ -194,6 +208,7 @@ def run_case(
         qps=1000.0 / median_ms if median_ms > 0 else float("inf"),
         peak_kib=peak_kib,
         span_count=len(build_path(case).fiber_configs),
+        reps_used=reps_used,
     )
 
 
