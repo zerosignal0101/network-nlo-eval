@@ -9,6 +9,8 @@
 * **ISRS 前端**：含 ISRS 的出纤功率与仓库既有的拉曼核逐位一致；功率倾斜
   随开关变化；ISRS 档的 NSP 能量谱在残余因子退化为常数时与解析闭式一致；
 * **色散口径**：两档口径都能跑且给出不同结果；默认档是仓库口径；
+* **确定性**：同一 (path, power) 的输出与调用历史无关（重复调用、先调别的功率、
+  正序/逆序调用都逐位相同）；核心矩阵缓存幂等；
 * **模型契约**：注册名、``egn`` 拒绝、异构跨段生效、与兄弟模型（PCFM）对照。
 """
 
@@ -36,6 +38,7 @@ from network_nlo_eval.models.base import (
 from network_nlo_eval.models.cgn import (
     CGN_MODEL_INFO,
     CGNSpanKernel,
+    _canonical_power,
     _isrs_nsp_energy_spectrum,
     _nsp_energy_spectrum,
 )
@@ -613,3 +616,143 @@ def test_matches_pcfm_on_homogeneous_link() -> None:
     pcfm = make_model("pcfm", case).evaluate_path(path, power)
     delta = cgn.snr_db - pcfm.snr_db
     assert float(np.sqrt(np.mean(delta**2))) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# 确定性：输出不得依赖调用历史
+# ---------------------------------------------------------------------------
+
+
+def _snr(model: object, case, path, power_dbm: float) -> np.ndarray:
+    """在给定功率点上取逐信道 SNR。"""
+    return np.asarray(model.evaluate_path(path, launch_profile(case, power_dbm)).snr_db, dtype=float)
+
+
+def test_repeated_calls_on_one_instance_are_bit_identical() -> None:
+    """同一实例对同一 (path, power) 连调三次，结果必须逐位相同。
+
+    这是 QoT 引擎的基本契约：一次路由搜索里同一个模型会被反复评估，同一个
+    问题必须永远得到同一个答案。任何跨调用累积的状态（缓存污染、分段推进的
+    残余因子、功率指纹）都会在这里暴露。
+    """
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+    model = _model("scaling_40ch")
+
+    first = _snr(model, case, path, -4.0)
+    second = _snr(model, case, path, -4.0)
+    third = _snr(model, case, path, -4.0)
+
+    assert np.array_equal(first, second)
+    assert np.array_equal(second, third)
+
+
+def test_call_history_does_not_change_the_result() -> None:
+    """先调别的功率之后，同一功率的结果必须与全新实例逐位相同。
+
+    回归用例：第二轮引入"带功率指纹的核心矩阵缓存"时，指纹用的是**相对**
+    功率（除以最大值），于是 -4 dBm 与 -1 dBm 落到同一个键上，缓存里存的
+    值取决于"哪个功率先到"——输出因此依赖调用历史。
+    """
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+
+    fresh = _snr(_model("scaling_40ch"), case, path, -4.0)
+
+    reused = _model("scaling_40ch")
+    _snr(reused, case, path, 0.0)
+    _snr(reused, case, path, 4.0)
+    after = _snr(reused, case, path, -4.0)
+
+    assert np.array_equal(fresh, after), "先调 0/+4 dBm 改变了 -4 dBm 的结果"
+
+
+def test_call_order_does_not_change_the_result() -> None:
+    """正序 [-4, 0, +4, -4] 与逆序 [+4, 0, -4] 的同功率结果必须逐位相同。"""
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+
+    forward_model = _model("scaling_40ch")
+    forward_minus4 = _snr(forward_model, case, path, -4.0)
+    _snr(forward_model, case, path, 0.0)
+    _snr(forward_model, case, path, 4.0)
+    forward_minus4_again = _snr(forward_model, case, path, -4.0)
+
+    reverse_model = _model("scaling_40ch")
+    _snr(reverse_model, case, path, 4.0)
+    _snr(reverse_model, case, path, 0.0)
+    reverse_minus4 = _snr(reverse_model, case, path, -4.0)
+
+    assert np.array_equal(forward_minus4, forward_minus4_again)
+    assert np.array_equal(forward_minus4, reverse_minus4)
+
+
+def test_determinism_holds_on_a_multi_span_link() -> None:
+    """多跨链（10 跨、逐跨功率不同）上同样不能依赖调用历史。"""
+    case = build_case("c_57ch")
+    path = build_path(case)
+
+    fresh = _snr(_model("c_57ch"), case, path, -4.0)
+
+    reused = _model("c_57ch")
+    _snr(reused, case, path, 0.0)
+    after = _snr(reused, case, path, -4.0)
+    again = _snr(reused, case, path, -4.0)
+
+    assert np.array_equal(fresh, after)
+    assert np.array_equal(after, again)
+
+
+def test_determinism_holds_without_isrs() -> None:
+    """不含 ISRS 的档同样不能依赖调用历史（出纤功率也不能被缓存成旧值）。"""
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+
+    fresh = _snr(_model("scaling_40ch", include_isrs=False), case, path, -4.0)
+
+    reused = _model("scaling_40ch", include_isrs=False)
+    _snr(reused, case, path, 0.0)
+    after = _snr(reused, case, path, -4.0)
+
+    assert np.array_equal(fresh, after)
+
+
+def test_core_cache_key_separates_absolute_power_levels() -> None:
+    """核心矩阵缓存必须区分**绝对**功率，而不是只看功率分布的形状。
+
+    -4 dBm 与 -1 dBm 的逐信道功率分布完全相同（只是标度不同），但拉曼倾斜
+    的速率正比于总功率，两者必须落到不同的缓存键上。
+    """
+    case = build_case("scaling_40ch")
+    kernel = _kernel("scaling_40ch")
+    low, _ = _canonical_power(launch_profile(case, -4.0))
+    high, _ = _canonical_power(launch_profile(case, -1.0))
+    assert low.shape == high.shape
+    assert not np.array_equal(low, high)
+
+    _, key_low = _canonical_power(launch_profile(case, -4.0))
+    _, key_high = _canonical_power(launch_profile(case, -1.0))
+    assert key_low != key_high
+
+
+def test_canonical_power_is_stable_under_float_round_trips() -> None:
+    """规范化必须吸收 1 ulp 级的浮点往返，否则整条光路要重建 10 次核心矩阵。"""
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, -4.0)
+    canonical, key = _canonical_power(power)
+    nudged = power * (1.0 + 2.0 * np.finfo(np.float64).eps)
+    canonical_nudged, key_nudged = _canonical_power(nudged)
+    assert key == key_nudged
+    assert np.array_equal(canonical, canonical_nudged)
+
+
+def test_core_cache_is_idempotent() -> None:
+    """同一个键必须永远对应同一个矩阵（缓存幂等）。"""
+    kernel = _kernel("scaling_40ch")
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, -4.0)
+    core_a = kernel._core_for(power, 100e3, 1)
+    kernel._core_cache.clear()
+    kernel._core_cache_bytes = 0
+    core_b = kernel._core_for(power, 100e3, 1)
+    assert np.array_equal(core_a, core_b)

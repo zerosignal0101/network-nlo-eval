@@ -56,6 +56,18 @@ Eq. (62)/(63)/(64) 相干累加   :func:`_dirichlet_weight`
 
 开关 ``include_isrs`` 保留两种模式，报告给出开/关的对比数字。
 
+**确定性契约**
+
+模型输出只由 (光路, 入纤功率) 决定，与调用历史无关：
+
+* 核心积分矩阵的缓存键带**规范化后的绝对功率**（见 :func:`_canonical_power`），
+  且矩阵也只用规范化后的功率构造 → 同一个键永远对应同一个矩阵（缓存幂等）；
+* 出纤功率**不进缓存**，每次按当前入纤功率重算。
+
+第二轮曾把缓存键做成"相对功率指纹"（除以最大值后再量化），那会让 -4 dBm 与
+-1 dBm 落到同一个键上，缓存里的值取决于"哪个功率先到"，于是同一个
+(path, power) 在不同调用历史下给出不同结果。第三轮修掉了这一点。
+
 **色散展开口径**
 
 ``dispersion_convention`` 有两档：
@@ -197,6 +209,31 @@ TRUNCATION_FACTOR = 40.0
 
 #: 构造期的临时数组规模上限（元素数）。分块处理 CUT 信道用。
 _CHUNK_ELEMENTS = 4_000_000
+
+#: 功率规范化时保留的**有效数字**位数（绝对量级）。
+#:
+#: 核心矩阵（含 ISRS 时）依赖入纤功率的**绝对**值：拉曼功率倾斜的速率正比于
+#: 总功率，所以 -4 dBm 与 -1 dBm 的 NSP 形状不同。规范化把功率向量吸附到一个
+#: 由 12 位有效数字决定的等距栅格上：
+#:
+#: * 栅格步长只由 ``max|power|`` 的 12 位有效数字决定，因此同一物理状态下
+#:   跨段之间的浮点往返（1 ulp 量级）落在同一个格点 → 整条光路共用一个缓存键；
+#: * 栅格是**绝对**的（不是相对最大值的），所以不同绝对功率一定落在不同格点
+#:   → 缓存键能区分 -4 dBm 与 -1 dBm。
+#:
+#: 量化误差为 1e-12 相对量级，对 NLI 的影响在 1e-11 dB 以下，远低于任何物理
+#: 意义；换来的是"同一输入逐位可复现"。
+CANONICAL_POWER_DIGITS = 12
+
+#: 规范化功率时，逐信道**形状**（相对最大值的分布）保留的有效数字位数。
+#:
+#: 形状决定 ISRS 功率倾斜的空间结构，必须比功率标度保留得更细，但也要把
+#: 浮点往返噪声吸收掉。
+CANONICAL_SHAPE_DIGITS = 9
+
+#: 核心矩阵缓存的内存预算（字节）。核心矩阵是 ``(N, N, J)`` 的 double 数组，
+#: 479 信道时单个约 5.5 MiB；预算是为了在功率扫描时既不反复重建，也不无界增长。
+CORE_CACHE_BUDGET_BYTES = 256 * 1024 * 1024
 
 CGN_MODEL_INFO = ModelInfo(
     name="cgn",
@@ -347,6 +384,52 @@ def _stimulus_attenuation(
     if convention == "gn":
         return 0.5 * total
     return total
+
+
+def _canonical_power(power: NDArrayFloat) -> tuple[NDArrayFloat, bytes]:
+    r"""把入纤功率吸附到规范栅格上，返回规范值与缓存键。
+
+    **为什么需要规范化**
+
+    含 ISRS 时核心积分矩阵依赖入纤功率的**绝对**值（拉曼速率正比于总功率）。
+    若缓存键直接用原始功率的字节，则同一物理状态在不同跨段之间的浮点往返
+    （1 ulp 量级）会给出不同的键，整条光路要重建 10 次核心矩阵；若缓存键用
+    *相对*功率（除以最大值），则不同绝对功率会挤到同一个键上，缓存里存的
+    值取决于"哪个功率先到"——这正是"输出依赖调用历史"的根源。
+
+    规范化把两者都解决掉：
+
+    * 标度 ``max|power|`` 先按 :data:`CANONICAL_POWER_DIGITS` 位有效数字取整，
+      1 ulp 的往返不会改变它；
+    * 逐信道数值按 ``标度 × 10^-CANONICAL_SHAPE_DIGITS`` 的**绝对**栅格取整，
+      形状差异（ISRS 倾斜）被保留，绝对功率差异被区分。
+
+    于是：同一物理状态 → 同一规范值 → 同一缓存键 → 同一个核心矩阵；不同
+    功率 → 不同键。缓存因此是幂等的。
+
+    Args:
+        power: ``(N,)`` 入纤功率 (W)。
+
+    Returns
+    -------
+        ``(canonical, key)``：``canonical`` 是规范化的功率向量 (W)，``key`` 是
+        它的字节串，可直接用作缓存键的一部分。
+    """
+    values = np.asarray(power, dtype=np.float64)
+    if values.size == 0:
+        return values.copy(), b"empty"
+    scale = float(np.max(np.abs(values)))
+    if scale <= 0.0:
+        return np.zeros_like(values), b"zero"
+    exponent = int(np.floor(np.log10(scale)))
+    # 标度按有效数字取整：12 位有效数字对 1e-16 的相对噪声是稳定的。
+    scale_digits = CANONICAL_POWER_DIGITS - 1 - exponent
+    scale_canon = float(np.round(scale, scale_digits))
+    if scale_canon <= 0.0:
+        scale_canon = scale
+    step = scale_canon * (10.0 ** (-CANONICAL_SHAPE_DIGITS))
+    canonical = np.round(values / step) * step
+    return canonical, canonical.tobytes()
 
 
 def _nsp_energy_spectrum(
@@ -961,8 +1044,13 @@ class CGNSpanKernel:
     相关系数核心积分矩阵 ``(N, N, J)``。热路径只剩矩阵-向量乘。
 
     含 ISRS 时，核心积分矩阵还依赖**入纤功率**（拉曼功率倾斜的速率正比于
-    总功率），故缓存键带上功率指纹；不含 ISRS 时核心与功率无关，缓存键
-    只有跨段长度与相干跨段数。
+    总功率），故缓存键带上**规范化后的绝对功率**；不含 ISRS 时核心与功率
+    无关，缓存键只有跨段长度与相干跨段数。
+
+    **确定性契约**：核的输出只由 (跨段长度, 相干跨段数, 入纤功率) 决定，与
+    调用历史无关。缓存是幂等的：键里的功率是规范化后的值，矩阵也只用规范化
+    后的功率构造，因此"同一个键"永远对应"同一个矩阵"。出纤功率不进缓存，
+    每次按当前入纤功率重算。
 
     Args:
         fiber_config: 该跨段的光纤配置。
@@ -1072,34 +1160,24 @@ class CGNSpanKernel:
         self._r_index_padded = np.where(self._r_index >= 0, self._r_index + 1, 0)
         #: 相干累加的跨段数；由模型在每次路径评估前写入。
         self.n_coherent_spans = 1
-        self._core_cache: dict[tuple, tuple[NDArrayFloat, NDArrayFloat]] = {}
+        #: 核心积分矩阵缓存：键 → 矩阵。矩阵是键的**纯函数**（幂等）。
+        self._core_cache: dict[tuple, NDArrayFloat] = {}
+        #: 缓存占用的字节数（用于按预算淘汰）。
+        self._core_cache_bytes = 0
 
-    def _power_signature(self, power: NDArrayFloat) -> bytes | None:
-        """核心积分矩阵的功率指纹。
-
-        含 ISRS 时 NSP 依赖入纤功率（拉曼速率正比于总功率），故缓存键必须
-        带上功率；不含 ISRS 时返回 ``None``，缓存只按跨段长度区分。
-
-        指纹做**相对量化**（1e-6）：逐跨的 EDFA 逐比特地还原入纤功率，浮点
-        往返会带来 ~1e-16 的相对差，不量化的话每个跨段都会重建核心矩阵
-        （10 跨链的冷启动时间因此差一个数量级）。1e-6 的相对差对 NLI 的
-        影响在 1e-5 dB 量级，可以忽略。
-        """
-        if not self.include_isrs:
-            return None
-        values = np.asarray(power, dtype=np.float64)
-        scale = float(np.max(np.abs(values))) if values.size else 0.0
-        if scale <= 0.0:
-            return b"all-zero"
-        return np.round(values / scale, 6).tobytes()
-
-    def _build_span_data(
+    def _span_output_power(
         self,
         power: NDArrayFloat,
         span_length_m: float,
-        n_coherent_spans: int,
-    ) -> tuple[NDArrayFloat, NDArrayFloat]:
-        """构造该跨段的核心积分矩阵与出纤功率。"""
+    ) -> NDArrayFloat:
+        """该跨段的出纤功率 (W)。
+
+        出纤功率**不进缓存**：它是入纤功率的逐点函数，每次重算（代价是
+        :math:`O(N^2)`，相对核心矩阵的构造可以忽略）。把它和核心矩阵放在
+        同一个缓存条目里会让"缓存条目"依赖"哪个功率先到"，那正是调用历史
+        依赖的根源。
+        """
+        length = float(span_length_m)
         if self.include_isrs:
             total_w = float(power.sum())
             r_f = _calc_raman_profile_jit(
@@ -1109,25 +1187,46 @@ class CGNSpanKernel:
                 DELTA_F_CO_HZ,
                 total_w,
             )
-            power_out = _calc_span_out_power_jit(
+            return _calc_span_out_power_jit(
                 np.ascontiguousarray(power, dtype=np.float64),
                 self.f_rel_hz,
                 np.ascontiguousarray(self.alpha_npm, dtype=np.float64),
-                float(span_length_m),
+                length,
                 np.ascontiguousarray(r_f, dtype=np.float64),
                 float(self.k_bar),
             )
+        return power * np.exp(-self.alpha_npm * length)
+
+    def _core_matrix(
+        self,
+        canonical_power: NDArrayFloat,
+        span_length_m: float,
+        n_coherent_spans: int,
+    ) -> NDArrayFloat:
+        """构造该跨段的核心积分矩阵。
+
+        Args:
+            canonical_power: 规范化后的入纤功率 (W)；矩阵只依赖它，故矩阵是
+                缓存键的纯函数。
+            span_length_m: 跨段长度 (m)。
+            n_coherent_spans: 相干累加的跨段数。
+
+        Returns
+        -------
+            ``(N, N, J)`` 核心积分矩阵。
+        """
+        if self.include_isrs:
             z_mid, gain, rate = _isrs_span_profile(
                 self.f_rel_hz,
                 self.alpha_npm,
-                power,
+                canonical_power,
                 self.f_m_hz,
                 self.f_M_hz,
                 self.k_bar,
                 float(span_length_m),
                 self.isrs_segments,
             )
-            core = _island_core(
+            return _island_core(
                 f_abs_hz=self.f_abs_hz,
                 b_hz=self.b_hz,
                 alpha_npm=self.alpha_npm,
@@ -1146,10 +1245,7 @@ class CGNSpanKernel:
                 isrs_z_mid=z_mid,
                 isrs_seg_length_m=float(span_length_m) / float(self.isrs_segments),
             )
-            return core, power_out
-
-        power_out = power * np.exp(-self.alpha_npm * float(span_length_m))
-        core = _island_core(
+        return _island_core(
             f_abs_hz=self.f_abs_hz,
             b_hz=self.b_hz,
             alpha_npm=self.alpha_npm,
@@ -1164,29 +1260,42 @@ class CGNSpanKernel:
             island_cells=self.island_cells,
             n_coherent_spans=int(n_coherent_spans),
         )
-        return core, power_out
 
     def _core_for(
         self,
         power: NDArrayFloat,
         span_length_m: float,
         n_coherent_spans: int,
-    ) -> tuple[NDArrayFloat, NDArrayFloat]:
-        """该跨段的核心积分矩阵与出纤功率（按长度、相干跨段数与功率缓存）。"""
+    ) -> NDArrayFloat:
+        """该跨段的核心积分矩阵（按长度、相干跨段数与**绝对**功率缓存）。
+
+        缓存是**幂等**的：键里带的是规范化后的绝对功率，而矩阵也只用规范化
+        后的功率构造，所以"同一个键"永远对应"同一个矩阵"，与调用历史无关。
+        """
+        canonical, power_key = _canonical_power(power)
         key = (
             float(span_length_m),
             int(n_coherent_spans),
-            self._power_signature(power),
+            power_key if self.include_isrs else None,
         )
         cached = self._core_cache.get(key)
         if cached is None:
-            cached = self._build_span_data(power, span_length_m, n_coherent_spans)
-            if len(self._core_cache) >= 4:
-                # 功率扫描会不断产生新键；只保留最近的一批，避免缓存无界增长
-                #（每个核心矩阵是 (N, N, J) 的 double 数组）。
-                self._core_cache.pop(next(iter(self._core_cache)))
-            self._core_cache[key] = cached
+            cached = self._core_matrix(canonical, span_length_m, n_coherent_spans)
+            self._store_core(key, cached)
         return cached
+
+    def _store_core(self, key: tuple, core: NDArrayFloat) -> None:
+        """把核心矩阵放进缓存，并按内存预算淘汰旧条目。"""
+        size = int(core.nbytes)
+        if size > CORE_CACHE_BUDGET_BYTES:
+            # 单个矩阵就超预算：不缓存，避免把内存吃光。
+            return
+        while self._core_cache and self._core_cache_bytes + size > CORE_CACHE_BUDGET_BYTES:
+            oldest = next(iter(self._core_cache))
+            self._core_cache_bytes -= int(self._core_cache[oldest].nbytes)
+            del self._core_cache[oldest]
+        self._core_cache[key] = core
+        self._core_cache_bytes += size
 
     def evaluate(
         self,
@@ -1215,7 +1324,8 @@ class CGNSpanKernel:
         if span_length_m <= 0.0:
             raise ValueError(f"span_length_m must be positive, got {span_length_m}.")
 
-        core, power_out = self._core_for(power, span_length_m, self.n_coherent_spans)
+        core = self._core_for(power, span_length_m, self.n_coherent_spans)
+        power_out = self._span_output_power(power, span_length_m)
         active = power > 0.0
         g_psd = np.where(active, power / self.b_hz, 0.0)
         # 第三波 PSD：(N, N, J)。槽位索引已 +1，哑元固定在 0 号位。
