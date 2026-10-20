@@ -467,7 +467,7 @@ def test_nominal_band_edges_cover_the_spectrum() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("case_name", ["c_80ch", "cl_152ch"])
+@pytest.mark.parametrize("case_name", ["c_57ch", "cl_152ch"])
 def test_snr_is_below_the_closed_form_gn_by_a_few_tenths_of_a_db(case_name: str) -> None:
     """相对 GN（``ecz``），GGN 的 SNR 略低，差值落在 0…0.8 dB。
 
@@ -485,7 +485,7 @@ def test_snr_is_below_the_closed_form_gn_by_a_few_tenths_of_a_db(case_name: str)
     assert gap.min() >= -SNR_GAP_MAX_DB - 1e-9
 
 
-@pytest.mark.parametrize("case_name", ["c_80ch", "cl_152ch", "scl_277ch"])
+@pytest.mark.parametrize("case_name", ["c_57ch", "cl_152ch", "scl_277ch"])
 def test_snr_is_within_one_db_of_the_isrs_gn_closed_form(case_name: str) -> None:
     """与 ``buglia2023``（ISRS-GN 闭式）的 SNR 差异在 1 dB 内。
 

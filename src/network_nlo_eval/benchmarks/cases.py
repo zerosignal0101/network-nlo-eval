@@ -157,7 +157,11 @@ BENCH_CASES: dict[str, BenchCase] = {
     "scl_277ch": _case("scl_277ch", "S+C+L", 277, 75e9, 10, 23.16),
     "escl_479ch": _case("escl_479ch", "E+S+C+L", 479, 75e9, 10, 25.0),
     "escl_479ch_1span": _case("escl_479ch_1span", "E+S+C+L", 479, 75e9, 1, 25.0),
-    "c_80ch": _case("c_80ch", "C", 80, 50e9, 10, 20.0),
+    # 亚奈奎斯特间隔：64 GBaud 信号塞进 50 GHz 栅格，相邻信道谱重叠 22%。
+    # 所有闭式模型都假设信道谱不重叠，本算例因此**不在**它们的适用域内，
+    # 只作为失效边界用例，不参与精度统计（见 run_all.py 的 ACCURACY_CASES）。
+    "c_80ch_subnyquist": _case("c_80ch_subnyquist", "C", 80, 50e9, 10, 20.0),
+    "c_57ch": _case("c_57ch", "C", 57, 75e9, 10, 20.0),
     "scaling_40ch": _case("scaling_40ch", "C", 40, 75e9, 1, 16.0),
     "scaling_80ch": _case("scaling_80ch", "C", 80, 75e9, 1, 19.0),
     "scaling_160ch": _case("scaling_160ch", "C+L", 160, 75e9, 1, 22.0),
