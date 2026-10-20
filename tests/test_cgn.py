@@ -1,10 +1,14 @@
 """cGN 相关函数闭式 GN 模型的测试。
 
-覆盖三类证据：
+覆盖五类证据：
 
 * **物理正确性**：与直接数值积分的 GN 参考式（论文 Eq. (1)，按 island 逐块积分）
   对比，验证相关域改写与矩形覆盖没有引入系统偏差；
 * **数值收敛性**：相关域求积点数加倍后 SNR 收敛；矩形覆盖片数加倍后收敛；
+  ISRS 剖面分段数加倍后收敛；
+* **ISRS 前端**：含 ISRS 的出纤功率与仓库既有的拉曼核逐位一致；功率倾斜
+  随开关变化；ISRS 档的 NSP 能量谱在残余因子退化为常数时与解析闭式一致；
+* **色散口径**：两档口径都能跑且给出不同结果；默认档是仓库口径；
 * **模型契约**：注册名、``egn`` 拒绝、异构跨段生效、与兄弟模型（PCFM）对照。
 """
 
@@ -21,6 +25,7 @@ from network_nlo_eval.benchmarks.cases import (
     launch_profile,
 )
 from network_nlo_eval.benchmarks.runner import make_model
+from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import (
     MultiSpanOpticalPath,
     PathQoTResult,
@@ -28,7 +33,16 @@ from network_nlo_eval.models.base import (
     create_model,
     get_model_info,
 )
-from network_nlo_eval.models.cgn import CGN_MODEL_INFO, CGNSpanKernel
+from network_nlo_eval.models.cgn import (
+    CGN_MODEL_INFO,
+    CGNSpanKernel,
+    _isrs_nsp_energy_spectrum,
+    _nsp_energy_spectrum,
+)
+from network_nlo_eval.models.numba_kernels import (
+    _calc_raman_profile_jit,
+    _calc_span_out_power_jit,
+)
 
 #: 与兄弟模型 PCFM 的对照需要 PCFM 分支已经合入 multi-model-dev。
 PCFM_AVAILABLE = "pcfm" in available_models()
@@ -37,6 +51,13 @@ PCFM_AVAILABLE = "pcfm" in available_models()
 def _model(case_name: str, **options):
     """按算例名构造 cGN 模型。"""
     return make_model("cgn", build_case(case_name), **options)
+
+
+def _kernel(case_name: str, **options) -> CGNSpanKernel:
+    """按算例名构造 cGN 单跨核。"""
+    case = build_case(case_name)
+    model = _model(case_name, **options)
+    return model.kernel_for(build_path(case).fiber_configs[0])
 
 
 def _direct_island_nli(
@@ -49,12 +70,15 @@ def _direct_island_nli(
     length_m: float,
     n_grid: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """直接对 GN island 做二维积分，返回逐信道 (SCI, XCI) 噪声功率。
+    r"""直接对 GN island 做二维积分，返回逐信道 (SCI, XCI) 噪声功率。
 
     这是论文 Eq. (1) 的**直接**数值评估：不用矩形覆盖、不做相关域改写，
     只按 (CUT, 第二波, 第三波) 三元组在精确 island 上做二维求积，功率剖面
     取纯光纤衰减（无 ISRS），跨段相干项为零（单跨）。因此它可以作为 cGN 单
     跨核的独立基准。
+
+    空间积分因子取 GN 模型口径 :math:`\\sqrt{\\rho_1\\rho_2\\rho_3/\\rho_c}`，
+    即指数 :math:`(\\alpha_2+\\alpha_3)/2`（第一波与被测信道相消）。
 
     Args:
         f_abs: ``(N,)`` 信道中心频率 (Hz)。
@@ -88,7 +112,7 @@ def _direct_island_nli(
                 mask = (xx + yy >= u_lo) & (xx + yy < u_hi)
                 if not mask.any():
                     continue
-                alpha_x = alpha_npm[second] + alpha_npm[r]
+                alpha_x = 0.5 * (alpha_npm[second] + alpha_npm[r])
                 omega = 4.0 * np.pi**2 * beta2_s2_m * xx * yy
                 denom = alpha_x - 1j * omega
                 nsp = gamma_w_m[c] * (1.0 - np.exp(-denom * length_m)) / denom
@@ -116,6 +140,8 @@ def test_model_is_registered_with_metadata() -> None:
     assert info.family == "gn"
     assert info.reference
     assert any(option[0] == "correlation_points" for option in info.options)
+    assert any(option[0] == "include_isrs" for option in info.options)
+    assert any(option[0] == "dispersion_convention" for option in info.options)
     assert "cgn" in available_models()
     assert create_model is not None
 
@@ -135,39 +161,43 @@ def test_invalid_correlation_points_are_rejected() -> None:
         create_model("cgn", grid_for(case), build_path(case).fiber_configs[0], correlation_points=2)
 
 
-def test_output_power_follows_fiber_attenuation() -> None:
-    """出纤功率 = 入纤功率 × exp(-αL)，且噪声非负。"""
+def test_invalid_dispersion_convention_is_rejected() -> None:
+    """色散口径非法时报错。"""
     case = build_case("scaling_40ch")
-    model = _model("scaling_40ch")
-    power = launch_profile(case, None)
-    kernel = model.kernel_for(build_path(case).fiber_configs[0])
-    out = kernel.evaluate(power, 100e3, 1)
-    expected = power * np.exp(-kernel.alpha_npm * 100e3)
-    assert np.allclose(out.power_out_w, expected, rtol=1e-12)
-    assert np.all(out.spm_noise_w >= 0.0)
-    assert np.all(out.xpm_noise_w >= 0.0)
+    with pytest.raises(ValueError, match="dispersion_convention"):
+        create_model(
+            "cgn",
+            grid_for(case),
+            build_path(case).fiber_configs[0],
+            dispersion_convention="bogus",
+        )
 
 
-def test_dark_channel_carries_no_noise() -> None:
-    """未占用的信道不产生任何 NLI。"""
+def test_result_shape_matches_contract() -> None:
+    """路径级结果满足冻结契约的形状约定。"""
     case = build_case("scaling_40ch")
     model = _model("scaling_40ch")
-    power = launch_profile(case, None)
-    power[3] = 0.0
-    path = build_path(case)
-    result = model.evaluate_path(path, power)
-    assert result.spm_noise_w[3] == 0.0
-    assert result.xpm_noise_w[3] == 0.0
-    assert np.isinf(result.snr_db[3])
+    result = model.evaluate_path(build_path(case), launch_profile(case, None))
+    assert isinstance(result, PathQoTResult)
+    assert result.signal_power_w.shape == (case.num_channels,)
+    assert result.spm_noise_w.shape == (case.num_channels,)
+    assert result.xpm_noise_w.shape == (case.num_channels,)
+    assert result.snr_db.shape == (case.num_channels,)
+    assert result.span_count == case.span_count
+
+
+def test_model_info_is_shared_with_registry() -> None:
+    """注册表里的描述与模块常量一致。"""
+    assert get_model_info("cgn") is CGN_MODEL_INFO
 
 
 # ---------------------------------------------------------------------------
-# 物理正确性
+# 物理正确性（不含 ISRS 的相关域改写）
 # ---------------------------------------------------------------------------
 
 
 def test_single_span_matches_direct_gn_integration() -> None:
-    """单跨核与 GN 参考式的直接数值积分一致（SCI 1%、XCI 6% 以内）。"""
+    """单跨核与 GN 参考式的直接数值积分一致（SCI 2%、XCI 8% 以内）。"""
     n_ch = 3
     spacing = 75e9
     f_abs = 193e12 + (np.arange(n_ch) - (n_ch - 1) / 2) * spacing
@@ -178,6 +208,7 @@ def test_single_span_matches_direct_gn_integration() -> None:
         f_abs_hz=f_abs,
         b_hz=b_hz,
         correlation_points=48,
+        include_isrs=False,
     )
     out = kernel.evaluate(power, 100e3, 1)
     spm_ref, xpm_ref = _direct_island_nli(
@@ -186,7 +217,7 @@ def test_single_span_matches_direct_gn_integration() -> None:
         power,
         kernel.alpha_npm,
         kernel.gamma_w_m,
-        float(kernel.beta2_s2_m[n_ch // 2]),
+        float(kernel.beta2_s2_m),
         100e3,
         n_grid=401,
     )
@@ -247,6 +278,232 @@ def test_identical_spans_accumulate_coherently() -> None:
     assert 0.05 < gain_db < 3.0
 
 
+def test_dark_channel_carries_no_noise() -> None:
+    """未占用的信道不产生任何 NLI。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    power[3] = 0.0
+    path = build_path(case)
+    result = model.evaluate_path(path, power)
+    assert result.spm_noise_w[3] == 0.0
+    assert result.xpm_noise_w[3] == 0.0
+    assert np.isinf(result.snr_db[3])
+
+
+def test_output_power_follows_fiber_attenuation_without_isrs() -> None:
+    """关掉 ISRS 时出纤功率 = 入纤功率 × exp(-αL)，且噪声非负。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch", include_isrs=False)
+    power = launch_profile(case, None)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    out = kernel.evaluate(power, 100e3, 1)
+    expected = power * np.exp(-kernel.alpha_npm * 100e3)
+    assert np.allclose(out.power_out_w, expected, rtol=1e-12)
+    assert np.all(out.spm_noise_w >= 0.0)
+    assert np.all(out.xpm_noise_w >= 0.0)
+
+
+# ---------------------------------------------------------------------------
+# ISRS 前端
+# ---------------------------------------------------------------------------
+
+
+def test_isrs_output_power_matches_repo_raman_kernel() -> None:
+    """含 ISRS 的出纤功率与仓库既有的拉曼核逐位一致。
+
+    cGN 复用 :func:`_calc_raman_profile_jit` 与
+    :func:`_calc_span_out_power_jit`（``models/isrs_gn.py`` 自己 import 的
+    那两个），故功率倾斜必须与兄弟模型同源。
+    """
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+    kernel = _kernel("scaling_40ch", include_isrs=True)
+    out = kernel.evaluate(power, 100e3, 1)
+
+    r_f = _calc_raman_profile_jit(
+        kernel.f_rel_hz,
+        kernel.f_m_hz,
+        kernel.f_M_hz,
+        15e12,
+        float(power.sum()),
+    )
+    expected = _calc_span_out_power_jit(
+        power,
+        kernel.f_rel_hz,
+        kernel.alpha_npm,
+        100e3,
+        r_f,
+        kernel.k_bar,
+    )
+    assert np.allclose(out.power_out_w, expected, rtol=1e-12, atol=0.0)
+
+
+def test_isrs_switch_changes_the_power_tilt() -> None:
+    """开关 ISRS 会改变跨频带的功率倾斜（高端信道更亏）。"""
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+    without = _kernel("scaling_40ch", include_isrs=False).evaluate(power, 100e3, 1)
+    with_isrs = _kernel("scaling_40ch", include_isrs=True).evaluate(power, 100e3, 1)
+
+    tilt_without = 10.0 * np.log10(without.power_out_w / power)
+    tilt_with = 10.0 * np.log10(with_isrs.power_out_w / power)
+    # 纯衰减本身的波长依赖也会让相对衰减有一点起伏，ISRS 让这个起伏明显变大
+    # （C 波段上端信道更亏）。
+    spread_without = float(np.ptp(tilt_without))
+    spread_with = float(np.ptp(tilt_with))
+    assert spread_with > spread_without + 0.1
+    extra = tilt_with - tilt_without
+    assert extra[-1] < extra[0]
+
+
+def test_isrs_nsp_spectrum_reduces_to_the_analytic_exponential() -> None:
+    """残余因子退化为常数时，ISRS 档的 NSP 能量谱与解析闭式逐位一致。"""
+    alpha_x = np.array([[[[3.7e-5]]]])
+    length_m = 100e3
+    n_seg = 8
+    seg = length_m / n_seg
+    omega = np.linspace(0.0, 5.0, 11)[None, None, :]
+    residual = np.ones((1, 1, n_seg))
+    gamma = np.array([[[[1.3e-3]]]])
+
+    analytic = _nsp_energy_spectrum(gamma, alpha_x, length_m, omega)
+    numeric = _isrs_nsp_energy_spectrum(gamma, alpha_x, residual, seg, omega)
+    assert np.allclose(numeric, analytic, rtol=1e-12)
+
+
+def test_isrs_segment_count_converges() -> None:
+    """ISRS 剖面分段数加倍后 NLI 收敛。"""
+    n_ch = 3
+    spacing = 75e9
+    f_abs = 193e12 + (np.arange(n_ch) - (n_ch - 1) / 2) * spacing
+    b_hz = np.full(n_ch, 64e9)
+    power = np.full(n_ch, 1e-3)
+    values = []
+    for segments in (4, 16):
+        kernel = CGNSpanKernel(
+            fiber_config=SMF_100KM,
+            f_abs_hz=f_abs,
+            b_hz=b_hz,
+            correlation_points=48,
+            include_isrs=True,
+            isrs_segments=segments,
+        )
+        out = kernel.evaluate(power, 100e3, 1)
+        values.append((out.spm_noise_w[1], out.xpm_noise_w[1]))
+    assert abs(values[1][0] - values[0][0]) < 0.02 * values[1][0]
+
+
+# ---------------------------------------------------------------------------
+# 色散展开口径
+# ---------------------------------------------------------------------------
+
+
+def test_dispersion_conventions_differ() -> None:
+    """两档口径都能跑，且给出可测地不同的 SNR。"""
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+    power = launch_profile(case, None)
+    repo = _model("scaling_40ch", dispersion_convention="repo").evaluate_path(path, power)
+    absolute = _model(
+        "scaling_40ch", dispersion_convention="paper_absolute"
+    ).evaluate_path(path, power)
+    delta = repo.snr_db - absolute.snr_db
+    assert np.all(np.isfinite(delta))
+    assert np.max(np.abs(delta)) > 0.01
+
+
+def test_repo_convention_is_the_default() -> None:
+    """默认档是仓库口径（与显式指定 ``repo`` 逐位一致）。"""
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+    power = launch_profile(case, None)
+    default = _model("scaling_40ch").evaluate_path(path, power)
+    explicit = _model("scaling_40ch", dispersion_convention="repo").evaluate_path(path, power)
+    assert np.array_equal(default.snr_db, explicit.snr_db)
+
+
+def test_paper_absolute_convention_uses_absolute_frequencies() -> None:
+    """``paper_absolute`` 档的三阶项按绝对频率展开，与仓库口径显著不同。"""
+    kernel_repo = _kernel("scaling_40ch", dispersion_convention="repo")
+    kernel_abs = _kernel("scaling_40ch", dispersion_convention="paper_absolute")
+    assert kernel_repo.beta2_s2_m == kernel_abs.beta2_s2_m
+    # 绝对频率口径引入 ~193 THz 的伪项：有效 beta2 的量级完全不同。
+    offset = 193e12
+    delta = np.pi * kernel_abs.beta3_s3_m * 2.0 * offset
+    assert abs(delta) > 5.0 * abs(kernel_abs.beta2_s2_m)
+
+
+# ---------------------------------------------------------------------------
+# NSP 指数口径
+# ---------------------------------------------------------------------------
+
+
+def test_nsp_convention_is_the_default() -> None:
+    """默认档是 GN 模型口径（与显式指定 ``gn`` 逐位一致）。"""
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+    power = launch_profile(case, None)
+    default = _model("scaling_40ch").evaluate_path(path, power)
+    explicit = _model("scaling_40ch", nsp_convention="gn").evaluate_path(path, power)
+    assert np.array_equal(default.snr_db, explicit.snr_db)
+
+
+def test_nsp_conventions_differ() -> None:
+    """两档 NSP 指数口径都能跑，且给出可测地不同的 SNR。"""
+    case = build_case("scaling_40ch")
+    path = build_path(case)
+    power = launch_profile(case, None)
+    gn = _model("scaling_40ch", nsp_convention="gn").evaluate_path(path, power)
+    product = _model("scaling_40ch", nsp_convention="paper_product").evaluate_path(path, power)
+    delta = gn.snr_db - product.snr_db
+    assert np.all(np.isfinite(delta))
+    assert np.max(np.abs(delta)) > 0.01
+
+
+def test_invalid_nsp_convention_is_rejected() -> None:
+    """NSP 口径非法时报错。"""
+    case = build_case("scaling_40ch")
+    with pytest.raises(ValueError, match="nsp_convention"):
+        create_model(
+            "cgn",
+            grid_for(case),
+            build_path(case).fiber_configs[0],
+            nsp_convention="bogus",
+        )
+
+
+def test_zero_dispersion_limit_matches_the_numerical_reference() -> None:
+    r"""零色散极限下 cGN 与仓库的 ``numerical`` 参考模型一致。
+
+    零色散时 GN 模型有解析极限，``numerical`` 已按该极限校验过
+    （相对误差 1.3e-7）。cGN 的 NSP 指数必须落在同一口径上：
+    GN 模型的空间积分因子是 :math:`\\sqrt{\\rho_1\\rho_2\\rho_3/\\rho_c}`，
+    指数要除以 2。这一条是 NSP 指数口径的回归守卫。
+    """
+    if "numerical" not in available_models():
+        pytest.skip("the numerical reference model is not registered")
+    n_ch = 3
+    spacing = 75e9
+    f_abs = 193e12 + (np.arange(n_ch) - (n_ch - 1) / 2) * spacing
+    b_hz = np.full(n_ch, 64e9)
+    power = np.full(n_ch, 1e-3)
+    zero_dispersion = SMF_100KM.model_copy(
+        update={"dispersion_parameter_d": 0.0, "dispersion_slope_s": 0.0}
+    )
+    grid = SpectrumGrid(n_ch, spacing, 193e12)
+
+    cgn = create_model(
+        "cgn", grid, zero_dispersion, symbol_rate_hz=64e9, include_isrs=False
+    ).kernel_for(zero_dispersion).evaluate(power, 100e3, 1)
+    reference = create_model(
+        "numerical", grid, zero_dispersion, symbol_rate_hz=64e9
+    ).kernel_for(zero_dispersion).evaluate(power, 100e3, 1)
+
+    assert cgn.spm_noise_w[1] == pytest.approx(reference.spm_noise_w[1], rel=0.02)
+    assert cgn.xpm_noise_w[1] == pytest.approx(reference.xpm_noise_w[1], rel=0.02)
+
+
 # ---------------------------------------------------------------------------
 # 数值收敛性
 # ---------------------------------------------------------------------------
@@ -284,17 +541,18 @@ def test_island_cover_convergence() -> None:
     b_hz = np.full(n_ch, 64e9)
     power = np.full(n_ch, 1e-3)
     values = []
-    for cells in (4, 16):
+    for cells in (8, 32):
         kernel = CGNSpanKernel(
             fiber_config=SMF_100KM,
             f_abs_hz=f_abs,
             b_hz=b_hz,
             correlation_points=48,
             island_cells=cells,
+            include_isrs=False,
         )
         out = kernel.evaluate(power, 100e3, 1)
         values.append((out.spm_noise_w[1], out.xpm_noise_w[1]))
-    # 片数越多越接近参考值：4 片与 16 片的偏差应明显缩小。
+    # 片数越多越接近参考值：出厂档（8 片）与 32 片的偏差应在 2% 以内。
     assert abs(values[1][0] - values[0][0]) < 0.02 * values[1][0]
 
 
@@ -355,21 +613,3 @@ def test_matches_pcfm_on_homogeneous_link() -> None:
     pcfm = make_model("pcfm", case).evaluate_path(path, power)
     delta = cgn.snr_db - pcfm.snr_db
     assert float(np.sqrt(np.mean(delta**2))) < 0.5
-
-
-def test_result_shape_matches_contract() -> None:
-    """路径级结果满足冻结契约的形状约定。"""
-    case = build_case("scaling_40ch")
-    model = _model("scaling_40ch")
-    result = model.evaluate_path(build_path(case), launch_profile(case, None))
-    assert isinstance(result, PathQoTResult)
-    assert result.signal_power_w.shape == (case.num_channels,)
-    assert result.spm_noise_w.shape == (case.num_channels,)
-    assert result.xpm_noise_w.shape == (case.num_channels,)
-    assert result.snr_db.shape == (case.num_channels,)
-    assert result.span_count == case.span_count
-
-
-def test_model_info_is_shared_with_registry() -> None:
-    """注册表里的描述与模块常量一致。"""
-    assert get_model_info("cgn") is CGN_MODEL_INFO

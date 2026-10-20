@@ -30,7 +30,9 @@ Eq. (1) GN 参考式            :func:`_island_core` 的组合方式
 Eq. (4) 有效非线性系数        :func:`_nonlinearity_coefficient`
 Eq. (5) 有效二阶色散          :func:`_effective_beta2`
 Eq. (6)/(9) NSP              :func:`_stimulus_attenuation`
-Eq. (16)/(22) NSP 能量谱     :func:`_nsp_energy_spectrum`
+Eq. (16)/(22) NSP 能量谱     :func:`_nsp_energy_spectrum`（无 ISRS）
+                             :func:`_isrs_nsp_energy_spectrum`（含 ISRS）
+ISRS 剖面（论文未给）        :func:`_isrs_span_profile`（复用仓库拉曼核）
 Eq. (24)/(30) SS 一维积分     :func:`_island_core`
 Eq. (27)/(29) 权重 :math:`W`  :func:`_rectangle_weight`
 Eq. (33)/(34) SCI 图元        :func:`_rectangle_weight`（:math:`a'=c'=0` 退化）
@@ -38,17 +40,65 @@ Eq. (53) 异构 XS             未实现（见"已知近似"）
 Eq. (62)/(63)/(64) 相干累加   :func:`_dirichlet_weight`
 ==========================  ==================================================
 
+**ISRS（信道间受激拉曼散射）**
+
+第一轮只取光纤衰减，故 NSP 是解析指数型，跨信道功率倾斜被完全忽略。本轮
+把 ISRS 纳入：
+
+* 单跨出纤功率改用仓库既有的拉曼剖面函数
+  (:func:`~network_nlo_eval.models.numba_kernels._calc_raman_profile_jit` 与
+  :func:`~network_nlo_eval.models.numba_kernels._calc_span_out_power_jit`，
+  即 ``models/isrs_gn.py`` 自己 import 的那两个) 计算，故功率倾斜与 ``ecz``
+  /``isrs_gn`` 同源；
+* NSP 不再是解析指数型：跨段功率剖面按 ``isrs_segments`` 段推进求解，NSP
+  的能量谱 :math:`S_p(\\Omega)` 在 z 域**从头数值积分**（快速衰减与快速相位
+  仍在解析的指数核里，逐段用解析指数变换，避开 z 网格的分辨率瓶颈）。
+
+开关 ``include_isrs`` 保留两种模式，报告给出开/关的对比数字。
+
+**色散展开口径**
+
+``dispersion_convention`` 有两档：
+
+``"repo"``（默认）
+    :math:`\\beta_2` / :math:`\\beta_3` 取**光纤参考波长**处的值，相位里的
+    三阶项按**相对被测信道中心的失谐** :math:`\\Delta f_1 + \\Delta f_2` 展开。
+    这是本仓 ``isrs_gn`` / ``numerical`` 使用的口径。
+
+``"paper_absolute"``
+    三阶项按**绝对频率** :math:`f_1 + f_2` 展开（论文 Eq. (5) 的字面写法）。
+    把 ~193 THz 直接代进 :math:`\\pi\\beta_3(f_1+f_2)` 会引入比
+    :math:`|\\beta_2|` 大约 7 倍的伪项，把 NLI 压到不合理，故**不是默认档**。
+    两档的 :math:`\\beta_2` 都取参考波长处的同一标量，以便隔离"三阶项口径"
+    这一个变量。
+
+**NSP 指数口径**
+
+``nsp_convention`` 有两档：
+
+``"gn"``（默认）
+    GN 模型的空间积分因子是 :math:`\\sqrt{\\rho_1\\rho_2\\rho_3/\\rho_c}`，故
+    NSP 指数要**除以 2**：:math:`\\alpha_x = (\\alpha_2+\\alpha_3)/2`（第一波
+    与被测信道相消）。这与本仓 ``numerical`` 参考模型一致，零色散解析极限下
+    两者吻合到 0.2%。
+
+``"paper_product"``
+    指数不除以 2，即 :math:`\\alpha_x = \\alpha_2+\\alpha_3`（第一轮对论文
+    Eq. (9) 的读法）。该档下相干极限的 :math:`|S_p|` 偏小约
+    :math:`(1+e^{-\\alpha L})^2/4`，零色散极限与 ``numerical`` 差 3.8 倍。
+
 **与冻结基线的关系**
 
 本模型只实现论文的 **GN**（``egn=True`` 抛 ``ValueError``）。它不依赖也不
 import 任何兄弟模型（``pcfm`` / ``ecz`` / ``numerical`` 等），以便并行分支
-互不冲突。
+互不冲突；拉曼物理则直接复用仓库的 numba 内核（见上）。
 
 **已知近似（实现层面，详见交付报告）**
 
-* 跨段功率剖面只取光纤衰减（不含 ISRS / 分布式拉曼），故 NSP 是解析指数型。
 * 第三波因子按论文的"矩形内局部常数"假设处理。
 * 矩形覆盖用阶梯近似（每个 island 切成 ``island_cells`` 片），误差二阶。
+* ISRS 剖面按分段推进求解，段内用仓库的闭式拉曼近似；残余因子按段取常数
+  （中点法，二阶）。
 * 异构链的 XS 项（论文 Eq. (53) 的逐跨对求和）未实现；齐次链走论文
   Eq. (62)-(64) 的闭式相干累加。
 """
@@ -73,6 +123,8 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_beta2_from_d,
     _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
+    _calc_raman_profile_jit,
+    _calc_span_out_power_jit,
 )
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
@@ -96,6 +148,46 @@ DEFAULT_CORRELATION_POINTS = 32
 #: 光纤配置缓存一次）保持可接受。
 DEFAULT_ISLAND_CELLS = 8
 
+#: ISRS 剖面的 z 方向分段数。
+#:
+#: 跨段功率剖面按这个段数推进求解，NSP 的能量谱再在这些段上做阶梯展开。
+#: 阶梯展开是中点法，误差二阶：ISRS 残余因子在整跨上只变化一个量级，
+#: 8 段的几何误差在 1% 以下。段数直接进 NSP 的每点求和代价（热路径已
+#: 预计算，代价只出现在冷启动）。
+DEFAULT_ISRS_SEGMENTS = 8
+
+#: NSP（空间激励剖面）指数口径。
+#:
+#: ``"gn"``（默认）
+#:     GN 模型的空间积分因子是 :math:`\sqrt{\rho_1\rho_2\rho_3/\rho_c}`，
+#:     即指数 :math:`(\alpha_1+\alpha_2+\alpha_3-\alpha_c)/2`；第一波在 CUT
+#:     带内时 :math:`\alpha_x = (\alpha_2+\alpha_3)/2`。这与本仓 ``numerical``
+#:     参考模型一致，零色散解析极限下两者逐位吻合。
+#: ``"paper_product"``
+#:     指数取 :math:`\alpha_1+\alpha_2+\alpha_3-\alpha_c`（不做平方根），
+#:     即第一轮对论文 Eq. (6)/(9) 的读法。它让 :math:`|S_p|` 在相干极限下
+#:     偏小约 :math:`(1+e^{-\alpha L})^2/4`（见交付报告的零色散对照）。
+NSP_CONVENTIONS = ("gn", "paper_product")
+NSP_CONVENTION_DEFAULT = "gn"
+
+#: 色散/三阶色散展开口径。
+#:
+#: ``"repo"``
+#:     :math:`\\beta_2`/\\ :math:`\\beta_3` 取光纤参考波长处的值，三阶项按相对
+#:     被测信道中心的失谐展开。本仓 ``isrs_gn`` / ``numerical`` 的口径，默认档。
+#: ``"paper_absolute"``
+#:     三阶项按绝对频率展开（论文 Eq. (5) 的字面写法）。见模块 docstring 的
+#:     说明：它会引入比 :math:`|\\beta_2|` 大约 7 倍的伪项，故不是默认档。
+DISPERSION_CONVENTIONS = ("repo", "paper_absolute")
+DISPERSION_CONVENTION_DEFAULT = "repo"
+
+#: 拉曼功率转移系数 ``r_f`` 计算所用的"共信道带宽" (Hz)。
+#:
+#: 与 ``models/isrs_gn.py`` 的 ``delta_f_co_hz`` 同值（石英光纤 SRS 增益谱的
+#: 截断频率）。该值决定 ``r_f`` 在频带内/边沿的分支，故必须与兄弟模型一致，
+#: 否则功率倾斜对不上。
+DELTA_F_CO_HZ = 15e12
+
 #: 相关域积分的截断因子（以 :math:`\\alpha_x / 4\\pi^2 |\\beta_2|` 为尺度）。
 #:
 #: NSP 能量谱在 :math:`|\\Omega| \\gg \\alpha_x` 处按 :math:`1/\\Omega^2` 衰减，
@@ -108,12 +200,15 @@ _CHUNK_ELEMENTS = 4_000_000
 
 CGN_MODEL_INFO = ModelInfo(
     name="cgn",
-    summary="Correlation-based closed-form GN for general multi-span links.",
+    summary="Correlation-based closed-form GN with ISRS for general multi-span links.",
     family="gn",
     reference="Jiang, Gao, Poggiolini, 'An Efficient Correlation-based Evaluation of the "
     "GN-Model for General Multi-Span Optical Systems', JLT submitted",
     options=(
         ("correlation_points", "Quadrature nodes of the 1-D correlation (frequency-product) integral."),
+        ("include_isrs", "Include the inter-channel Raman (ISRS) power tilt in the NSP."),
+        ("dispersion_convention", "'repo' | 'paper_absolute'; beta3 expansion convention."),
+        ("nsp_convention", "'gn' | 'paper_product'; NSP exponent convention."),
     ),
 )
 
@@ -138,10 +233,12 @@ def _nonlinearity_coefficient(lambdas_m: NDArrayFloat, n2_m2_w: float, a_eff_m2:
 
 
 def _effective_beta2(
-    beta2: NDArrayFloat,
+    beta2: float,
     beta3: float,
     x_offsets: NDArrayFloat,
     y_offsets: NDArrayFloat,
+    f_center_hz: NDArrayFloat | None = None,
+    convention: str = DISPERSION_CONVENTION_DEFAULT,
 ) -> NDArrayFloat:
     r"""有效二阶色散 :math:`\\beta_{2,\\mathrm{eff}}` (s²/m)。
 
@@ -152,27 +249,61 @@ def _effective_beta2(
         \\beta_{2,\\mathrm{eff}} = \\beta_2 + \\pi \\beta_3 (f_1 + f_2 - 2 f_c) .
 
     ``x_offsets`` / ``y_offsets`` 是矩形中心相对观测频率 :math:`f_c` 的偏移
-    (Hz)，故 :math:`f_1+f_2-2f_c` 即两者之和。:math:`\\beta_2` 与
-    :math:`\\beta_3` 取**被测信道波长**处的光纤色散（局部口径）：论文把公式
-    按观测频率 :math:`f_c` 展开，:math:`\\beta_2` 必须是该频率处的局部值，
-    否则波长依赖会被重复计入。四阶及以上项本实现忽略。
+    (Hz)，:math:`f_1 = f_c + x`、:math:`f_2 = f_c + y`。四阶及以上项本实现忽略。
+
+    两档口径只差三阶项的展开原点：
+
+    ``"repo"``（默认）
+        :math:`\\beta_2` / :math:`\\beta_3` 取**光纤参考波长**处的标量，三阶项
+        用相对被测信道中心的失谐 :math:`x + y`。这是本仓 ``isrs_gn`` /
+        ``numerical`` / ``route`` 共同建立的口径。
+
+    ``"paper_absolute"``
+        三阶项用**绝对频率** :math:`f_1 + f_2 = 2 f_c + x + y`（论文 Eq. (5) 的
+        字面写法）。把 ~193 THz 直接代进 :math:`\\pi\\beta_3(f_1+f_2)` 会引入
+        比 :math:`|\\beta_2|` 大约 7 倍的伪项，把 NLI 压到不合理，故不默认。
 
     Args:
-        beta2: 被测信道处的二阶色散 (s²/m)，``(..., )`` 逐信道。
-        beta3: 三阶色散 (s³/m)。
+        beta2: 参考波长处的二阶色散 (s²/m)，两档口径共用同一个标量。
+        beta3: 参考波长处的三阶色散 (s³/m)。
         x_offsets: ``(...,)`` 第一波频率偏移 (Hz)。
         y_offsets: ``(...,)`` 第二波频率偏移 (Hz)。
+        f_center_hz: ``(...,)`` 被测信道中心频率 (Hz)；``"paper_absolute"``
+            档需要它来还原绝对频率。
+        convention: 见 :data:`DISPERSION_CONVENTIONS`。
 
     Returns
     -------
         与输入同形的有效二阶色散 (s²/m)。
+
+    Raises
+    ------
+        ValueError: 口径取值非法，或 ``"paper_absolute"`` 档缺
+            ``f_center_hz``。
     """
-    return np.asarray(beta2, dtype=np.float64) + np.pi * beta3 * (
-        np.asarray(x_offsets) + np.asarray(y_offsets)
+    if convention not in DISPERSION_CONVENTIONS:
+        raise ValueError(
+            f"dispersion convention must be one of {DISPERSION_CONVENTIONS}, got {convention!r}."
+        )
+    x_offsets = np.asarray(x_offsets, dtype=np.float64)
+    y_offsets = np.asarray(y_offsets, dtype=np.float64)
+    if convention == "repo":
+        # 相对被测信道中心的失谐：f1 + f2 - 2 f_c = x + y。
+        return float(beta2) + np.pi * float(beta3) * (x_offsets + y_offsets)
+    if f_center_hz is None:
+        raise ValueError("the 'paper_absolute' dispersion convention needs f_center_hz.")
+    # 绝对频率：f1 + f2 = 2 f_c + x + y。
+    return float(beta2) + np.pi * float(beta3) * (
+        2.0 * np.asarray(f_center_hz, dtype=np.float64) + x_offsets + y_offsets
     )
 
 
-def _stimulus_attenuation(alpha_npm: NDArrayFloat, second: NDArrayFloat, third: NDArrayFloat) -> NDArrayFloat:
+def _stimulus_attenuation(
+    alpha_npm: NDArrayFloat,
+    second: NDArrayFloat,
+    third: NDArrayFloat,
+    convention: str = NSP_CONVENTION_DEFAULT,
+) -> NDArrayFloat:
     r"""NSP 的指数衰减率 :math:`\\alpha_x` (Np/m)。
 
     论文 Eq. (6)/(9)：归一化 SPP 只取光纤衰减，故
@@ -182,19 +313,40 @@ def _stimulus_attenuation(alpha_npm: NDArrayFloat, second: NDArrayFloat, third: 
 
         \\alpha_x = \\alpha_1 + \\alpha_2 + \\alpha_3 - \\alpha_c .
 
-    第一波与被测信道同属 CUT，故 :math:`\\alpha_x = \\alpha_2 + \\alpha_3`。
+    第一波与被测信道同属 CUT，故第一波项与被测信道项相消。
+
+    两档口径（见 :data:`NSP_CONVENTIONS`）：
+
+    ``"gn"``（默认）
+        GN 模型的空间积分因子是 :math:`\\sqrt{\\rho_1\\rho_2\\rho_3/\\rho_c}`，
+        指数要**除以 2**：:math:`\\alpha_x = (\\alpha_2+\\alpha_3)/2`。这与本仓
+        ``numerical`` 参考模型一致。
+
+    ``"paper_product"``
+        指数不除以 2（第一轮对论文 Eq. (9) 的读法）。
+
     SPP 是**归一化**量，故 NSP 与绝对功率无关（绝对功率进入 PSD 因子）。
 
     Args:
         alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
         second: 第二波信道索引。
         third: 第三波信道索引。
+        convention: 见 :data:`NSP_CONVENTIONS`。
 
     Returns
     -------
         ``(...,)`` 指数衰减率 (Np/m)。
+
+    Raises
+    ------
+        ValueError: 口径取值非法。
     """
-    return np.asarray(alpha_npm)[second] + np.asarray(alpha_npm)[third]
+    if convention not in NSP_CONVENTIONS:
+        raise ValueError(f"nsp convention must be one of {NSP_CONVENTIONS}, got {convention!r}.")
+    total = np.asarray(alpha_npm)[second] + np.asarray(alpha_npm)[third]
+    if convention == "gn":
+        return 0.5 * total
+    return total
 
 
 def _nsp_energy_spectrum(
@@ -239,6 +391,165 @@ def _nsp_energy_spectrum(
     numerator = 1.0 - 2.0 * decay * np.cos(omega * length_m) + decay * decay
     denominator = alpha_x * alpha_x + omega * omega
     return np.asarray(gamma_w_m, dtype=np.float64) ** 2 * numerator / denominator
+
+
+def _isrs_span_profile(
+    f_rel_hz: NDArrayFloat,
+    alpha_npm: NDArrayFloat,
+    power_in_w: NDArrayFloat,
+    f_m_hz: float,
+    f_M_hz: float,
+    k_bar: float,
+    length_m: float,
+    n_segments: int,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    r"""ISRS 扰动下的跨段功率剖面（分段推进）。
+
+    逐段调用仓库既有的拉曼剖面函数
+    :func:`~network_nlo_eval.models.numba_kernels._calc_raman_profile_jit` 与
+    :func:`~network_nlo_eval.models.numba_kernels._calc_span_out_power_jit`
+    （即 ``models/isrs_gn.py`` 自己 import 的那两个），把跨段切成
+    ``n_segments`` 段推进，得到每个信道在段中点处的**归一化 ISRS 增益因子**
+
+    .. math::
+
+        g_i(z) = \frac{P_i(z)}{P_i(0)} e^{\alpha_i z} ,
+
+    以及整跨的有效 ISRS 衰减率
+
+    .. math::
+
+        s_i = -\frac{1}{L}\ln g_i(L) .
+
+    Args:
+        f_rel_hz: ``(N,)`` 相对频率 (Hz)。
+        alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
+        power_in_w: ``(N,)`` 入纤功率 (W)。
+        f_m_hz: 频带下边界 (Hz，相对频率)。
+        f_M_hz: 频带上边界 (Hz，相对频率)。
+        k_bar: 泵浦系数（分布式拉曼泵浦功率占比，上限 1）。
+        length_m: 跨段长度 (m)。
+        n_segments: 分段数。
+
+    Returns
+    -------
+        ``(z_mid, gain, rate)``：``z_mid`` 是 ``(n_segments,)`` 段中点位置 (m)，
+        ``gain`` 是 ``(n_segments, N)`` 归一化 ISRS 增益因子，``rate`` 是
+        ``(N,)`` 有效 ISRS 衰减率 (Np/m)。
+    """
+    n_seg = max(1, int(n_segments))
+    dz = float(length_m) / n_seg
+    z_mid = (np.arange(n_seg, dtype=np.float64) + 0.5) * dz
+
+    power = np.array(power_in_w, dtype=np.float64, copy=True)
+    launch = np.array(power_in_w, dtype=np.float64, copy=True)
+    active = launch > 0.0
+    safe_launch = np.where(active, launch, 1.0)
+
+    # 推进步长取粗段长的一半：这样每个粗段**中点**处正好有一个采样点，
+    # 归一化增益因子 g(z) = rho(z) e^{alpha z} 才是在中点位置上取到的
+    # （用段末功率配段中点的 e^{alpha z} 会把纯衰减算重，g 直接塌成 0）。
+    n_sub = 2 * n_seg
+    dz_sub = float(length_m) / n_sub
+    gain = np.ones((n_seg, launch.size), dtype=np.float64)
+    for index in range(n_sub):
+        total_w = float(power.sum())
+        r_f = _calc_raman_profile_jit(
+            np.ascontiguousarray(f_rel_hz, dtype=np.float64),
+            float(f_m_hz),
+            float(f_M_hz),
+            DELTA_F_CO_HZ,
+            total_w,
+        )
+        power = _calc_span_out_power_jit(
+            np.ascontiguousarray(power, dtype=np.float64),
+            np.ascontiguousarray(f_rel_hz, dtype=np.float64),
+            np.ascontiguousarray(alpha_npm, dtype=np.float64),
+            dz_sub,
+            np.ascontiguousarray(r_f, dtype=np.float64),
+            float(k_bar),
+        )
+        if index % 2 == 0:
+            # 第 index 个子步（偶数）之后的位置是 (index+1) dz_sub = 粗段中点。
+            coarse = index // 2
+            gain[coarse] = (power / safe_launch) * np.exp(alpha_npm * z_mid[coarse])
+    gain[:, ~active] = 1.0
+
+    end_gain = (power / safe_launch) * np.exp(alpha_npm * float(length_m))
+    end_gain = np.where(active & (end_gain > 0.0), end_gain, 1.0)
+    rate = -np.log(end_gain) / float(length_m)
+    rate = np.where(active, rate, 0.0)
+    return z_mid, gain, rate
+
+
+def _isrs_nsp_energy_spectrum(
+    gamma_w_m: NDArrayFloat,
+    alpha_x_npm: NDArrayFloat,
+    residual: NDArrayFloat,
+    seg_length_m: float,
+    omega_rad_m: NDArrayFloat,
+) -> NDArrayFloat:
+    r"""含 ISRS 的 NSP 能量谱 :math:`S_p(\Omega)` (1/W²)。
+
+    NSP 拆成"解析指数部分 × 慢变残余"：
+
+    .. math::
+
+        \mathrm{NSP}(z) = e^{-\alpha_x' z} \, r(z), \qquad
+        \alpha_x' = \alpha_x + s_2 + s_3 ,
+
+    其中 :math:`s_i` 是参与波的 ISRS 有效衰减率，:math:`r(z)` 是残余因子
+    （ISRS 速率沿跨段不是常数，故 NSP 不再是解析指数型）。
+
+    :math:`r(z)` 按段取常数（中点值），而指数部分在段内用**解析**指数变换：
+
+    .. math::
+
+        \int_{z_m}^{z_m + \Delta} e^{-(\alpha_x' - j\Omega) z}\, \mathrm{d}z
+        = \frac{e^{-s z_m}\left(1 - e^{-s\Delta}\right)}{s},
+        \qquad s = \alpha_x' - j\Omega .
+
+    这样既拿到"从头数值积分"的 NSP，又不必用 z 网格去解析
+    :math:`\Omega L \sim 10^4` 的快速相位（那需要 10^5 级别的采样点）。
+
+    Args:
+        gamma_w_m: 非线性系数 (1/(W·m))。
+        alpha_x_npm: ``(...,)`` 含 ISRS 的 NSP 衰减率 (Np/m)。
+        residual: ``(..., n_segments)`` 残余因子（段中点取值）。
+        seg_length_m: 段长 (m)。
+        omega_rad_m: ``(...,)`` 相位失配 :math:`\Omega` (rad/m)。
+
+    Returns
+    -------
+        与 ``omega_rad_m`` 同形的能量谱 (1/W²)。
+    """
+    alpha_x = np.asarray(alpha_x_npm, dtype=np.float64)
+    omega = np.asarray(omega_rad_m, dtype=np.float64)
+    residual = np.asarray(residual, dtype=np.float64)
+
+    # s = alpha_x - j omega；每段的比值 w = e^{-s Δ}。
+    # 复指数在这里是热点（每点都要一次），改用实指数 + 实三角函数：
+    #   e^{-s Δ} = e^{-alpha_x Δ} (cos(ωΔ) + j sin(ωΔ))
+    # 分子 1 - w 用 expm1 / 1-cos 的稳定形式，避免小 |s Δ| 时的相消。
+    decay = float(seg_length_m)
+    exponent_real = alpha_x * decay
+    phase = omega * decay
+    cos_phase = np.cos(phase)
+    sin_phase = np.sin(phase)
+    magnitude = np.exp(-exponent_real)
+    w = magnitude * (cos_phase + 1j * sin_phase)
+    one_minus_w = (-np.expm1(-exponent_real) + magnitude * (1.0 - cos_phase)) - 1j * (
+        magnitude * sin_phase
+    )
+
+    accumulator = np.zeros_like(w)
+    for index in range(residual.shape[-1] - 1, -1, -1):
+        accumulator *= w
+        accumulator += residual[..., index][..., None, None]
+    segment = one_minus_w / (alpha_x - 1j * omega)
+    amplitude = segment * accumulator
+    gamma = np.asarray(gamma_w_m, dtype=np.float64)
+    return gamma**2 * (amplitude.real**2 + amplitude.imag**2)
 
 
 def _rectangle_weight(
@@ -478,13 +789,19 @@ def _island_core(
     b_hz: NDArrayFloat,
     alpha_npm: NDArrayFloat,
     gamma_w_m: NDArrayFloat,
-    beta2_s2_m: NDArrayFloat,
+    beta2_s2_m: float,
     beta3_s3_m: float,
+    dispersion_convention: str,
+    nsp_convention: str,
     length_m: float,
     r_index: NDArrayFloat,
     correlation_points: int,
     island_cells: int,
     n_coherent_spans: int,
+    isrs_gain: NDArrayFloat | None = None,
+    isrs_rate: NDArrayFloat | None = None,
+    isrs_z_mid: NDArrayFloat | None = None,
+    isrs_seg_length_m: float = 0.0,
 ) -> NDArrayFloat:
     r"""每个 (CUT, 第二波, 第三波) 三元组的相关系数核心积分。
 
@@ -492,13 +809,17 @@ def _island_core(
 
     .. math::
 
-        K^{(m,m)} = \\int_{a'c'}^{b'd'} S_p(B^2 \\xi) W(\\xi) \\, \\mathrm{d}\\xi ,
+        K^{(m,m)} = \int_{a'c'}^{b'd'} S_p(B^2 \xi) W(\xi) \, \mathrm{d}\xi ,
 
     其中积分域是 island 的矩形覆盖，:math:`S_p` 是 NSP 能量谱
     （论文 Eq. (22)），:math:`W` 是矩形权重（论文 Eq. (29)）。
 
+    ``isrs_gain`` 非空时走含 ISRS 的 NSP：NSP 的衰减率加上参与波的 ISRS
+    有效衰减率，残余因子按段展开后逐段做解析指数变换（见
+    :func:`_isrs_nsp_energy_spectrum`）。
+
     齐次链时按论文 Eq. (62)-(64) 乘上相干累加核
-    :math:`[\\sin(N_s\\theta/2)/\\sin(\\theta/2)]^2` 并除以跨段数，使路由层
+    :math:`[\sin(N_s\theta/2)/\sin(\theta/2)]^2` 并除以跨段数，使路由层
     逐跨相加后还原总相干结果。
 
     Args:
@@ -506,13 +827,20 @@ def _island_core(
         b_hz: ``(N,)`` 信道带宽 (Hz)。
         alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
         gamma_w_m: ``(N,)`` 逐信道非线性系数 (1/(W·m))。
-        beta2_s2_m: ``(N,)`` 逐信道二阶色散 (s²/m)。
-        beta3_s3_m: 三阶色散 (s³/m)。
+        beta2_s2_m: 参考波长处的二阶色散 (s²/m)。
+        beta3_s3_m: 参考波长处的三阶色散 (s³/m)。
+        dispersion_convention: 见 :data:`DISPERSION_CONVENTIONS`。
+        nsp_convention: 见 :data:`NSP_CONVENTIONS`。
         length_m: 跨段长度 (m)。
         r_index: ``(N, N, J)`` 第三波信道索引（-1 表示空槽）。
         correlation_points: 相关域求积点数。
         island_cells: 每个 island 的矩形覆盖片数。
         n_coherent_spans: 相干累加的跨段数（1 表示非相干）。
+        isrs_gain: ``(n_segments, N)`` 逐段中点的归一化 ISRS 增益因子；
+            ``None`` 表示不含 ISRS。
+        isrs_rate: ``(N,)`` 逐信道有效 ISRS 衰减率 (Np/m)。
+        isrs_z_mid: ``(n_segments,)`` 段中点位置 (m)。
+        isrs_seg_length_m: 段长 (m)。
 
     Returns
     -------
@@ -534,14 +862,21 @@ def _island_core(
     u1 = f_abs_hz[third] - f_abs_hz[:, None, None] - 0.5 * b_hz[third]
     u2 = f_abs_hz[third] - f_abs_hz[:, None, None] + 0.5 * b_hz[third]
     second = np.broadcast_to(np.arange(n_ch, dtype=np.int64)[None, :, None], r_index.shape)
-    alpha_x = _stimulus_attenuation(alpha_npm, second, third)
+    alpha_x = _stimulus_attenuation(alpha_npm, second, third, convention=nsp_convention)
+
+    use_isrs = isrs_gain is not None and isrs_rate is not None
+    if use_isrs:
+        # NSP 的衰减率加上两束参与波的 ISRS 有效衰减率；口径与纯衰减部分一致
+        # （"gn" 档下 ISRS 项同样要除以 2）。
+        scale = 0.5 if nsp_convention == "gn" else 1.0
+        alpha_x = alpha_x + scale * (isrs_rate[second] + isrs_rate[third])
 
     # 分块处理 CUT 信道，避免 (N, N, J, cells, 4, points) 的巨型临时数组。
     per_c = max(1, n_ch * n_slots * island_cells * 4 * max(correlation_points, 1))
     chunk = max(1, min(n_ch, int(_CHUNK_ELEMENTS // per_c)))
 
     for start in range(0, n_ch, chunk):
-        stop = min(n_ch, start + chunk)
+        stop = min(start + chunk, n_ch)
         idx = slice(start, stop)
         xa, xb, ylo, yhi = _island_cover(
             x1[idx],
@@ -556,8 +891,27 @@ def _island_core(
         y_center = 0.5 * (ylo + yhi)
         gamma_c = gamma_w_m[idx].reshape(-1, 1, 1, 1, 1)
         alpha_c = alpha_x[idx]
-        beta2_c = beta2_s2_m[idx].reshape(-1, 1, 1, 1)
-        beta2_eff = _effective_beta2(beta2_c, beta3_s3_m, x_center, y_center)
+        beta2_eff = _effective_beta2(
+            beta2_s2_m,
+            beta3_s3_m,
+            x_center,
+            y_center,
+            f_center_hz=f_abs_hz[idx].reshape(-1, 1, 1, 1),
+            convention=dispersion_convention,
+        )
+
+        residual_view = None
+        if use_isrs:
+            # 残余因子 r(z)：逐段中点的 ISRS 增益之积，乘回解析指数部分。
+            residual = np.empty((stop - start, n_ch, n_slots, isrs_gain.shape[0]), dtype=np.float64)
+            third_chunk = third[idx]
+            rate_second = isrs_rate[second[idx]]
+            for seg in range(isrs_gain.shape[0]):
+                gain_seg = isrs_gain[seg]
+                residual[..., seg] = (gain_seg[None, :, None] * gain_seg[third_chunk]) * np.exp(
+                    (rate_second + isrs_rate[third_chunk]) * isrs_z_mid[seg]
+                )
+            residual_view = residual
 
         acc = np.zeros((stop - start, n_ch, n_slots), dtype=np.float64)
         for a, b, c, d in _quadrant_pieces(xa, xb, ylo, yhi):
@@ -572,7 +926,18 @@ def _island_core(
 
             nodes, weights = _xi_quadrature(xi_min, xi_end, correlation_points)
             omega = 4.0 * np.pi**2 * beta2_eff[..., None] * nodes
-            spectrum = _nsp_energy_spectrum(gamma_c, alpha_c[..., None, None], length_m, omega)
+            if residual_view is None:
+                spectrum = _nsp_energy_spectrum(
+                    gamma_c, alpha_c[..., None, None], length_m, omega
+                )
+            else:
+                spectrum = _isrs_nsp_energy_spectrum(
+                    gamma_c,
+                    alpha_c[..., None, None],
+                    residual_view,
+                    isrs_seg_length_m,
+                    omega,
+                )
             weight = _rectangle_weight(a[..., None], b[..., None], c[..., None], d[..., None], nodes)
             integrand = spectrum * weight * weights
             if n_coherent_spans > 1:
@@ -595,12 +960,20 @@ class CGNSpanKernel:
     核持有逐信道常量（衰减、非线性系数、色散）与**逐跨段长度缓存**的
     相关系数核心积分矩阵 ``(N, N, J)``。热路径只剩矩阵-向量乘。
 
+    含 ISRS 时，核心积分矩阵还依赖**入纤功率**（拉曼功率倾斜的速率正比于
+    总功率），故缓存键带上功率指纹；不含 ISRS 时核心与功率无关，缓存键
+    只有跨段长度与相干跨段数。
+
     Args:
         fiber_config: 该跨段的光纤配置。
         f_abs_hz: ``(N,)`` 信道中心频率 (Hz)。
         b_hz: ``(N,)`` 信道带宽 (Hz)。
-        correlation_points: 相关域求积点数。
+        correlation_points: 相关域一维求积点数。
         island_cells: 每个 island 的矩形覆盖片数。
+        include_isrs: 是否把 ISRS 功率倾斜纳入 SPP / NSP。
+        dispersion_convention: 见 :data:`DISPERSION_CONVENTIONS`。
+        isrs_segments: ISRS 剖面的 z 方向分段数。
+        band_center_hz: 频带中心 (Hz)；``None`` 时取信道中心频率的均值。
     """
 
     def __init__(
@@ -611,17 +984,33 @@ class CGNSpanKernel:
         b_hz: NDArrayFloat,
         correlation_points: int = DEFAULT_CORRELATION_POINTS,
         island_cells: int = DEFAULT_ISLAND_CELLS,
+        include_isrs: bool = True,
+        dispersion_convention: str = DISPERSION_CONVENTION_DEFAULT,
+        nsp_convention: str = NSP_CONVENTION_DEFAULT,
+        isrs_segments: int = DEFAULT_ISRS_SEGMENTS,
+        band_center_hz: float | None = None,
     ) -> None:
         """准备逐信道常量。
 
         Raises
         ------
-            ValueError: 求积点数或切片数不是正整数。
+            ValueError: 求积点数或切片数不是正整数，或色散口径非法。
         """
         if correlation_points < 4:
             raise ValueError(f"correlation_points must be >= 4, got {correlation_points}.")
         if island_cells < 1:
             raise ValueError(f"island_cells must be >= 1, got {island_cells}.")
+        if isrs_segments < 1:
+            raise ValueError(f"isrs_segments must be >= 1, got {isrs_segments}.")
+        if dispersion_convention not in DISPERSION_CONVENTIONS:
+            raise ValueError(
+                f"dispersion_convention must be one of {DISPERSION_CONVENTIONS}, "
+                f"got {dispersion_convention!r}."
+            )
+        if nsp_convention not in NSP_CONVENTIONS:
+            raise ValueError(
+                f"nsp_convention must be one of {NSP_CONVENTIONS}, got {nsp_convention!r}."
+            )
 
         self.fiber_config = fiber_config
         self.f_abs_hz = np.ascontiguousarray(f_abs_hz, dtype=np.float64)
@@ -629,6 +1018,10 @@ class CGNSpanKernel:
         self.n_nodes = int(self.f_abs_hz.shape[0])
         self.correlation_points = int(correlation_points)
         self.island_cells = int(island_cells)
+        self.include_isrs = bool(include_isrs)
+        self.dispersion_convention = str(dispersion_convention)
+        self.nsp_convention = str(nsp_convention)
+        self.isrs_segments = int(isrs_segments)
 
         lambdas_m = C_LIGHT / self.f_abs_hz
         if fiber_config.use_attenuation_polynomial:
@@ -654,10 +1047,9 @@ class CGNSpanKernel:
             a_eff_m2,
         )
         ref_lambda_m = fiber_config.reference_wavelength_nm * 1e-9
-        # 论文 Eq. (5) 按观测频率展开，故 beta_2 / beta_3 取**逐信道**的局部值。
-        self.beta2_s2_m = np.array(
-            [_calc_beta2_from_d(fiber_config.dispersion_parameter_d, lam) for lam in lambdas_m],
-            dtype=np.float64,
+        # 仓库口径：beta_2 / beta_3 取**光纤参考波长**处的标量，两档口径共用。
+        self.beta2_s2_m = float(
+            _calc_beta2_from_d(fiber_config.dispersion_parameter_d, ref_lambda_m)
         )
         self.beta3_s3_m = float(
             _calc_beta3_from_s_d(
@@ -666,31 +1058,133 @@ class CGNSpanKernel:
                 ref_lambda_m,
             )
         )
+
+        # ISRS 前端的几何：相对频率与频带边界（与 models/isrs_gn.py 同口径）。
+        center = float(np.mean(self.f_abs_hz)) if band_center_hz is None else float(band_center_hz)
+        self.band_center_hz = center
+        self.f_rel_hz = np.ascontiguousarray(self.f_abs_hz - center, dtype=np.float64)
+        self.f_m_hz = float(np.min(self.f_abs_hz - 0.5 * self.b_hz) - center)
+        self.f_M_hz = float(np.max(self.f_abs_hz + 0.5 * self.b_hz) - center)
+        self.k_bar = min(sum(pump.power_w for pump in fiber_config.raman_pumps), 1.0)
+
         self._r_index, self._n_slots = _third_wave_slots(self.f_abs_hz, self.b_hz)
         # 第三波槽位的 PSD 取值索引；空槽指向一个恒为 0 的哑元。
         self._r_index_padded = np.where(self._r_index >= 0, self._r_index + 1, 0)
         #: 相干累加的跨段数；由模型在每次路径评估前写入。
         self.n_coherent_spans = 1
-        self._core_cache: dict[tuple[float, int], NDArrayFloat] = {}
+        self._core_cache: dict[tuple, tuple[NDArrayFloat, NDArrayFloat]] = {}
 
-    def _core_for(self, span_length_m: float, n_coherent_spans: int) -> NDArrayFloat:
-        """该跨段长度下的核心积分矩阵（按长度与相干跨段数缓存）。"""
-        key = (float(span_length_m), int(n_coherent_spans))
-        cached = self._core_cache.get(key)
-        if cached is None:
-            cached = _island_core(
+    def _power_signature(self, power: NDArrayFloat) -> bytes | None:
+        """核心积分矩阵的功率指纹。
+
+        含 ISRS 时 NSP 依赖入纤功率（拉曼速率正比于总功率），故缓存键必须
+        带上功率；不含 ISRS 时返回 ``None``，缓存只按跨段长度区分。
+
+        指纹做**相对量化**（1e-6）：逐跨的 EDFA 逐比特地还原入纤功率，浮点
+        往返会带来 ~1e-16 的相对差，不量化的话每个跨段都会重建核心矩阵
+        （10 跨链的冷启动时间因此差一个数量级）。1e-6 的相对差对 NLI 的
+        影响在 1e-5 dB 量级，可以忽略。
+        """
+        if not self.include_isrs:
+            return None
+        values = np.asarray(power, dtype=np.float64)
+        scale = float(np.max(np.abs(values))) if values.size else 0.0
+        if scale <= 0.0:
+            return b"all-zero"
+        return np.round(values / scale, 6).tobytes()
+
+    def _build_span_data(
+        self,
+        power: NDArrayFloat,
+        span_length_m: float,
+        n_coherent_spans: int,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """构造该跨段的核心积分矩阵与出纤功率。"""
+        if self.include_isrs:
+            total_w = float(power.sum())
+            r_f = _calc_raman_profile_jit(
+                self.f_rel_hz,
+                self.f_m_hz,
+                self.f_M_hz,
+                DELTA_F_CO_HZ,
+                total_w,
+            )
+            power_out = _calc_span_out_power_jit(
+                np.ascontiguousarray(power, dtype=np.float64),
+                self.f_rel_hz,
+                np.ascontiguousarray(self.alpha_npm, dtype=np.float64),
+                float(span_length_m),
+                np.ascontiguousarray(r_f, dtype=np.float64),
+                float(self.k_bar),
+            )
+            z_mid, gain, rate = _isrs_span_profile(
+                self.f_rel_hz,
+                self.alpha_npm,
+                power,
+                self.f_m_hz,
+                self.f_M_hz,
+                self.k_bar,
+                float(span_length_m),
+                self.isrs_segments,
+            )
+            core = _island_core(
                 f_abs_hz=self.f_abs_hz,
                 b_hz=self.b_hz,
                 alpha_npm=self.alpha_npm,
                 gamma_w_m=self.gamma_w_m,
                 beta2_s2_m=self.beta2_s2_m,
                 beta3_s3_m=self.beta3_s3_m,
+                dispersion_convention=self.dispersion_convention,
+                nsp_convention=self.nsp_convention,
                 length_m=float(span_length_m),
                 r_index=self._r_index,
                 correlation_points=self.correlation_points,
                 island_cells=self.island_cells,
                 n_coherent_spans=int(n_coherent_spans),
+                isrs_gain=gain,
+                isrs_rate=rate,
+                isrs_z_mid=z_mid,
+                isrs_seg_length_m=float(span_length_m) / float(self.isrs_segments),
             )
+            return core, power_out
+
+        power_out = power * np.exp(-self.alpha_npm * float(span_length_m))
+        core = _island_core(
+            f_abs_hz=self.f_abs_hz,
+            b_hz=self.b_hz,
+            alpha_npm=self.alpha_npm,
+            gamma_w_m=self.gamma_w_m,
+            beta2_s2_m=self.beta2_s2_m,
+            beta3_s3_m=self.beta3_s3_m,
+            dispersion_convention=self.dispersion_convention,
+            nsp_convention=self.nsp_convention,
+            length_m=float(span_length_m),
+            r_index=self._r_index,
+            correlation_points=self.correlation_points,
+            island_cells=self.island_cells,
+            n_coherent_spans=int(n_coherent_spans),
+        )
+        return core, power_out
+
+    def _core_for(
+        self,
+        power: NDArrayFloat,
+        span_length_m: float,
+        n_coherent_spans: int,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """该跨段的核心积分矩阵与出纤功率（按长度、相干跨段数与功率缓存）。"""
+        key = (
+            float(span_length_m),
+            int(n_coherent_spans),
+            self._power_signature(power),
+        )
+        cached = self._core_cache.get(key)
+        if cached is None:
+            cached = self._build_span_data(power, span_length_m, n_coherent_spans)
+            if len(self._core_cache) >= 4:
+                # 功率扫描会不断产生新键；只保留最近的一批，避免缓存无界增长
+                #（每个核心矩阵是 (N, N, J) 的 double 数组）。
+                self._core_cache.pop(next(iter(self._core_cache)))
             self._core_cache[key] = cached
         return cached
 
@@ -721,7 +1215,7 @@ class CGNSpanKernel:
         if span_length_m <= 0.0:
             raise ValueError(f"span_length_m must be positive, got {span_length_m}.")
 
-        core = self._core_for(span_length_m, self.n_coherent_spans)
+        core, power_out = self._core_for(power, span_length_m, self.n_coherent_spans)
         active = power > 0.0
         g_psd = np.where(active, power / self.b_hz, 0.0)
         # 第三波 PSD：(N, N, J)。槽位索引已 +1，哑元固定在 0 号位。
@@ -743,7 +1237,6 @@ class CGNSpanKernel:
         spm_noise = prefactor * spm_sum * self.b_hz
         xpm_noise = prefactor * xpm_sum * self.b_hz
 
-        power_out = power * np.exp(-self.alpha_npm * span_length_m)
         return SpanFiberOutput(
             power_out_w=power_out,
             spm_noise_w=np.where(active, spm_noise, 0.0),
@@ -808,6 +1301,10 @@ class CGNModel(RouteModel):
         ref_fiber_config: 参考光纤配置。
         symbol_rate_hz: 符号率 (Hz)。
         correlation_points: 相关域一维求积点数。
+        include_isrs: 是否把 ISRS 功率倾斜纳入 SPP / NSP（默认开）。
+        dispersion_convention: ``"repo"``（默认）或 ``"paper_absolute"``；
+            见 :data:`DISPERSION_CONVENTIONS`。
+        isrs_segments: ISRS 剖面的 z 方向分段数。
         egn: 不支持；``True`` 直接报错。
         **route_options: 透传给 :class:`~network_nlo_eval.models.route.RouteModel`。
     """
@@ -820,6 +1317,10 @@ class CGNModel(RouteModel):
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         correlation_points: int = DEFAULT_CORRELATION_POINTS,
+        include_isrs: bool = True,
+        dispersion_convention: str = DISPERSION_CONVENTION_DEFAULT,
+        nsp_convention: str = NSP_CONVENTION_DEFAULT,
+        isrs_segments: int = DEFAULT_ISRS_SEGMENTS,
         egn: bool = False,
         **route_options,
     ) -> None:
@@ -827,7 +1328,7 @@ class CGNModel(RouteModel):
 
         Raises
         ------
-            ValueError: 请求了 ``egn=True``，或求积点数非法。
+            ValueError: 请求了 ``egn=True``，或求积点数/口径非法。
         """
         if egn:
             raise ValueError(
@@ -836,10 +1337,25 @@ class CGNModel(RouteModel):
             )
         if correlation_points < 4:
             raise ValueError(f"correlation_points must be >= 4, got {correlation_points}.")
+        if dispersion_convention not in DISPERSION_CONVENTIONS:
+            raise ValueError(
+                f"dispersion_convention must be one of {DISPERSION_CONVENTIONS}, "
+                f"got {dispersion_convention!r}."
+            )
+        if nsp_convention not in NSP_CONVENTIONS:
+            raise ValueError(
+                f"nsp_convention must be one of {NSP_CONVENTIONS}, got {nsp_convention!r}."
+            )
+        if isrs_segments < 1:
+            raise ValueError(f"isrs_segments must be >= 1, got {isrs_segments}.")
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.egn = False
         self.correlation_points = int(correlation_points)
         self.island_cells = DEFAULT_ISLAND_CELLS
+        self.include_isrs = bool(include_isrs)
+        self.dispersion_convention = str(dispersion_convention)
+        self.nsp_convention = str(nsp_convention)
+        self.isrs_segments = int(isrs_segments)
         #: 当前光路的相干累加跨段数；只在 :meth:`evaluate_path` 调用期间有效。
         self._n_coherent_spans = 1
 
@@ -851,6 +1367,11 @@ class CGNModel(RouteModel):
             b_hz=self.channel_bandwidth_hz_channels,
             correlation_points=self.correlation_points,
             island_cells=self.island_cells,
+            include_isrs=self.include_isrs,
+            dispersion_convention=self.dispersion_convention,
+            nsp_convention=self.nsp_convention,
+            isrs_segments=self.isrs_segments,
+            band_center_hz=self.band_center_hz,
         )
 
     def evaluate_path(
