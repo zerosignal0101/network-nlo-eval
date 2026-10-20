@@ -746,6 +746,25 @@ def test_canonical_power_is_stable_under_float_round_trips() -> None:
     assert np.array_equal(canonical, canonical_nudged)
 
 
+def test_canonical_power_survives_extreme_scales() -> None:
+    """极端功率标度下规范化不能产生 NaN/Inf（次正规数、下溢、上溢）。"""
+    for scale in (5e-324, 1e-320, 1e-305, 1e-30, 1e-4, 1.0, 1e12, 1e300):
+        canonical, key = _canonical_power(np.full(3, scale))
+        assert np.all(np.isfinite(canonical)), f"scale={scale:g} produced non-finite values"
+        assert len(key) > 0
+
+
+def test_canonical_power_handles_zero_and_mixed_vectors() -> None:
+    """全零功率与含零（未占用信道）的功率向量都要给出有限的规范值。"""
+    canonical, key = _canonical_power(np.zeros(4))
+    assert np.all(canonical == 0.0)
+    assert key == b"zero"
+
+    canonical, key = _canonical_power(np.array([0.0, 1e-4, 2e-4]))
+    assert np.all(np.isfinite(canonical))
+    assert canonical[0] == 0.0
+
+
 def test_core_cache_is_idempotent() -> None:
     """同一个键必须永远对应同一个矩阵（缓存幂等）。"""
     kernel = _kernel("scaling_40ch")

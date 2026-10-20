@@ -423,12 +423,24 @@ def _canonical_power(power: NDArrayFloat) -> tuple[NDArrayFloat, bytes]:
         return np.zeros_like(values), b"zero"
     exponent = int(np.floor(np.log10(scale)))
     # 标度按有效数字取整：12 位有效数字对 1e-16 的相对噪声是稳定的。
-    scale_digits = CANONICAL_POWER_DIGITS - 1 - exponent
-    scale_canon = float(np.round(scale, scale_digits))
-    if scale_canon <= 0.0:
-        scale_canon = scale
+    # 用"尾数取整 + 指数还原"而不是 np.round(scale, decimals)：后者在极端标度
+    # （decimals 达到几百）下会溢出成 inf，进而把规范值变成 NaN。
+    decade = 10.0**exponent
+    if not np.isfinite(decade) or decade <= 0.0:
+        # 次正规数：10^exponent 下溢为 0，尾数无法还原，退回原值。
+        return values.copy(), values.tobytes()
+    mantissa = scale / decade
+    mantissa_canon = float(np.round(mantissa, CANONICAL_POWER_DIGITS - 1))
+    if mantissa_canon <= 0.0:
+        mantissa_canon = float(mantissa)
+    scale_canon = mantissa_canon * decade
     step = scale_canon * (10.0 ** (-CANONICAL_SHAPE_DIGITS))
+    if not np.isfinite(step) or step <= 0.0:
+        # 极端标度（次正规数）：栅格不可用，退回原值，键仍然唯一。
+        return values.copy(), values.tobytes()
     canonical = np.round(values / step) * step
+    if not np.all(np.isfinite(canonical)):
+        return values.copy(), values.tobytes()
     return canonical, canonical.tobytes()
 
 
