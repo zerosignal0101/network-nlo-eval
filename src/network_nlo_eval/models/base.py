@@ -17,6 +17,8 @@ ROADM 与噪声累积都不属于核，因此换模型不会改变后处理语�
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -236,6 +238,27 @@ class QoTModel(Protocol):
 
 ModelFactory = Callable[..., QoTModel]
 
+#: 是否已扫描过 ``network_nlo_eval.models`` 下的实现模块。
+_DISCOVERED = False
+
+
+def _discover_models() -> None:
+    """导入包内所有模型模块，让它们各自完成注册。
+
+    注册是模块导入的副作用。逐个 import 而不是维护一份手写清单，是为了让新增
+    模型只需落一个文件、不必回来改这个中心模块——并行开发时中心文件的每一处
+    改动都是冲突点。只扫描一层，不递归进子包。
+    """
+    global _DISCOVERED
+    if _DISCOVERED:
+        return
+    _DISCOVERED = True
+    package = importlib.import_module("network_nlo_eval.models")
+    for module in pkgutil.iter_modules(package.__path__):
+        if module.name in {"base", "route"}:
+            continue
+        importlib.import_module(f"{package.__name__}.{module.name}")
+
 #: 名称 -> 构造函数。构造函数签名与 :class:`QoTModel` 实现类的 ``__init__`` 一致。
 MODEL_REGISTRY: dict[str, ModelFactory] = {}
 
@@ -262,6 +285,7 @@ def register_model(info: ModelInfo, factory: ModelFactory) -> None:
 
 def available_models() -> dict[str, ModelInfo]:
     """返回已注册模型的静态描述，按名称排序。"""
+    _discover_models()
     return dict(sorted(MODEL_INFO.items()))
 
 
@@ -272,6 +296,7 @@ def get_model_info(name: str) -> ModelInfo:
     ------
         KeyError: 名称未注册。
     """
+    _discover_models()
     try:
         return MODEL_INFO[name]
     except KeyError:
@@ -285,6 +310,7 @@ def create_model(name: str, *args, **kwargs) -> QoTModel:
     ------
         KeyError: 名称未注册。
     """
+    _discover_models()
     try:
         factory = MODEL_REGISTRY[name]
     except KeyError:

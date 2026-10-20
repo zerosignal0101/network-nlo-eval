@@ -106,6 +106,9 @@ class ModelRun:
 def time_calls(model: Any, path: Any, power: NDArrayFloat, *, reps: int = 25) -> tuple[float, float, float, float]:
     """测量冷/热调用耗时与内存峰值。
 
+    计时与内存分两趟测：``tracemalloc`` 自身有可观开销，混在计时段里会把延迟
+    抬高数倍，得到一个不可比的"速度"数字。
+
     Args:
         model: 模型实例。
         path: 光路。
@@ -116,17 +119,18 @@ def time_calls(model: Any, path: Any, power: NDArrayFloat, *, reps: int = 25) ->
     -------
         ``(cold_ms, warm_median_ms, warm_p95_ms, peak_kib)``。
     """
-    tracemalloc.start()
     started = time.perf_counter()
     model.evaluate_path(path, power)
     cold_ms = (time.perf_counter() - started) * 1e3
-    tracemalloc.reset_peak()
 
     samples: list[float] = []
     for _ in range(reps):
         started = time.perf_counter()
         model.evaluate_path(path, power)
         samples.append((time.perf_counter() - started) * 1e3)
+
+    tracemalloc.start()
+    model.evaluate_path(path, power)
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
