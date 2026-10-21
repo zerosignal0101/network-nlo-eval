@@ -68,6 +68,33 @@ Eq. (64) 的标量压缩           :func:`_coherent_ratio`（目标相干因子�
 原来的逐跨求和，浮点运算顺序不变，故单跨结果与改造前**逐位一致**。
 异构链同样走纯功率分支（论文 Eq. (53) 的 XS 项未实现，见"已知近似"）。
 
+**带内 NLI PSD 的频率分辨率口径**
+
+GN 参考式（论文 Eq. (1)）给出的是 NLI **PSD**，它在信道带内**不是常数**：
+观测频率靠近带边时，integration island 的面积随观测频率收缩，PSD 比带心
+低 3–5 dB（论文 Fig. 3）。于是"带内 NLI 功率"有两种算法：
+
+``band_points = 1``（默认，闭式口径）
+    只在**被测信道中心频率**求一次 NLI PSD，再乘以信道带宽。这是 GN/EGN
+    闭式模型族的常规做法，也是本仓 ``ecz`` / ``numerical`` 的口径。便宜，
+    但对官方 cGN 的**带内积分**值偏高 0.5…+0.7 dB（单信道 SPM）。
+
+``band_points > 1``（官方 cGN 口径）
+    在信道带上取 Gauss-Legendre 节点，逐点重建 island 几何，把 NLI PSD 在
+    带内积分。与官方 ``NLI_calculator.mexa64`` 一致：单信道 SPM 残差
+    < 0.02 dB，2 信道 < 0.1 dB。代价是核心积分矩阵的构造时间乘以节点数。
+
+两档的**物理量相同**（同一个 GN 参考式），差别只在"带内 NLI PSD 是否解析"。
+与官方 MEX 的逐点对照见 ``tests/test_cgn_mex_crosscheck.py``。
+
+**与官方 MEX 的已知差异（结构性，非口径）**
+
+本实现的 island 分解把**第一波钉在被测信道带内**，第二波与第三波逐信道
+枚举，靠 GN 积分对 :math:`(f_1, f_2)` 的对称性补上"另一波在带内"的图元。
+因此**两束相互作用波都在被测信道带外**的 MCI 型图元被略去：该份额随色散
+减小而增大（官方 MEX 分解：β2 = −21.7 ps²/km 时 0.6%，β2 = −1 ps²/km 时
+3.3%），在低色散多信道算例里表现为 0.1–0.15 dB 的残差。
+
 **ISRS（信道间受激拉曼散射）**
 
 第一轮只取光纤衰减，故 NSP 是解析指数型，跨信道功率倾斜被完全忽略。本轮
@@ -120,12 +147,15 @@ Eq. (64) 的标量压缩           :func:`_coherent_ratio`（目标相干因子�
     GN 模型的空间积分因子是 :math:`\\sqrt{\\rho_1\\rho_2\\rho_3/\\rho_c}`，故
     NSP 指数要**除以 2**：:math:`\\alpha_x = (\\alpha_2+\\alpha_3)/2`（第一波
     与被测信道相消）。这与本仓 ``numerical`` 参考模型一致，零色散解析极限下
-    两者吻合到 0.2%。
+    两者吻合到 0.2%。**这一档与官方 cGN MEX 一致**：单信道 SPM 下本仓默认档
+    复现官方 NLI PSD 的带心值到 0.05 dB 以内（见
+    ``tests/test_cgn_mex_crosscheck.py``）。
 
 ``"paper_product"``
-    指数不除以 2，即 :math:`\\alpha_x = \\alpha_2+\\alpha_3`（第一轮对论文
-    Eq. (9) 的读法）。该档下相干极限的 :math:`|S_p|` 偏小约
-    :math:`(1+e^{-\\alpha L})^2/4`，零色散极限与 ``numerical`` 差 3.8 倍。
+    指数不除以 2，即 :math:`\\alpha_x = \\alpha_2+\\alpha_3`（不做平方根的
+    读法）。该档下相干极限的 :math:`|S_p|` 偏小约
+    :math:`(1+e^{-\\alpha L})^2/4`，零色散极限与 ``numerical`` 差 3.8 倍；
+    与官方 MEX 同样对不上（差约 3 dB），只作为口径对照保留。
 
 **与冻结基线的关系**
 
@@ -190,6 +220,19 @@ __all__ = [
 #: 加密，因为 SCI 图元在 :math:`\\xi=0` 处有可积的对数奇点，论文 Eq. (34)）。
 DEFAULT_CORRELATION_POINTS = 32
 
+#: 带内积分（观测频率）的求积点数。
+#:
+#: ``1``（默认）表示 **"带内 NLI PSD 取常数"** 的口径：只在被测信道中心频率
+#: 求一次 NLI PSD，再乘以信道带宽。这是 GN/EGN 闭式模型族的常规做法，也是
+#: 本仓 ``ecz`` / ``numerical`` 的口径。
+#:
+#: ``>1`` 表示按官方 cGN（``NLI_calculator.mexa64``）的做法 **在带内求 NLI
+#: PSD 并积分**：观测频率在信道带上取 Gauss-Legendre 节点，逐点重建 island
+#: 几何。官方 cGN 的 NLI PSD 在带边比带心低 3–5 dB，故两种口径在 SPM 单项
+#: 上差 +0.5…+0.7 dB（见交付报告的交叉验证表）。该档的代价是核心积分矩阵
+#: 的构造时间乘以节点数。
+DEFAULT_BAND_POINTS = 1
+
 #: 每个 GN 积分 island 的矩形覆盖片数。
 #:
 #: 论文 Fig. 16 用"每 island 15 个矩形"做收敛性扫描。这里固定为 8 片：阶梯
@@ -211,11 +254,12 @@ DEFAULT_ISRS_SEGMENTS = 8
 #:     GN 模型的空间积分因子是 :math:`\sqrt{\rho_1\rho_2\rho_3/\rho_c}`，
 #:     即指数 :math:`(\alpha_1+\alpha_2+\alpha_3-\alpha_c)/2`；第一波在 CUT
 #:     带内时 :math:`\alpha_x = (\alpha_2+\alpha_3)/2`。这与本仓 ``numerical``
-#:     参考模型一致，零色散解析极限下两者逐位吻合。
+#:     参考模型一致，零色散解析极限下两者逐位吻合；**也与官方 cGN MEX 一致**
+#:     （官方 MEX 实现的正是这一指数，见 ``tests/test_cgn_mex_crosscheck.py``）。
 #: ``"paper_product"``
 #:     指数取 :math:`\alpha_1+\alpha_2+\alpha_3-\alpha_c`（不做平方根），
-#:     即第一轮对论文 Eq. (6)/(9) 的读法。它让 :math:`|S_p|` 在相干极限下
-#:     偏小约 :math:`(1+e^{-\alpha L})^2/4`（见交付报告的零色散对照）。
+#:     它让 :math:`|S_p|` 在相干极限下偏小约 :math:`(1+e^{-\alpha L})^2/4`
+#:     （见交付报告的零色散对照），与官方 MEX 也对不上。
 NSP_CONVENTIONS = ("gn", "paper_product")
 NSP_CONVENTION_DEFAULT = "gn"
 
@@ -290,6 +334,11 @@ CGN_MODEL_INFO = ModelInfo(
         ("include_isrs", "Include the inter-channel Raman (ISRS) power tilt in the NSP."),
         ("dispersion_convention", "'repo' | 'paper_absolute'; beta3 expansion convention."),
         ("nsp_convention", "'gn' | 'paper_product'; NSP exponent convention."),
+        (
+            "band_points",
+            "In-band NLI-PSD quadrature nodes; 1 = flat-PSD convention (default), "
+            ">1 = official cGN in-band integration.",
+        ),
     ),
 )
 
@@ -401,7 +450,7 @@ def _stimulus_attenuation(
     ``"gn"``（默认）
         GN 模型的空间积分因子是 :math:`\\sqrt{\\rho_1\\rho_2\\rho_3/\\rho_c}`，
         指数要**除以 2**：:math:`\\alpha_x = (\\alpha_2+\\alpha_3)/2`。这与本仓
-        ``numerical`` 参考模型一致。
+        ``numerical`` 参考模型一致，也与官方 cGN MEX 一致。
 
     ``"paper_product"``
         指数不除以 2（第一轮对论文 Eq. (9) 的读法）。
@@ -794,6 +843,7 @@ def _nli_from_core(
     g_psd: NDArrayFloat,
     third_psd: NDArrayFloat,
     b_hz: NDArrayFloat,
+    apply_bandwidth: bool = True,
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
     r"""把核心积分矩阵聚合成逐信道的 SCI / XCI 噪声功率 (W)。
 
@@ -806,6 +856,9 @@ def _nli_from_core(
         g_psd: ``(N,)`` 第二波 PSD (W/Hz)。
         third_psd: ``(N, N, J)`` 第三波 PSD (W/Hz)。
         b_hz: ``(N,)`` 信道带宽 (Hz)。
+        apply_bandwidth: 是否再乘一次信道带宽。默认档的核心积分是"信道中心
+            频率处的 NLI PSD"，要变成带内功率需乘带宽；带内积分档的核心积分
+            已经含带宽量纲，故不能再乘。
 
     Returns
     -------
@@ -822,7 +875,9 @@ def _nli_from_core(
     xpm_sum = 2.0 * (off_diagonal @ g_psd)
     # |NSP|^2 已含 gamma^2（论文 Eq. (22)），此处不再重复计入。
     prefactor = (16.0 / 27.0) * g_psd
-    return prefactor * spm_sum * b_hz, prefactor * xpm_sum * b_hz
+    if apply_bandwidth:
+        return prefactor * spm_sum * b_hz, prefactor * xpm_sum * b_hz
+    return prefactor * spm_sum, prefactor * xpm_sum
 
 
 def _coherent_ratio(link: NDArrayFloat, single: NDArrayFloat) -> NDArrayFloat:
@@ -872,6 +927,36 @@ def _xi_quadrature(xi_min: NDArrayFloat, xi_max: NDArrayFloat, n_points: int) ->
     nodes = xi_min + span * (u**2)
     weights = span * (u_edges[1:] ** 2 - u_edges[:-1] ** 2)
     return nodes, weights
+
+
+def _band_quadrature(n_points: int) -> tuple[tuple[float, float], ...]:
+    r"""带内积分（观测频率）的 Gauss-Legendre 节点与权重。
+
+    节点 :math:`u_k \in [-1, 1]` 是**归一化**的观测频率偏移：实际偏移
+    :math:`\delta_k = u_k B_c/2`（:math:`B_c` 是被测信道带宽），权重
+    :math:`w_k` 按 :math:`\mathrm{d}f = (B_c/2)\,\mathrm{d}u` 配对。
+
+    选 Gauss-Legendre 而不是等距 Simpson：NLI PSD 在带内的形状在带边有拐点
+    （island 面积随观测频率线性收缩），等距 Simpson 收敛只有 :math:`O(n^{-1})`
+    （实测 25 个节点仍差 0.035 dB），而 Gauss-Legendre 用 9 个节点即可把
+    带内积分误差压到 0.001 dB 以下（见交付报告的求积收敛表）。
+
+    Args:
+        n_points: 节点数（≥ 2）。
+
+    Returns
+    -------
+        ``((u_0, w_0), ...)``：节点与权重（权重之和为 2，即 :math:`[-1,1]`
+        的长度）。
+
+    Raises
+    ------
+        ValueError: 节点数小于 2。
+    """
+    if n_points < 2:
+        raise ValueError(f"band_points must be >= 2, got {n_points}.")
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_points))
+    return tuple((float(node), float(weight)) for node, weight in zip(nodes, weights, strict=True))
 
 
 def _island_cover(
@@ -971,7 +1056,11 @@ def _quadrant_pieces(
     ]
 
 
-def _third_wave_slots(f_abs_hz: NDArrayFloat, b_hz: NDArrayFloat) -> tuple[NDArrayFloat, int]:
+def _third_wave_slots(
+    f_abs_hz: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    widen_by_cut_bandwidth: bool = False,
+) -> tuple[NDArrayFloat, int]:
     r"""每个 (CUT, 第二波) 对可用的第三波信道槽位。
 
     第三波频率 :math:`f_3 = f_1 + f_2 - f_c` 的可达范围是
@@ -982,6 +1071,10 @@ def _third_wave_slots(f_abs_hz: NDArrayFloat, b_hz: NDArrayFloat) -> tuple[NDArr
     Args:
         f_abs_hz: ``(N,)`` 信道中心频率 (Hz)。
         b_hz: ``(N,)`` 信道带宽 (Hz)。
+        widen_by_cut_bandwidth: 是否把可达范围按被测信道带宽的一半加宽。
+            带内积分档需要它：观测频率在带内移动时第三波频率整体平移
+            （:math:`f_3 = f_1 + f_2 - f`），可达范围要覆盖平移后的并集，
+            否则某些只在带边才够得着的第三波信道会被漏掉。
 
     Returns
     -------
@@ -998,6 +1091,8 @@ def _third_wave_slots(f_abs_hz: NDArrayFloat, b_hz: NDArrayFloat) -> tuple[NDArr
     upper_edge = np.maximum.accumulate(upper_edge)
 
     reach = 0.5 * (b_hz[:, None] + b_hz[None, :])
+    if widen_by_cut_bandwidth:
+        reach = reach + 0.5 * b_hz[:, None]
     band_low = f_abs_hz[None, :] - reach
     band_high = f_abs_hz[None, :] + reach
 
@@ -1037,6 +1132,7 @@ def _island_core(
     isrs_rate: NDArrayFloat | None = None,
     isrs_z_mid: NDArrayFloat | None = None,
     isrs_seg_length_m: float = 0.0,
+    band_points: int = DEFAULT_BAND_POINTS,
 ) -> NDArrayFloat:
     r"""每个 (CUT, 第二波, 第三波) 三元组的相关系数核心积分。
 
@@ -1078,6 +1174,11 @@ def _island_core(
         isrs_rate: ``(N,)`` 逐信道有效 ISRS 衰减率 (Np/m)。
         isrs_z_mid: ``(n_segments,)`` 段中点位置 (m)。
         isrs_seg_length_m: 段长 (m)。
+        band_points: 带内积分的观测频率求积点数。``1``（默认）表示"带内 NLI
+            PSD 取常数"的口径（只在被测信道中心频率求值，再乘信道带宽）；
+            ``>1`` 表示按官方 cGN 的做法在带内求 NLI PSD 并积分（见
+            :func:`_band_quadrature`）。取值大于 1 时，返回的核心积分已经
+            含带宽量纲，调用方**不得**再乘一次信道带宽。
 
     Returns
     -------
@@ -1116,6 +1217,11 @@ def _island_core(
     # 分块处理 CUT 信道，避免 (N, N, J, cells, 4, points) 的巨型临时数组。
     per_c = max(1, n_ch * n_slots * island_cells * 4 * max(correlation_points, 1))
     chunk = max(1, min(n_ch, int(_CHUNK_ELEMENTS // per_c)))
+
+    # 观测频率（带内积分）的求积节点。默认档只有一个节点（信道中心），
+    # 带内积分档用 Gauss-Legendre 节点铺满信道带。
+    integrate_band = int(band_points) > 1
+    band_nodes = _band_quadrature(int(band_points)) if integrate_band else ((0.0, 1.0),)
 
     for start in range(0, n_ch, chunk):
         stop = min(start + chunk, n_ch)
@@ -1159,41 +1265,64 @@ def _island_core(
         acc_dirichlet = (
             None if dirichlet is None else np.zeros((stop - start, n_ch, n_slots), dtype=np.float64)
         )
-        for a, b, c, d in _quadrant_pieces(xa, xb, ylo, yhi):
-            xi_min = a * c
-            xi_max = b * d
-            # 相关域的自然尺度：|Omega| ~ alpha_x 处 NSP 能量谱开始衰减。
-            with np.errstate(divide="ignore", invalid="ignore"):
-                xi_scale = alpha_c[..., None] / (4.0 * np.pi**2 * np.abs(beta2_eff))
-            xi_scale = np.where(np.isfinite(xi_scale) & (xi_scale > 0.0), xi_scale, np.inf)
-            xi_cut = np.minimum(xi_max, xi_min + TRUNCATION_FACTOR * xi_scale)
-            xi_end = np.maximum(xi_cut, xi_min)
-
-            nodes, weights = _xi_quadrature(xi_min, xi_end, correlation_points)
-            omega = 4.0 * np.pi**2 * beta2_eff[..., None] * nodes
-            if residual_view is None:
-                spectrum = _nsp_energy_spectrum(
-                    gamma_c, alpha_c[..., None, None], length_m, omega
-                )
+        # 观测频率节点：默认只有被测信道中心（delta = 0）；带内积分档再取
+        # Gauss-Legendre 节点。节点偏移以"信道半带宽"为单位，故逐 CUT 可异。
+        for node, node_weight in band_nodes:
+            if node == 0.0:
+                cover = (xa, xb, ylo, yhi)
             else:
-                spectrum = _isrs_nsp_energy_spectrum(
-                    gamma_c,
-                    alpha_c[..., None, None],
-                    residual_view,
-                    isrs_seg_length_m,
-                    omega,
+                # 观测频率从信道中心移到 f_c + delta：整幅 island 在移位坐标系
+                # 里整体平移 -delta（矩形与第三波条带同时平移），故把几何的
+                # 四个边界一起平移即可。
+                shift = (0.5 * b_hz[idx] * node)[:, None]
+                cover = _island_cover(
+                    x1[idx] - shift,
+                    x2[idx] - shift,
+                    y1[idx] - shift,
+                    y2[idx] - shift,
+                    u1[idx] - shift[..., None],
+                    u2[idx] - shift[..., None],
+                    island_cells,
                 )
-            weight = _rectangle_weight(a[..., None], b[..., None], c[..., None], d[..., None], nodes)
-            integrand = spectrum * weight * weights
-            integrand = np.where(np.isfinite(integrand), integrand, 0.0)
-            # 单跨核心积分：与 n_coherent_spans == 1 的旧路径逐位一致。
-            acc += np.sum(integrand, axis=(-2, -1))
-            if acc_dirichlet is not None:
-                # 链路级相干总量：逐点乘上论文 Eq. (63) 的相干累加核。
-                theta = 4.0 * np.pi**2 * beta2_eff[..., None] * length_m * nodes
-                weighted = integrand * _dirichlet_weight(theta, n_coherent_spans)
-                weighted = np.where(np.isfinite(weighted), weighted, 0.0)
-                acc_dirichlet += np.sum(weighted, axis=(-2, -1))
+            # 带内积分的测度：df = (B_c/2) du。默认档没有带内积分，权重为 1。
+            band_scale = (
+                1.0 if not integrate_band else (node_weight * 0.5 * b_hz[idx])[:, None, None]
+            )
+            for a, b, c, d in _quadrant_pieces(*cover):
+                xi_min = a * c
+                xi_max = b * d
+                # 相关域的自然尺度：|Omega| ~ alpha_x 处 NSP 能量谱开始衰减。
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    xi_scale = alpha_c[..., None] / (4.0 * np.pi**2 * np.abs(beta2_eff))
+                xi_scale = np.where(np.isfinite(xi_scale) & (xi_scale > 0.0), xi_scale, np.inf)
+                xi_cut = np.minimum(xi_max, xi_min + TRUNCATION_FACTOR * xi_scale)
+                xi_end = np.maximum(xi_cut, xi_min)
+
+                nodes, weights = _xi_quadrature(xi_min, xi_end, correlation_points)
+                omega = 4.0 * np.pi**2 * beta2_eff[..., None] * nodes
+                if residual_view is None:
+                    spectrum = _nsp_energy_spectrum(
+                        gamma_c, alpha_c[..., None, None], length_m, omega
+                    )
+                else:
+                    spectrum = _isrs_nsp_energy_spectrum(
+                        gamma_c,
+                        alpha_c[..., None, None],
+                        residual_view,
+                        isrs_seg_length_m,
+                        omega,
+                    )
+                weight = _rectangle_weight(a[..., None], b[..., None], c[..., None], d[..., None], nodes)
+                integrand = spectrum * weight * weights
+                integrand = np.where(np.isfinite(integrand), integrand, 0.0)
+                # 单跨核心积分：与 n_coherent_spans == 1 的旧路径逐位一致。
+                acc += band_scale * np.sum(integrand, axis=(-2, -1))
+                if acc_dirichlet is not None:
+                    # 链路级相干总量：逐点乘上论文 Eq. (63) 的相干累加核。
+                    theta = 4.0 * np.pi**2 * beta2_eff[..., None] * length_m * nodes
+                    weighted = integrand * _dirichlet_weight(theta, n_coherent_spans)
+                    weighted = np.where(np.isfinite(weighted), weighted, 0.0)
+                    acc_dirichlet += band_scale * np.sum(weighted, axis=(-2, -1))
 
         acc = np.where(np.isfinite(acc), acc, 0.0)
         core[idx] = acc
@@ -1244,6 +1373,7 @@ class CGNSpanKernel:
         include_isrs: 是否把 ISRS 功率倾斜纳入 SPP / NSP。
         dispersion_convention: 见 :data:`DISPERSION_CONVENTIONS`。
         isrs_segments: ISRS 剖面的 z 方向分段数。
+        band_points: 带内积分的观测频率求积点数（见 :data:`DEFAULT_BAND_POINTS`）。
         band_center_hz: 频带中心 (Hz)；``None`` 时取信道中心频率的均值。
     """
 
@@ -1259,6 +1389,7 @@ class CGNSpanKernel:
         dispersion_convention: str = DISPERSION_CONVENTION_DEFAULT,
         nsp_convention: str = NSP_CONVENTION_DEFAULT,
         isrs_segments: int = DEFAULT_ISRS_SEGMENTS,
+        band_points: int = DEFAULT_BAND_POINTS,
         band_center_hz: float | None = None,
     ) -> None:
         """准备逐信道常量。
@@ -1273,6 +1404,8 @@ class CGNSpanKernel:
             raise ValueError(f"island_cells must be >= 1, got {island_cells}.")
         if isrs_segments < 1:
             raise ValueError(f"isrs_segments must be >= 1, got {isrs_segments}.")
+        if band_points < 1:
+            raise ValueError(f"band_points must be >= 1, got {band_points}.")
         if dispersion_convention not in DISPERSION_CONVENTIONS:
             raise ValueError(
                 f"dispersion_convention must be one of {DISPERSION_CONVENTIONS}, "
@@ -1293,6 +1426,7 @@ class CGNSpanKernel:
         self.dispersion_convention = str(dispersion_convention)
         self.nsp_convention = str(nsp_convention)
         self.isrs_segments = int(isrs_segments)
+        self.band_points = int(band_points)
 
         lambdas_m = C_LIGHT / self.f_abs_hz
         if fiber_config.use_attenuation_polynomial:
@@ -1338,7 +1472,11 @@ class CGNSpanKernel:
         self.f_M_hz = float(np.max(self.f_abs_hz + 0.5 * self.b_hz) - center)
         self.k_bar = min(sum(pump.power_w for pump in fiber_config.raman_pumps), 1.0)
 
-        self._r_index, self._n_slots = _third_wave_slots(self.f_abs_hz, self.b_hz)
+        self._r_index, self._n_slots = _third_wave_slots(
+            self.f_abs_hz,
+            self.b_hz,
+            widen_by_cut_bandwidth=self.band_points > 1,
+        )
         # 第三波槽位的 PSD 取值索引；空槽指向一个恒为 0 的哑元。
         self._r_index_padded = np.where(self._r_index >= 0, self._r_index + 1, 0)
         #: 相干累加的跨段数；由模型在每次路径评估前写入。
@@ -1428,6 +1566,7 @@ class CGNSpanKernel:
                 isrs_rate=rate,
                 isrs_z_mid=z_mid,
                 isrs_seg_length_m=float(span_length_m) / float(self.isrs_segments),
+                band_points=self.band_points,
             )
         return _island_core(
             f_abs_hz=self.f_abs_hz,
@@ -1443,6 +1582,7 @@ class CGNSpanKernel:
             correlation_points=self.correlation_points,
             island_cells=self.island_cells,
             n_coherent_spans=int(n_coherent_spans),
+            band_points=self.band_points,
         )
 
     def _link_ramps(
@@ -1473,8 +1613,13 @@ class CGNSpanKernel:
         g_psd = np.where(canonical_power > 0.0, canonical_power / self.b_hz, 0.0)
         g_pad = np.concatenate([[0.0], g_psd])
         third_psd = g_pad[self._r_index_padded]
-        single_spm, single_xpm = _nli_from_core(plain, g_psd, third_psd, self.b_hz)
-        link_spm, link_xpm = _nli_from_core(dirichlet, g_psd, third_psd, self.b_hz)
+        apply_bandwidth = self.band_points == 1
+        single_spm, single_xpm = _nli_from_core(
+            plain, g_psd, third_psd, self.b_hz, apply_bandwidth
+        )
+        link_spm, link_xpm = _nli_from_core(
+            dirichlet, g_psd, third_psd, self.b_hz, apply_bandwidth
+        )
         ramp_spm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_spm, single_spm))
         ramp_xpm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_xpm, single_xpm))
         return ramp_spm, ramp_xpm
@@ -1510,8 +1655,12 @@ class CGNSpanKernel:
         g_pad = np.concatenate([[0.0], g_psd])
         third_psd = g_pad[self._r_index_padded]
         if dirichlet is None:
-            return _nli_from_core(plain, g_psd, third_psd, self.b_hz)
-        return _nli_from_core(dirichlet, g_psd, third_psd, self.b_hz)
+            return _nli_from_core(
+                plain, g_psd, third_psd, self.b_hz, self.band_points == 1
+            )
+        return _nli_from_core(
+            dirichlet, g_psd, third_psd, self.b_hz, self.band_points == 1
+        )
 
     def _core_for(
         self,
@@ -1605,7 +1754,9 @@ class CGNSpanKernel:
         # 第三波 PSD：(N, N, J)。槽位索引已 +1，哑元固定在 0 号位。
         g_pad = np.concatenate([[0.0], g_psd])
         third_psd = g_pad[self._r_index_padded]
-        spm_noise, xpm_noise = _nli_from_core(core, g_psd, third_psd, self.b_hz)
+        spm_noise, xpm_noise = _nli_from_core(
+            core, g_psd, third_psd, self.b_hz, self.band_points == 1
+        )
         spm_noise = np.where(active, spm_noise, 0.0)
         xpm_noise = np.where(active, xpm_noise, 0.0)
 
@@ -1700,6 +1851,8 @@ class CGNModel(RouteModel):
         dispersion_convention: ``"repo"``（默认）或 ``"paper_absolute"``；
             见 :data:`DISPERSION_CONVENTIONS`。
         isrs_segments: ISRS 剖面的 z 方向分段数。
+        band_points: 带内积分的观测频率求积点数。``1``（默认）是"带内 NLI PSD
+            取常数"的口径；``>1`` 按官方 cGN 的做法在带内求 NLI PSD 并积分。
         egn: 不支持；``True`` 直接报错。
         **route_options: 透传给 :class:`~network_nlo_eval.models.route.RouteModel`。
     """
@@ -1719,6 +1872,7 @@ class CGNModel(RouteModel):
         dispersion_convention: str = DISPERSION_CONVENTION_DEFAULT,
         nsp_convention: str = NSP_CONVENTION_DEFAULT,
         isrs_segments: int = DEFAULT_ISRS_SEGMENTS,
+        band_points: int = DEFAULT_BAND_POINTS,
         egn: bool = False,
         **route_options,
     ) -> None:
@@ -1746,6 +1900,8 @@ class CGNModel(RouteModel):
             )
         if isrs_segments < 1:
             raise ValueError(f"isrs_segments must be >= 1, got {isrs_segments}.")
+        if band_points < 1:
+            raise ValueError(f"band_points must be >= 1, got {band_points}.")
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.egn = False
         self.correlation_points = int(correlation_points)
@@ -1754,6 +1910,7 @@ class CGNModel(RouteModel):
         self.dispersion_convention = str(dispersion_convention)
         self.nsp_convention = str(nsp_convention)
         self.isrs_segments = int(isrs_segments)
+        self.band_points = int(band_points)
         #: 当前光路的相干累加跨段数；只在 :meth:`evaluate_path` 调用期间有效。
         #: ``None`` 表示"不在路径评估中"，此时 :meth:`span_step` 按
         #: ``span_context.total_spans`` 推断，避免直接调用时静默退化成非相干。
@@ -1771,6 +1928,7 @@ class CGNModel(RouteModel):
             dispersion_convention=self.dispersion_convention,
             nsp_convention=self.nsp_convention,
             isrs_segments=self.isrs_segments,
+            band_points=self.band_points,
             band_center_hz=self.band_center_hz,
         )
 
