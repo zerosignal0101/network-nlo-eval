@@ -31,6 +31,15 @@
 2019b Table I  各调制格式的超额峭度 → :data:`EXCESS_KURTOSIS`
 ===========  =================================================================
 
+**跨间可见度：按 NLI 噪声功率加权（非论文公式）**
+
+跨间可见度不是 2019a/2019b 的公式，而是把该模型自己的 GN 核
+（``1/(abar^2 + th^2)``，见 :mod:`network_nlo_eval.models.numerical_kernels`
+的数值 GN 积分）用到**跨间**相干上：频率对 ``(x, y)`` 产生的 NLI 正比于这个
+核，而两份拷贝（相隔 ``d``）之间的相位差是 ``th*(d/L)``。实现见
+:func:`network_nlo_eval.models.semrau2019_kernels.gn_weighted_spm_visibility`
+（推导、一维归约与求积都在那里的文档里）。
+
 **与冻结基线 ``ecz`` 的差别**
 
 ``ecz`` 用 Lasagni 2023 的**三角**拉曼近似（``r_f`` 在频带内部为 0、边缘三角
@@ -55,13 +64,24 @@
 
 * 同一份 NLI 噪声在第 ``j`` 跨与第 ``k`` 跨各生成一次，两份拷贝之间的相位差是
   色散在两跨间距 ``d = |j-k|·L`` 上积累的失配。噪声不是单频，而是带内连续谱，
-  因此真正相关的是**频带平均可见度**：
+  因此真正相关的是**带内平均可见度**——而且必须按 **NLI 噪声功率**加权：
 
-  - SPM（自拍频）: ``V_spm(d) = Si(z)/z``，``z = pi^2·|beta2|·d·B^2``；
+  - SPM（自拍频）: ``V_spm(d) = <cos(th*d/L)>_{GN kernel}``。一对带内偏移
+    ``(x, y)`` 的信号频率产生的 NLI 正比于 ``1/(abar^2 + th^2)``（``abar =
+    alpha*L``，``th`` 是该频率对在单跨上积累的相失配），功率集中在相位匹配
+    的对上；两份拷贝之间的相位差正是 ``th*(d/L)``。闭式与一维归约见
+    :func:`network_nlo_eval.models.semrau2019_kernels.gn_weighted_spm_visibility`。
   - XPM（互拍频）: ``V_xpm(d) = sinc(2·pi^2·|beta2|·d·Delta_B·B)``，
-    ``Delta_B`` 是到最近邻信道的频率间隔。
+    ``Delta_B`` 是到最近邻信道的频率间隔。XPM 的失配变量不同（干扰信道在
+    ±spacing 处），两种口径都近乎非相干，因此保持原样。
 
-* 频带平均的可见度给出跨间相干因子
+* 口径的重要性（``c_57ch``、10 跨、SMF）："信号谱口径"（带内**均匀**平均
+  ``Si(z)/z``，``z = pi^2·|beta2|·d·B^2``）把 82% 的权重压在单跨相位失配已
+  超过 ``alpha*L = 3.74 rad`` 的频率对上，而 GN 核只给这些对 32%，于是相干度
+  被压到接近 0（``V(1 跨) = 0.018``、``buildup(10) = 1.069``）。GN 加权口径
+  给出 ``V(1 跨) ≈ 0.12``、``buildup(10) ≈ 1.39``。
+
+* 带内平均的可见度给出跨间相干因子
   ``R(N) = N + 2·sum_{Delta=1}^{N-1} (N-Delta)·V(Delta·L)``
   （:func:`_coherent_factor`）：色散趋零时 ``V→1``，``R→N²``（完全相干）；
   色散很强时 ``V→0``，``R→N``（非相干）。
@@ -126,7 +146,11 @@ from network_nlo_eval.models.route import (
     apply_amplifier_and_roadm,
     resolve_noise_figure,
 )
-from network_nlo_eval.models.semrau2019_kernels import build_semrau_matrices, semrau_span_jit
+from network_nlo_eval.models.semrau2019_kernels import (
+    build_semrau_matrices,
+    gn_weighted_spm_visibility,
+    semrau_span_jit,
+)
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
@@ -179,18 +203,66 @@ def _self_beating_visibility(
     beta2_abs_s2_m: float,
     bandwidth_hz: NDArrayFloat,
     distance_m: float,
+    span_length_m: float,
+    alpha_npm: NDArrayFloat,
 ) -> NDArrayFloat:
-    """自拍频（SPM）两份拷贝的频带平均可见度。
+    """自拍频（SPM）两份拷贝的**GN 核加权**跨间可见度。
 
-    自拍频的相位失配是 ``4·pi^2·|beta2|·d·nu·nu'``（``nu``、``nu'`` 是带内
-    偏移），两份拷贝间隔 ``d`` 米时相差一个 ``a·nu·nu'``（``a = 4·pi^2·|beta2|·d``），
-    仍能相干干涉的比例是带内余弦的平均：
+    跨间相干度必须按 **NLI 噪声功率**加权：一对信号频率 ``(x, y)`` 产生的
+    NLI 正比于 ``1/(abar^2 + th^2)``（``abar = alpha*L``，``th`` 是该频率对在
+    单跨上积累的相失配），功率集中在相位匹配的对上。同一对频率在两份拷贝
+    （相隔 ``d`` 米）之间的相位差是 ``th*(d/L)``，于是
 
-    ``V(d) = <cos(a·nu·nu')> = Si(a·B^2/4)/(a·B^2/4)``，
+    .. code-block:: text
 
-    其中 ``Si`` 是正弦积分。闭式用的原因与
-    :mod:`network_nlo_eval.models.numerical` 相同：被积函数越往带边振荡越快，
-    固定点求积解不动。
+        V(d) = <cos(th*d/L)>_{GN kernel}
+
+    这与"信号谱口径"的 ``Si(z)/z``（两份**信号**副本之间的均匀带内平均）不
+    是一回事：后者把 82% 的权重压在单跨相位失配已超过 ``alpha*L`` 的频率对
+    上，而 GN 核只给这些对 32%，相干度因此被压到接近 0。
+
+    这是**单个跨距**的便利包装；批量（一次算完所有跨距）走
+    :func:`network_nlo_eval.models.semrau2019_kernels.gn_weighted_spm_visibility`，
+    闭式与一维归约的推导也在那里。
+
+    Args
+    ----
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m)。
+        bandwidth_hz: ``(N,)`` 信道带宽 (Hz)。
+        distance_m: 两份拷贝的距离 (m)。
+        span_length_m: 跨段长度 (m)：失配与洛伦兹宽度以**单跨**为尺度。
+        alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
+
+    Returns
+    -------
+        ``(N,)`` 可见度，取值在 ``[-1, 1]``；无色散时为 1。
+    """
+    return gn_weighted_spm_visibility(
+        beta2_abs_s2_m=beta2_abs_s2_m,
+        bandwidth_hz=bandwidth_hz,
+        alpha_npm=alpha_npm,
+        span_length_m=span_length_m,
+        span_separations_m=np.array([float(distance_m)], dtype=np.float64),
+    )[0]
+
+
+def _signal_spectrum_spm_visibility(
+    beta2_abs_s2_m: float,
+    bandwidth_hz: NDArrayFloat,
+    distance_m: float,
+) -> NDArrayFloat:
+    """自拍频（SPM）两份拷贝的**信号谱口径**可见度（改造前的旧口径）。
+
+    自拍频的相位失配是 ``4*pi^2*|beta2|*d*nu*nu'``（``nu``、``nu'`` 是带内
+    偏移），两份拷贝间隔 ``d`` 米时相差一个 ``a*nu*nu'``（``a = 4*pi^2*|beta2|*d``），
+    仍能相干干涉的比例是带内余弦的**均匀**平均：
+
+    ``V(d) = <cos(a*nu*nu')> = Si(a*B^2/4)/(a*B^2/4)``，
+
+    其中 ``Si`` 是正弦积分。
+
+    这不是 NLI 的相干度（它把 82% 的权重压在单跨相位失配已超过 ``alpha*L`` 的
+    频率对上），本模型不再用它算跨间相干；保留它是为了报告里的口径对照。
 
     Args
     ----
@@ -457,23 +529,31 @@ class Semrau2019SpanKernel:
             return cached  # type: ignore[return-value]
         n = max(1, int(n_spans))
         distances = np.arange(1, n, dtype=np.float64) * float(span_length_m)
-        visibility_spm = np.stack(
-            [
-                _self_beating_visibility(self.beta2_abs_s2_m, self.b_hz, distance)
-                for distance in distances
-            ]
-        ) if n > 1 else np.zeros((0, self.b_hz.size), dtype=np.float64)
-        visibility_xpm = np.stack(
-            [
-                _cross_beating_visibility(
-                    self.beta2_abs_s2_m,
-                    self.b_hz,
-                    distance,
-                    self.partner_offset_hz,
-                )
-                for distance in distances
-            ]
-        ) if n > 1 else np.zeros((0, self.b_hz.size), dtype=np.float64)
+        if n > 1:
+            # SPM：按 GN 核加权（见 _self_beating_visibility）。
+            visibility_spm = gn_weighted_spm_visibility(
+                beta2_abs_s2_m=self.beta2_abs_s2_m,
+                bandwidth_hz=self.b_hz,
+                alpha_npm=self.alpha_npm,
+                span_length_m=float(span_length_m),
+                span_separations_m=distances,
+            )
+            # XPM：失配变量不同（干扰信道在 ±spacing 处），两种口径都近乎
+            # 非相干，保持原样（见交付报告的 XPM 审计）。
+            visibility_xpm = np.stack(
+                [
+                    _cross_beating_visibility(
+                        self.beta2_abs_s2_m,
+                        self.b_hz,
+                        distance,
+                        self.partner_offset_hz,
+                    )
+                    for distance in distances
+                ]
+            )
+        else:
+            visibility_spm = np.zeros((0, self.b_hz.size), dtype=np.float64)
+            visibility_xpm = np.zeros((0, self.b_hz.size), dtype=np.float64)
         factor_spm = _coherent_factor(n, visibility_spm)
         factor_xpm = _coherent_factor(n, visibility_xpm)
         ramp_spm = _equivalent_phase_ramp(n, factor_spm)

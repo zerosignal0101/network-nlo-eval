@@ -6,9 +6,9 @@
   （``|nu_N(p)|^2 = N + 2 sum_Delta (N-Delta) cos(Delta·2 psi(p))``，逐点恒等式）；
 * 论文口径下的 SCI GN 累加因子等于**按噪声密度加权**的逐对可见度之和
   ``R = N + 2 sum_Delta (N-Delta) <cos(Delta theta)>``；
-* 同一积分换成**均匀**（频带平均）权重就落到 ``semrau2019`` 的口径上；
-  ``numerical`` 也一度如此，自 2026-10-21 起改成 NLI 加权（见
-  ``tests/test_numerical_visibility.py``），不再属于这一类；
+* 同一积分换成**均匀**（频带平均）权重就会明显低估相干度；
+  ``numerical`` 与 ``semrau2019`` 原先都这样，现均改为 **NLI 噪声功率加权**
+  （见 ``tests/test_numerical_visibility.py``），buildup 由 1.02 抬到 1.13；
 * 两个口径在零色散（buildup = N）与单跨（buildup = 1）处收敛。
 
 参考积分在这里**独立重写**：直接按论文的 ``zeta``/``nu`` 公式做嵌套复合
@@ -292,11 +292,13 @@ def test_both_conventions_give_unit_buildup_for_one_span() -> None:
 
 
 def test_carena_buildup_stays_above_the_band_average_convention() -> None:
-    """名义算例上 ``carena2014`` 的 buildup 明显高于频带平均口径的 ``semrau2019``。
+    """``carena2014`` 的 buildup 仍显著高于两个 NLI 加权模型。
 
-    差距的量级（1.65 对 1.02）就是审计结论本身：口径差异，不是实现错误。
-    ``carena2014`` 的带内采样从 3 点收敛到 41 点后 buildup 由 1.595 升到 1.649；
-    ``numerical`` 改用 NLI 加权口径后由 1.019 升到 1.132。
+    两者现在同口径（NLI 加权）：``numerical`` 1.132、``semrau2019`` 1.130，
+    互差 0.01 dB。``carena2014`` 用论文 Eq. (12) 的 ``nu(p)`` 且带内采样 41 点，
+    buildup 1.649，高于它们 1.64 dB——这部分主要来自 EGN 修正项（EGN 的跨间
+    增长慢于 GN），以及论文的逐跨相位映射与等效斜坡的相位结构差异，
+    不是权重口径的差异。
     """
     case = build_case(CASE_NAME)
     fiber = build_path(case).fiber_configs[0]
@@ -304,11 +306,12 @@ def test_carena_buildup_stays_above_the_band_average_convention() -> None:
     numerical = _buildup("numerical", fiber, N_SPANS)
     semrau = _buildup("semrau2019", fiber, N_SPANS)
     assert carena == pytest.approx(1.649, abs=0.01)
-    assert semrau == pytest.approx(1.022, abs=0.005)
-    # NLI 加权口径：numerical 的 buildup 从 1.019 抬到 1.132。
+    assert semrau == pytest.approx(1.130, abs=0.005)
     assert numerical == pytest.approx(1.132, abs=0.005)
-    # carena 的 41 点收敛把它的 buildup 抬到 1.649，两个差距随之重算。
-    assert 10.0 * np.log10(carena / semrau) == pytest.approx(2.07, abs=0.06)
+    # 两个 NLI 加权实现必须互相对上。
+    assert abs(10.0 * np.log10(numerical / semrau)) < 0.05
+    # carena 与它们的差距现在只应来自 EGN 项与相位结构。
+    assert 10.0 * np.log10(carena / semrau) == pytest.approx(1.64, abs=0.06)
     assert 10.0 * np.log10(carena / numerical) == pytest.approx(1.63, abs=0.06)
 
 

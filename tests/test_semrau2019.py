@@ -37,7 +37,9 @@ from network_nlo_eval.models.semrau2019 import (
     _equivalent_phase_ramp,
     _paper_visibility_equivalent,
     _self_beating_visibility,
+    _signal_spectrum_spm_visibility,
 )
+from network_nlo_eval.models.semrau2019_kernels import gn_weighted_spm_visibility
 from network_nlo_eval.network.elements import EDFAConfig
 
 #: 论文 2019a 第三节 C 段声明的量级：SSFM 的 uniform 64-QAM 与（高斯假设的）
@@ -331,7 +333,12 @@ def test_multi_span_scaling_at_kernel_level() -> None:
     """链路级总量按相干因子 ``R(N)`` 增长，而不是论文的 ``N``。
 
     ``R(N) = N + 2·sum (N-Delta)·V(Delta·L)``：完全非相干时是 ``N``，完全
-    相干时是 ``N²``。SMF 上 ``V ≈ 0.018``，故 ``R(10) ≈ 10.7``。
+    相干时是 ``N²``。SMF 上按 **GN 核加权**的可见度 ``V ≈ 0.119``（改造前的
+    信号谱口径只有 ``0.018``），故 ``R(10) ≈ 13.9``。
+
+    上界从改造前的 ``12.0`` 改成 ``15.0``：相干增益变大是口径变化的**直接
+    后果**——GN 核把 NLI 功率集中到相位匹配的频率对上，这部分在跨间是相干
+    的，因此可见度（以及 ``R``）显著高于均匀平均的口径。
     """
     case = build_case("scaling_160ch")
     fiber = _fiber()
@@ -342,7 +349,7 @@ def test_multi_span_scaling_at_kernel_level() -> None:
     ten = kernel.link_level_total(power, 100e3, 10)
     ratio = ten.spm_noise_w / one.spm_noise_w
     assert np.all(ratio > 10.0), "强色散下相干因子必须略大于 N（相干增益）"
-    assert np.all(ratio < 12.0), f"SMF 上不应接近完全相干，实测 {ratio.max():.3f}"
+    assert np.all(ratio < 15.0), f"SMF 上不应接近完全相干，实测 {ratio.max():.3f}"
 
     # 相干因子与可见度公式一致。
     _, _, factor_spm, _ = kernel._coherence(10, 100e3)
@@ -443,8 +450,10 @@ def test_multi_span_nli_is_finite_and_monotonic() -> None:
 def test_ten_span_nli_is_not_ten_times_the_single_span() -> None:
     """10 跨的 NLI 不等于"单跨 × 10"：相干因子给出的是 ``R(10)`` 而不是 10。
 
-    SMF 上相干长度远小于跨距，跨间几乎非相干，故 ``R(10) ≈ 10.69``：
-    比值 10.69 而不是 10.00，即 0.29 dB 的相干增益。
+    SMF 上（GN 核加权口径）``R(10) ≈ 13.9``：比值 13.9 而不是 10.00，即
+    1.4 dB 的相干增益。改造前（信号谱口径，``V ≈ 0.018``）是 10.69 /
+    0.29 dB；相干增益变大是口径变化的直接后果——GN 核把 NLI 功率集中到
+    相位匹配的频率对上，这部分在跨间是相干的。
     """
     case = build_case("scaling_160ch")
     power = launch_profile(case, None)
@@ -454,11 +463,11 @@ def test_ten_span_nli_is_not_ten_times_the_single_span() -> None:
 
     ratio = _nli(ten) / _nli(one)
     assert np.all(ratio > 10.0), f"10 跨/1 跨比值 {ratio.min():.4f}..{ratio.max():.4f} 未超过 10"
-    assert np.all(ratio < 11.0), f"SMF 上不应接近完全相干，实测 {ratio.max():.4f}"
+    assert np.all(ratio < 15.0), f"SMF 上不应接近完全相干，实测 {ratio.max():.4f}"
     # 相干增益 = 相对于"非相干累加（比值恰好 N）"的额外 NLI。
     gain_db = 10 * np.log10(ratio / 10.0)
     assert np.all(gain_db > 0.0)
-    assert np.all(gain_db < 1.0), f"相干增益 {gain_db.max():.3f} dB 不在 SMF 的量级内"
+    assert np.all(gain_db < 2.0), f"相干增益 {gain_db.max():.3f} dB 不在 SMF 的量级内"
 
 
 def test_zero_dispersion_is_fully_coherent() -> None:
@@ -488,7 +497,19 @@ def test_zero_dispersion_is_fully_coherent() -> None:
 
 
 def test_strong_dispersion_is_incoherent() -> None:
-    """色散很强时跨间接近非相干：NLI ∝ N。"""
+    """色散很强时跨间接近非相干：NLI ∝ N。
+
+    **口径变化后的行为（重要）**：GN 核加权把 NLI 功率集中到**相位匹配**的
+    频率对上，色散越强这批对越窄，但它们的单跨相位失配仍然被 ``alpha*L``
+    限住，因此 SPM 的跨间相干**不会**随色散单调趋零，而是停在一个非零值
+    （``D = 100 ps/(nm·km)`` 时 ``R_spm(10) ≈ 12.7``，改造前是 10.05）。
+    互拍频（XPM）一项则仍然是近乎非相干的（``R_xpm(10) ≈ 9.98``）。
+
+    因此本测试断言：
+
+    * 总 NLI 比值仍远低于完全相干的 ``N²``（100）；
+    * XPM 的相干因子仍然贴着 ``N``（非相干），SPM 的则明显高于 ``N``。
+    """
     case = build_case("scaling_160ch")
     power = launch_profile(case, None)
     fiber = _fiber(dispersion_d=100.0, slope_s=0.0)
@@ -500,11 +521,14 @@ def test_strong_dispersion_is_incoherent() -> None:
 
     ratio = _nli(result) / _nli(one)
     assert np.all(ratio > 10.0), f"强色散下 10 跨/1 跨比值 {ratio.min():.4f} 未超过 10"
-    assert np.all(ratio < 10.2), f"强色散下应接近 N，实测 {ratio.max():.4f}"
+    assert np.all(ratio < 13.0), f"强色散下应远低于完全相干，实测 {ratio.max():.4f}"
 
     _, _, factor_spm, factor_xpm = kernel._coherence(10, 100e3)
-    assert np.all(factor_spm < 10.2)
+    # XPM 仍然近乎非相干。
     assert np.all(factor_xpm < 10.2)
+    # SPM 的相干因子高于 N（GN 加权口径的直接后果），但仍远离 N²。
+    assert np.all(factor_spm > 10.5)
+    assert np.all(factor_spm < 14.0)
 
 
 def test_phase_comes_only_from_the_span_context() -> None:
@@ -569,8 +593,14 @@ def test_paper_factor_maps_to_an_equivalent_visibility() -> None:
 def test_visibility_models_the_two_analytic_limits() -> None:
     """可见度公式的两个解析极限：无色散 → 1，强色散 → 0。"""
     bandwidth = np.array([64e9], dtype=np.float64)
-    assert _self_beating_visibility(0.0, bandwidth, 100e3)[0] == pytest.approx(1.0)
-    assert _self_beating_visibility(2.168e-26, bandwidth, 100e3)[0] < 0.05
+    alpha = np.array([3.7e-5], dtype=np.float64)
+    gn = _self_beating_visibility(0.0, bandwidth, 100e3, 100e3, alpha)
+    assert gn[0] == pytest.approx(1.0)
+    # 强色散：GN 核把权重集中在相位匹配的对上，可见度仍有残留（> 0）。
+    gn_strong = _self_beating_visibility(2.168e-26, bandwidth, 100e3, 100e3, alpha)
+    assert 0.0 < gn_strong[0] < 0.2
+
+    # 互拍频（XPM）口径未变。
     assert _cross_beating_visibility(0.0, bandwidth, 100e3, np.array([75e9]))[0] == pytest.approx(1.0)
     assert _cross_beating_visibility(2.168e-26, bandwidth, 100e3, np.array([75e9]))[0] < 0.05
 
@@ -580,6 +610,167 @@ def test_visibility_models_the_two_analytic_limits() -> None:
     assert _coherent_factor(5, np.zeros((4, 1), dtype=np.float64))[0] == pytest.approx(5.0)
     # Dirichlet 反解：相位步长 0 → N²。
     assert _equivalent_phase_ramp(5, np.array([25.0]))[0] == pytest.approx(0.0, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# GN 核加权的跨间可见度（本轮改造的核心）
+# ---------------------------------------------------------------------------
+
+
+def test_gn_weighting_moves_the_weight_onto_the_phase_matched_pairs() -> None:
+    """GN 核把权重从"相位失配大"的频率对上挪走。
+
+    这是口径变化的物理要点：均匀（信号谱）口径把 82% 的权重压在单跨相位
+    失配已超过 ``alpha*L`` 的频率对上，而 GN 核只给这些对 32%——相干度因此
+    从接近 0 抬回 0.12 量级。
+    """
+    case = build_case("c_57ch")
+    kernel = make_model("semrau2019", case).kernel_for(_fiber())
+    beta2 = kernel.beta2_abs_s2_m
+    length = 100e3
+    alpha = float(kernel.alpha_npm[case.num_channels // 2])
+    abar = alpha * length
+    half_band = 0.5 * float(kernel.b_hz[case.num_channels // 2])
+    a_mix = 4.0 * np.pi**2 * beta2 * length
+
+    # 乘积密度 rho(p) = 2*ln(b^2/|p|)（两个 U[-b,b] 偏移的乘积密度）。
+    # p 从一个极小的正值起步：对数奇点在 p->0 处可积，被切掉的那一小块质量
+    # 相对 b^2 可以忽略。
+    p_min = half_band**2 * 1e-9
+    p = np.linspace(p_min, half_band**2, 400001)
+    density = 2.0 * np.log(half_band**2 / p)
+    theta = a_mix * p
+    beyond = theta > abar
+    uniform_share = density[beyond].sum() / density.sum()
+    gn_share = (density[beyond] / (abar**2 + theta[beyond] ** 2)).sum() / (
+        density / (abar**2 + theta**2)
+    ).sum()
+    assert 0.80 < uniform_share < 0.84, f"均匀口径的权重份额 {uniform_share:.3f} 不是 82%"
+    assert 0.30 < gn_share < 0.34, f"GN 核的权重份额 {gn_share:.3f} 不是 32%"
+
+
+def test_gn_weighted_visibility_beats_the_signal_spectrum_caliber() -> None:
+    """GN 加权口径的可见度显著高于信号谱口径，且随跨距单调下降。"""
+    case = build_case("c_57ch")
+    kernel = make_model("semrau2019", case).kernel_for(_fiber())
+    distances = np.arange(1, 10, dtype=np.float64) * 100e3
+    gn = gn_weighted_spm_visibility(
+        beta2_abs_s2_m=kernel.beta2_abs_s2_m,
+        bandwidth_hz=kernel.b_hz,
+        alpha_npm=kernel.alpha_npm,
+        span_length_m=100e3,
+        span_separations_m=distances,
+    )
+    uniform = np.stack(
+        [
+            _signal_spectrum_spm_visibility(kernel.beta2_abs_s2_m, kernel.b_hz, d)
+            for d in distances
+        ]
+    )
+    mid = case.num_channels // 2
+    # 改造前：V(1 跨) = 0.0179（被压到接近 0）；改造后：0.119。
+    assert 0.017 < uniform[0, mid] < 0.019
+    assert 0.110 < gn[0, mid] < 0.125
+    # 可见度随跨距单调下降（相位失配随距离线性增长）。
+    assert np.all(np.diff(gn[:, mid]) < 0.0)
+    assert np.all(np.abs(gn) <= 1.0)
+
+
+def test_signal_spectrum_caliber_is_kept_for_the_comparison() -> None:
+    """旧的信号谱口径保留下来，作为交付报告里"改前/改后"对照的基准。
+
+    改造前的口径：``V(1 跨) = 0.0179``、``buildup(10) = 1.069``。
+    """
+    case = build_case("c_57ch")
+    kernel = make_model("semrau2019", case).kernel_for(_fiber())
+    distances = np.arange(1, 10, dtype=np.float64) * 100e3
+    uniform = np.stack(
+        [
+            _signal_spectrum_spm_visibility(kernel.beta2_abs_s2_m, kernel.b_hz, d)
+            for d in distances]
+    )
+    factor = float(_coherent_factor(10, uniform[:, case.num_channels // 2 : case.num_channels // 2 + 1])[0])
+    assert factor == pytest.approx(10.6919, rel=1e-4)
+    assert factor / 10 == pytest.approx(1.0692, rel=1e-4)
+
+
+def test_c_57ch_ten_span_buildup_matches_the_brief() -> None:
+    """``c_57ch``、10 跨：SPM 的 buildup 必须落在 1.40 ± 0.02。
+
+    口径：GN 核加权的可见度给出的相干因子 ``R(10)`` 除以跨数。参考值 1.402
+    （独立求积）与 1.403（论文实现收敛值）由工作包给出；本实现落在
+    1.386..1.395（逐信道），带内均值 1.392。
+    """
+    case = build_case("c_57ch")
+    kernel = make_model("semrau2019", case).kernel_for(_fiber())
+    _, _, factor_spm, _ = kernel._coherence(10, 100e3)
+    buildup = factor_spm / 10.0
+    assert np.all(buildup > 1.38), f"buildup {buildup.min():.4f} 低于 1.38"
+    assert np.all(buildup < 1.42), f"buildup {buildup.max():.4f} 高于 1.42"
+
+
+def test_c_57ch_ten_span_buildup_does_not_depend_on_the_launch_power() -> None:
+    """Buildup 只由色散与跨距决定，与入纤功率无关（0 dBm 与标称功率一致）。"""
+    case = build_case("c_57ch")
+    kernel = make_model("semrau2019", case).kernel_for(_fiber())
+    _, _, factor_spm, _ = kernel._coherence(10, 100e3)
+    reference = factor_spm / 10.0
+
+    model = make_model("semrau2019", case)
+    for dbm in (0.0, 20.0):
+        power = launch_profile(case, dbm)
+        result = model.evaluate_path(_path(10, case.edfa_noise_figure_db), power)
+        one = model.evaluate_path(_path(1, case.edfa_noise_figure_db), power)
+        ratio = result.spm_noise_w / one.spm_noise_w
+        assert np.allclose(ratio, reference * 10.0, rtol=1e-9), f"{dbm} dBm 的 buildup 变了"
+
+
+def test_xpm_inter_span_coherence_is_negligible_in_both_calibers() -> None:
+    """XPM 的跨间相干在两种口径下都近乎为零，因此保持原样。
+
+    审计（``c_57ch``、75 GHz 间隔、100 km SMF）：
+
+    * 信号谱口径（当前实现）：``V_xpm(1 跨) = 0.0094``、``V_xpm(10 跨) ≈ -5e-4``；
+    * GN 核加权口径：``V_xpm(1 跨) = 0.0248``、``V_xpm(10 跨) ≈ -1e-5``。
+
+    两者在 2 跨以上都是 0 量级，故相干因子贴着 ``N``，权重效应对 XPM 的跨间
+    结构没有影响——XPM 的可见度函数因此不动。
+    """
+    case = build_case("c_57ch")
+    kernel = make_model("semrau2019", case).kernel_for(_fiber())
+    _, _, _, factor_xpm = kernel._coherence(10, 100e3)
+    assert np.all(factor_xpm < 10.05)
+    assert np.all(factor_xpm > 9.90)
+
+
+def test_gn_weighted_visibility_matches_a_high_resolution_reference() -> None:
+    """固定节点的一维求积必须与高分辨率二维参考积分一致。
+
+    求积点数固定为 :data:`GN_VISIBILITY_QUADRATURE_NODES`（热路径开销可预测），
+    本测试用 801x801 的二维直接积分做基准，容差 1e-3。
+    """
+    beta2 = 2.1608e-26
+    bandwidth = 64e9
+    alpha = 3.7278e-5
+    length = 100e3
+    distance = 3 * length
+
+    gn = gn_weighted_spm_visibility(
+        beta2_abs_s2_m=beta2,
+        bandwidth_hz=np.array([bandwidth]),
+        alpha_npm=np.array([alpha]),
+        span_length_m=length,
+        span_separations_m=np.array([distance]),
+    )[0, 0]
+
+    half = 0.5 * bandwidth
+    axis = np.linspace(-half, half, 801)
+    x, y = np.meshgrid(axis, axis, indexing="ij")
+    theta = 4.0 * np.pi**2 * beta2 * length * x * y
+    weight = 1.0 / ((alpha * length) ** 2 + theta**2)
+    reference = np.sum(weight * np.cos(theta * distance / length)) / np.sum(weight)
+
+    assert gn == pytest.approx(reference, rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
