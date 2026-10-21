@@ -107,7 +107,8 @@ GN 参考式（论文 Eq. (1)）给出的是 NLI **PSD**，它在信道带内**�
   平方（详见内核注释）；
 * **线程并行**：核心积分按 CUT 信道分块，各块互不依赖、块内累加顺序不变，
   故可以按块并行（numpy 的 ufunc 与 numba 的 njit 都释放 GIL）。并行度默认
-  取 ``os.cpu_count()``，环境变量 ``CGN_CORE_WORKERS`` 可覆盖。
+  取 ``min(8, os.cpu_count())``（8 线程已基本吃满并行收益），环境变量
+  ``CGN_CORE_WORKERS`` 可覆盖。
 
 物理量、求积节点与权重、图元集合都没有改动；等价性由
 ``tests/test_cgn_coldstart.py`` 逐位守住。
@@ -800,7 +801,10 @@ def _core_workers(n_tasks: int) -> int:
         except ValueError:
             requested = 1
         return max(1, min(requested, n_tasks))
-    return max(1, min(os.cpu_count() or 1, n_tasks))
+    # 默认封顶 8：并行收益在这一档已基本吃满（479ch 冷启动 1 线程 150 s、4 线程 39 s、
+    # 8 线程 22 s、20 线程 15 s），而默认吃满全机在共享机器上会把别的任务挤死，
+    # 也会让同时构造多个模型的基准测试互相踩踏。需要极限速度时用 CGN_CORE_WORKERS 放宽。
+    return max(1, min(8, os.cpu_count() or 1, n_tasks))
 
 
 def _nonlinearity_coefficient(lambdas_m: NDArrayFloat, n2_m2_w: float, a_eff_m2: NDArrayFloat) -> NDArrayFloat:
