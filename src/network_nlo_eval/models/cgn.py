@@ -37,8 +37,36 @@ Eq. (24)/(30) SS 一维积分     :func:`_island_core`
 Eq. (27)/(29) 权重 :math:`W`  :func:`_rectangle_weight`
 Eq. (33)/(34) SCI 图元        :func:`_rectangle_weight`（:math:`a'=c'=0` 退化）
 Eq. (53) 异构 XS             未实现（见"已知近似"）
-Eq. (62)/(63)/(64) 相干累加   :func:`_dirichlet_weight`
-==========================  ==================================================
+Eq. (62)/(63)/(64) 相干累加   :func:`_dirichlet_weight`（核）
+                             :func:`_island_core`（逐点加权的链路级矩阵）
+                             :func:`_equivalent_phase_ramp`（等效相位斜坡）
+Eq. (64) 的标量压缩           :func:`_coherent_ratio`（目标相干因子）
+============================  ==================================================
+
+**跨间相干累加（复振幅口径）**
+
+论文 Eq. (62)-(64) 的相干累加核 :math:`[\sin(N_s\theta/2)/\sin(\theta/2)]^2`
+是**成对**的：它同时出现在跨 :math:`j` 与跨 :math:`k` 的联合权重里
+（:math:`\cos(r\theta)`，:math:`r=|j-k|`）。而路由层的契约每跨每信道只
+允许**一个**复振幅 :math:`a_k`，成对结构无法逐项表达。本模型的处理是：
+
+1. 逐跨给出**单跨**噪声的复振幅：:math:`|a_k|^2` 等于该跨的 ``*_noise_w``
+   （契约硬性要求），相位是逐跨线性增长的**等效斜坡** :math:`\psi`；
+2. 斜坡由"链路级相干总量 ÷ 单跨总量"反解（:func:`_equivalent_phase_ramp`），
+   于是路由层的 :math:`|\sum_k a_k|^2` **精确复现** Dirichlet 核算出的链路
+   总量（相对误差 < 1e-9）；
+3. 斜坡是**每信道**的（各信道的 :math:`\theta` 结构不同），且只依赖
+   ``(n_spans, span_length)`` 与光纤常量（含 ISRS 时还依赖入纤功率，因为
+   ISRS 会改变 NSP 的形状）——它随核心矩阵一起缓存，不在热路径重算。
+
+压缩的代价：等效斜坡只能复现链路**总量**，不能复现逐对（逐 :math:`r`）的
+结构。总量里"自"项（:math:`r=0`，共 :math:`N P_1`）是**精确**的（就是各跨
+振幅的模方之和），"互"项（:math:`r\ge 1`）被压缩成一条斜坡。交付报告给出
+逐 :math:`r` 的压缩残差。
+
+单跨链（``total_spans == 1``）走**纯功率**分支：不给出复振幅，路由层沿用
+原来的逐跨求和，浮点运算顺序不变，故单跨结果与改造前**逐位一致**。
+异构链同样走纯功率分支（论文 Eq. (53) 的 XS 项未实现，见"已知近似"）。
 
 **ISRS（信道间受激拉曼散射）**
 
@@ -111,11 +139,19 @@ import 任何兄弟模型（``pcfm`` / ``ecz`` / ``numerical`` 等），以便�
 * 矩形覆盖用阶梯近似（每个 island 切成 ``island_cells`` 片），误差二阶。
 * ISRS 剖面按分段推进求解，段内用仓库的闭式拉曼近似；残余因子按段取常数
   （中点法，二阶）。
-* 异构链的 XS 项（论文 Eq. (53) 的逐跨对求和）未实现；齐次链走论文
-  Eq. (62)-(64) 的闭式相干累加。
+* 异构链的 XS 项（论文 Eq. (53) 的逐跨对求和）未实现；异构链退回**纯功率**
+  口径（与改造前一致），齐次链走论文 Eq. (62)-(64) 的闭式相干累加。
+* 成对的跨间相干结构被压缩成一条**等效相位斜坡**（见"跨间相干累加"）：
+  链路总量精确复现（<1e-9），但逐对（逐 :math:`r`）的贡献分布与精确
+  Dirichlet 结构不同，残差见交付报告。
+* 相干口径的精确性要求逐跨功率传输因子为 1（EDFA 补偿跨损的常规配置）。
+  跨间若存在额外损耗（如 ROADM 或未补偿的跨损），路由层按 :math:`\\sqrt{t}`
+  加权各跨振幅，等效斜坡不再与链路总量严格相等。
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -126,6 +162,7 @@ from network_nlo_eval.models.base import (
     ModelInfo,
     MultiSpanOpticalPath,
     PathQoTResult,
+    SpanContext,
     SpanFiberOutput,
     SpanKernel,
     register_model,
@@ -234,6 +271,13 @@ CANONICAL_SHAPE_DIGITS = 9
 #: 核心矩阵缓存的内存预算（字节）。核心矩阵是 ``(N, N, J)`` 的 double 数组，
 #: 479 信道时单个约 5.5 MiB；预算是为了在功率扫描时既不反复重建，也不无界增长。
 CORE_CACHE_BUDGET_BYTES = 256 * 1024 * 1024
+
+#: 等效相位斜坡的二分步数。
+#:
+#: 相干因子 :math:`[\sin(N\psi/2)/\sin(\psi/2)]^2` 在 :math:`\psi\in[0,2\pi/N]`
+#: 上单调，二分反解。60 步把区间压到 :math:`2\pi/N/2^{60}`，远低于双精度
+#: 分辨率；相干因子的相对误差因此优于 :math:`10^{-17}`。
+RAMP_BISECTION_STEPS = 60
 
 CGN_MODEL_INFO = ModelInfo(
     name="cgn",
@@ -707,6 +751,102 @@ def _dirichlet_weight(theta: NDArrayFloat, n_spans: int) -> NDArrayFloat:
     return ratio**2
 
 
+def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
+    r"""把目标相干因子反解成逐跨相位增量（论文 Eq. (63) 的标量压缩）。
+
+    路由层按 :math:`|\sum_k a_k|^2` 相干累加。:math:`N` 个等幅、逐跨相位
+    线性增长 :math:`\psi` 的复振幅给出的相干因子是
+
+    .. math::
+
+        \left[\frac{\sin(N\psi/2)}{\sin(\psi/2)}\right]^2 ,
+
+    它与 Dirichlet 核 :func:`_dirichlet_weight` 是同一个函数。本函数反解这个
+    关系：返回使相干因子等于 ``target`` 的逐跨相位增量。
+
+    相干因子在 :math:`\psi \in [0, 2\pi/N]` 上从 :math:`N^2` **单调**降到
+    :math:`0`，故二分即可。目标值被截断到 :math:`[0, N^2]`（数值上界）。
+
+    Args:
+        n_spans: 跨段数。
+        target: ``(N,)`` 目标相干因子。
+
+    Returns
+    -------
+        ``(N,)`` 逐跨相位增量 (rad)。
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return np.zeros_like(np.asarray(target, dtype=np.float64))
+    goal = np.clip(np.asarray(target, dtype=np.float64), 0.0, float(n) ** 2)
+    low = np.zeros_like(goal)
+    high = np.full_like(goal, 2.0 * np.pi / n)
+    for _ in range(RAMP_BISECTION_STEPS):
+        mid = 0.5 * (low + high)
+        too_large = _dirichlet_weight(mid, n) > goal
+        low = np.where(too_large, mid, low)
+        high = np.where(too_large, high, mid)
+    return 0.5 * (low + high)
+
+
+def _nli_from_core(
+    core: NDArrayFloat,
+    g_psd: NDArrayFloat,
+    third_psd: NDArrayFloat,
+    b_hz: NDArrayFloat,
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    r"""把核心积分矩阵聚合成逐信道的 SCI / XCI 噪声功率 (W)。
+
+    聚合是**线性**的：核心矩阵的每个元素乘上第三波 PSD 后对槽位求和，再对
+    第二波求和（SCI 只留对角，XCI 取非对角并计两次，因为 GN 积分对
+    :math:`(f_1, f_2)` 对称）。
+
+    Args:
+        core: ``(N, N, J)`` 核心积分矩阵。
+        g_psd: ``(N,)`` 第二波 PSD (W/Hz)。
+        third_psd: ``(N, N, J)`` 第三波 PSD (W/Hz)。
+        b_hz: ``(N,)`` 信道带宽 (Hz)。
+
+    Returns
+    -------
+        ``(spm, xpm)``：逐信道 SCI / XCI 噪声功率 (W)。
+    """
+    m = core * third_psd
+    m_sum = m.sum(axis=2)
+    diag = np.arange(core.shape[0])
+    # SCI: 第二波也在 CUT 内带，故 PSD 因子为 G_c * G_c * G_r。
+    spm_sum = m_sum[diag, diag] * g_psd
+    off_diagonal = m_sum.copy()
+    off_diagonal[diag, diag] = 0.0
+    # GN 积分对 (f1, f2) 对称：跨信道对 (c, l) 与 (l, c) 等价，故 XCI 计两次。
+    xpm_sum = 2.0 * (off_diagonal @ g_psd)
+    # |NSP|^2 已含 gamma^2（论文 Eq. (22)），此处不再重复计入。
+    prefactor = (16.0 / 27.0) * g_psd
+    return prefactor * spm_sum * b_hz, prefactor * xpm_sum * b_hz
+
+
+def _coherent_ratio(link: NDArrayFloat, single: NDArrayFloat) -> NDArrayFloat:
+    r"""链路级相干总量与单跨总量之比，即目标相干因子。
+
+    该比值就是 Dirichlet 核 :math:`[\sin(N\psi/2)/\sin(\psi/2)]^2` 应当
+    取到的值：路由层按 :math:`|\sum_k a_k|^2` 相干累加，逐跨振幅的幅度是
+    单跨噪声，故相干因子乘以单跨总量就是链路级相干总量。
+
+    Args:
+        link: ``(N,)`` 链路级相干总量 (W)。
+        single: ``(N,)`` 单跨总量 (W)。
+
+    Returns
+    -------
+        ``(N,)`` 相干因子；单跨总量为 0 的信道取中性值 1。
+    """
+    link = np.asarray(link, dtype=np.float64)
+    single = np.asarray(single, dtype=np.float64)
+    positive = single > 0.0
+    safe = np.where(positive, single, 1.0)
+    return np.where(positive, link / safe, 1.0)
+
+
 def _xi_quadrature(xi_min: NDArrayFloat, xi_max: NDArrayFloat, n_points: int) -> tuple[NDArrayFloat, NDArrayFloat]:
     r"""相关域一维求积的节点与权重（平方律分级中点法）。
 
@@ -913,9 +1053,11 @@ def _island_core(
     有效衰减率，残余因子按段展开后逐段做解析指数变换（见
     :func:`_isrs_nsp_energy_spectrum`）。
 
-    齐次链时按论文 Eq. (62)-(64) 乘上相干累加核
-    :math:`[\sin(N_s\theta/2)/\sin(\theta/2)]^2` 并除以跨段数，使路由层
-    逐跨相加后还原总相干结果。
+    齐次链时按论文 Eq. (62)-(64) 额外累加一份"链路级相干总量"矩阵：核心积分
+    逐点乘上相干累加核 :math:`[\sin(N_s\theta/2)/\sin(\theta/2)]^2`。该矩阵
+    **不**除以跨段数——它就是链路级相干总量本身。模型用它反解等效相位斜坡
+    （:func:`_equivalent_phase_ramp`），再由路由层按 :math:`|\sum_k a_k|^2`
+    真的相干累加。
 
     Args:
         f_abs_hz: ``(N,)`` 信道中心频率 (Hz)。
@@ -939,13 +1081,18 @@ def _island_core(
 
     Returns
     -------
-        ``(N, N, J)`` 核心积分（无量纲）。
+        ``(plain, dirichlet)``：``plain`` 是单跨核心积分 ``(N, N, J)``；
+        ``dirichlet`` 是逐点乘上相干累加核的链路级核心积分 ``(N, N, J)``
+        （``n_coherent_spans == 1`` 时为 ``None``）。
     """
     n_ch = f_abs_hz.size
     n_slots = r_index.shape[2]
     core = np.zeros((n_ch, n_ch, n_slots), dtype=np.float64)
     if n_slots == 0 or length_m <= 0.0:
-        return core
+        return core, None
+    dirichlet = None
+    if n_coherent_spans > 1:
+        dirichlet = np.zeros((n_ch, n_ch, n_slots), dtype=np.float64)
 
     # 每个三元组的 island 几何（相对观测频率 f_c）。
     x1 = -0.5 * b_hz[:, None]
@@ -1009,6 +1156,9 @@ def _island_core(
             residual_view = residual
 
         acc = np.zeros((stop - start, n_ch, n_slots), dtype=np.float64)
+        acc_dirichlet = (
+            None if dirichlet is None else np.zeros((stop - start, n_ch, n_slots), dtype=np.float64)
+        )
         for a, b, c, d in _quadrant_pieces(xa, xb, ylo, yhi):
             xi_min = a * c
             xi_max = b * d
@@ -1035,18 +1185,39 @@ def _island_core(
                 )
             weight = _rectangle_weight(a[..., None], b[..., None], c[..., None], d[..., None], nodes)
             integrand = spectrum * weight * weights
-            if n_coherent_spans > 1:
-                theta = 4.0 * np.pi**2 * beta2_eff[..., None] * length_m * nodes
-                integrand = integrand * _dirichlet_weight(theta, n_coherent_spans)
             integrand = np.where(np.isfinite(integrand), integrand, 0.0)
+            # 单跨核心积分：与 n_coherent_spans == 1 的旧路径逐位一致。
             acc += np.sum(integrand, axis=(-2, -1))
+            if acc_dirichlet is not None:
+                # 链路级相干总量：逐点乘上论文 Eq. (63) 的相干累加核。
+                theta = 4.0 * np.pi**2 * beta2_eff[..., None] * length_m * nodes
+                weighted = integrand * _dirichlet_weight(theta, n_coherent_spans)
+                weighted = np.where(np.isfinite(weighted), weighted, 0.0)
+                acc_dirichlet += np.sum(weighted, axis=(-2, -1))
 
         acc = np.where(np.isfinite(acc), acc, 0.0)
-        if n_coherent_spans > 1:
-            acc = acc / float(n_coherent_spans)
         core[idx] = acc
+        if acc_dirichlet is not None:
+            acc_dirichlet = np.where(np.isfinite(acc_dirichlet), acc_dirichlet, 0.0)
+            dirichlet[idx] = acc_dirichlet
 
-    return core
+    return core, dirichlet
+
+
+@dataclass(frozen=True)
+class _CoreEntry:
+    """核心矩阵缓存的条目。
+
+    Attributes
+    ----------
+        plain: ``(N, N, J)`` 单跨核心积分矩阵。
+        ramp_spm: ``(N,)`` SPM 的等效逐跨相位增量 (rad)；``None`` 表示非相干档。
+        ramp_xpm: ``(N,)`` XPM 的等效逐跨相位增量 (rad)；``None`` 表示非相干档。
+    """
+
+    plain: NDArrayFloat
+    ramp_spm: NDArrayFloat | None = None
+    ramp_xpm: NDArrayFloat | None = None
 
 
 class CGNSpanKernel:
@@ -1214,8 +1385,8 @@ class CGNSpanKernel:
         canonical_power: NDArrayFloat,
         span_length_m: float,
         n_coherent_spans: int,
-    ) -> NDArrayFloat:
-        """构造该跨段的核心积分矩阵。
+    ) -> tuple[NDArrayFloat, NDArrayFloat | None]:
+        """构造该跨段的核心积分矩阵（单跨 + 链路级相干总量）。
 
         Args:
             canonical_power: 规范化后的入纤功率 (W)；矩阵只依赖它，故矩阵是
@@ -1225,7 +1396,8 @@ class CGNSpanKernel:
 
         Returns
         -------
-            ``(N, N, J)`` 核心积分矩阵。
+            ``(plain, dirichlet)``：单跨核心积分与链路级相干总量核心积分
+            （非相干档后者为 ``None``）。
         """
         if self.include_isrs:
             z_mid, gain, rate = _isrs_span_profile(
@@ -1273,16 +1445,85 @@ class CGNSpanKernel:
             n_coherent_spans=int(n_coherent_spans),
         )
 
+    def _link_ramps(
+        self,
+        plain: NDArrayFloat,
+        dirichlet: NDArrayFloat,
+        canonical_power: NDArrayFloat,
+        n_spans: int,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        r"""由 Dirichlet 链路总量反解逐跨相位斜坡。
+
+        逐跨的 NLI 振幅幅度必须等于**单跨**噪声（契约要求 ``|a|**2`` 等于
+        ``*_noise_w``），相干因子
+        :math:`[\sin(N\psi/2)/\sin(\psi/2)]^2` 只能通过相位斜坡表达。因此
+        斜坡按"链路级相干总量 ÷ 单跨总量"反解：路由层算出的
+        :math:`|\sum_k a_k|^2` 恰好等于 Dirichlet 核算出的链路总量。
+
+        Args:
+            plain: ``(N, N, J)`` 单跨核心积分矩阵。
+            dirichlet: ``(N, N, J)`` 链路级相干总量核心积分矩阵。
+            canonical_power: 规范化后的入纤功率 (W)。
+            n_spans: 跨段数。
+
+        Returns
+        -------
+            ``(ramp_spm, ramp_xpm)``：逐跨相位增量 (rad)，各 ``(N,)``。
+        """
+        g_psd = np.where(canonical_power > 0.0, canonical_power / self.b_hz, 0.0)
+        g_pad = np.concatenate([[0.0], g_psd])
+        third_psd = g_pad[self._r_index_padded]
+        single_spm, single_xpm = _nli_from_core(plain, g_psd, third_psd, self.b_hz)
+        link_spm, link_xpm = _nli_from_core(dirichlet, g_psd, third_psd, self.b_hz)
+        ramp_spm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_spm, single_spm))
+        ramp_xpm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_xpm, single_xpm))
+        return ramp_spm, ramp_xpm
+
+    def link_nli(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        n_spans: int,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        r"""Dirichlet 核核算出的链路级 NLI (W)（论文 Eq. (62)-(64)）。
+
+        这是逐跨相干累加必须复现的**参考值**：把单跨核心积分逐点乘上相干
+        累加核 :math:`[\sin(N_s\theta/2)/\sin(\theta/2)]^2` 后按
+        :func:`_nli_from_core` 聚合。相干口径下路由层算出的
+        :math:`|\sum_k a_k|^2` 与它逐位一致（相对误差 < 1e-9）。
+
+        功率口径（不含 ISRS 时与功率无关）用**规范化后的功率**构造核心矩阵，
+        与 :meth:`_link_ramps` 保持同一口径，故比较的是同一件事。
+
+        Args:
+            power_in_w: ``(N,)`` 入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            n_spans: 跨段数。
+
+        Returns
+        -------
+            ``(spm, xpm)``：链路级 SCI / XCI 噪声功率 (W)，各 ``(N,)``。
+        """
+        canonical, _ = _canonical_power(power_in_w)
+        plain, dirichlet = self._core_matrix(canonical, span_length_m, int(n_spans))
+        g_psd = np.where(canonical > 0.0, canonical / self.b_hz, 0.0)
+        g_pad = np.concatenate([[0.0], g_psd])
+        third_psd = g_pad[self._r_index_padded]
+        if dirichlet is None:
+            return _nli_from_core(plain, g_psd, third_psd, self.b_hz)
+        return _nli_from_core(dirichlet, g_psd, third_psd, self.b_hz)
+
     def _core_for(
         self,
         power: NDArrayFloat,
         span_length_m: float,
         n_coherent_spans: int,
-    ) -> NDArrayFloat:
-        """该跨段的核心积分矩阵（按长度、相干跨段数与**绝对**功率缓存）。
+    ) -> _CoreEntry:
+        """该跨段的核心积分矩阵与相位斜坡（按长度、相干跨段数与**绝对**功率缓存）。
 
-        缓存是**幂等**的：键里带的是规范化后的绝对功率，而矩阵也只用规范化
-        后的功率构造，所以"同一个键"永远对应"同一个矩阵"，与调用历史无关。
+        缓存是**幂等**的：键里带的是规范化后的绝对功率，而矩阵与斜坡也只用
+        规范化后的功率构造，所以"同一个键"永远对应"同一个条目"，与调用历史
+        无关。
         """
         canonical, power_key = _canonical_power(power)
         key = (
@@ -1292,21 +1533,28 @@ class CGNSpanKernel:
         )
         cached = self._core_cache.get(key)
         if cached is None:
-            cached = self._core_matrix(canonical, span_length_m, n_coherent_spans)
+            plain, dirichlet = self._core_matrix(canonical, span_length_m, n_coherent_spans)
+            if dirichlet is None:
+                cached = _CoreEntry(plain=plain)
+            else:
+                ramp_spm, ramp_xpm = self._link_ramps(
+                    plain, dirichlet, canonical, int(n_coherent_spans)
+                )
+                cached = _CoreEntry(plain=plain, ramp_spm=ramp_spm, ramp_xpm=ramp_xpm)
             self._store_core(key, cached)
         return cached
 
-    def _store_core(self, key: tuple, core: NDArrayFloat) -> None:
-        """把核心矩阵放进缓存，并按内存预算淘汰旧条目。"""
-        size = int(core.nbytes)
+    def _store_core(self, key: tuple, entry: _CoreEntry) -> None:
+        """把核心条目放进缓存，并按内存预算淘汰旧条目。"""
+        size = int(entry.plain.nbytes)
         if size > CORE_CACHE_BUDGET_BYTES:
             # 单个矩阵就超预算：不缓存，避免把内存吃光。
             return
         while self._core_cache and self._core_cache_bytes + size > CORE_CACHE_BUDGET_BYTES:
             oldest = next(iter(self._core_cache))
-            self._core_cache_bytes -= int(self._core_cache[oldest].nbytes)
+            self._core_cache_bytes -= int(self._core_cache[oldest].plain.nbytes)
             del self._core_cache[oldest]
-        self._core_cache[key] = core
+        self._core_cache[key] = entry
         self._core_cache_bytes += size
 
     def evaluate(
@@ -1314,14 +1562,27 @@ class CGNSpanKernel:
         power_in_w: NDArrayFloat,
         span_length_m: float,
         n_effective_spans: int = 1,
+        span_context: SpanContext | None = None,
     ) -> SpanFiberOutput:
-        """计算单跨的出纤功率与 SCI / XCI 噪声。
+        r"""计算单跨的出纤功率与 SCI / XCI 噪声。
+
+        单跨链（``span_context`` 为空，或链路只有一跨）走**纯功率**分支：
+        返回的噪声就是路由层原来逐跨相加的单跨噪声，浮点运算顺序不变，
+        因此单跨结果与改造前逐位一致。
+
+        多跨齐次链走**相干**分支：返回的复振幅幅度是单跨噪声的平方根，
+        相位是按 Dirichlet 链路总量反解出来的等效斜坡
+        （见 :func:`_equivalent_phase_ramp`）。路由层按
+        :math:`|\sum_k a_k|^2` 相干累加，得到的链路级 NLI 恰好等于
+        Dirichlet 核算出的链路总量。
 
         Args:
             power_in_w: ``(N,)`` 入纤功率 (W)；0 表示该信道未占用。
             span_length_m: 跨段长度 (m)。
             n_effective_spans: 未使用。相干累加的跨段数由
                 :attr:`n_coherent_spans` 给出（模型在路径评估前写入）。
+            span_context: 该跨在链路中的位置；给出且链路为齐次多跨时，
+                输出携带复振幅。
 
         Returns
         -------
@@ -1336,33 +1597,45 @@ class CGNSpanKernel:
         if span_length_m <= 0.0:
             raise ValueError(f"span_length_m must be positive, got {span_length_m}.")
 
-        core = self._core_for(power, span_length_m, self.n_coherent_spans)
+        entry = self._core_for(power, span_length_m, self.n_coherent_spans)
+        core = entry.plain
         power_out = self._span_output_power(power, span_length_m)
         active = power > 0.0
         g_psd = np.where(active, power / self.b_hz, 0.0)
         # 第三波 PSD：(N, N, J)。槽位索引已 +1，哑元固定在 0 号位。
         g_pad = np.concatenate([[0.0], g_psd])
         third_psd = g_pad[self._r_index_padded]
-        m = core * third_psd
-        m_sum = m.sum(axis=2)
+        spm_noise, xpm_noise = _nli_from_core(core, g_psd, third_psd, self.b_hz)
+        spm_noise = np.where(active, spm_noise, 0.0)
+        xpm_noise = np.where(active, xpm_noise, 0.0)
 
-        diag = np.arange(self.n_nodes)
-        # SCI: 第二波也在 CUT 内带，故 PSD 因子为 G_c * G_c * G_r。
-        spm_sum = m_sum[diag, diag] * g_psd
-        off_diagonal = m_sum.copy()
-        off_diagonal[diag, diag] = 0.0
-        # GN 积分对 (f1, f2) 对称：跨信道对 (c, l) 与 (l, c) 等价，故 XCI 计两次。
-        xpm_sum = 2.0 * (off_diagonal @ g_psd)
+        if (
+            span_context is None
+            or span_context.total_spans <= 1
+            or self.n_coherent_spans <= 1
+            or entry.ramp_spm is None
+            or entry.ramp_xpm is None
+        ):
+            # 单跨（或非齐次链）：纯功率口径，路由层沿用原来的求和顺序。
+            return SpanFiberOutput(
+                power_out_w=power_out,
+                spm_noise_w=spm_noise,
+                xpm_noise_w=xpm_noise,
+            )
 
-        # |NSP|^2 已含 gamma^2（论文 Eq. (22)），此处不再重复计入。
-        prefactor = (16.0 / 27.0) * g_psd
-        spm_noise = prefactor * spm_sum * self.b_hz
-        xpm_noise = prefactor * xpm_sum * self.b_hz
-
+        # 相干口径：相位随已传播的链路长度线性增长。齐次链上
+        # cumulative_length_m / span_length_m 就是跨序号。
+        scale = span_context.cumulative_length_m / float(span_length_m)
+        phase_spm = entry.ramp_spm * scale
+        phase_xpm = entry.ramp_xpm * scale
+        amplitude_spm = np.sqrt(spm_noise) * np.exp(1j * phase_spm)
+        amplitude_xpm = np.sqrt(xpm_noise) * np.exp(1j * phase_xpm)
         return SpanFiberOutput(
             power_out_w=power_out,
-            spm_noise_w=np.where(active, spm_noise, 0.0),
-            xpm_noise_w=np.where(active, xpm_noise, 0.0),
+            spm_noise_w=spm_noise,
+            xpm_noise_w=xpm_noise,
+            nli_amplitude_spm=amplitude_spm.astype(np.complex128),
+            nli_amplitude_xpm=amplitude_xpm.astype(np.complex128),
         )
 
 
@@ -1432,6 +1705,9 @@ class CGNModel(RouteModel):
     """
 
     info = CGN_MODEL_INFO
+
+    #: 模型需要知道自己在链路里的位置，才能给出各跨 NLI 振幅之间的相对相位。
+    supports_span_context = True
 
     def __init__(
         self,
@@ -1524,11 +1800,18 @@ class CGNModel(RouteModel):
         edfa_config: EDFAConfig | None,
         power_in_w: NDArrayFloat,
         span_length_m: float,
+        span_context: SpanContext | None = None,
     ) -> ElementOutput:
-        """单跨：调用核，再统一走放大器/ASE。"""
+        r"""单跨：调用核，再统一走放大器/ASE。
+
+        ``span_context`` 透传给核：核据此给出该跨 NLI 复振幅的相对相位，
+        路由层再按 :math:`|\sum_k a_k|^2` 相干累加。跨的序号只从
+        :class:`~network_nlo_eval.models.base.SpanContext` 取，模型自己
+        不维护任何跨计数器。
+        """
         kernel = self.kernel_for(fiber_config)
         kernel.n_coherent_spans = self._n_coherent_spans
-        fiber_output = kernel.evaluate(power_in_w, span_length_m, 1)
+        fiber_output = kernel.evaluate(power_in_w, span_length_m, 1, span_context=span_context)
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
         return apply_amplifier_and_roadm(
             power_in_w=power_in_w,

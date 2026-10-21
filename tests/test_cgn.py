@@ -31,6 +31,7 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import (
     MultiSpanOpticalPath,
     PathQoTResult,
+    SpanContext,
     available_models,
     create_model,
     get_model_info,
@@ -39,6 +40,7 @@ from network_nlo_eval.models.cgn import (
     CGN_MODEL_INFO,
     CGNSpanKernel,
     _canonical_power,
+    _dirichlet_weight,
     _isrs_nsp_energy_spectrum,
     _nsp_energy_spectrum,
 )
@@ -261,23 +263,23 @@ def test_identical_spans_accumulate_coherently() -> None:
     1.07 dB、``|β2| = 1 ps²/km`` 时约 2.40 dB。本仓库的 SMF 参考光纤
     ``D = 17 ps/(nm·km)``（约 21.7 ps²/km），色散更强，相干增强更弱，故这里
     只断言"相干高于非相干"并给出量级上界。
+
+    相干口径下逐跨给出的是**单跨**噪声（契约要求 ``|a|**2 == spm_noise_w``），
+    链路总量由路由层按 ``|Σ a_k|²`` 累加得到。
     """
     case = build_case("scaling_40ch")
     model = _model("scaling_40ch")
     power = launch_profile(case, None)
     fiber = build_path(case).fiber_configs[0]
-    kernel = model.kernel_for(fiber)
+    edfa = build_path(case).edfa_configs[0]
 
-    kernel.n_coherent_spans = 1
-    incoherent = kernel.evaluate(power, 100e3, 1)
-    kernel.n_coherent_spans = 10
-    coherent = kernel.evaluate(power, 100e3, 1)
+    single = model.evaluate_path(MultiSpanOpticalPath([fiber], [edfa]), power)
+    ten = model.evaluate_path(MultiSpanOpticalPath([fiber] * 10, [edfa] * 10), power)
 
-    # 10 跨的相干总量 = 逐跨值 × 10，必须高于非相干求和 10 × 单跨值。
-    coherent_total = 10.0 * coherent.spm_noise_w[20]
-    incoherent_total = 10.0 * incoherent.spm_noise_w[20]
-    assert coherent_total > incoherent_total
-    gain_db = 10.0 * np.log10(coherent_total / incoherent_total)
+    # 相干总量 = 10 跨逐跨相干累加；非相干求和 = 10 × 单跨。
+    ratio = ten.spm_noise_w[20] / single.spm_noise_w[20]
+    assert ratio > 10.0
+    gain_db = 10.0 * np.log10(ratio / 10.0)
     assert 0.05 < gain_db < 3.0
 
 
@@ -774,4 +776,253 @@ def test_core_cache_is_idempotent() -> None:
     kernel._core_cache.clear()
     kernel._core_cache_bytes = 0
     core_b = kernel._core_for(power, 100e3, 1)
-    assert np.array_equal(core_a, core_b)
+    assert np.array_equal(core_a.plain, core_b.plain)
+
+
+# ---------------------------------------------------------------------------
+# 跨间相干累加（复振幅口径）
+# ---------------------------------------------------------------------------
+
+#: 改造前（纯功率口径）单跨链的硬编码读数：``scaling_40ch``、标称每信道功率、
+#: 通道 20。这三个数由**改造前**的实现产出（``git show HEAD~1`` 可复现），
+#: 用来钉死"单跨走纯功率分支时与改造前逐位一致"这条硬性要求。
+SINGLE_SPAN_SNR_MID_BEFORE = 27.866528441287723
+SINGLE_SPAN_SPM_MID_BEFORE = 1.496862542480594e-07
+SINGLE_SPAN_XPM_MID_BEFORE = 2.817325422025434e-07
+
+
+def _homogeneous_path(case, spans: int, fiber=None) -> MultiSpanOpticalPath:
+    """同一根光纤、同一台放大器重复 ``spans`` 次的光路。"""
+    if fiber is None:
+        fiber = build_path(case).fiber_configs[0]
+    edfa = build_path(case).edfa_configs[0]
+    return MultiSpanOpticalPath([fiber] * spans, [edfa] * spans)
+
+
+def test_single_span_result_is_bit_identical_to_the_previous_implementation() -> None:
+    """单跨链：改造后的 SNR / NLI 与改造前逐位相同。
+
+    单跨时相干退化为单跨，``|a|**2 == 噪声功率``，路由层必须走**纯功率**
+    分支，浮点运算顺序不变。这里用改造前的硬编码数值做断言。
+    """
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    result = model.evaluate_path(build_path(case), launch_profile(case, None))
+    assert result.snr_db[20] == SINGLE_SPAN_SNR_MID_BEFORE
+    assert result.spm_noise_w[20] == SINGLE_SPAN_SPM_MID_BEFORE
+    assert result.xpm_noise_w[20] == SINGLE_SPAN_XPM_MID_BEFORE
+
+
+def test_single_span_keeps_the_power_only_branch() -> None:
+    """单跨链不给出复振幅（路由层因此走原来的纯功率累加）。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    step = model.span_step(
+        build_path(case).fiber_configs[0],
+        build_path(case).edfa_configs[0],
+        launch_profile(case, None),
+        100e3,
+    )
+    assert getattr(step, "nli_amplitude_spm", None) is None
+    assert getattr(step, "nli_amplitude_xpm", None) is None
+
+
+def test_amplitude_magnitude_matches_the_noise_power() -> None:
+    """``|a|**2`` 必须严格等于同名的噪声功率（契约硬性要求）。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    kernel.n_coherent_spans = 10
+    context = SpanContext(
+        span_index=3,
+        total_spans=10,
+        cumulative_length_m=300e3,
+        span_length_m=100e3,
+    )
+    out = kernel.evaluate(power, 100e3, 1, span_context=context)
+    assert out.nli_amplitude_spm is not None
+    assert out.nli_amplitude_xpm is not None
+    assert np.allclose(np.abs(out.nli_amplitude_spm) ** 2, out.spm_noise_w, rtol=1e-12, atol=0.0)
+    assert np.allclose(np.abs(out.nli_amplitude_xpm) ** 2, out.xpm_noise_w, rtol=1e-12, atol=0.0)
+
+
+def test_coherent_sum_reproduces_the_dirichlet_link_total() -> None:
+    """路由层的 ``|Σ a_k|²`` 必须精确复现 Dirichlet 核算出的链路总量。
+
+    斜坡是按"链路级相干总量 ÷ 单跨总量"反解出来的，所以这条等式是斜坡的定义
+    性质；这里用**独立**的 :meth:`CGNSpanKernel.link_nli` 重新算一遍链路总量
+    来验证（相对误差 < 1e-9）。
+    """
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    result = model.evaluate_path(_homogeneous_path(case, 10), power)
+    link_spm, link_xpm = kernel.link_nli(power, 100e3, 10)
+    assert np.all(np.isfinite(result.spm_noise_w))
+    assert np.allclose(result.spm_noise_w, link_spm, rtol=1e-9, atol=0.0)
+    assert np.allclose(result.xpm_noise_w, link_xpm, rtol=1e-9, atol=0.0)
+
+
+def test_multi_span_nli_is_finite_and_monotonic_in_span_count() -> None:
+    """NLI 随跨数单调增长、有限，且 10 跨不等于"单跨 × 10"。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    single = model.evaluate_path(_homogeneous_path(case, 1), power)
+    ratios = []
+    for spans in (1, 2, 3, 5, 10):
+        result = model.evaluate_path(_homogeneous_path(case, spans), power)
+        assert np.all(np.isfinite(result.spm_noise_w))
+        assert np.all(result.spm_noise_w >= 0.0)
+        ratios.append(float(result.spm_noise_w[20] / single.spm_noise_w[20]))
+    assert all(b > a for a, b in zip(ratios, ratios[1:], strict=False)), ratios
+    # 10 跨不是"单跨 × 10"：相干累加给出的是 Dirichlet 总量。
+    assert ratios[-1] != pytest.approx(10.0, rel=1e-6)
+    assert ratios[-1] > 10.0
+
+
+def test_zero_dispersion_limit_is_fully_coherent() -> None:
+    """色散趋零：跨间完全相干，NLI ∝ N²（10 跨 → 100 倍单跨）。"""
+    case = build_case("scaling_40ch")
+    zero_dispersion = SMF_100KM.model_copy(
+        update={"dispersion_parameter_d": 0.0, "dispersion_slope_s": 0.0}
+    )
+    model = create_model(
+        "cgn", grid_for(case), zero_dispersion, symbol_rate_hz=case.symbol_rate_hz
+    )
+    power = launch_profile(case, None)
+    single = model.evaluate_path(_homogeneous_path(case, 1, zero_dispersion), power)
+    ten = model.evaluate_path(_homogeneous_path(case, 10, zero_dispersion), power)
+    ratio = ten.spm_noise_w[20] / single.spm_noise_w[20]
+    assert ratio == pytest.approx(100.0, rel=1e-4)
+    ratio_xpm = ten.xpm_noise_w[20] / single.xpm_noise_w[20]
+    assert ratio_xpm == pytest.approx(100.0, rel=1e-4)
+
+
+def test_large_dispersion_limit_is_nearly_incoherent(monkeypatch: pytest.MonkeyPatch) -> None:
+    r"""色散很大：跨间接近非相干，NLI ∝ N（10 跨 → 约 10 倍单跨）。
+
+    这里必须把相关域的截断窗口放宽（``TRUNCATION_FACTOR``）：默认的 40 倍
+    谱衰减尺度只覆盖约 ``40·α_x·L/(2π)`` 个 Dirichlet 周期，与 :math:`\\beta_2`
+    无关，所以默认档下再大的色散也到不了非相干极限（见交付报告的"已知限制"）。
+    """
+    import network_nlo_eval.models.cgn as cgn_module
+
+    monkeypatch.setattr(cgn_module, "TRUNCATION_FACTOR", 400.0)
+    case = build_case("scaling_40ch")
+    strong = SMF_100KM.model_copy(update={"dispersion_parameter_d": 1e4})
+    model = create_model("cgn", grid_for(case), strong, symbol_rate_hz=case.symbol_rate_hz)
+    power = launch_profile(case, None)
+    single = model.evaluate_path(_homogeneous_path(case, 1, strong), power)
+    ten = model.evaluate_path(_homogeneous_path(case, 10, strong), power)
+    ratio = ten.spm_noise_w[20] / single.spm_noise_w[20]
+    assert ratio == pytest.approx(10.0, rel=0.05)
+
+
+def test_long_span_is_nearly_incoherent() -> None:
+    r"""累计色散足够大（跨长 150 km）时，跨间接近非相干：NLI ∝ N。
+
+    这是不改动模型任何参数就能走到的解析极限端：相邻跨之间的相位失配正比于
+    :math:`\\beta_2 L`，跨长加倍即把失配加倍。
+    """
+    case = build_case("scaling_40ch")
+    long_span = SMF_100KM.model_copy(update={"length_km": 150.0, "max_span_length_km": 150.0})
+    model = create_model("cgn", grid_for(case), long_span, symbol_rate_hz=case.symbol_rate_hz)
+    power = launch_profile(case, None)
+    fiber = long_span
+    edfa = build_path(case).edfa_configs[0]
+    single = model.evaluate_path(MultiSpanOpticalPath([fiber], [edfa]), power)
+    ten = model.evaluate_path(MultiSpanOpticalPath([fiber] * 10, [edfa] * 10), power)
+    ratio = ten.spm_noise_w[20] / single.spm_noise_w[20]
+    assert ratio == pytest.approx(10.0, rel=0.10)
+
+
+def test_phase_comes_from_the_span_context() -> None:
+    """相位只由 ``SpanContext`` 决定：跨序号不同 → 相位不同。
+
+    这条守住"``span_index`` 只能来自 ``SpanContext``"的约定：模型不得自己
+    维护跨计数器（那正是上一轮调用历史 bug 的来源）。
+    """
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    kernel.n_coherent_spans = 10
+    phases = []
+    for index in (0, 1, 2):
+        context = SpanContext(
+            span_index=index,
+            total_spans=10,
+            cumulative_length_m=index * 100e3,
+            span_length_m=100e3,
+        )
+        out = kernel.evaluate(power, 100e3, 1, span_context=context)
+        assert out.nli_amplitude_spm is not None
+        phases.append(np.angle(out.nli_amplitude_spm[20]))
+    # 逐跨相位线性增长，且步长等于斜坡本身。
+    step = phases[1] - phases[0]
+    assert step != 0.0
+    assert phases[2] - phases[1] == pytest.approx(step, rel=1e-9)
+
+
+def test_heterogeneous_link_keeps_the_power_convention() -> None:
+    """异构链不进入相干分支：结果等于逐跨功率相加。
+
+    论文 Eq. (53) 的 XS 项本实现未覆盖，异构链没有闭式相干解，退回纯功率
+    口径（与改造前一致）。
+    """
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    base_fiber = build_path(case).fiber_configs[0]
+    edfa = build_path(case).edfa_configs[0]
+    short = base_fiber.model_copy(update={"length_km": 80.0, "max_span_length_km": 80.0})
+    fibers = [base_fiber, short]
+    result = model.evaluate_path(MultiSpanOpticalPath(fibers, [edfa] * 2), power)
+
+    # 纯功率口径：跨间功率传输因子为 1（放大器补偿跨损），总量 = 逐跨之和。
+    total = np.zeros(case.num_channels)
+    for fiber in fibers:
+        kernel = model.kernel_for(fiber)
+        kernel.n_coherent_spans = 1
+        out = kernel.evaluate(power, fiber.length_km * 1e3, 1)
+        total += out.spm_noise_w
+    assert np.allclose(result.spm_noise_w, total, rtol=1e-9, atol=0.0)
+
+
+def test_coherent_ramp_does_not_depend_on_call_history() -> None:
+    """相位斜坡的缓存是幂等的：先调别的功率再调回来，结果逐位相同。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    path = _homogeneous_path(case, 10)
+    fresh = model.evaluate_path(path, launch_profile(case, -4.0))
+
+    reused = _model("scaling_40ch")
+    reused.evaluate_path(path, launch_profile(case, 0.0))
+    reused.evaluate_path(path, launch_profile(case, 4.0))
+    after = reused.evaluate_path(path, launch_profile(case, -4.0))
+
+    assert np.array_equal(fresh.spm_noise_w, after.spm_noise_w)
+    assert np.array_equal(fresh.snr_db, after.snr_db)
+
+
+def test_coherent_factor_stays_within_the_dirichlet_bounds() -> None:
+    """相干因子必须落在 ``[0, N²]`` 内（Dirichlet 核的取值范围）。"""
+    case = build_case("scaling_40ch")
+    model = _model("scaling_40ch")
+    power = launch_profile(case, None)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    entry = kernel._core_for(power, 100e3, 10)
+    assert entry.ramp_spm is not None and entry.ramp_xpm is not None
+    for ramp in (entry.ramp_spm, entry.ramp_xpm):
+        assert np.all(ramp >= 0.0)
+        assert np.all(ramp <= 2.0 * np.pi / 10.0 + 1e-12)
+    # 斜坡给出的相干因子就是链路总量 ÷ 单跨总量。
+    link_spm, link_xpm = kernel.link_nli(power, 100e3, 10)
+    single_spm, single_xpm = kernel.link_nli(power, 100e3, 1)
+    factor = _dirichlet_weight(entry.ramp_spm, 10)
+    assert np.allclose(factor * single_spm, link_spm, rtol=1e-9, atol=0.0)
+    factor = _dirichlet_weight(entry.ramp_xpm, 10)
+    assert np.allclose(factor * single_xpm, link_xpm, rtol=1e-9, atol=0.0)
