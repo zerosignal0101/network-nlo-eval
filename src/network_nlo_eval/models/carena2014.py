@@ -13,6 +13,21 @@
 物理、多少来自那个常数。本版把两处都换成 2014 论文正文与附录里的**显式积分**，
 用 Gauss-Legendre 求积算出来，模型里不再有来源不明的常数。
 
+**这一版改了什么（2026-10-21）**
+
+论文 Eq. (8) 的 4 阶修正 ``kappa2`` 是**两行**，且两行的**积分域不同**：
+
+* 第一行（``80/81``）按附录 C 的 Eq. (43) 化简，外层变量是 ``f1``（记作 ``L1``）；
+* 第二行（``16/81``）把积分变量 ``f1`` 换成 ``f3 = f1+f2-f``（``f1 = f3-f2+f``），
+  按 Eq. (44) 化简，**外层变量是 ``f3``**（记作 ``L2``）。
+
+论文原文（``full.md`` 第 636 行与第 644 行）把这两项分别叫做 ``kappa21(f)`` 与
+``kappa22(f)``。之前的实现把两行合并成 ``(96/81) L1``，等于宣称 ``L2 = L1``：
+这让 ``kappa2`` 抬高 8.5 %（N=1）/ 15 %（N=10），并把 c_57ch 上 N=10 的 EGN SPM
+buildup 从 1.9624 抬到 2.0500。本版按论文原式分成两项，并给 ``l2`` 模式补上了
+"外层变量 = f3"的求积（见 :meth:`EgnIntegrator._core_l2`）。独立求积对照见
+``tests/test_carena2014_egn_kappas.py`` 与 ``tests/egn_reference.py``。
+
 **结构**
 
 2014 论文把 NLI 拆成 SCI / XCI / MCI 三块，每块都写成
@@ -60,7 +75,9 @@ Hermite），表外的外层积分用复合 Gauss-Legendre。
 * SCI 的 GN 项（三重 ``|s|^2`` 与 ``|mu|^2`` 的二重积分，系数 ``16/27 R_s^3``）
   → :meth:`EgnIntegrator.sci`
 * SCI 的 4 阶修正（两行三阶积分，含 ``s s* mu mu*``，系数 ``80/81`` 与 ``16/81``
-  乘 ``R_s^2``）→ :meth:`EgnIntegrator.sci`
+  乘 ``R_s^2``；两行积分域不同）→ :meth:`EgnIntegrator.sci`
+* 附录 C 的 Eq. (43)（4 阶，外层是 ``f1``）与 Eq. (44)（4 阶，外层是 ``f3``）
+  → :meth:`EgnIntegrator._core` 与 :meth:`EgnIntegrator._core_l2`
 * SCI 的 6 阶修正（四重积分，系数 ``16/81 R_s``）→ :meth:`EgnIntegrator.sci`
 * 链路函数 ``mu = zeta * nu``（``zeta`` 的分母里没有跨长 ``L_s``）→ :class:`LinkFunction`
 * XPM 近似的 X1 域（系数 ``32/27 R_s^3`` 与 ``80/81 R_s^2``）→ :meth:`EgnIntegrator.xci`
@@ -69,6 +86,7 @@ Hermite），表外的外层积分用复合 Gauss-Legendre。
 * 附录 A 的 ``kappa_21`` … ``kappa_43`` → :meth:`EgnIntegrator.xci`
 * 附录 B 的多信道 MCI 修正 → **未实现**（见"已知限制"）
 * 附录 C 的三重/四重积分降二重积分的换元 → :meth:`EgnIntegrator._core`
+* 附录 A 的 ``kappa_42``（X4 域 4 阶修正的两行）→ :meth:`EgnIntegrator.xci`
 * Table 1 的 ``Phi_a`` / ``Psi_a`` → :data:`MODULATION_TABLE`
 
 **谱因子**
@@ -109,6 +127,15 @@ Hermite），表外的外层积分用复合 Gauss-Legendre。
     （``pi/(N_s |c|)``，``c = 2 pi^2 beta2 L_s``）细分，色散越大表越大：D = 17
     ps/(nm·km) 时建表约 2.1 s，D = 100 时约 11.8 s，内存也同比例上升。极强色散
     的配置在本模型上不经济。
+11. **``l2`` 模式（外层变量 = ``f3``）用乘积积分近似。** 它的内层积分里
+    ``p = (f3-f2)*(f2-f)`` 是内层变量的二次式，没法像 ``l1`` 那样直接换成 ``p`` 轴上
+    的原函数；本实现改用 ``s = f3-2 f2``、``u = s^2`` 的换元，把内层积分拆成两段偶
+    函数积分，再在 ``u`` 轴上用原函数表 ``Psi(p)`` 做乘积积分（权重 ``1/sqrt(u)`` 取
+    单元平均）。乘积积分的截断误差由 ``L2_CELLS``（分段数）与 ``L2_OUTER_DIVISOR``
+    （外层网格细分因子）控制：实测 ``L2`` 积分相对独立求积（``tests/egn_reference.py``）
+    的相对偏差在 ``L2_CELLS = 256`` 时是 N=1 的 2.4e-5、N=10 顶点区（``f=0``）的
+    2.0e-4，带平均后对 ``kappa2`` 的影响 < 1e-5；把两个参数同时加倍时结果变化
+    < 1e-3。外层网格的细分因子实测几乎不影响结果（放粗 8 倍的相对变化 < 5e-5）。
 
 **跨间相干累积：逐跨复振幅**
 
@@ -340,6 +367,38 @@ DEFAULT_FREQUENCY_POINTS = 41
 #: 快速衰减（正比于 ``1/Delta_f^2``）而可以截断。这个窗口是**数值截断**而不是
 #: 物理常数，测试里检查窗口翻倍后 SNR 变化 < 0.01 dB。
 XCI_NEIGHBOR_SPAN = 8
+
+#: ``l2`` 模式（外层变量是第三个波形 ``f3``）在 ``u = (w-2v)^2`` 轴上的分段数。
+#:
+#: ``l2`` 的内层积分里 ``p = (w-v)*v`` 是内层变量的**二次**式，没法像 ``l1`` 那样
+#: 直接换成 ``p`` 轴上的原函数；本实现改用 ``s = w-2v``（于是 ``p = (w^2-s^2)/4``）
+#: 把内层积分拆成两段偶函数积分，再在 ``u = s^2`` 轴上用原函数表
+#: ``Psi(p) = int_0^p mu`` 做乘积积分（权重 ``1/sqrt(u)`` 取单元平均）。
+#:
+#: 分段数不是经验常数：单元在 ``u`` 轴上按平方律加密（靠 ``u = 0`` 的一端最密），
+#: 因为那里的权重 ``1/sqrt(u)`` 最陡；靠权重平滑的一端单元最宽。这个数只影响
+#: 乘积积分的截断误差，测试里检查分段数翻倍时结果的变化。
+#:
+#: 256 是按**误差**定的，不是按成本定的：单元平均权重的乘积积分每单元的误差是
+#: ``O(mu'(u) * Delta u^3 / u^{3/2})``，总误差按分段数的平方衰减。实测（对照
+#: ``tests/egn_reference.py`` 的独立求积，N=10、f=0、64 GBd）相对偏差是
+#: 64 段 2.9e-3、128 段 7.7e-4、256 段 2.0e-4、512 段 6.0e-5；取 256 段，
+#: 相对偏差 < 3e-4（N=1 时 < 3e-5）。这个分段数**不影响运行时间**：
+#: 单元平均把 ``mu`` 的积分交给原函数表，内层只剩查表，实测 64 → 512 段
+#: ``sci()`` 的耗时在噪声内（见 ``tests/test_carena2014_egn_kappas.py`` 的收敛断言）。
+L2_CELLS = 256
+
+#: ``l2`` 模式外层网格的细分因子：子区间个数 = ``nu`` 的最细周期数 / 这个因子。
+#:
+#: ``l2`` 的外层被积函数是 ``|int dv mu|^2``：内层积分把 ``mu`` 在窗口上的细结构
+#: **平均掉**了，留在外层变量上的最细结构是 ``nu`` 的 Dirichlet 核里两条指数之差
+#: （频率差 ``2(N_s-1) c``），也就是比 ``nu`` 的最细周期宽约 ``pi`` 倍。取 8 倍
+#: （比那个估计再保守 2.5 倍）：实测在 N=1…50、32/64 GBd、SCI 与 X4 域、带内各
+#: 处频率上，外层网格放粗 8 倍后 ``l2`` 积分的相对变化 < 5e-5。
+#:
+#: 这是**数值细分因子**（与 Gauss 节点数同级），不是物理常数；它只影响截断误差，
+#: 正确性由 ``tests/test_carena2014_egn_kappas.py`` 的独立求积对照守住。
+L2_OUTER_DIVISOR = 8
 
 #: 反解等效跨间相位步长时的二分迭代次数。
 #:
@@ -829,7 +888,13 @@ class EgnIntegrator:
         interior = sorted({c for c in candidates if u_lo < c < u_hi})
         return [u_lo, *interior, u_hi]
 
-    def _outer_grid(self, lo: float, hi: float, v_scale: float) -> tuple[NDArrayFloat, NDArrayFloat]:
+    def _outer_grid(
+        self,
+        lo: float,
+        hi: float,
+        v_scale: float,
+        divisor: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """外层（``u``）的复合 Gauss-Legendre 节点与权重。
 
         子区间个数由被积函数的细结构决定：原函数在 ``p`` 轴上的周期是 ``T``，
@@ -840,6 +905,8 @@ class EgnIntegrator:
             lo: 区间下界。
             hi: 区间上界。
             v_scale: 内层变量的量级 (Hz)。
+            divisor: 子区间个数的**细分因子**（1 = 每个振荡周期一段）。``l2`` 模式
+                用它放粗外层网格，见 :meth:`_core_l2`。
 
         Returns
         -------
@@ -849,7 +916,7 @@ class EgnIntegrator:
             n_osc = (hi - lo) * v_scale / self._table.period
         else:
             n_osc = 0.0
-        n_sub = max(1, int(np.ceil(n_osc)))
+        n_sub = max(1, int(np.ceil(n_osc / divisor)))
         x, w = leggauss(self.points)
         edges = np.linspace(lo, hi, n_sub + 1)
         width = np.diff(edges)
@@ -872,13 +939,16 @@ class EgnIntegrator:
             band1: 第 1 个波形的频带 (Hz)。
             band2: 第 2 个波形的频带 (Hz)。
             band3: 第 3 个波形 ``f1+f2-f`` 的频带 (Hz)。
-            kind: ``"gn"``（GN 项）、``"fourth"``（4 阶项）或 ``"sixth"``（6 阶项）。
+            kind: ``"gn"``（GN 项）、``"fourth"``（4 阶项）、``"sixth"``（6 阶项）
+                或 ``"l2"``（外层变量是第 3 个波形的 4 阶项，论文附录 C 的 Eq. (44)）。
 
         Returns
         -------
             ``gn`` 为 ``int int |mu|^2``；``coherent`` 为 4 阶项的
             ``int |int mu|^2`` 或 6 阶项的 ``int int mu``（未取模平方）。
         """
+        if kind == "l2":
+            return 0.0, self._core_l2(f_hz, band1, band2, band3)
         u_lo, u_hi = band1[0] - f_hz, band1[1] - f_hz
         v_lo, v_hi = band2[0] - f_hz, band2[1] - f_hz
         w_lo, w_hi = band3[0] - f_hz, band3[1] - f_hz
@@ -912,16 +982,137 @@ class EgnIntegrator:
             return 0.0, float(coh_total.real)
         return 0.0, coh_total
 
+    def _l2_half_integral(
+        self,
+        w_nodes: NDArrayFloat,
+        a2: NDArrayFloat,
+        b2: NDArrayFloat,
+    ) -> NDArrayFloat:
+        """``l2`` 内层积分的偶函数半段：``int_{a2}^{b2} mu((w^2-u)/4) du / sqrt(u)``。
+
+        换元链：``s = w - 2v``（于是 ``p = (w-v)*v = (w^2-s^2)/4``）、``u = s^2``。
+        ``mu`` 的部分仍然走 ``p`` 轴上的原函数表 ``Psi(p) = int_0^p mu``：
+        ``int mu((w^2-u)/4) du = 4 [Psi(p_lo) - Psi(p_hi)]``（``p = (w^2-u)/4``）。
+        剩下的权重 ``1/sqrt(u)`` 在每个单元上取**单元平均**（解析式），这是乘积积分
+        的标准做法：权重在单元内越平，截断误差越小。
+
+        单元在 ``u`` 轴上按平方律加密：``u_j = a2 + (b2-a2) (j/N)^2``。靠 ``u = 0``
+        的一端权重最陡（那里 ``1/sqrt(u)`` 发散），所以那里的单元最密；靠权重平滑的
+        一端单元最宽。
+
+        Args:
+            w_nodes: 外层变量（第 3 个波形）``w`` (Hz)，形状 ``(M,)``。
+            a2: 积分下端 ``a^2`` (Hz^2)，形状 ``(M,)``。
+            b2: 积分上端 ``b^2`` (Hz^2)，形状 ``(M,)``。
+
+        Returns
+        -------
+            实数组，形状 ``(M,)``。
+        """
+        frac = (np.arange(L2_CELLS + 1, dtype=np.float64) / float(L2_CELLS)) ** 2
+        u = a2[:, None] + (b2 - a2)[:, None] * frac[None, :]
+        p = (w_nodes[:, None] ** 2 - u) / 4.0
+        # 权重 1/sqrt(u) 的单元平均：int du/sqrt(u) = 2 sqrt(u)。
+        du = u[:, 1:] - u[:, :-1]
+        weight = 2.0 * (np.sqrt(u[:, 1:]) - np.sqrt(u[:, :-1]))
+        average = np.where(du > 0.0, weight / np.where(du > 0.0, du, 1.0), 0.0)
+        # int_a^b mu((w^2-u)/4) du = 4 [Psi(p_a) - Psi(p_b)]，其中 p = (w^2-u)/4。
+        psi = self._table.value(p)
+        segment = 4.0 * (psi[:, :-1] - psi[:, 1:])
+        return np.sum(average * segment, axis=1)
+
+    def _core_l2(
+        self,
+        f_hz: float,
+        band1: tuple[float, float],
+        band2: tuple[float, float],
+        band3: tuple[float, float],
+    ) -> float:
+        """``l2`` 模式：外层变量是第 3 个波形 ``f3``（论文附录 C 的 Eq. (44)）。
+
+        这是论文 Eq. (8) 第二行（``16/81``）的积分域：外层变量是 ``f3 = f1+f2-f``，
+        内层变量是 ``f2``，而 ``f1 = f3 - f2 + f``。于是
+
+        .. code-block:: text
+
+            kappa22 ~ int df3 | int df2 mu(f3-f2+f, f2, f) |^2
+
+        与 ``"fourth"`` 模式（外层是 ``f1``、``p = (f1-f)(f2-f)``）的**积分域不同**，
+        两者不是同一个积分，不能合并成一个系数。
+
+        坐标：``u = f1-f``、``v = f2-f``、``w = f3-f``，于是 ``u = w - v``、
+        ``p = u*v = (w-v)*v``。内层区间由三条频带给出：
+        ``v in [max(V_lo, w-U_hi), min(V_hi, w-U_lo)]``。
+
+        Args:
+            f_hz: 被干扰频率 (Hz)。
+            band1: 第 1 个波形 ``f1`` 的频带 (Hz)。
+            band2: 第 2 个波形 ``f2`` 的频带 (Hz)。
+            band3: 第 3 个波形 ``f3`` 的频带 (Hz)，**外层变量**。
+
+        Returns
+        -------
+            ``int df3 |int df2 mu|^2`` 的值。
+        """
+        u_lo, u_hi = band1[0] - f_hz, band1[1] - f_hz
+        v_lo, v_hi = band2[0] - f_hz, band2[1] - f_hz
+        w_lo, w_hi = band3[0] - f_hz, band3[1] - f_hz
+        # p = (w-v)*v 的上限，以及外层变量带来的 w^2/4（s = w-2v 的端点）。
+        self._ensure_table(
+            max(
+                max(abs(u_lo), abs(u_hi)) * max(abs(v_lo), abs(v_hi)),
+                0.25 * max(abs(w_lo), abs(w_hi)) ** 2,
+            )
+        )
+        v_scale = max(abs(v_lo), abs(v_hi), abs(w_lo), abs(w_hi), 2.0 * max(abs(u_lo), abs(u_hi)))
+        coh_total = 0.0
+        # 内层窗口的折点：v1 = max(V_lo, w-U_hi) 在 w = V_lo+U_hi 处换式，
+        # v2 = min(V_hi, w-U_lo) 在 w = V_hi+U_lo 处换式。
+        kinks = sorted({v_lo + u_hi, v_hi + u_lo})
+        edges = [w_lo, *[k for k in kinks if w_lo < k < w_hi], w_hi]
+        for lo, hi in zip(edges[:-1], edges[1:], strict=False):
+            w_nodes, w_w = self._outer_grid(lo, hi, v_scale, divisor=L2_OUTER_DIVISOR)
+            v1 = np.maximum(v_lo, w_nodes - u_hi)
+            v2 = np.minimum(v_hi, w_nodes - u_lo)
+            valid = v2 > v1
+            if not bool(np.any(valid)):
+                continue
+            # s = w - 2v：内层积分沿 s 展开，p = (w^2-s^2)/4。
+            s1 = w_nodes - 2.0 * v1
+            s2 = w_nodes - 2.0 * v2
+            inner = np.zeros(w_nodes.shape, dtype=np.complex128)
+            # s > 0 的半段：s 从 max(s2,0) 到 s1。
+            positive = valid & (s1 > 0.0)
+            if bool(np.any(positive)):
+                a2 = np.where(s2 > 0.0, s2 * s2, 0.0)
+                b2 = s1 * s1
+                part = 0.25 * self._l2_half_integral(w_nodes, a2, b2)
+                inner = inner + np.where(positive, part, 0.0)
+            # s < 0 的半段：|s| 从 max(-s1,0) 到 -s2（被积函数关于 s 偶）。
+            negative = valid & (s2 < 0.0)
+            if bool(np.any(negative)):
+                a2 = np.where(s1 < 0.0, s1 * s1, 0.0)
+                b2 = s2 * s2
+                part = 0.25 * self._l2_half_integral(w_nodes, a2, b2)
+                inner = inner + np.where(negative, part, 0.0)
+            coh_total += float(np.sum(w_w * np.abs(inner) ** 2))
+        return coh_total
+
     # --- SCI (2014 Eq. (7)/(8)/(9)) -----------------------------------------
     def sci(self, f_hz: float) -> SciKappas:
         """SCI 的 ``kappa1`` / ``kappa2`` / ``kappa3``。
 
         Eq. (7)：``kappa1 = (16/27) R_s^3 int int |s|^2 |s|^2 |s(f1+f2-f)|^2 |mu|^2``。
 
-        Eq. (8) 的两行按附录 C 的 Eq. (43)/(44) 降成二重积分。第一行的外层是
-        ``f1``；第二行把 ``f1`` 换成 ``f3 = f1+f2-f``，再把外层换回 ``f1``，落到
-        与第一行相同的区域。矩形谱下两行的谱因子与积分区域完全相同，于是可以合并
-        成一个系数。
+        Eq. (8) 的两行按附录 C 降成二重积分，但**积分域不同**：
+
+        * 第一行（``80/81``）按 Eq. (43) 化简，外层变量是 ``f1``，记作 ``L1``；
+        * 第二行（``16/81``）把积分变量 ``f1`` 换成 ``f3 = f1+f2-f``（``f1 = f3-f2+f``），
+          按 Eq. (44) 化简，**外层变量是 ``f3``**，记作 ``L2``。
+
+        论文原文（``full.md`` 第 636 行与第 644 行）明确把这两项分别叫做
+        ``kappa21(f)`` 与 ``kappa22(f)``。两者的谱因子相同（矩形谱下都是
+        ``R_s^{-6}``），但积分域不同，**不能合并成一个系数**。
 
         Eq. (9) 按附录 C 的 Eq. (45) 降成二重积分的模平方。
 
@@ -935,11 +1126,12 @@ class EgnIntegrator:
         band = self._cut_band()
         gn, _ = self._core(f_hz, band, band, band, "gn")
         _, fourth = self._core(f_hz, band, band, band, "fourth")
+        _, fourth_third = self._core(f_hz, band, band, band, "l2")
         _, sixth = self._core(f_hz, band, band, band, "sixth")
         rs = self.symbol_rate_hz
         spec = self._spectral
         kappa1 = (16.0 / 27.0) * rs**3 * spec * gn
-        kappa2 = ((80.0 / 81.0) + (16.0 / 81.0)) * rs**2 * spec * fourth
+        kappa2 = ((80.0 / 81.0) * fourth + (16.0 / 81.0) * fourth_third) * rs**2 * spec
         kappa3 = (16.0 / 81.0) * rs * spec * abs(sixth) ** 2
         return SciKappas(kappa1=kappa1, kappa2=kappa2, kappa3=kappa3)
 
@@ -979,6 +1171,7 @@ class EgnIntegrator:
         _, c32 = self._core(f_hz, cut, cut, int_band, "fourth")
         gn41, _ = self._core(f_hz, int_band, int_band, int_band, "gn")
         _, c42 = self._core(f_hz, int_band, int_band, int_band, "fourth")
+        _, c42_third = self._core(f_hz, int_band, int_band, int_band, "l2")
         _, c43 = self._core(f_hz, int_band, int_band, int_band, "sixth")
 
         return XciKappas(
@@ -989,7 +1182,9 @@ class EgnIntegrator:
             kappa31=(16.0 / 27.0) * rs**3 * spec * gn31,
             kappa32=(16.0 / 81.0) * rs**2 * spec * c32,
             kappa41=(16.0 / 27.0) * rs**3 * spec * gn41,
-            kappa42=((80.0 / 81.0) + (16.0 / 81.0)) * rs**2 * spec * c42,
+            # 论文 Eq. (34)：两行分别是 80/81（外层是 f1）与 16/81（外层是 f3），
+            # 积分域不同，不能合并成一个系数。
+            kappa42=((80.0 / 81.0) * c42 + (16.0 / 81.0) * c42_third) * rs**2 * spec,
             kappa43=(16.0 / 81.0) * rs * spec * abs(c43) ** 2,
         )
 

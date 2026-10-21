@@ -296,23 +296,34 @@ def test_carena_buildup_stays_above_the_band_average_convention() -> None:
 
     两者现在同口径（NLI 加权）：``numerical`` 1.132、``semrau2019`` 1.130，
     互差 0.01 dB。``carena2014`` 用论文 Eq. (12) 的 ``nu(p)`` 且带内采样 41 点，
-    buildup 1.649，高于它们 1.64 dB——这部分主要来自 EGN 修正项（EGN 的跨间
+    buildup 1.628，高于它们 1.59 dB——这部分主要来自 EGN 修正项（EGN 的跨间
     增长慢于 GN），以及论文的逐跨相位映射与等效斜坡的相位结构差异，
     不是权重口径的差异。
+
+    **期望值随论文 Eq. (8) 的双项修正更新（2026-10-21）**：修正前把 Eq. (8) 的
+    两行（``80/81`` 的 ``kappa21`` 与 ``16/81`` 的 ``kappa22``）合并成一个积分，
+    ``kappa2`` 被抬高 8.5 %（N=1）/ 15 %（N=10），EGN 的 buildup 因此是 2.050、
+    总量 buildup 是 1.649。修正后 ``kappa2 = (80/81) L1 + (16/81) L2``
+    （``L2`` 的外层变量是 ``f3 = f1+f2-f``，见论文 ``full.md`` 第 636/644 行与
+    附录 C 的 Eq. (43)/(44)），总量 buildup 变成 1.6276（-0.0215）。
+    新值由**独立求积**给出：同一把尺子下独立求积的总量 buildup 是 1.6173
+    （口径差来自单跨权重的取法，见 ``tests/egn_reference.py`` 的
+    ``REPO_SPM_SINGLE_SPAN_W``），EGN SPM buildup 是 1.9624（修正前 2.0500）。
+    断言的**容差没有放宽**：仍是 ``abs=0.01`` 与 ``abs=0.06``。
     """
     case = build_case(CASE_NAME)
     fiber = build_path(case).fiber_configs[0]
     carena = _buildup("carena2014", fiber, N_SPANS)
     numerical = _buildup("numerical", fiber, N_SPANS)
     semrau = _buildup("semrau2019", fiber, N_SPANS)
-    assert carena == pytest.approx(1.649, abs=0.01)
+    assert carena == pytest.approx(1.6276, abs=0.01)
     assert semrau == pytest.approx(1.130, abs=0.005)
     assert numerical == pytest.approx(1.132, abs=0.005)
     # 两个 NLI 加权实现必须互相对上。
     assert abs(10.0 * np.log10(numerical / semrau)) < 0.05
     # carena 与它们的差距现在只应来自 EGN 项与相位结构。
-    assert 10.0 * np.log10(carena / semrau) == pytest.approx(1.64, abs=0.06)
-    assert 10.0 * np.log10(carena / numerical) == pytest.approx(1.63, abs=0.06)
+    assert 10.0 * np.log10(carena / semrau) == pytest.approx(1.585, abs=0.06)
+    assert 10.0 * np.log10(carena / numerical) == pytest.approx(1.578, abs=0.06)
 
 
 # ---------------------------------------------------------------------------
@@ -323,14 +334,25 @@ def test_buildup_decomposition(kernel) -> None:
 
     * SCI 的 **GN 项**（论文 Eq. (7) + Eq. (12)）：累加因子 14.03 → buildup 1.403；
       同一积分换成均匀权重是 11.02 → buildup 1.103（``numerical`` 的口径）。
-    * SCI 的 **EGN 块**（含 Eq. (8)/(9) 的 4/6 阶修正）：累加因子 20.50 → 2.050。
+    * SCI 的 **EGN 块**（含 Eq. (8)/(9) 的 4/6 阶修正）：累加因子 19.62 → 1.962。
     * XPM（Eq. (16)-(18)/(23)-(26)）：累加因子 14.26 → 1.426。
-    * 两者按噪声占比混合，链路级总量比值 16.49 → buildup 1.649。
+    * 两者按噪声占比混合，链路级总量比值 16.28 → buildup 1.628。
+
+    **期望值随论文 Eq. (8) 的双项修正更新（2026-10-21）**：Eq. (8) 的两行是
+    **两个不同的积分域**（``80/81`` 的 ``kappa21`` 外层变量是 ``f1``，``16/81`` 的
+    ``kappa22`` 外层变量是 ``f3 = f1+f2-f``；论文 ``full.md`` 第 636/644 行、
+    附录 C 的 Eq. (43)/(44)）。合并成一个积分会把 EGN 块抬高 4.3 %（20.50 → 19.62
+    是反向：修正**后**变小），总量 buildup 从 1.6494 降到 1.6276。
+    新值由**独立求积**给出：独立求积的 EGN SPM buildup 是 1.9624、总量 buildup
+    是 1.6173（口径差来自单跨权重的取法）。GN 行与 XPM 行不受影响（GN 的
+    14.034 与 XPM 的 14.261 都逐位不变，因为只有 Eq. (8)/(34) 的 ``16/81`` 行
+    换了积分域）。
+    断言的**容差没有放宽**：仍是 ``rel=1e-3``。
     """
     gn_one, egn_one = kernel._sci_block(1, SPAN_M)
     gn_many, egn_many = kernel._sci_block(N_SPANS, SPAN_M)
     assert gn_many / gn_one == pytest.approx(14.034, rel=1e-3)
-    assert egn_many / egn_one == pytest.approx(20.500, rel=1e-3)
+    assert egn_many / egn_one == pytest.approx(19.624, rel=1e-3)
 
     case = build_case(CASE_NAME)
     power = launch_profile(case, 0.0)
@@ -341,10 +363,10 @@ def test_buildup_decomposition(kernel) -> None:
     with np.errstate(divide="ignore", invalid="ignore"):
         safe = np.where(per_span > 0.0, per_span, 1.0)
         buildup_xpm = np.where(per_span > 0.0, link_xpm / safe, 0.0)
-    assert float(np.median(buildup_xpm)) == pytest.approx(14.262, rel=1e-3)
+    assert float(np.median(buildup_xpm)) == pytest.approx(14.261, rel=1e-3)
 
     sci_link, xpm_link = kernel.link_level_nli(power, SPAN_M, N_SPANS)
     sci_one, xpm_one = kernel.link_level_nli(power, SPAN_M, 1)
     ratio = float((sci_link.sum() + xpm_link.sum()) / (sci_one.sum() + xpm_one.sum()))
-    assert ratio == pytest.approx(16.494, rel=1e-3)
-    assert ratio / N_SPANS == pytest.approx(1.6494, rel=1e-3)
+    assert ratio == pytest.approx(16.275, rel=1e-3)
+    assert ratio / N_SPANS == pytest.approx(1.6276, rel=1e-3)
