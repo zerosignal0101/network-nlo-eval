@@ -27,8 +27,10 @@ from network_nlo_eval.benchmarks.cases import (
     launch_profile,
 )
 from network_nlo_eval.benchmarks.runner import make_model
+from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import (
     MultiSpanOpticalPath,
+    SpanContext,
     available_models,
     create_model,
     get_model_info,
@@ -216,13 +218,14 @@ def test_c_inf_grows_sublinearly() -> None:
 
 
 def test_span_count_only_scales_the_sc_component() -> None:
-    """1 跨 / 10 跨一致性：逐跨物理不变，只有 SC 被 ``(1 + C_∞)`` 放大。
+    """1 跨 / 10 跨一致性：逐跨物理不变，跨间相干只改 SC 分量的**链路级**因子。
 
-    这是 WP 明确要求的一致性判据：
+    复振幅口径下，逐跨核返回的是**单跨物理值**（跨间相干由振幅的相位承载，
+    不再折算进逐跨功率），因此：
 
-    * 单跨逐跨等效值 = ``P_SC + P_XC``（``C_∞(1) = 0``）；
-    * 10 跨逐跨等效值 = ``(1 + C_∞(10))·P_SC + P_XC``，XC 分量逐位相同；
-    * 10 跨的**总量**（核内 ``evaluate`` 口径）= ``10·[(1+C_∞)·P_SC + P_XC]``。
+    * ``sc_w`` / ``xc_w`` / ``spm_w`` / ``xpm_w`` 与跨数无关；
+    * 链路级总量 ``link_spm_w = N·(1 + C_∞)·P_SC``、``link_xpm_w = N·P_XC``，
+      也就是论文 Eq. (11) 的 ``N·[(1 + C_∞)·P_SC + P_XC]``。
     """
     case = build_case("scaling_160ch")
     kernel = _kernel(case)
@@ -235,39 +238,45 @@ def test_span_count_only_scales_the_sc_component() -> None:
     # 逐跨物理（SC/XC 本体）与跨数无关。
     assert one["sc_w"][idx] == pytest.approx(ten["sc_w"][idx], rel=1e-12)
     assert one["xc_w"][idx] == pytest.approx(ten["xc_w"][idx], rel=1e-12)
-    # 只有 SC 被 (1 + C_∞) 放大。
+    # 逐跨返回值就是单跨物理值：相干增益不再折算进逐跨功率。
     assert one["spm_w"][idx] == pytest.approx(one["sc_w"][idx], rel=1e-12)
-    assert ten["spm_w"][idx] == pytest.approx((1.0 + ten["c_inf"]) * ten["sc_w"][idx], rel=1e-12)
-    assert ten["spm_w"][idx] > one["spm_w"][idx]
+    assert ten["spm_w"][idx] == pytest.approx(ten["sc_w"][idx], rel=1e-12)
     assert ten["xpm_w"][idx] == pytest.approx(one["xpm_w"][idx], rel=1e-12)
 
-    # 总量口径：evaluate(..., 10) 是 evaluate(..., 1) 的 10 倍（逐跨等效值的 10 倍）。
-    total_one = kernel.evaluate(power, 100e3, 1)
-    total_ten = kernel.evaluate(power, 100e3, 10)
-    per_span_ten = kernel.evaluate_per_span(power, 100e3, 10)
-    assert total_ten.spm_noise_w[idx] == pytest.approx(10.0 * per_span_ten.spm_noise_w[idx], rel=1e-12)
-    assert total_ten.xpm_noise_w[idx] == pytest.approx(10.0 * per_span_ten.xpm_noise_w[idx], rel=1e-12)
-    assert total_one.spm_noise_w[idx] == pytest.approx(one["spm_w"][idx], rel=1e-12)
+    # 链路级总量：只有 SC 被 (1 + C_∞) 放大，XC 严格线性。
+    assert ten["link_spm_w"][idx] == pytest.approx(
+        10.0 * (1.0 + float(ten["c_inf"])) * ten["sc_w"][idx], rel=1e-12
+    )
+    assert ten["link_xpm_w"][idx] == pytest.approx(10.0 * ten["xc_w"][idx], rel=1e-12)
+    assert one["link_spm_w"][idx] == pytest.approx(one["sc_w"][idx], rel=1e-12)
+
+    # 单跨链路（``C_∞(1) = 0``）的相干因子是 1：相干退化为单跨。
+    assert one["factor_spm"] == 1.0
+    assert one["factor_xpm"] == 1.0
 
 
 def test_route_accumulation_reproduces_the_paper_eq_11_total() -> None:
-    """路由层逐跨累加后，NLI 总量等于论文 Eq. (11) 的 ``N_s·[(1+C_∞)P_SC + P_XC]``。
+    """路由层**相干**累加后，NLI 总量等于论文 Eq. (11) 的 ``N_s·[(1+C_∞)P_SC + P_XC]``。
 
     冻结的路由层在累加噪声时会乘以后续跨的功率传输比，所以这里用"每跨功率
     不变"的等增益理想化：EDFA 补偿掉跨间损耗后，各跨入纤功率相同、传输比为 1，
-    于是累加结果应当精确等于论文的 n 跨总量。
+    于是相干累加的结果应当精确等于论文的 n 跨总量。
+
+    这条断言同时钉死了"等效相位斜坡"的正确性：总量是由 ``|Σ_k a_k|²`` 算出来
+    的，不是把 ``C_∞`` 乘进逐跨功率里。
     """
     case = build_case("scaling_160ch")
     power = launch_profile(case, None)
     kernel = _kernel(case)
     parts = kernel.evaluate_components(power, 100e3, 10)
-    total = kernel.evaluate(power, 100e3, 10)
     idx = _mid(case)
 
     expected_spm = 10.0 * (1.0 + float(parts["c_inf"])) * parts["sc_w"][idx]
     expected_xpm = 10.0 * parts["xc_w"][idx]
-    assert total.spm_noise_w[idx] == pytest.approx(expected_spm, rel=1e-12)
-    assert total.xpm_noise_w[idx] == pytest.approx(expected_xpm, rel=1e-12)
+
+    result = make_model("damico2022", case).evaluate_path(_path(10, case.edfa_noise_figure_db), power)
+    assert result.spm_noise_w[idx] == pytest.approx(expected_spm, rel=1e-9)
+    assert result.xpm_noise_w[idx] == pytest.approx(expected_xpm, rel=1e-9)
 
 
 def test_multi_span_nli_grows_linearly() -> None:
@@ -567,9 +576,271 @@ def test_invalid_options_are_rejected() -> None:
         _kernel(case, n_bands=0)
 
 
+
+# ---------------------------------------------------------------------------
+# 跨间相干累加（复振幅口径）
+# ---------------------------------------------------------------------------
+
+#: 改造前（"链路级 C_∞ 总量除以跨数"的折算口径）单跨的实测值，钉成回归基线。
+#: 算例 ``scaling_160ch``（C+L，160 信道，1 跨），中间信道（索引 80）。
+#: 来源：改造前的 ``make_model("damico2022", case).evaluate_path(path, power)``。
+PRE_CHANGE_SINGLE_SPAN_SNR_DB = 27.579833618493748
+PRE_CHANGE_SINGLE_SPAN_SPM_W = 1.2363131087475858e-07
+PRE_CHANGE_SINGLE_SPAN_XPM_W = 3.1766996670251615e-07
+PRE_CHANGE_SINGLE_SPAN_ASE_W = 1.2881035043432004e-06
+
+
+def test_single_span_is_bit_identical_to_the_pre_change_baseline() -> None:
+    """单跨：改造后与改造前**逐位**相同（硬编码基线，不许放宽）。
+
+    相干退化为单跨时 ``|a|² == 噪声功率``，但路由层在单跨时走的是纯功率分支，
+    因此结果必须与改造前的浮点运算逐位一致。
+    """
+    case = build_case("scaling_160ch")
+    result = make_model("damico2022", case).evaluate_path(build_path(case), launch_profile(case, None))
+    idx = _mid(case)
+
+    assert result.snr_db[idx] == PRE_CHANGE_SINGLE_SPAN_SNR_DB
+    assert result.spm_noise_w[idx] == PRE_CHANGE_SINGLE_SPAN_SPM_W
+    assert result.xpm_noise_w[idx] == PRE_CHANGE_SINGLE_SPAN_XPM_W
+    assert result.ase_noise_w[idx] == PRE_CHANGE_SINGLE_SPAN_ASE_W
+
+
+def test_single_span_carries_no_amplitude() -> None:
+    """单跨时不给复振幅：路由层必须走纯功率累加（否则与改造前不再逐位一致）。"""
+    case = build_case("scaling_160ch")
+    kernel = _kernel(case)
+    power = launch_profile(case, None)
+    context = SpanContext(
+        span_index=0,
+        total_spans=1,
+        cumulative_length_m=0.0,
+        span_length_m=100e3,
+    )
+    out = kernel.evaluate(power, 100e3, 1, span_context=context)
+    assert out.nli_amplitude_spm is None
+    assert out.nli_amplitude_xpm is None
+
+
+def test_amplitude_squares_match_the_noise_power() -> None:
+    """``|a|²`` 必须等于同名的噪声功率（``atol=0``、``rtol=1e-12``）。"""
+    case = build_case("cl_152ch")
+    model = make_model("damico2022", case)
+    power = launch_profile(case, None)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    context = SpanContext(
+        span_index=3,
+        total_spans=10,
+        cumulative_length_m=3.0 * 100e3,
+        span_length_m=100e3,
+    )
+    out = kernel.evaluate(power, 100e3, 1, span_context=context)
+    assert out.nli_amplitude_spm is not None
+    assert out.nli_amplitude_xpm is not None
+    np.testing.assert_allclose(
+        np.abs(out.nli_amplitude_spm) ** 2, out.spm_noise_w, rtol=1e-12, atol=0.0
+    )
+    np.testing.assert_allclose(
+        np.abs(out.nli_amplitude_xpm) ** 2, out.xpm_noise_w, rtol=1e-12, atol=0.0
+    )
+
+
+def test_multi_span_nli_is_not_ten_times_the_single_span() -> None:
+    """10 跨的 NLI 不等于"单跨 × 10"：SC 分量拿到跨间相干增益。
+
+    同一算例、同一入纤功率下的 10 跨 / 1 跨比值：
+
+    * SPM：``N·(1 + C_∞)``，必须严格大于 10（相干增益）；
+    * XPM：恰好 10（论文 Eq. 11 里 XC 是逐跨非相干累加）。
+    """
+    case = build_case("scaling_160ch")
+    power = launch_profile(case, None)
+    model = make_model("damico2022", case)
+
+    one = model.evaluate_path(_path(1, case.edfa_noise_figure_db), power)
+    ten = model.evaluate_path(_path(10, case.edfa_noise_figure_db), power)
+
+    spm_ratio = ten.spm_noise_w / one.spm_noise_w
+    xpm_ratio = ten.xpm_noise_w / one.xpm_noise_w
+    assert np.all(spm_ratio > 10.0)
+    assert np.all(spm_ratio < 20.0)
+    np.testing.assert_allclose(xpm_ratio, 10.0, rtol=1e-9)
+
+    nli_ratio = (ten.spm_noise_w + ten.xpm_noise_w) / (one.spm_noise_w + one.xpm_noise_w)
+    assert np.all(nli_ratio > 10.0)
+    assert np.all(nli_ratio < 16.0)
+
+
+def test_coherent_gain_matches_the_c_inf_factor() -> None:
+    """相干增益必须等于 ``N·(1 + C_∞)``：等效斜坡把 ``C_∞`` 精确复现出来。"""
+    case = build_case("scaling_160ch")
+    power = launch_profile(case, None)
+    model = make_model("damico2022", case)
+    parts = model.kernel_for(build_path(case).fiber_configs[0]).evaluate_components(power, 100e3, 10)
+
+    one = model.evaluate_path(_path(1, case.edfa_noise_figure_db), power)
+    ten = model.evaluate_path(_path(10, case.edfa_noise_figure_db), power)
+    expected = 10.0 * (1.0 + float(parts["c_inf"]))
+    np.testing.assert_allclose(ten.spm_noise_w / one.spm_noise_w, expected, rtol=1e-9)
+
+
+def test_disabling_c_inf_falls_back_to_incoherent_accumulation() -> None:
+    """关掉 ``C_∞``：跨间相干消失，10 跨正好是单跨 × 10。
+
+    这是"相干 vs 非相干"的对照组：论文 Eq. (10) 的非相干累加。
+    """
+    case = build_case("scaling_160ch")
+    power = launch_profile(case, None)
+    one = make_model("damico2022", case).evaluate_path(_path(1, case.edfa_noise_figure_db), power)
+    off = make_model("damico2022", case, c_inf_enabled=False).evaluate_path(
+        _path(10, case.edfa_noise_figure_db), power
+    )
+    on = make_model("damico2022", case).evaluate_path(_path(10, case.edfa_noise_figure_db), power)
+
+    np.testing.assert_allclose(off.spm_noise_w / one.spm_noise_w, 10.0, rtol=1e-9)
+    np.testing.assert_allclose(off.xpm_noise_w / one.xpm_noise_w, 10.0, rtol=1e-9)
+    assert np.all(on.spm_noise_w > off.spm_noise_w)
+
+
+def test_nli_grows_monotonically_with_the_span_count() -> None:
+    """跨数从 1 到 10：NLI 单调、有限。"""
+    case = build_case("cl_152ch")
+    power = launch_profile(case, None)
+    model = make_model("damico2022", case)
+    idx = _mid(case)
+
+    previous = 0.0
+    for spans in range(1, 11):
+        result = model.evaluate_path(_path(spans, case.edfa_noise_figure_db), power)
+        nli = float((result.spm_noise_w + result.xpm_noise_w)[idx])
+        assert np.isfinite(nli) and nli > 0.0
+        assert nli > previous
+        previous = nli
+
+
+def test_span_position_comes_from_the_span_context() -> None:
+    """相位必须来自 ``SpanContext``，模型不得自带跨计数器。
+
+    * 同一个上下文重复调用必须逐位相同（内部计数器会让第二次调用推进相位）；
+    * 换一个上下文，相位必须跟着变（相位确实来自上下文）。
+    """
+    case = build_case("cl_152ch")
+    model = make_model("damico2022", case)
+    assert model.supports_span_context is True
+    assert not hasattr(model, "_n_path_spans")
+
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, None)
+    context = SpanContext(
+        span_index=2,
+        total_spans=10,
+        cumulative_length_m=2.0 * 100e3,
+        span_length_m=100e3,
+    )
+    first = kernel.evaluate(power, 100e3, 1, span_context=context)
+    second = kernel.evaluate(power, 100e3, 1, span_context=context)
+    assert first.nli_amplitude_spm is not None
+    np.testing.assert_array_equal(first.nli_amplitude_spm, second.nli_amplitude_spm)
+
+    later = kernel.evaluate(
+        power,
+        100e3,
+        1,
+        span_context=SpanContext(
+            span_index=5,
+            total_spans=10,
+            cumulative_length_m=5.0 * 100e3,
+            span_length_m=100e3,
+        ),
+    )
+    assert later.nli_amplitude_spm is not None
+    assert not np.array_equal(first.nli_amplitude_spm, later.nli_amplitude_spm)
+
+
+def test_repeated_calls_are_deterministic() -> None:
+    """同一实例、同一 (path, power) 连调三次必须逐位相同。"""
+    case = build_case("cl_152ch")
+    power = launch_profile(case, None)
+    model = make_model("damico2022", case)
+    path = _path(10, case.edfa_noise_figure_db)
+
+    first = model.evaluate_path(path, power)
+    second = model.evaluate_path(path, power)
+    third = model.evaluate_path(path, power)
+    np.testing.assert_array_equal(first.snr_db, second.snr_db)
+    np.testing.assert_array_equal(first.snr_db, third.snr_db)
+    np.testing.assert_array_equal(first.spm_noise_w, third.spm_noise_w)
+
+
+def _single_channel_fiber(dispersion_ps_nm_km: float):
+    """给定色散的单信道光纤（色散斜率置零，便于单变量扫描）。"""
+    return _fiber().model_copy(
+        update={"dispersion_parameter_d": dispersion_ps_nm_km, "dispersion_slope_s": 0.0}
+    )
+
+
+def _single_channel_model(fiber, **options):
+    """单信道栅格上的模型：XC 恒为零，NLI 只剩 SC 分量。"""
+    grid = SpectrumGrid(1, 75e9, 193.1e12)
+    return create_model("damico2022", grid, fiber, symbol_rate_hz=64e9, **options)
+
+
+def _single_channel_nli_ratio(dispersion_ps_nm_km: float, **options) -> float:
+    """1 跨与 10 跨的 NLI 之比（单信道：NLI 只有 SC 分量）。"""
+    fiber = _single_channel_fiber(dispersion_ps_nm_km)
+    model = _single_channel_model(fiber, **options)
+    power = np.array([1e-3], dtype=np.float64)
+    one = model.evaluate_path(MultiSpanOpticalPath([fiber], [EDFAConfig(noise_figure_db=5.5)]), power)
+    ten = model.evaluate_path(
+        MultiSpanOpticalPath([fiber] * 10, [EDFAConfig(noise_figure_db=5.5)] * 10), power
+    )
+    return float(
+        (ten.spm_noise_w[0] + ten.xpm_noise_w[0]) / (one.spm_noise_w[0] + one.xpm_noise_w[0])
+    )
+
+
+def test_coherent_limit_without_dispersion() -> None:
+    """色散趋零：跨间几乎完全相干，NLI ∝ N²（10 跨 → 100 倍）。"""
+    ratio = _single_channel_nli_ratio(1e-6)
+    assert 99.0 < ratio <= 100.0 + 1e-9
+
+
+def test_incoherent_limit_with_large_dispersion() -> None:
+    """色散很大：跨间接近非相干，NLI ∝ N（10 跨 → 10 倍）。
+
+    这里的求积点数必须足够大：``C_∞`` 的可见度积分的被积函数在带边振荡很快，
+    默认的 64 点在强色散下会混叠出一个偏大的可见度（详见交付报告）。
+    """
+    ratio = _single_channel_nli_ratio(1e5, coherence_points=65536)
+    assert 10.0 <= ratio < 11.0
+
 # ---------------------------------------------------------------------------
 # 性能
 # ---------------------------------------------------------------------------
+
+
+def test_hot_latency_is_not_worse_than_the_pre_change_baseline() -> None:
+    """热路径不得比改造前慢 2 倍以上。
+
+    改造前实测（同一台机器、同一算例，热调用中位数）：
+
+    * ``scaling_160ch``（160 信道，1 跨）：0.59 ms → 预算 1.2 ms；
+    * ``scaling_479ch``（479 信道，1 跨）：1.95 ms → 预算 4.0 ms。
+    """
+    budgets = {"scaling_160ch": 1.2, "scaling_479ch": 4.0}
+    for case_name, budget_ms in budgets.items():
+        case = build_case(case_name)
+        power = launch_profile(case, None)
+        path = build_path(case)
+        model = make_model("damico2022", case)
+        model.evaluate_path(path, power)  # 预热
+        samples = []
+        for _ in range(15):
+            started = time.perf_counter()
+            model.evaluate_path(path, power)
+            samples.append((time.perf_counter() - started) * 1e3)
+        median = float(np.median(samples))
+        assert median <= budget_ms, f"{case_name}: 热调用中位数 {median:.3f} ms 超过预算 {budget_ms} ms"
 
 
 def test_hot_latency_meets_the_work_package_budget() -> None:

@@ -23,6 +23,31 @@
 即 N_s 跨累积后的 NLI 总量为 ``N_s · [(1 + C_∞) P_SC + P_XC]``。FWM 贡献按论文
 假设忽略。
 
+**跨间相干累加（复振幅口径）**
+
+冻结的路由层现在自己按 ``|Σ_k a_k|²`` 累加跨间 NLI：模型给出每一跨的复振幅
+``a_k = sqrt(P_k)·e^{iφ_k}``，路由层只做实数幅度传输，**相位由模型负责**。
+因此旧的"链路级总量除以跨数"的折算被删掉：逐跨核返回**单跨物理值**
+``P_SC`` / ``P_XC``，跨间相干由 ``φ_k`` 表达。
+
+论文 Eq. (11) 的 ``C_∞`` 本身是**重构形式的包络**（论文正文没有给出闭式，引用
+了自己的 [38]），它只给出一个标量的总量修正，不含逐频率对的相位。本实现把它
+转成一条**等效相位斜坡** ``ψ``：路由层对 N 个等幅、逐跨相位差 ``ψ`` 的振幅求和
+给出
+
+``|Σ_k e^{i k ψ}|² = [sin(N ψ/2)/sin(ψ/2)]²``  （Dirichlet 核的平方），
+
+该因子在 ``ψ ∈ (0, 2π/N]`` 上从 ``N²`` 单调降到 0，于是可以二分反演出让
+``|Σ_k a_k|²`` **精确复现** ``C_∞`` 给出的总量：
+
+* SC 分量：目标因子 ``N·(1 + C_∞)``（由 ``C_∞`` 的定义，它恰好等于成对求和
+  ``N + 2Σ(N-Δs)·κ(Δs)``）；
+* XC 分量：论文 Eq. (11) 里 XC 是逐跨**非相干**累加，目标因子就是 ``N``。
+
+**诚实标注**：总量精确，成对结构被压缩。斜坡是**带内标量**的一条直线相位，
+它复现总量，但不携带逐频率对的相位结构：部分跨的前缀因子不再等于成对求和，
+不同信道的可见度差异也被压成一条斜坡。压缩带来的残差在交付报告里逐项给出。
+
 论文把 GGN 的三重频率积分（Eq. 26/27）换成可按步长求和的半解析式（Eq. 28/29），
 并显式使用**逐频率**的 ``β_2(f)``（而非带中心常数），这是它与 ISRS-GN 闭式模型
 的关键差别。
@@ -38,8 +63,8 @@ Eq. (3)/(4) D(λ) 与 β_2      ``_calc_beta2_from_d``（复用）+ **逐信道*
 Eq. (5) γ(λ)                 ``_gamma_per_channel``
 Eq. (7)/(8) 拉曼增益 g_R     复用 ECZ 三角拉曼近似（``isrs_gn`` 前端，见下）
 Eq. (9) 逐跨 OSNR            路由层 ASE 累加（``models/route.py``）
-Eq. (10) 非相干 NLI 累加     路由层逐跨累加 + 本核的**逐跨等效**返回（见下）
-Eq. (11) C_∞ 相干 SC 包络    ``_coherence_envelope`` + :meth:`Damico2022SpanKernel.evaluate`
+Eq. (10) 非相干 NLI 累加     路由层逐跨累加（复振幅口径下走 ``|Σ a_k|²``）
+Eq. (11) C_∞ 相干 SC 包络    ``_coherence_envelope`` → :func:`_equivalent_phase_ramp` → 逐跨相位
 Eq. (12) 单跨 ASE            路由层/放大器层（``models/route.py``）
 Eq. (13) Manakov 方程        解析前提，不直接实现
 Eq. (14)-(18) 扰动展开       解析前提，不直接实现
@@ -52,6 +77,7 @@ Eq. (27) Ψ_κ 与 Δβ           ``_psi_approx`` 的逐频 β_2 用法
 Eq. (28) 单步闭式解          ``_psi_approx``（分段 ρ² 指数化）
 Eq. (29) 分段求和闭式        ``_psi_approx``（``z_int`` 与 ``Mx`` 矩阵）
 Eq. (31) 归一化 NLI 效率     诊断用途：``NliEfficiency``
+跨间相位斜坡（本实现构造）   ``_equivalent_phase_ramp`` + ``_dirichlet_factor``
 ===========================  ==========================================================
 
 **与冻结基线 ``ecz`` 的差别**
@@ -77,9 +103,15 @@ Eq. (31) 归一化 NLI 效率     诊断用途：``NliEfficiency``
 * SRS 前端用 ECZ 三角近似而非 Eq. (21) 的耦合方程数值解。
 * 不做拉曼放大与 DRA 泵浦：``raman_pumps`` 不参与计算（``k_bar = 0``）。
 * ``C_∞`` 的相干性模型是本实现的构造，论文没有给闭式。
+* 跨间相干用**一条带内标量的等效相位斜坡**表达：总量精确（与 ``C_∞`` 给出的
+  ``N·(1+C_∞)·P_SC + N·P_XC`` 逐位一致到 1e-12），但成对结构被压缩——
+  斜坡的前缀因子不等于成对求和，不同信道的可见度差异也被抹平。XC 分量的
+  斜坡只用来复现"逐跨非相干"的总量（目标因子 ``N``），不携带任何成对信息。
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 import numpy as np
 
@@ -87,8 +119,7 @@ from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import (
     ElementOutput,
     ModelInfo,
-    MultiSpanOpticalPath,
-    PathQoTResult,
+    SpanContext,
     SpanFiberOutput,
     SpanKernel,
     register_model,
@@ -110,6 +141,7 @@ from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
     "DAMICO2022_MODEL_INFO",
+    "DEFAULT_COHERENCE_POINTS",
     "Damico2022Model",
     "Damico2022SpanKernel",
     "NOMINAL_BAND_EDGES_HZ",
@@ -245,6 +277,77 @@ def _coherence_envelope(
     return 2.0 * total / n_spans
 
 
+#: ``C_∞`` 可见度积分的默认求积点数。64 点对 SMF 足够（与改造前的模型逐位
+#: 一致）；强色散光纤上积分的被积函数在带边振荡很快，需要更多点才能收敛
+#: （见交付报告的残差估计）。
+DEFAULT_COHERENCE_POINTS = 64
+
+#: 等效相位斜坡的二分步数。斜坡的根在 ``[0, 2π/N]`` 上，60 步已经把分辨率推到
+#: 双精度之下（``(2π/N)·2^-60``）。
+_RAMP_BISECTION_STEPS = 60
+
+
+def _dirichlet_factor(n_spans: int, psi: float) -> float:
+    """N 个等幅、逐跨相位差 ``psi`` 的振幅相干相加后的功率因子。
+
+    路由层按 ``|Σ_k a_k|²`` 累加，N 个等幅、逐跨相位差为 ``psi`` 的振幅给出
+
+    ``|Σ_{k=0}^{N-1} e^{i k psi}|² = [sin(N psi/2)/sin(psi/2)]²``，
+
+    即 Dirichlet 核的平方。
+
+    Args:
+        n_spans: 跨段数 ``N``。
+        psi: 逐跨相位增量 (rad)。
+
+    Returns
+    -------
+        功率因子：完全相干 ``psi = 0`` 时为 ``N²``，``psi = 2π/N`` 时为 0。
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return 1.0
+    denominator = np.sin(0.5 * psi)
+    if abs(denominator) < 1e-12:
+        # psi -> 0 的极限：完全相干。
+        return float(n) ** 2
+    return float(np.sin(0.5 * n * psi) / denominator) ** 2
+
+
+def _equivalent_phase_ramp(n_spans: int, target: float) -> float:
+    """把目标跨间相干因子反演成逐跨相位增量 ``psi``。
+
+    论文 Eq. (11) 的 ``C_∞`` 只给出一个**总量**修正（标量），不含逐频率对的
+    相位。路由层的接口每跨只承载**一条**复振幅，因此跨间相干只能被压缩成
+    一条等效相位斜坡：把 ``C_∞`` 换算成目标相干因子，再反演出能复现该因子的
+    斜坡。
+
+    目标因子落在 ``[N, N²]``（完全非相干到完全相干）时，斜坡存在且唯一：
+    Dirichlet 因子在 ``psi ∈ (0, 2π/N]`` 上从 ``N²`` 单调降到 0，因此二分即可。
+
+    Args:
+        n_spans: 跨段数 ``N``。
+        target: 想要的相干因子（相对单跨噪声功率的倍数）。
+
+    Returns
+    -------
+        逐跨相位增量 (rad)；``N = 1`` 时返回 0。
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return 0.0
+    goal = float(np.clip(target, 0.0, float(n) ** 2))
+    low = 0.0
+    high = 2.0 * np.pi / n
+    for _ in range(_RAMP_BISECTION_STEPS):
+        mid = 0.5 * (low + high)
+        if _dirichlet_factor(n, mid) > goal:
+            low = mid
+        else:
+            high = mid
+    return 0.5 * (low + high)
+
+
 class Damico2022SpanKernel:
     """单跨 GGN 物理核：SC/XC 分解 + 逐频 β_2 的半解析 NLI。
 
@@ -369,6 +472,11 @@ class Damico2022SpanKernel:
         self.group_ids = np.zeros(self.f_abs_hz.shape[0], dtype=np.int64)
         for group_index, mask in enumerate(self.group_masks):
             self.group_ids[mask] = group_index
+
+        # 跨间相干性（C_∞、两个相干因子、两条等效斜坡）的缓存。键是
+        # (跨数, 跨长, 带内平均 |β_2|, 带内平均带宽)：这些都是纯函数，缓存是
+        # 幂等的，不引入任何跨调用状态。
+        self._coherence_cache: dict[tuple[int, float, float, float], tuple[float, float, float, float, float]] = {}
 
     # --- 物理子步骤 -------------------------------------------------------
     def _gamma_per_channel(self) -> NDArrayFloat:
@@ -576,13 +684,70 @@ class Damico2022SpanKernel:
         noise = np.where(np.isfinite(noise), noise, 0.0)
         return np.where(power_in_w > 0.0, np.maximum(noise, 0.0), 0.0)
 
+    def _band_coherence(
+        self,
+        power: NDArrayFloat,
+        span_length_m: float,
+        n_spans: int,
+    ) -> tuple[float, float, float, float, float]:
+        """带内（标量）的跨间相干性。
+
+        ``C_∞`` 是**带内标量**的包络：它用参与信道的平均 ``|β_2|`` 与平均带宽
+        积分出可见度 ``κ(Δs)``，再给出成对相干因子
+
+        ``N·(1 + C_∞) = N + 2 Σ_{Δs=1}^{N-1} (N-Δs)·κ(Δs)``。
+
+        本方法把它转成两条等效相位斜坡（SC 与 XC 各一条），供路由层的
+        ``|Σ_k a_k|²`` 复现同样的总量。
+
+        Args:
+            power: ``(N,)`` 入纤功率 (W)，用来取"占用信道"的带内平均量。
+            span_length_m: 跨长 (m)。
+            n_spans: 跨段数。
+
+        Returns
+        -------
+            ``(c_inf, factor_spm, factor_xpm, psi_spm, psi_xpm)``：
+
+            * ``c_inf``：论文 Eq. (11) 的渐近系数（关掉开关时为 0）；
+            * ``factor_spm``：SC 分量的跨间相干因子 ``N·(1 + C_∞)``；
+            * ``factor_xpm``：XC 分量的跨间相干因子（论文口径的非相干累加 -> ``N``）；
+            * ``psi_spm`` / ``psi_xpm``：对应的等效相位斜坡 (rad)。
+        """
+        n = max(1, int(n_spans))
+        if n <= 1:
+            return 0.0, 1.0, 1.0, 0.0, 0.0
+        active = power > 0.0
+        if np.any(active):
+            beta2_mean = float(np.mean(np.abs(self.beta2_s2_m[active])))
+            rs_mean = float(np.mean(self.b_hz[active]))
+        else:
+            beta2_mean = float(np.mean(np.abs(self.beta2_s2_m)))
+            rs_mean = float(np.mean(self.b_hz))
+        key = (n, float(span_length_m), beta2_mean, rs_mean)
+        cached = self._coherence_cache.get(key)
+        if cached is not None:
+            return cached
+        if self.c_inf_enabled:
+            c_inf = _coherence_envelope(beta2_mean, rs_mean, span_length_m, n, self.coherence_points)
+        else:
+            c_inf = 0.0
+        factor_spm = float(n) * (1.0 + c_inf)
+        # 论文 Eq. (11) 里 XC 分量是逐跨非相干累加的：目标因子就是 N。
+        factor_xpm = float(n)
+        psi_spm = _equivalent_phase_ramp(n, factor_spm)
+        psi_xpm = _equivalent_phase_ramp(n, factor_xpm)
+        cached = (float(c_inf), factor_spm, factor_xpm, psi_spm, psi_xpm)
+        self._coherence_cache[key] = cached
+        return cached
+
     def evaluate_components(
         self,
         power_in_w: NDArrayFloat,
         span_length_m: float,
         n_effective_spans: int = 1,
     ) -> dict[str, NDArrayFloat | float]:
-        """计算单跨结果，并额外暴露 SC/XC 分解与 ``C_∞``。
+        """计算单跨结果，并额外暴露 SC/XC 分解、``C_∞`` 与跨间相干因子。
 
         Args:
             power_in_w: ``(N,)`` 入纤功率 (W)；0 表示该信道未占用。
@@ -592,7 +757,14 @@ class Damico2022SpanKernel:
         Returns
         -------
             字典，键为 ``"power_out_w"`` / ``"sc_w"`` / ``"xc_w"`` /
-            ``"c_inf"`` / ``"spm_w"`` / ``"xpm_w"``。
+            ``"c_inf"`` / ``"spm_w"`` / ``"xpm_w"`` / ``"factor_spm"`` /
+            ``"factor_xpm"`` / ``"psi_spm"`` / ``"psi_xpm"`` /
+            ``"link_spm_w"`` / ``"link_xpm_w"``。
+
+            ``"spm_w"`` / ``"xpm_w"`` 是**单跨物理值**（``P_SC`` / ``P_XC``）：
+            跨间相干现在由复振幅的相位表达，不再折算进逐跨的功率里。
+            ``"link_spm_w"`` / ``"link_xpm_w"`` 是链路级总量
+            ``N·(1+C_∞)·P_SC`` 与 ``N·P_XC``（论文 Eq. 11）。
         """
         power = np.asarray(power_in_w, dtype=np.float64)
         if power.shape != self.b_hz.shape:
@@ -609,29 +781,25 @@ class Damico2022SpanKernel:
         sc = self._sc_noise(power, rho2, z, r_f)
         xc = self._xc_noise(power, z_int)
 
-        if self.c_inf_enabled:
-            active = power > 0.0
-            if np.any(active):
-                beta2_mean = float(np.mean(np.abs(self.beta2_s2_m[active])))
-                rs_mean = float(np.mean(self.b_hz[active]))
-            else:
-                beta2_mean = float(np.mean(np.abs(self.beta2_s2_m)))
-                rs_mean = float(np.mean(self.b_hz))
-            c_inf = _coherence_envelope(
-                beta2_mean, rs_mean, span_length_m, n_spans, self.coherence_points
-            )
-        else:
-            c_inf = 0.0
+        c_inf, factor_spm, factor_xpm, psi_spm, psi_xpm = self._band_coherence(
+            power, span_length_m, n_spans
+        )
 
         return {
             "power_out_w": p_out,
             "sc_w": sc,
             "xc_w": xc,
             "c_inf": float(c_inf),
-            # 论文 Eq. (11) 的**逐跨等效**值：路由层逐跨相加 N_s 次后正好还原
-            # N_s·[(1 + C_∞)·P_SC + P_XC]。
-            "spm_w": (1.0 + c_inf) * sc,
+            # 单跨物理值：跨间相干由复振幅的相位承载，不折算进逐跨功率。
+            "spm_w": sc,
             "xpm_w": xc,
+            "factor_spm": factor_spm,
+            "factor_xpm": factor_xpm,
+            "psi_spm": psi_spm,
+            "psi_xpm": psi_xpm,
+            # 论文 Eq. (11) 的链路级总量。
+            "link_spm_w": factor_spm * sc,
+            "link_xpm_w": factor_xpm * xc,
         }
 
     def evaluate(
@@ -639,72 +807,73 @@ class Damico2022SpanKernel:
         power_in_w: NDArrayFloat,
         span_length_m: float,
         n_effective_spans: int = 1,
+        span_context: SpanContext | None = None,
     ) -> SpanFiberOutput:
-        """计算 **n 跨总量**的出纤功率与 SC/XC 噪声。
+        """计算**单跨**的出纤功率与 NLI 噪声，多跨时附带跨间相干复振幅。
 
-        论文 Eq. (11) 给出 n 跨后的 NLI 总量
+        论文 Eq. (11) 给出 N 跨后的 NLI 总量
 
         ``N_s · [(1 + C_∞)·P_SC + P_XC]``
 
-        本方法返回该总量（``n_effective_spans = 1`` 时就是单跨的物理值
-        ``(1 + C_∞)·P_SC + P_XC``，此时 ``C_∞ = 0``）。逐跨累加的路由层要用
-        :meth:`evaluate_per_span`。
+        旧实现把该总量除以跨数、逐跨返回等效值，让路由层做**非相干**累加。新
+        口径下路由层自己按 ``|Σ_k a_k|²`` 累加，所以本方法返回的是**单跨物理
+        值** ``P_SC`` / ``P_XC``，并额外给出复振幅
+
+        ``a_k = sqrt(P_k)·exp(1j·φ_k)``，``φ_k = ψ · k``，
+
+        其中 ``ψ`` 是由 ``C_∞`` 反演出来的等效相位斜坡（见
+        :func:`_equivalent_phase_ramp`）。
 
         Args:
             power_in_w: ``(N,)`` 入纤功率 (W)；0 表示该信道未占用。
             span_length_m: 跨长 (m)。
-            n_effective_spans: 光路跨段数。用于 ``C_∞``（Eq. 11 的跨间相干累积）
-                与总量口径。
+            n_effective_spans: 光路跨段数。只在**没有** ``span_context`` 时用作
+                链路级总量的口径（见下）；路由层总是给出 ``span_context``。
+            span_context: 该跨在链路中的位置。给出且链路多于一跳时，返回值
+                携带复振幅，其参考面是**本跨出纤处**。
 
         Returns
         -------
             :class:`~network_nlo_eval.models.base.SpanFiberOutput`。
+
+            * 无 ``span_context``：返回链路级总量（纯功率口径，供链路级诊断）；
+            * 单跨（``total_spans <= 1``）：返回单跨物理值且**不带**振幅，
+              路由层走原来的纯功率累加，结果与改造前逐位一致；
+            * 多跨：返回单跨物理值 + 复振幅，路由层按 ``|Σ a_k|²`` 相干累加。
         """
-        parts = self.evaluate_components(power_in_w, span_length_m, n_effective_spans)
-        n = max(1, int(n_effective_spans))
+        if span_context is None:
+            # 没有位置信息：只能给链路级总量（纯功率口径）。
+            parts = self.evaluate_components(power_in_w, span_length_m, max(1, int(n_effective_spans)))
+            return SpanFiberOutput(
+                power_out_w=np.asarray(parts["power_out_w"], dtype=np.float64),
+                spm_noise_w=np.asarray(parts["link_spm_w"], dtype=np.float64),
+                xpm_noise_w=np.asarray(parts["link_xpm_w"], dtype=np.float64),
+            )
+
+        # 跨间相干是**链路**相关的量：跨数与相位斜坡都取自 SpanContext。
+        parts = self.evaluate_components(power_in_w, span_length_m, int(span_context.total_spans))
+        sc = np.asarray(parts["sc_w"], dtype=np.float64)
+        xc = np.asarray(parts["xc_w"], dtype=np.float64)
+        power_out = np.asarray(parts["power_out_w"], dtype=np.float64)
+
+        if int(span_context.total_spans) <= 1:
+            # 单跨：没有跨间相干可言，走纯功率分支（与改造前逐位一致）。
+            return SpanFiberOutput(power_out_w=power_out, spm_noise_w=sc, xpm_noise_w=xc)
+
+        # 相位随**累计链路长度**线性增长：等长链路下
+        # cumulative_length_m / span_length_m 恰好就是 span_index。
+        phase_scale = span_context.cumulative_length_m / float(span_context.span_length_m)
+        psi_spm = float(parts["psi_spm"])
+        psi_xpm = float(parts["psi_xpm"])
+        amplitude_spm = np.sqrt(sc) * np.exp(1j * (psi_spm * phase_scale))
+        amplitude_xpm = np.sqrt(xc) * np.exp(1j * (psi_xpm * phase_scale))
         return SpanFiberOutput(
-            power_out_w=np.asarray(parts["power_out_w"], dtype=np.float64),
-            spm_noise_w=n * np.asarray(parts["spm_w"], dtype=np.float64),
-            xpm_noise_w=n * np.asarray(parts["xpm_w"], dtype=np.float64),
+            power_out_w=power_out,
+            spm_noise_w=sc,
+            xpm_noise_w=xc,
+            nli_amplitude_spm=amplitude_spm,
+            nli_amplitude_xpm=amplitude_xpm,
         )
-
-    def evaluate_per_span(
-        self,
-        power_in_w: NDArrayFloat,
-        span_length_m: float,
-        n_path_spans: int = 1,
-    ) -> SpanFiberOutput:
-        """计算**逐跨等效**的出纤功率与噪声。
-
-        冻结的路由层是逐跨累加噪声的，而论文 Eq. (11) 给的是 n 跨的**总量**
-        ``N_s·[(1 + C_∞)·P_SC + P_XC]``。本方法返回该总量除以 ``n_path_spans``，
-        路由层逐跨相加后正好还原论文的 n 跨总量。
-
-        换算关系（逐跨等效值）::
-
-            spm_per_span = (1 + C_∞(N_s)) · P_SC
-            xpm_per_span = P_XC
-
-        单跨时 ``C_∞(1) = 0``，逐跨等效值退化为单跨物理值 ``P_SC + P_XC``；
-        多跨时只有 SC 分量被 ``(1 + C_∞)`` 放大，XC 分量逐跨线性累加。
-
-        Args:
-            power_in_w: ``(N,)`` 入纤功率 (W)；0 表示该信道未占用。
-            span_length_m: 跨长 (m)。
-            n_path_spans: 整条光路的跨段数。
-
-        Returns
-        -------
-            :class:`~network_nlo_eval.models.base.SpanFiberOutput`。
-        """
-        parts = self.evaluate_components(power_in_w, span_length_m, n_path_spans)
-        n = max(1, int(n_path_spans))
-        return SpanFiberOutput(
-            power_out_w=np.asarray(parts["power_out_w"], dtype=np.float64),
-            spm_noise_w=np.asarray(parts["spm_w"], dtype=np.float64),
-            xpm_noise_w=np.asarray(parts["xpm_w"], dtype=np.float64),
-        )
-
 
 DAMICO2022_MODEL_INFO = ModelInfo(
     name="damico2022",
@@ -718,6 +887,11 @@ DAMICO2022_MODEL_INFO = ModelInfo(
         ("xc_aggregation", "'exact' | 'centroid'; per-band XC aggregation mode."),
         ("n_bands", "Equal-width band groups for the XC sum; None uses nominal band edges."),
         ("c_inf_enabled", "Enable the cross-span coherent SC envelope C_inf."),
+        (
+            "coherence_points",
+            "Quadrature points of the C_inf visibility integral; larger values converge "
+            "the envelope for strongly dispersive spans (the default 64 is enough for SMF).",
+        ),
     ),
 )
 
@@ -726,8 +900,9 @@ class Damico2022Model(RouteModel):
     """D'Amico 2022 GGN 近似模型的路由层。
 
     与其它模型共用 :mod:`network_nlo_eval.models.route` 的跨段累积、放大器与
-    SNR 合成；本类只负责单跨物理核，并额外负责**跨数**的传递：论文 Eq. (11)
-    的 ``C_∞`` 是跨数相关的量，必须知道整条光路有几跨。
+    SNR 合成；本类只负责单跨物理核，并额外负责**跨间相干相位**：论文 Eq. (11)
+    的 ``C_∞`` 是跨数相关的量，跨数与本跨位置由路由层通过
+    :class:`~network_nlo_eval.models.base.SpanContext` 给出。
 
     构造期可选参数（均为关键字）：
 
@@ -741,12 +916,18 @@ class Damico2022Model(RouteModel):
         XC 分组数；``None`` 时使用名义 L/C/S/E 边界，给定整数时把频谱等分。
     ``c_inf_enabled``
         是否启用跨间相干 SC 累积（``C_∞``）。
+    ``coherence_points``
+        ``C_∞`` 可见度积分的求积点数，默认 64。
     ``use_dispersion_slope``
         是否用配置的色散斜率给出逐波长 ``D(λ)``（论文 Sec. III）。关掉则退回
         参考波长处的常数 ``D``，便于与带中心 ``β_2`` 的基线做同口径对比。
     """
 
     info = DAMICO2022_MODEL_INFO
+
+    #: 跨间相干累加需要知道本跨在链路中的位置，才能给出各跨 NLI 振幅之间的
+    #: 相对相位。路由层据此把 :class:`SpanContext` 传进来。
+    supports_span_context = True
 
     def __init__(
         self,
@@ -760,6 +941,7 @@ class Damico2022Model(RouteModel):
         n_bands: int | None = None,
         c_inf_enabled: bool = True,
         use_dispersion_slope: bool = True,
+        coherence_points: int = DEFAULT_COHERENCE_POINTS,
         **route_options,
     ) -> None:
         """初始化节点几何与模型专属选项。
@@ -773,6 +955,7 @@ class Damico2022Model(RouteModel):
             xc_aggregation: XC 聚合口径。
             n_bands: XC 分组数。
             c_inf_enabled: 是否启用 ``C_∞``。
+            coherence_points: ``C_∞`` 可见度积分的求积点数。
             **route_options: 透传给 :class:`~network_nlo_eval.models.route.RouteModel`。
         """
         super().__init__(grid, ref_fiber_config, symbol_rate_hz=symbol_rate_hz, **route_options)
@@ -782,8 +965,9 @@ class Damico2022Model(RouteModel):
         self.n_bands = n_bands
         self.c_inf_enabled = bool(c_inf_enabled)
         self.use_dispersion_slope = bool(use_dispersion_slope)
-        #: 当前光路的跨段数；只在 :meth:`evaluate_path` 调用期间有效。
-        self._n_path_spans = 1
+        if coherence_points < 8:
+            raise ValueError(f"coherence_points must be >= 8, got {coherence_points}.")
+        self.coherence_points = int(coherence_points)
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         """构造该光纤参数下的单跨核（按 ``FiberSpanConfig`` 记忆化）。"""
@@ -799,70 +983,55 @@ class Damico2022Model(RouteModel):
             xc_aggregation=self.xc_aggregation,
             band_edges_hz=NOMINAL_BAND_EDGES_HZ,
             n_bands=self.n_bands,
-            coherence_points=64,
+            coherence_points=self.coherence_points,
             c_inf_enabled=self.c_inf_enabled,
             use_dispersion_slope=self.use_dispersion_slope,
         )
 
     # --- 路径累积 ----------------------------------------------------------
-    def evaluate_path(
-        self,
-        optical_path: MultiSpanOpticalPath,
-        power_in_w: NDArrayFloat,
-    ) -> PathQoTResult:
-        """沿路径评估，并让逐跨累加还原论文 Eq. (11) 的 N 跨总量。
-
-        冻结的路由层把噪声逐跨相加，而论文 Eq. (11) 的 NLI 总量是
-        ``N_s·[(1 + C_∞)·P_SC + P_XC]``。本实现让单跨核先算出该总量、再除以
-        ``N_s`` 返回**逐跨等效**值，累加 N_s 次后正好还原该总量（单跨时
-        ``C_∞ = 0``，总量退化为 ``P_SC + P_XC``）。
-
-        跨数同时决定 ``C_∞``：相干 SC 累积是跨数相关的量，所以这里先数出
-        整条光路的跨段数再进入累加。
-        """
-        previous = self._n_path_spans
-        self._n_path_spans = _count_spans(optical_path)
-        try:
-            return super().evaluate_path(optical_path, power_in_w)
-        finally:
-            self._n_path_spans = previous
-
     def span_step(
         self,
         fiber_config: FiberSpanConfig,
         edfa_config: EDFAConfig | None,
         power_in_w: NDArrayFloat,
         span_length_m: float,
+        span_context: SpanContext | None = None,
     ) -> ElementOutput:
-        """单跨：调用核（逐跨等效值），再统一走放大器/ASE。
+        """单跨：调用核（单跨物理值 + 跨间相干振幅），再统一走放大器/ASE。
 
-        核内部按论文 Eq. (11) 算出 n 跨总量 ``N_s·[(1 + C_∞)·P_SC + P_XC]``，
-        再除以 ``N_s`` 返回逐跨等效值；路由层逐跨相加后还原该总量。
+        论文 Eq. (11) 的 N 跨 NLI 总量 ``N_s·[(1 + C_∞)·P_SC + P_XC]`` 现在
+        **不再**折算进逐跨的功率里：核返回单跨物理值 ``P_SC`` / ``P_XC`` 以及
+        复振幅 ``a_k = sqrt(P_k)·e^{iφ_k}``，相位 ``φ_k`` 由 ``C_∞`` 反演得到。
+        路由层按 ``|Σ_k a_k|²`` 相干累加，得到的总量与论文 Eq. (11) 一致。
+
+        放大器/ROADM 的辅助函数在"纯功率"口径下**不**给 NLI 乘放大器增益
+        （黄金向量锁定该口径），所以这里先按纯功率口径走一遍辅助函数，再把振幅
+        挂到结果上：振幅的参考面是**本跨出纤处**，跨间幅度传输由路由层负责。
         """
         kernel = self.kernel_for(fiber_config)
-        fiber_output = kernel.evaluate_per_span(power_in_w, span_length_m, self._n_path_spans)
+        fiber_output = kernel.evaluate(power_in_w, span_length_m, 1, span_context=span_context)
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
-        return apply_amplifier_and_roadm(
+        plain = SpanFiberOutput(
+            power_out_w=fiber_output.power_out_w,
+            spm_noise_w=fiber_output.spm_noise_w,
+            xpm_noise_w=fiber_output.xpm_noise_w,
+        )
+        element = apply_amplifier_and_roadm(
             power_in_w=power_in_w,
-            fiber_output=fiber_output,
+            fiber_output=plain,
             edfa_config=edfa_config,
             roadm_config=None,
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
         )
-
-
-def _count_spans(optical_path: MultiSpanOpticalPath) -> int:
-    """数出光路实际包含的跨段数（与路由层的跨段切分规则一致）。"""
-    total = 0
-    for fiber in optical_path.fiber_configs:
-        remaining_km = fiber.length_km
-        while remaining_km > 1e-12:
-            span_km = min(remaining_km, fiber.max_span_length_km)
-            total += 1
-            remaining_km -= span_km
-    return max(1, total)
+        if fiber_output.nli_amplitude_spm is None:
+            return element
+        return replace(
+            element,
+            nli_amplitude_spm=fiber_output.nli_amplitude_spm,
+            nli_amplitude_xpm=fiber_output.nli_amplitude_xpm,
+        )
 
 
 register_model(DAMICO2022_MODEL_INFO, Damico2022Model)
