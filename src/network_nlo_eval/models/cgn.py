@@ -32,9 +32,12 @@ Eq. (5) 有效二阶色散          :func:`_effective_beta2`
 Eq. (6)/(9) NSP              :func:`_stimulus_attenuation`
 Eq. (16)/(22) NSP 能量谱     :func:`_nsp_energy_spectrum`（无 ISRS）
                              :func:`_isrs_nsp_energy_spectrum`（含 ISRS）
+                             :func:`_fused_integrand_plain` /
+                             :func:`_fused_integrand_isrs`（融合内核，构造期用）
 ISRS 剖面（论文未给）        :func:`_isrs_span_profile`（复用仓库拉曼核）
 Eq. (24)/(30) SS 一维积分     :func:`_island_core`
 Eq. (27)/(29) 权重 :math:`W`  :func:`_rectangle_weight`
+                             :func:`_fused_integrand_isrs`（融合内核内联）
 Eq. (33)/(34) SCI 图元        :func:`_rectangle_weight`（:math:`a'=c'=0` 退化）
 Eq. (53) 异构 XS             未实现（见"已知近似"）
 Eq. (62)/(63)/(64) 相干累加   :func:`_dirichlet_weight`（核）
@@ -86,6 +89,25 @@ GN 参考式（论文 Eq. (1)）给出的是 NLI **PSD**，它在信道带内**�
 
 两档的**物理量相同**（同一个 GN 参考式），差别只在"带内 NLI PSD 是否解析"。
 与官方 MEX 的逐点对照见 ``tests/test_cgn_mex_crosscheck.py``。
+
+**构造期实现（融合内核 + 线程并行）**
+
+核心积分矩阵的构造是"逐元素 + 大数组"型负载，也是本模型唯一的冷启动开销。
+实现上有两层加速，**都不改变任何一位数字**：
+
+* **融合内核**（:func:`_fused_integrand_isrs` / :func:`_fused_integrand_plain`）：
+  原来的 numpy 链路对每个 ``(CUT, 第二波, 第三波, 矩形片, 相关域节点)``
+  五元组要走二十多趟整块数组的往返（复数 Horner 累加、复数除法、两次幂、
+  非有限值掩码……）。融合内核把"相关域节点 → 矩形权重 → NSP 能量谱 →
+  求积权重 → 被积函数"压成**一趟**，只写回最终的被积函数。逐位一致性靠
+  显式的 fma 内建函数、照抄 numpy 的复数除法算法、以及 ``x * x`` 形式的
+  平方（详见内核注释）；
+* **线程并行**：核心积分按 CUT 信道分块，各块互不依赖、块内累加顺序不变，
+  故可以按块并行（numpy 的 ufunc 与 numba 的 njit 都释放 GIL）。并行度默认
+  取 ``os.cpu_count()``，环境变量 ``CGN_CORE_WORKERS`` 可覆盖。
+
+物理量、求积节点与权重、图元集合都没有改动；等价性由
+``tests/test_cgn_coldstart.py`` 逐位守住。
 
 **与官方 MEX 的已知差异（结构性，非口径）**
 
@@ -181,9 +203,15 @@ import 任何兄弟模型（``pcfm`` / ``ecz`` / ``numerical`` 等），以便�
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+import llvmlite.ir as _ll_ir
 import numpy as np
+from numba import njit
+from numba.core import types as _nb_types
+from numba.extending import intrinsic as _nb_intrinsic
 
 from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.types import NDArrayFloat
@@ -341,6 +369,368 @@ CGN_MODEL_INFO = ModelInfo(
         ),
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# 构造期融合内核
+# ---------------------------------------------------------------------------
+#
+# 核心积分矩阵的构造是"逐元素 + 大数组"型负载：每个
+# ``(CUT, 第二波, 第三波, 矩形片, 相关域节点)`` 五元组都要算一次 NSP 能量谱、
+# 矩形权重与求积权重。纯 numpy 写法下这条链路有二十多趟对整块数组的往返
+# （复数 Horner 累加、复数除法、两次幂、非有限值掩码……），时间几乎全花在
+# 内存带宽上，而不是算术上。
+#
+# 下面的融合内核把这条链路压成**一趟**：每个元素在寄存器里走完
+# "相关域节点 → 矩形权重 → NSP 能量谱 → 求积权重 → 被积函数"，
+# 只把最终的被积函数写回数组。逐位一致性靠三件事保证：
+#
+# 1. **复数乘法**显式调用 ``llvm.fma.f64``：numpy 1.26 的复数乘法 SIMD 循环
+#    用的是硬件 fma（实部 ``fma(ar, br, -(ai*bi))``、虚部 ``fma(ar, bi, ai*br)``）。
+#    不能靠 ``fastmath={"contract"}`` 让 LLVM 自己去收缩——收缩后的**结合方式**
+#    取决于 LLVM 是否把被调函数内联，内联与否会改变虚部的 fma 次序，实测会差
+#    1 ulp。故这里直接发射 fma 内建函数，次序完全固定；
+# 2. **复数除法**照抄 numpy 的 ``npy_cdiv`` 标量算法（``rat``/``scl`` 的舍入
+#    顺序），且该段**不**参与 fma 收缩（主内核不开 ``fastmath``）；
+# 3. **平方**用 ``x * x``：numpy 的 ``array ** 2`` 走的是逐元素乘法
+#    （``np.power(x, 2)`` 才走 libm 的 ``pow``，两者在约 0.09% 的输入上差
+#    1 ulp）。
+#
+# 三角函数用 numba 的 ``cos``/``sin``：它们与 numpy 的逐元素实现**逐位相同**
+# （都落到 libm 的 ``cos``/``sin``）。
+
+@_nb_intrinsic
+def _fma(typingctx, a, b, c):
+    """发射 ``llvm.fma.f64``：正确舍入的 ``a * b + c``（单次舍入）。
+
+    Args:
+        typingctx: numba 的类型上下文（由 numba 传入）。
+        a: 第一个乘数。
+        b: 第二个乘数。
+        c: 加数。
+
+    Returns
+    -------
+        融合乘加的签名与 codegen。
+    """
+    sig = _nb_types.float64(_nb_types.float64, _nb_types.float64, _nb_types.float64)
+
+    def codegen(context, builder, sig, args):
+        module = builder.module
+        function = module.declare_intrinsic(
+            "llvm.fma", [_ll_ir.DoubleType(), _ll_ir.DoubleType(), _ll_ir.DoubleType()]
+        )
+        return builder.call(function, args)
+
+    return sig, codegen
+
+
+@njit(cache=False, nogil=True)
+def _complex_multiply(ar, ai, br, bi):
+    """复数乘法，语义与 numpy 的复数乘法**逐位相同**。
+
+    numpy 1.26 的复数乘法 SIMD 循环用硬件 fma：实部 ``fma(ar, br, -(ai*bi))``、
+    虚部 ``fma(ar, bi, ai*br)``。这里显式发射 fma 内建函数，次序固定。
+
+    Args:
+        ar: 实部 a。
+        ai: 虚部 a。
+        br: 实部 b。
+        bi: 虚部 b。
+
+    Returns
+    -------
+        ``(实部, 虚部)``。
+    """
+    cross = ai * bi
+    cross2 = ai * br
+    return _fma(ar, br, -cross), _fma(ar, bi, cross2)
+
+
+@njit(cache=False, nogil=True)
+def _np_maximum(a, b):
+    """``numpy.maximum`` 的标量语义（NaN 传播）。
+
+    Args:
+        a: 第一个操作数。
+        b: 第二个操作数。
+
+    Returns
+    -------
+        两者的最大值；任一为 NaN 时返回 NaN。
+    """
+    if a != a:
+        return a
+    if b != b:
+        return b
+    return a if a > b else b
+
+
+@njit(cache=False, nogil=True)
+def _np_minimum(a, b):
+    """``numpy.minimum`` 的标量语义（NaN 传播）。
+
+    Args:
+        a: 第一个操作数。
+        b: 第二个操作数。
+
+    Returns
+    -------
+        两者的最小值；任一为 NaN 时返回 NaN。
+    """
+    if a != a:
+        return a
+    if b != b:
+        return b
+    return a if a < b else b
+
+
+@njit(cache=False, nogil=True)
+def _square(value):
+    """平方，语义与 numpy 的 ``array ** 2`` **逐位相同**。
+
+    numpy 的 ``**`` 运算符对整数指数 2 走逐元素乘法（``np.power(x, 2)`` 才走
+    libm 的 ``pow``，两者在约 0.09% 的输入上差 1 ulp），故这里是 ``x * x``。
+
+    Args:
+        value: 待平方的数。
+
+    Returns
+    -------
+        平方值。
+    """
+    return value * value
+
+
+@njit(cache=False, nogil=True)
+def _fused_integrand_isrs(
+    out,
+    alpha_x,
+    residual,
+    magnitude,
+    expm1_neg,
+    beta2_eff,
+    xi_min,
+    xi_span,
+    uu,
+    wq,
+    a_b,
+    b_b,
+    c_d,
+    d_d,
+    gamma2,
+    decay,
+    four_pi2,
+):
+    r"""含 ISRS 的被积函数（融合内核）。
+
+    每个元素走完"相关域节点 → 矩形权重 → NSP 能量谱 → 求积权重 → 被积函数"，
+    语义与 :func:`_isrs_nsp_energy_spectrum` + :func:`_rectangle_weight` 的
+    numpy 链路**逐位相同**（见模块内"构造期融合内核"注释）。
+
+    矩形权重为 0 的元素直接写 0：这与 numpy 链路的 ``spectrum * 0 * weights``
+    等价（0 乘有限值得 ±0，非有限值随后被掩码成 0），故结果逐位不变。
+
+    Args:
+        out: 输出数组 ``(C, N, J, cells, P)``。
+        alpha_x: ``(C, N, J)`` NSP 衰减率 (Np/m)（含 ISRS 速率）。
+        residual: ``(C, N, J, n_seg)`` 逐段残余因子。
+        magnitude: ``(C, N, J)`` ``exp(-alpha_x * decay)``。
+        expm1_neg: ``(C, N, J)`` ``expm1(-alpha_x * decay)``。
+        beta2_eff: ``(C, N, J, cells)`` 有效二阶色散 (s²/m)。
+        xi_min: ``(C, N, J, cells)`` 相关域积分下界 (Hz²)。
+        xi_span: ``(C, N, J, cells)`` 相关域积分区间长度 (Hz²)。
+        uu: ``(P,)`` 求积节点的平方律分级坐标。
+        wq: ``(P,)`` 求积权重常数。
+        a_b: ``(C, cells)`` 矩形第一轴下界 (Hz)。
+        b_b: ``(C, cells)`` 矩形第一轴上界 (Hz)。
+        c_d: ``(C, N, J, cells)`` 矩形第二轴下界 (Hz)。
+        d_d: ``(C, N, J, cells)`` 矩形第二轴上界 (Hz)。
+        gamma2: ``(C,)`` 逐 CUT 信道的非线性系数平方。
+        decay: ISRS 分段长度 (m)。
+        four_pi2: :math:`4\\pi^2`。
+    """
+    n_c = alpha_x.shape[0]
+    n_s = alpha_x.shape[1]
+    n_j = alpha_x.shape[2]
+    n_seg = residual.shape[3]
+    n_cell = beta2_eff.shape[3]
+    n_p = uu.shape[0]
+    for c in range(n_c):
+        g2 = gamma2[c]
+        for s in range(n_s):
+            for j in range(n_j):
+                ax = alpha_x[c, s, j]
+                mag = magnitude[c, s, j]
+                exm = expm1_neg[c, s, j]
+                for cell in range(n_cell):
+                    om_coef = four_pi2 * beta2_eff[c, s, j, cell]
+                    xi0 = xi_min[c, s, j, cell]
+                    xspan = xi_span[c, s, j, cell]
+                    av = a_b[c, cell]
+                    bv = b_b[c, cell]
+                    d_safe = d_d[c, s, j, cell]
+                    if not (d_safe > 0.0):
+                        d_safe = 1.0
+                    c_safe = c_d[c, s, j, cell]
+                    if not (c_safe > 0.0):
+                        c_safe = 1.0
+                    for p in range(n_p):
+                        node = xi0 + xspan * uu[p]
+                        # 矩形权重（论文 Eq. (27)/(29)）。
+                        eta_min = _np_maximum(av, node / d_safe)
+                        eta_max = _np_minimum(bv, node / c_safe)
+                        log_min = np.log(_np_maximum(eta_min, 1e-300))
+                        log_max = np.log(_np_maximum(eta_max, 1e-300))
+                        weight = _np_maximum(log_max - log_min, 0.0)
+                        if weight == 0.0:
+                            out[c, s, j, cell, p] = 0.0
+                            continue
+                        # NSP 能量谱（论文 Eq. (16)/(22)，含 ISRS 展开）。
+                        omega = om_coef * node
+                        phase = omega * decay
+                        cos_p = np.cos(phase)
+                        sin_p = np.sin(phase)
+                        w_re = mag * cos_p
+                        w_im = mag * sin_p
+                        acc_re = 0.0
+                        acc_im = 0.0
+                        for k in range(n_seg - 1, -1, -1):
+                            acc_re, acc_im = _complex_multiply(acc_re, acc_im, w_re, w_im)
+                            # numpy 的 "复数 += 实数" 只改实部（实数被提升成
+                            # (rk, 0) 后相加），虚部不变。
+                            acc_re += residual[c, s, j, k]
+                        omw_re = -exm + mag * (1.0 - cos_p)
+                        omw_im = -(mag * sin_p)
+                        div_re = ax
+                        div_im = -omega
+                        if abs(div_re) >= abs(div_im):
+                            rat = div_im / div_re
+                            scl = 1.0 / (div_re + div_im * rat)
+                            seg_re = (omw_re + omw_im * rat) * scl
+                            seg_im = (omw_im - omw_re * rat) * scl
+                        else:
+                            rat = div_re / div_im
+                            scl = 1.0 / (div_im + div_re * rat)
+                            seg_re = (omw_re * rat + omw_im) * scl
+                            seg_im = (omw_im * rat - omw_re) * scl
+                        amp_re, amp_im = _complex_multiply(seg_re, seg_im, acc_re, acc_im)
+                        spectrum = g2 * (_square(amp_re) + _square(amp_im))
+                        value = (spectrum * weight) * (xspan * wq[p])
+                        if not (value == value) or value == np.inf or value == -np.inf:
+                            value = 0.0
+                        out[c, s, j, cell, p] = value
+    return out
+
+
+@njit(cache=False, nogil=True)
+def _fused_integrand_plain(
+    out,
+    alpha_x,
+    length_m,
+    beta2_eff,
+    xi_min,
+    xi_span,
+    uu,
+    wq,
+    a_b,
+    b_b,
+    c_d,
+    d_d,
+    gamma2,
+    four_pi2,
+):
+    r"""不含 ISRS 的被积函数（融合内核）。
+
+    语义与 :func:`_nsp_energy_spectrum` + :func:`_rectangle_weight` 的 numpy
+    链路**逐位相同**。
+
+    Args:
+        out: 输出数组 ``(C, N, J, cells, P)``。
+        alpha_x: ``(C, N, J)`` NSP 衰减率 (Np/m)。
+        length_m: 跨段长度 (m)。
+        beta2_eff: ``(C, N, J, cells)`` 有效二阶色散 (s²/m)。
+        xi_min: ``(C, N, J, cells)`` 相关域积分下界 (Hz²)。
+        xi_span: ``(C, N, J, cells)`` 相关域积分区间长度 (Hz²)。
+        uu: ``(P,)`` 求积节点的平方律分级坐标。
+        wq: ``(P,)`` 求积权重常数。
+        a_b: ``(C, cells)`` 矩形第一轴下界 (Hz)。
+        b_b: ``(C, cells)`` 矩形第一轴上界 (Hz)。
+        c_d: ``(C, N, J, cells)`` 矩形第二轴下界 (Hz)。
+        d_d: ``(C, N, J, cells)`` 矩形第二轴上界 (Hz)。
+        gamma2: ``(C,)`` 逐 CUT 信道的非线性系数平方。
+        four_pi2: :math:`4\\pi^2`。
+    """
+    n_c = alpha_x.shape[0]
+    n_s = alpha_x.shape[1]
+    n_j = alpha_x.shape[2]
+    n_cell = beta2_eff.shape[3]
+    n_p = uu.shape[0]
+    for c in range(n_c):
+        g2 = gamma2[c]
+        for s in range(n_s):
+            for j in range(n_j):
+                ax = alpha_x[c, s, j]
+                decay = np.exp(-ax * length_m)
+                for cell in range(n_cell):
+                    om_coef = four_pi2 * beta2_eff[c, s, j, cell]
+                    xi0 = xi_min[c, s, j, cell]
+                    xspan = xi_span[c, s, j, cell]
+                    av = a_b[c, cell]
+                    bv = b_b[c, cell]
+                    d_safe = d_d[c, s, j, cell]
+                    if not (d_safe > 0.0):
+                        d_safe = 1.0
+                    c_safe = c_d[c, s, j, cell]
+                    if not (c_safe > 0.0):
+                        c_safe = 1.0
+                    for p in range(n_p):
+                        node = xi0 + xspan * uu[p]
+                        eta_min = _np_maximum(av, node / d_safe)
+                        eta_max = _np_minimum(bv, node / c_safe)
+                        log_min = np.log(_np_maximum(eta_min, 1e-300))
+                        log_max = np.log(_np_maximum(eta_max, 1e-300))
+                        weight = _np_maximum(log_max - log_min, 0.0)
+                        if weight == 0.0:
+                            out[c, s, j, cell, p] = 0.0
+                            continue
+                        omega = om_coef * node
+                        numerator = (
+                            1.0 - 2.0 * decay * np.cos(omega * length_m) + decay * decay
+                        )
+                        denominator = ax * ax + omega * omega
+                        spectrum = (g2 * numerator) / denominator
+                        value = (spectrum * weight) * (xspan * wq[p])
+                        if not (value == value) or value == np.inf or value == -np.inf:
+                            value = 0.0
+                        out[c, s, j, cell, p] = value
+    return out
+
+
+def _core_workers(n_tasks: int) -> int:
+    """核心矩阵构造的并行度（线程数）。
+
+    核心积分按 CUT 信道分块后各块互不依赖，故可用线程池并行：numpy 的
+    ufunc 与 numba 的 ``njit`` 都释放 GIL。环境变量 ``CGN_CORE_WORKERS``
+    可覆盖默认并行度（设为 1 即退回单线程）。
+
+    Args:
+        n_tasks: 可并行的分块数。
+
+    Returns
+    -------
+        线程数，范围 ``[1, n_tasks]``。
+    """
+    if n_tasks <= 1:
+        return 1
+    override = os.environ.get("CGN_CORE_WORKERS")
+    if override:
+        try:
+            requested = int(override)
+        except ValueError:
+            requested = 1
+        return max(1, min(requested, n_tasks))
+    return max(1, min(os.cpu_count() or 1, n_tasks))
 
 
 def _nonlinearity_coefficient(lambdas_m: NDArrayFloat, n2_m2_w: float, a_eff_m2: NDArrayFloat) -> NDArrayFloat:
@@ -1223,8 +1613,22 @@ def _island_core(
     integrate_band = int(band_points) > 1
     band_nodes = _band_quadrature(int(band_points)) if integrate_band else ((0.0, 1.0),)
 
-    for start in range(0, n_ch, chunk):
-        stop = min(start + chunk, n_ch)
+    # 相关域求积的节点坐标与权重常数（与 _xi_quadrature 的 numpy 路径同源，
+    # 但只算一次，供融合内核逐元素使用）。
+    u_nodes = (np.arange(correlation_points, dtype=np.float64) + 0.5) / float(correlation_points)
+    u_edges = np.arange(correlation_points + 1, dtype=np.float64) / float(correlation_points)
+    quad_u = u_nodes**2
+    quad_w = u_edges[1:] ** 2 - u_edges[:-1] ** 2
+
+    four_pi2 = 4.0 * np.pi**2
+
+    def _chunk_body(start: int, stop: int) -> tuple[NDArrayFloat, NDArrayFloat | None]:
+        """CUT 信道 ``[start, stop)`` 的核心积分。
+
+        单个分块内部的运算顺序与改造前完全一致（逐 band 节点、逐象限片、
+        逐积分节点累加），故分块结果与改造前**逐位相同**；分块之间互不依赖，
+        故可以按线程并行。
+        """
         idx = slice(start, stop)
         xa, xb, ylo, yhi = _island_cover(
             x1[idx],
@@ -1237,7 +1641,6 @@ def _island_core(
         )
         x_center = 0.5 * (xa + xb)
         y_center = 0.5 * (ylo + yhi)
-        gamma_c = gamma_w_m[idx].reshape(-1, 1, 1, 1, 1)
         alpha_c = alpha_x[idx]
         beta2_eff = _effective_beta2(
             beta2_s2_m,
@@ -1249,6 +1652,8 @@ def _island_core(
         )
 
         residual_view = None
+        magnitude = None
+        expm1_neg = None
         if use_isrs:
             # 残余因子 r(z)：逐段中点的 ISRS 增益之积，乘回解析指数部分。
             residual = np.empty((stop - start, n_ch, n_slots, isrs_gain.shape[0]), dtype=np.float64)
@@ -1260,6 +1665,14 @@ def _island_core(
                     (rate_second + isrs_rate[third_chunk]) * isrs_z_mid[seg]
                 )
             residual_view = residual
+            decay = float(isrs_seg_length_m)
+            exponent = alpha_c * decay
+            magnitude = np.exp(-exponent)
+            expm1_neg = np.expm1(-exponent)
+
+        gamma2 = gamma_w_m[idx] ** 2
+        shape = (stop - start, n_ch, n_slots, island_cells, correlation_points)
+        integrand = np.empty(shape, dtype=np.float64)
 
         acc = np.zeros((stop - start, n_ch, n_slots), dtype=np.float64)
         acc_dirichlet = (
@@ -1298,37 +1711,74 @@ def _island_core(
                 xi_cut = np.minimum(xi_max, xi_min + TRUNCATION_FACTOR * xi_scale)
                 xi_end = np.maximum(xi_cut, xi_min)
 
-                nodes, weights = _xi_quadrature(xi_min, xi_end, correlation_points)
-                omega = 4.0 * np.pi**2 * beta2_eff[..., None] * nodes
-                if residual_view is None:
-                    spectrum = _nsp_energy_spectrum(
-                        gamma_c, alpha_c[..., None, None], length_m, omega
+                # 融合内核：一次遍历算完"节点 → 矩形权重 → NSP 能量谱 →
+                # 求积权重 → 被积函数"，语义与 numpy 链路逐位相同。
+                a_b = np.ascontiguousarray(a[:, 0, 0, :])
+                b_b = np.ascontiguousarray(b[:, 0, 0, :])
+                if use_isrs:
+                    _fused_integrand_isrs(
+                        integrand,
+                        np.ascontiguousarray(alpha_c),
+                        residual_view,
+                        magnitude,
+                        expm1_neg,
+                        beta2_eff,
+                        xi_min,
+                        xi_end - xi_min,
+                        quad_u,
+                        quad_w,
+                        a_b,
+                        b_b,
+                        np.ascontiguousarray(c),
+                        np.ascontiguousarray(d),
+                        gamma2,
+                        decay,
+                        four_pi2,
                     )
                 else:
-                    spectrum = _isrs_nsp_energy_spectrum(
-                        gamma_c,
-                        alpha_c[..., None, None],
-                        residual_view,
-                        isrs_seg_length_m,
-                        omega,
+                    _fused_integrand_plain(
+                        integrand,
+                        np.ascontiguousarray(alpha_c),
+                        float(length_m),
+                        beta2_eff,
+                        xi_min,
+                        xi_end - xi_min,
+                        quad_u,
+                        quad_w,
+                        a_b,
+                        b_b,
+                        np.ascontiguousarray(c),
+                        np.ascontiguousarray(d),
+                        gamma2,
+                        four_pi2,
                     )
-                weight = _rectangle_weight(a[..., None], b[..., None], c[..., None], d[..., None], nodes)
-                integrand = spectrum * weight * weights
-                integrand = np.where(np.isfinite(integrand), integrand, 0.0)
                 # 单跨核心积分：与 n_coherent_spans == 1 的旧路径逐位一致。
                 acc += band_scale * np.sum(integrand, axis=(-2, -1))
                 if acc_dirichlet is not None:
                     # 链路级相干总量：逐点乘上论文 Eq. (63) 的相干累加核。
+                    nodes, _ = _xi_quadrature(xi_min, xi_end, correlation_points)
                     theta = 4.0 * np.pi**2 * beta2_eff[..., None] * length_m * nodes
                     weighted = integrand * _dirichlet_weight(theta, n_coherent_spans)
                     weighted = np.where(np.isfinite(weighted), weighted, 0.0)
                     acc_dirichlet += band_scale * np.sum(weighted, axis=(-2, -1))
 
         acc = np.where(np.isfinite(acc), acc, 0.0)
-        core[idx] = acc
         if acc_dirichlet is not None:
             acc_dirichlet = np.where(np.isfinite(acc_dirichlet), acc_dirichlet, 0.0)
-            dirichlet[idx] = acc_dirichlet
+        return acc, acc_dirichlet
+
+    ranges = [(start, min(start + chunk, n_ch)) for start in range(0, n_ch, chunk)]
+    workers = _core_workers(len(ranges))
+    if workers > 1:
+        # 各分块写各自的切片，块内累加顺序不变，故与串行结果逐位相同。
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda item: _chunk_body(*item), ranges))
+    else:
+        results = [_chunk_body(*item) for item in ranges]
+    for (start, stop), (acc, acc_dirichlet) in zip(ranges, results, strict=True):
+        core[start:stop] = acc
+        if dirichlet is not None:
+            dirichlet[start:stop] = acc_dirichlet
 
     return core, dirichlet
 
