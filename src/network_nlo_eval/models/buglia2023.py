@@ -54,15 +54,74 @@ Appendix D 给出适用条件 :math:`\alpha_{l,i} L \gg 0`）。
 4. **相干因子 :math:`n^\epsilon`** 按论文 Eq. (3) 施加在 SPM 上，但冻结的
    :mod:`network_nlo_eval.models.route` 逐跨累加噪声时固定传 ``n=1``，所以多跨
    场景下该因子实际不生效（``ecz`` 基线同样如此）。
+
+跨间相干
+--------
+多跨链路上，各跨产生的 NLI 噪声**不是**独立相加的：第 ``k`` 跨生成的噪声比
+第 0 跨生成的噪声多走了 ``k·L`` 米，两份拷贝之间的相位差由色散在这段距离上
+积累的失配决定。相干度必须按 **NLI 噪声功率**加权，而不是按信号谱均匀平均：
+
+.. math::
+
+    V(d) = \left\langle \cos(\rho d)\right\rangle_W, \qquad
+    W(\rho) = \frac{\left|1 - e^{-(\alpha + j\rho)L}\right|^2}{\alpha^2 + \rho^2},
+
+其中 :math:`\rho = 4\pi^2|\beta_2|\,(f_1 - f)(f_2 - f)` 是信号对的相位失配率
+(rad/m)。加权平均的权重就是闭式 GN 核本身：失配越大的频率对产生的 NLI 越少，
+因此它对跨间相干度的贡献也越小。
+
+可见度是链路级量：给定跨数 :math:`N` 与各跨间距 :math:`kL`，相干因子
+
+.. math::
+
+    R(N) = N + 2\sum_{k=1}^{N-1}(N-k)\,V(kL), \qquad \mathrm{buildup} = R(N)/N
+
+给出"完全相干"（:math:`R = N^2`）与"完全非相干"（:math:`R = N`）之间的插值。
+零色散时 :math:`V \equiv 1`，buildup 退化为 :math:`N`；色散很强时
+:math:`V \approx 0`，buildup 退化为 1。
+
+冻结的路由层每个信道每个跨只携带**一个**复振幅，无法表达 :math:`V(j-k)` 的
+两两结构，因此这里用**等效相位斜坡**：取每跨相位步长 :math:`\psi` 使
+
+.. math::
+
+    \left[\frac{\sin(N\psi/2)}{\sin(\psi/2)}\right]^2 = R(N),
+
+并让第 ``k`` 跨的振幅相位随已走过的长度线性增长。对路由层真正需要的"总 NLI
+功率"这个量是精确的；两两结构是等效近似（与本仓库其它相干档模型同口径）。
+
+单跨链路（``total_spans == 1``）**不走**这条路径：核返回纯功率结果，路由层
+按 :math:`\sum|a_k|^2` 累加，与改造前逐位一致。
+
+实现说明
+--------
+* 可见度的一维归约与洛伦兹反导数表都是**本模块自己的实现**（不 import
+  :mod:`network_nlo_eval.models.numerical`，避免两个模型耦死），口径与它一致：
+  观测频率用余弦栅格，第二个输入频率的积分用解析反导数
+  :math:`C_m(t) = \int_0^t \cos(m\alpha L s)/(1+s^2)\,\mathrm{d}s`。
+* XPM 用**同一套** NLI 加权：跨拍频的失配变量换成"波 1 的带内偏移 × 波 2 相对
+  被观测信道中心的偏移"。见 :func:`_gn_weighted_xpm_visibility`。实测
+  （``c_57ch``、10 跨）跨拍频的可见度只有 1.9e-3 量级，XPM 的相干增益
+  （buildup）是 1.0036；与均匀带平均口径相比链路级 SNR 差 0.004 dB，远在
+  0.05 dB 的噪声地板之下，因此保留 GN 加权口径（与 SPM 同一套权重）。
+* 逐跨相位步长按**等跨**假设折算：跨长不等时，步长仍按当前跨长折算。
 """
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from network_nlo_eval.core.constants import PI
-from network_nlo_eval.core.types import NDArrayFloat
-from network_nlo_eval.models.base import ModelInfo, SpanFiberOutput, register_model
+from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
+from network_nlo_eval.models.base import (
+    ElementOutput,
+    ModelInfo,
+    SpanContext,
+    SpanFiberOutput,
+    register_model,
+)
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -72,8 +131,12 @@ from network_nlo_eval.models.numba_kernels import (
     _calc_raman_profile_jit,
     _calc_span_out_power_jit,
 )
-from network_nlo_eval.models.route import RouteModel
-from network_nlo_eval.network.elements import FiberSpanConfig
+from network_nlo_eval.models.route import (
+    RouteModel,
+    apply_amplifier_and_roadm,
+    resolve_noise_figure,
+)
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
     "BUGLIA2023_MODEL_INFO",
@@ -146,6 +209,507 @@ def alpha_tilde_kappa(alpha_l: float, length_m: float) -> tuple[float, float]:
     return float(tilde_alpha), float(kappa)
 
 
+# =============================================================================
+# 跨间相干：GN 噪声功率加权的可见度
+#
+# 这一节是本模块自洽的实现：口径与 ``models.numerical`` 一致，但代码不共享，
+# 免得两个模型耦死（数值模型是"可追溯性优先"的慢参考，闭式模型是"速度优先"
+# 的生产线实现，耦合会让两边都难改）。
+# =============================================================================
+
+#: 可见度求积里观测频率的节点数。
+#:
+#: 观测频率跨信道带宽分布：被积函数在带宽边缘（可容许的三波区域退化）很陡，
+#: 中间很平滑，因此用余弦栅格而不是均匀栅格。
+_VIS_FREQUENCY_POINTS = 41
+
+#: 每个积分子区间上的 Gauss-Legendre 节点数。
+_VIS_QUADRATURE_POINTS = 200
+
+#: 反导数表 ``C_m(t)`` 的步长。
+_VIS_TABLE_STEP = 1.0e-3
+
+#: 反导数表覆盖的最大 ``t``；超出部分用洛伦兹尾的渐近展开。
+_VIS_TABLE_LIMIT = 30.0
+
+#: 反导数表至少覆盖的 ``t`` 范围（保证表格良态，且不会用到只在大 ``t`` 有效的尾）。
+_VIS_TABLE_MINIMUM = 1.0
+
+#: 小于该值的失配率视作零：相位差可忽略，两份拷贝完全相干。
+_VIS_NEGLIGIBLE_T = 1.0e-6
+
+#: 等效相位斜坡的二分步数。
+_RAMP_BISECTION_STEPS = 60
+
+
+def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
+    r"""洛伦兹尾 :math:`\int_t^\infty \cos(\beta s)/(1+s^2)\,\mathrm{d}s`。
+
+    反复分部积分得到的渐近展开。``beta`` 是无量纲的
+    :math:`m\alpha L`；展开在 ``t = 30`` 处的相对误差优于 1e-8。
+
+    Args:
+        beta: 无量纲频率 :math:`m\alpha L`。
+        t: 尾积分的下限（数组）。
+    Returns:
+        尾积分的值（数组）。
+    """
+    denominator = 1.0 + t * t
+    f = 1.0 / denominator
+    df = -2.0 * t / denominator**2
+    d2f = (6.0 * t * t - 2.0) / denominator**3
+    d3f = -24.0 * t * (t * t - 1.0) / denominator**4
+    d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
+    sin_beta = np.sin(beta * t)
+    cos_beta = np.cos(beta * t)
+    return (
+        -f * sin_beta / beta
+        - df * cos_beta / beta**2
+        + d2f * sin_beta / beta**3
+        + d3f * cos_beta / beta**4
+        - d4f * sin_beta / beta**5
+    )
+
+
+class _VisibilityAntiderivative:
+    r"""反导数 :math:`C_m(t) = \int_0^t \cos(m\alpha L s)/(1+s^2)\,\mathrm{d}s`。
+
+    表用**修正梯形法**（复合梯形 + Euler-Maclaurin 的一阶修正）建立：修正项
+    恢复了四阶精度，代价却只有 Simpson 网格的一半。``m = 0`` 时
+    :math:`C_0(t) = \arctan t`，直接闭式求值。
+
+    表之外用洛伦兹尾的渐近展开，极限值取洛伦兹的 Fourier 变换
+    :math:`C_m(\infty) = (\pi/2)e^{-m\alpha L}`。
+
+    Args:
+        alpha_npm_m: 光纤功率衰减 (Np/m)。
+        span_length_m: 跨段长度 (m)。
+        m_max: 需要建表的最大 ``m``。
+        t_end: 需要覆盖的最大 ``t``。
+    """
+
+    def __init__(
+        self,
+        alpha_npm_m: float,
+        span_length_m: float,
+        m_max: int,
+        t_end: float,
+        step: float = _VIS_TABLE_STEP,
+    ) -> None:
+        self.alpha = float(alpha_npm_m)
+        self.span_length = float(span_length_m)
+        self.beta = self.alpha * self.span_length
+        limit = min(max(float(t_end), _VIS_TABLE_MINIMUM), _VIS_TABLE_LIMIT)
+        n_points = max(3, int(math.ceil(limit / step)) + 1)
+        if n_points % 2 == 0:
+            n_points += 1
+        self.t = np.linspace(0.0, limit, n_points)
+        h = float(self.t[1] - self.t[0])
+        self._tables: dict[int, NDArrayFloat] = {}
+        for m in range(1, int(m_max) + 1):
+            phase = m * self.beta * self.t
+            cos_phase = np.cos(phase)
+            values = cos_phase / (1.0 + self.t * self.t)
+            derivative = (
+                -m * self.beta * np.sin(phase) / (1.0 + self.t * self.t)
+                - 2.0 * self.t * cos_phase / (1.0 + self.t * self.t) ** 2
+            )
+            self._tables[m] = self._cumulative(values, derivative, h)
+
+    @staticmethod
+    def _cumulative(
+        values: NDArrayFloat, derivative: NDArrayFloat, h: float
+    ) -> NDArrayFloat:
+        """修正梯形法的累积积分。"""
+        integral = np.zeros_like(values)
+        integral[1:] = np.cumsum(0.5 * h * (values[:-1] + values[1:]))
+        # Euler-Maclaurin：int = T - h^2/12 (f'(b) - f'(a)) + O(h^4)。
+        integral[1:] -= h * h / 12.0 * (derivative[1:] - derivative[0])
+        return integral
+
+    def C(self, m: int, t: NDArrayFloat) -> NDArrayFloat:
+        """``C_m(t)``，``t`` 可以是负数（``C_m`` 是奇函数）。"""
+        if m == 0:
+            return np.arctan(np.asarray(t, dtype=np.float64))
+        t = np.asarray(t, dtype=np.float64)
+        out = np.empty_like(t)
+        sign = np.sign(t)
+        magnitude = np.abs(t)
+        inside = magnitude <= self.t[-1]
+        if np.any(inside):
+            out[inside] = sign[inside] * np.interp(magnitude[inside], self.t, self._tables[m])
+        outside = ~inside
+        if np.any(outside):
+            beta = m * self.beta
+            tail = _lorentzian_tail(beta, magnitude[outside])
+            out[outside] = sign[outside] * (0.5 * math.pi * math.exp(-beta) - tail)
+        return out
+
+
+def _weighted_visibility(
+    t_low: NDArrayFloat,
+    t_high: NDArrayFloat,
+    measure: NDArrayFloat,
+    table: _VisibilityAntiderivative,
+    exp_alpha_l: float,
+    n_separations: int,
+) -> NDArrayFloat:
+    r"""由归约后的求积节点求各跨距的可见度。
+
+    权重与被积函数都只通过 :math:`t = |\rho|/\alpha` 依赖失配率 :math:`\rho`，
+    于是
+
+    .. math::
+
+        \int \left|1 - e^{-(\alpha + j\rho)L}\right|^2 \cos(m\rho L)
+        \frac{\mathrm{d}t}{1+t^2}
+        = (1 + e^{-2\alpha L})\,C_m(t)
+          - e^{-\alpha L}\left(C_{|m-1|}(t) + C_{m+1}(t)\right),
+
+    其中用到 :math:`2\cos(\alpha L s)\cos(m\alpha L s) =
+    \cos((m-1)\alpha L s) + \cos((m+1)\alpha L s)`。跨距 :math:`d = mL`` 时
+    相位差是 :math:`\rho d = m\alpha L t`，所以 :math:`m` 必须是跨距的整数倍
+    ——这正是"等跨"假设在数学上的落点。
+
+    Args:
+        t_low: 每个求积节点上 ``t`` 区间的下限。
+        t_high: 每个求积节点上 ``t`` 区间的上限。
+        measure: 每个求积节点的测度。
+        table: 反导数表。
+        exp_alpha_l: :math:`e^{-\alpha L}`。
+        n_separations: 跨距数（可见度数组的长度）。
+    Returns:
+        ``(n_separations,)`` 可见度，取值在 ``[-1, 1]``。
+    """
+    weight_high = (1.0 + exp_alpha_l**2) * table.C(0, t_high) - 2.0 * exp_alpha_l * table.C(1, t_high)
+    weight_low = (1.0 + exp_alpha_l**2) * table.C(0, t_low) - 2.0 * exp_alpha_l * table.C(1, t_low)
+    total = float(np.sum(measure * (weight_high - weight_low)))
+    if not total > 0.0:
+        # 权重退化（例如零带宽）：两份拷贝没有任何可分辨的相位差。
+        return np.ones(n_separations, dtype=np.float64)
+    out = np.empty(n_separations, dtype=np.float64)
+    for index in range(n_separations):
+        m = index + 1
+        cosine_high = (
+            (1.0 + exp_alpha_l**2) * table.C(m, t_high)
+            - exp_alpha_l * (table.C(abs(m - 1), t_high) + table.C(m + 1, t_high))
+        )
+        cosine_low = (
+            (1.0 + exp_alpha_l**2) * table.C(m, t_low)
+            - exp_alpha_l * (table.C(abs(m - 1), t_low) + table.C(m + 1, t_low))
+        )
+        out[index] = float(np.sum(measure * (cosine_high - cosine_low))) / total
+    return out
+
+
+def _spm_region_nodes(
+    half_band_hz: float,
+    rate: float,
+    alpha_npm_m: float,
+    n_frequency: int,
+    n_quadrature: int,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    r"""自拍频（SPM）三波区域的求积节点。
+
+    被观测频率 :math:`f` 跨信道带宽分布；两个输入波是
+    :math:`f_1 = f + u`、:math:`f_2 = f + v`，闲频 :math:`f_3 = f + u + v`，
+    三者都必须落在同一信道带内。于是 :math:`v` 的取值区间是
+
+    .. math::
+
+        v \in [f - B/2, f + B/2] \cap [f - B/2 - u, f + B/2 - u].
+
+    对固定的 :math:`(f, u)`，失配率 :math:`\rho = 4\pi^2|\beta_2| u v` 随
+    :math:`v` 单调，:math:`t = |\rho|/\alpha` 因此也单调，内层的 :math:`v`
+    积分用反导数解析求出；外层的 :math:`(f, u)` 用数值求积。
+
+    Args:
+        half_band_hz: 信道带宽的一半 (Hz)。
+        rate: :math:`4\pi^2|\beta_2|` (rad/(m·Hz²))。
+        alpha_npm_m: 光纤功率衰减 (Np/m)。
+        n_frequency: 观测频率的节点数。
+        n_quadrature: 每个子区间上的 Gauss-Legendre 节点数。
+    Returns:
+        ``(t_low, t_high, measure)``：``t`` 区间的上下限与每个节点的测度。
+    """
+    frequencies, frequency_weights = _cosine_frequency_grid(half_band_hz, n_frequency)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    low_parts: list[NDArrayFloat] = []
+    high_parts: list[NDArrayFloat] = []
+    measure_parts: list[NDArrayFloat] = []
+    for frequency, frequency_weight in zip(frequencies, frequency_weights, strict=True):
+        low = -half_band_hz - float(frequency)
+        high = half_band_hz - float(frequency)
+        for start, stop in ((low, 0.0), (0.0, high)):
+            if stop - start <= 0.0:
+                continue
+            u = 0.5 * (stop - start) * (nodes + 1.0) + start
+            weight = 0.5 * (stop - start) * weights
+            v_low = np.maximum(low, low - u)
+            v_high = np.minimum(high, high - u)
+            valid = v_high > v_low
+            if not np.any(valid):
+                continue
+            u = u[valid]
+            weight = weight[valid]
+            v_low = v_low[valid]
+            v_high = v_high[valid]
+            # dv = dt / (rate |u| alpha)：Jacobian 取绝对值。
+            measure = weight * frequency_weight / (rate * np.abs(u) * alpha_npm_m)
+            t_low = rate * u * v_low / alpha_npm_m
+            t_high = rate * u * v_high / alpha_npm_m
+            low_parts.append(np.minimum(t_low, t_high))
+            high_parts.append(np.maximum(t_low, t_high))
+            measure_parts.append(measure)
+    if not low_parts:
+        empty = np.zeros(0, dtype=np.float64)
+        return empty, empty, empty
+    return (
+        np.concatenate(low_parts),
+        np.concatenate(high_parts),
+        np.concatenate(measure_parts),
+    )
+
+
+def _xpm_region_nodes(
+    half_band_hz: float,
+    rate: float,
+    alpha_npm_m: float,
+    channel_offset_hz: float,
+    n_quadrature: int,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    r"""跨拍频（XPM）三波区域的求积节点。
+
+    跨拍的失配变量与自拍频不同：参与拍频的两列波分处两个信道，失配率是
+
+    .. math::
+
+        \rho = 4\pi^2|\beta_2|\,x\,(\Delta + y),
+
+    其中 :math:`x` 是波 1（邻居信道）相对该信道中心的带内偏移，
+    :math:`\Delta` 是两个信道中心的间隔，:math:`y` 是波 2 相对**被观测信道**
+    中心的偏移。闲频 :math:`f_3 = f_1 + y` 必须落在邻居信道内，于是
+
+    .. math::
+
+        y \in [-B/2, B/2] \cap [-B/2 - x, B/2 - x].
+
+    与自拍频一样，固定 :math:`x` 后 :math:`y` 的积分用反导数解析求出。
+
+    Args:
+        half_band_hz: 信道带宽的一半 (Hz)。
+        rate: :math:`4\pi^2|\beta_2|` (rad/(m·Hz²))。
+        alpha_npm_m: 光纤功率衰减 (Np/m)。
+        channel_offset_hz: 两个信道中心的间隔 (Hz)，取正值。
+        n_quadrature: 积分子区间上的 Gauss-Legendre 节点数。
+    Returns:
+        ``(t_low, t_high, measure)``。
+    """
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    low_parts: list[NDArrayFloat] = []
+    high_parts: list[NDArrayFloat] = []
+    measure_parts: list[NDArrayFloat] = []
+    for start, stop in ((-half_band_hz, 0.0), (0.0, half_band_hz)):
+        if stop - start <= 0.0:
+            continue
+        x = 0.5 * (stop - start) * (nodes + 1.0) + start
+        weight = 0.5 * (stop - start) * weights
+        y_low = np.maximum(-half_band_hz, -half_band_hz - x)
+        y_high = np.minimum(half_band_hz, half_band_hz - x)
+        valid = y_high > y_low
+        if not np.any(valid):
+            continue
+        x = x[valid]
+        weight = weight[valid]
+        y_low = y_low[valid]
+        y_high = y_high[valid]
+        measure = weight / (rate * np.abs(x) * alpha_npm_m)
+        t_low = rate * x * (channel_offset_hz + y_low) / alpha_npm_m
+        t_high = rate * x * (channel_offset_hz + y_high) / alpha_npm_m
+        low_parts.append(np.minimum(t_low, t_high))
+        high_parts.append(np.maximum(t_low, t_high))
+        measure_parts.append(measure)
+    if not low_parts:
+        empty = np.zeros(0, dtype=np.float64)
+        return empty, empty, empty
+    return (
+        np.concatenate(low_parts),
+        np.concatenate(high_parts),
+        np.concatenate(measure_parts),
+    )
+
+
+def _cosine_frequency_grid(
+    half_band_hz: float, n_frequency: int
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """观测频率的余弦栅格及其复合梯形权重。"""
+    if n_frequency > 1:
+        index = np.arange(n_frequency, dtype=np.float64)
+        frequencies = -half_band_hz * np.cos(np.pi * index / (n_frequency - 1))
+        weights = np.empty(n_frequency, dtype=np.float64)
+        weights[0] = 0.5 * (frequencies[1] - frequencies[0])
+        weights[-1] = 0.5 * (frequencies[-1] - frequencies[-2])
+        weights[1:-1] = 0.5 * (frequencies[2:] - frequencies[:-2])
+    else:
+        frequencies = np.zeros(1, dtype=np.float64)
+        weights = np.ones(1, dtype=np.float64)
+    return frequencies, weights
+
+
+def _gn_weighted_spm_visibility(
+    *,
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: float,
+    span_length_m: float,
+    span_separations_m: NDArrayFloat,
+) -> NDArrayFloat:
+    r"""GN 噪声功率加权的自拍频（SPM）跨间可见度。
+
+    可见度是"两份噪声拷贝"的相干度，按**产生噪声的频率对**加权：
+
+    .. math::
+
+        V(d) = \frac{\int\int \cos(\rho d)\,W(\rho)\,\mathrm{d}f_1\mathrm{d}f_2}
+        {\int\int W(\rho)\,\mathrm{d}f_1\mathrm{d}f_2}, \qquad
+        W(\rho) = \frac{\left|1 - e^{-(\alpha + j\rho)L}\right|^2}{\alpha^2 + \rho^2}.
+
+    权重 :math:`W` 就是闭式 GN 核：失配越大的频率对产生的 NLI 越少，因此它
+    对跨间相干度的贡献也越小。均匀权重（信号谱口径）给的是**两份信号副本**
+    之间的相干度，不是噪声的相干度。
+
+    Args:
+        beta2_abs_s2_m: :math:`|\beta_2|` (s²/m)。
+        alpha_npm_m: 光纤功率衰减 (Np/m)。
+        bandwidth_hz: 信道带宽 (Hz)。
+        span_length_m: 跨段长度 (m)，失配与洛伦兹宽度都以**单跨**为尺度。
+        span_separations_m: ``(K,)`` 两份拷贝之间的距离 (m)，必须是跨长的整数倍。
+    Returns:
+        ``(K,)`` 可见度，取值在 ``[-1, 1]``；无色散时为 1。
+    """
+    separations = np.asarray(span_separations_m, dtype=np.float64)
+    if separations.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if beta2_abs_s2_m == 0.0 or alpha_npm_m <= 0.0 or bandwidth_hz <= 0.0:
+        return np.ones(separations.size, dtype=np.float64)
+    rate = 4.0 * PI**2 * abs(float(beta2_abs_s2_m))
+    t_low, t_high, measure = _spm_region_nodes(
+        0.5 * float(bandwidth_hz),
+        rate,
+        float(alpha_npm_m),
+        _VIS_FREQUENCY_POINTS,
+        _VIS_QUADRATURE_POINTS,
+    )
+    if t_high.size == 0 or float(np.max(np.abs(t_high))) < _VIS_NEGLIGIBLE_T:
+        # 失配率小到相位差可以忽略：两份拷贝完全相干。
+        return np.ones(separations.size, dtype=np.float64)
+    table = _VisibilityAntiderivative(
+        float(alpha_npm_m),
+        float(span_length_m),
+        int(separations.size) + 1,
+        float(np.max(np.abs(t_high))),
+    )
+    exp_alpha_l = float(np.exp(-float(alpha_npm_m) * float(span_length_m)))
+    return _weighted_visibility(t_low, t_high, measure, table, exp_alpha_l, int(separations.size))
+
+
+def _gn_weighted_xpm_visibility(
+    *,
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: float,
+    span_length_m: float,
+    span_separations_m: NDArrayFloat,
+    channel_offset_hz: float,
+) -> NDArrayFloat:
+    r"""GN 噪声功率加权的跨拍频（XPM）跨间可见度。
+
+    与自拍频用**同一套**权重 :math:`W(\rho)` 与同一个反导数表，只是失配变量
+    换成跨拍频的形式 :math:`\rho = 4\pi^2|\beta_2| x (\Delta + y)`（见
+    :func:`_xpm_region_nodes`）。干扰信道取**最近邻**：GN 核随信道间隔迅速
+    衰减，XPM 噪声由最近的邻居主导。
+
+    Args:
+        beta2_abs_s2_m: :math:`|\beta_2|` (s²/m)。
+        alpha_npm_m: 光纤功率衰减 (Np/m)。
+        bandwidth_hz: 信道带宽 (Hz)。
+        span_length_m: 跨段长度 (m)。
+        span_separations_m: ``(K,)`` 两份拷贝之间的距离 (m)。
+        channel_offset_hz: 干扰信道与被观测信道的中心间隔 (Hz)。
+    Returns:
+        ``(K,)`` 可见度，取值在 ``[-1, 1]``。
+    """
+    separations = np.asarray(span_separations_m, dtype=np.float64)
+    if separations.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    offset = abs(float(channel_offset_hz))
+    if beta2_abs_s2_m == 0.0 or alpha_npm_m <= 0.0 or bandwidth_hz <= 0.0 or offset == 0.0:
+        return np.ones(separations.size, dtype=np.float64)
+    rate = 4.0 * PI**2 * abs(float(beta2_abs_s2_m))
+    t_low, t_high, measure = _xpm_region_nodes(
+        0.5 * float(bandwidth_hz),
+        rate,
+        float(alpha_npm_m),
+        offset,
+        _VIS_QUADRATURE_POINTS,
+    )
+    if t_high.size == 0 or float(np.max(np.abs(t_high))) < _VIS_NEGLIGIBLE_T:
+        return np.ones(separations.size, dtype=np.float64)
+    table = _VisibilityAntiderivative(
+        float(alpha_npm_m),
+        float(span_length_m),
+        int(separations.size) + 1,
+        float(np.max(np.abs(t_high))),
+    )
+    exp_alpha_l = float(np.exp(-float(alpha_npm_m) * float(span_length_m)))
+    return _weighted_visibility(t_low, t_high, measure, table, exp_alpha_l, int(separations.size))
+
+
+def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
+    r"""相干因子 :math:`R(N) = N + 2\sum_{k=1}^{N-1}(N-k)V(kL)`。
+
+    Args:
+        n_spans: 链路跨数。
+        visibility: ``(N - 1, N_channels)`` 相隔 1、2、... 跨的两份拷贝的可见度。
+    Returns:
+        ``(N_channels,)`` 相干因子：完全相干时是 :math:`N^2`，完全非相干时是 :math:`N`。
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return np.ones(visibility.shape[-1], dtype=np.float64)
+    weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
+    return n + 2.0 * (weights * visibility).sum(axis=0)
+
+
+def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
+    r"""等效每跨相位步长 :math:`\psi`，使相干因子等于 ``target``。
+
+    路由层按复振幅相加，:math:`N` 跨的线性相位斜坡给出
+    :math:`[\sin(N\psi/2)/\sin(\psi/2)]^2` 倍的单跨噪声。该因子从
+    :math:`\psi = 0` 处的 :math:`N^2` 单调降到 :math:`\psi = 2\pi/N` 处的 0，
+    因此二分即可。
+
+    Args:
+        n_spans: 链路跨数。
+        target: ``(N_channels,)`` 想要的相干因子。
+    Returns:
+        ``(N_channels,)`` 每跨相位步长 (rad)。
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return np.zeros(np.shape(target), dtype=np.float64)
+    goal = np.clip(np.asarray(target, dtype=np.float64), 0.0, float(n) ** 2)
+    low = np.zeros_like(goal)
+    high = np.full_like(goal, 2.0 * np.pi / n)
+    for _ in range(_RAMP_BISECTION_STEPS):
+        middle = 0.5 * (low + high)
+        factor = (np.sin(0.5 * n * middle) / np.sin(0.5 * middle)) ** 2
+        too_large = factor > goal
+        low = np.where(too_large, middle, low)
+        high = np.where(too_large, high, middle)
+    return 0.5 * (low + high)
+
+
 class Buglia2023SpanKernel:
     """Buglia 2023 单跨物理核。
 
@@ -213,6 +777,132 @@ class Buglia2023SpanKernel:
         # (N, N) 常量按跨长缓存：只依赖信道几何、频带与跨长，不随功率变。
         self._pair_cache: dict[float, tuple[NDArrayFloat, ...]] = {}
 
+        # --- 跨间相干所需的光纤级常量 -------------------------------------
+        # 可见度只依赖失配率的绝对值 |beta_2|：相位失配是 beta_2 与 beta_3 的
+        # 组合在带内的平均，而带内平均由 beta_2 主导（beta_3 只带来带内的缓变，
+        # 在跨间尺度的相位差上贡献不到 1%）。
+        self.beta2_abs_s2_m = abs(self.beta2_s2_m)
+        # 可见度的权重用整条光纤的平均衰减：C 波段内衰减的变化远小于 1%。
+        self.alpha_visibility_npm = float(np.mean(self.alpha_npm))
+        # XPM 的干扰信道取最近邻：GN 核随信道间隔迅速衰减。
+        if self.n_channels > 1:
+            offsets = np.abs(self.f_rel_hz[:, None] - self.f_rel_hz[None, :])
+            np.fill_diagonal(offsets, np.inf)
+            self.partner_offset_hz = offsets.min(axis=1)
+        else:
+            self.partner_offset_hz = np.zeros(self.n_channels, dtype=np.float64)
+        # 等效相位斜坡按 (跨数, 跨长) 记忆化；单位相位因子按
+        # (跨数, 跨长, 累计长度/跨长) 记忆化。两者的内容都是光纤常量的纯函数，
+        # 缓存命中后热路径上完全免费。
+        self._ramp_cache: dict[tuple[int, float], tuple[NDArrayFloat, NDArrayFloat]] = {}
+        self._factor_cache: dict[tuple[int, float, float], tuple[NDArrayComplex, NDArrayComplex]] = {}
+
+    # --- 跨间相干 ---------------------------------------------------------
+    def _spm_visibility(self, distances_m: NDArrayFloat, span_length_m: float) -> NDArrayFloat:
+        """自拍频（SPM）的跨间可见度 ``(K, N)``。
+
+        逐信道带宽相同的信道共享同一列可见度，因此按唯一带宽分组计算。
+
+        Args:
+            distances_m: ``(K,)`` 两份拷贝之间的距离 (m)。
+            span_length_m: 跨段长度 (m)。
+        Returns:
+            ``(K, N)`` 可见度。
+        """
+        out = np.empty((distances_m.size, self.n_channels), dtype=np.float64)
+        unique, inverse = np.unique(self.b_hz_channels, return_inverse=True)
+        for index, bandwidth in enumerate(unique):
+            column = _gn_weighted_spm_visibility(
+                beta2_abs_s2_m=self.beta2_abs_s2_m,
+                alpha_npm_m=self.alpha_visibility_npm,
+                bandwidth_hz=float(bandwidth),
+                span_length_m=float(span_length_m),
+                span_separations_m=distances_m,
+            )
+            out[:, inverse == index] = column[:, None]
+        return out
+
+    def _xpm_visibility(self, distances_m: NDArrayFloat, span_length_m: float) -> NDArrayFloat:
+        """跨拍频（XPM）的跨间可见度 ``(K, N)``。
+
+        干扰信道取最近邻，可见度按 (带宽, 最近邻间隔) 分组计算。
+
+        Args:
+            distances_m: ``(K,)`` 两份拷贝之间的距离 (m)。
+            span_length_m: 跨段长度 (m)。
+        Returns:
+            ``(K, N)`` 可见度。
+        """
+        out = np.empty((distances_m.size, self.n_channels), dtype=np.float64)
+        groups: dict[tuple[float, float], list[int]] = {}
+        for channel in range(self.n_channels):
+            key = (float(self.b_hz_channels[channel]), float(self.partner_offset_hz[channel]))
+            groups.setdefault(key, []).append(channel)
+        for (bandwidth, offset), channels in groups.items():
+            column = _gn_weighted_xpm_visibility(
+                beta2_abs_s2_m=self.beta2_abs_s2_m,
+                alpha_npm_m=self.alpha_visibility_npm,
+                bandwidth_hz=bandwidth,
+                span_length_m=float(span_length_m),
+                span_separations_m=distances_m,
+                channel_offset_hz=offset,
+            )
+            out[:, channels] = column[:, None]
+        return out
+
+    def _inter_span_ramps(
+        self, n_spans: int, span_length_m: float
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """等效每跨相位步长（SPM 与 XPM 各一条）。
+
+        Args:
+            n_spans: 链路跨数。
+            span_length_m: 跨段长度 (m)。
+        Returns:
+            ``(ramp_spm, ramp_xpm)``，均为 ``(N,)`` (rad/跨)。
+        """
+        key = (int(n_spans), float(span_length_m))
+        cached = self._ramp_cache.get(key)
+        if cached is not None:
+            return cached
+        n = max(1, int(n_spans))
+        distances = np.arange(1, n, dtype=np.float64) * float(span_length_m)
+        if n > 1:
+            visibility_spm = self._spm_visibility(distances, float(span_length_m))
+            visibility_xpm = self._xpm_visibility(distances, float(span_length_m))
+        else:
+            visibility_spm = np.zeros((0, self.n_channels), dtype=np.float64)
+            visibility_xpm = np.zeros((0, self.n_channels), dtype=np.float64)
+        ramp_spm = _equivalent_phase_ramp(n, _coherent_factor(n, visibility_spm))
+        ramp_xpm = _equivalent_phase_ramp(n, _coherent_factor(n, visibility_xpm))
+        self._ramp_cache[key] = (ramp_spm, ramp_xpm)
+        return ramp_spm, ramp_xpm
+
+    def _span_phase_factors(
+        self, span_context: SpanContext, span_length_m: float
+    ) -> tuple[NDArrayComplex, NDArrayComplex]:
+        """本跨 NLI 振幅的单位相位因子 ``exp(1j·phi)``。
+
+        相位随链路上已走过的长度线性增长（等跨时即随跨号线性增长）：在第
+        ``k`` 跨生成的噪声比第 0 跨生成的噪声多走了 ``k·L`` 米，两份拷贝之间
+        的相位差就是色散在这段距离上积累的失配。跨号只从
+        :class:`~network_nlo_eval.models.base.SpanContext` 取，核自己不记跨号。
+
+        Args:
+            span_context: 本跨在链路里的位置。
+            span_length_m: 跨段长度 (m)。
+        Returns:
+            ``(factor_spm, factor_xpm)``，均为 ``(N,)`` 复数，模长为 1。
+        """
+        scale = span_context.cumulative_length_m / float(span_length_m)
+        key = (int(span_context.total_spans), float(span_length_m), float(scale))
+        cached = self._factor_cache.get(key)
+        if cached is None:
+            ramp_spm, ramp_xpm = self._inter_span_ramps(span_context.total_spans, span_length_m)
+            cached = (np.exp(1j * ramp_spm * scale), np.exp(1j * ramp_xpm * scale))
+            self._factor_cache[key] = cached
+        return cached
+
     # --- 内部常量 ---------------------------------------------------------
     def _profile_coefficients(self, length_m: float) -> tuple[NDArrayFloat, ...]:
         r"""给定跨长，算出 Eq. (15)/(16) 的逐信道量与 Eq. (17) 的 ``(N, N)`` 配对矩阵。
@@ -277,6 +967,7 @@ class Buglia2023SpanKernel:
         power_in_w: NDArrayFloat,
         span_length_m: float,
         n_effective_spans: int = 1,
+        span_context: SpanContext | None = None,
     ) -> SpanFiberOutput:
         """计算一个跨段的出纤功率与 NLI 噪声。
 
@@ -284,6 +975,9 @@ class Buglia2023SpanKernel:
             power_in_w: ``(N,)`` 跨段入口每信道功率 (W)。0 表示该信道未占用。
             span_length_m: 跨段长度 (m)。
             n_effective_spans: 有效跨段数，SPM 的相干因子用（论文 Eq. (3)）。
+            span_context: 本跨在链路中的位置。给出且链路跨数大于 1 时，返回值
+                带上**逐跨复振幅**，路由层据此做相干累加；单跨链路（或没给
+                ``span_context``）走纯功率分支，结果与改造前逐位一致。
         Returns:
             出纤功率与 SPM/XPM 噪声，均为 ``(N,)`` 且不与输入共享内存。
         """
@@ -333,7 +1027,17 @@ class Buglia2023SpanKernel:
 
         spm_noise = np.where(np.isfinite(spm_noise), spm_noise, 0.0)
         xpm_noise = np.where(np.isfinite(xpm_noise), xpm_noise, 0.0)
-        return SpanFiberOutput(power_out, np.maximum(spm_noise, 0.0), np.maximum(xpm_noise, 0.0))
+        spm_noise = np.maximum(spm_noise, 0.0)
+        xpm_noise = np.maximum(xpm_noise, 0.0)
+
+        if span_context is None or int(span_context.total_spans) <= 1:
+            # 单跨：相干退化为单跨，路由层保持纯功率口径（逐位不变）。
+            return SpanFiberOutput(power_out, spm_noise, xpm_noise)
+        factor_spm, factor_xpm = self._span_phase_factors(span_context, length_m)
+        # 振幅的参考面是本跨出纤处：|amp|**2 必须精确等于同名噪声功率。
+        amplitude_spm = np.sqrt(spm_noise) * factor_spm
+        amplitude_xpm = np.sqrt(xpm_noise) * factor_xpm
+        return SpanFiberOutput(power_out, spm_noise, xpm_noise, amplitude_spm, amplitude_xpm)
 
 
 class Buglia2023Model(RouteModel):
@@ -344,6 +1048,9 @@ class Buglia2023Model(RouteModel):
     """
 
     info = BUGLIA2023_MODEL_INFO
+
+    #: 本模型给出跨间相干用的复振幅，路由层据此做复数累加。
+    supports_span_context = True
 
     def __init__(
         self,
@@ -419,6 +1126,43 @@ class Buglia2023Model(RouteModel):
             b_hz_channels=self.channel_bandwidth_hz_channels,
             c_r_w_m_hz=_SRS_CR,
             symbol_rate_hz=self.symbol_rate_hz,
+        )
+
+    def span_step(
+        self,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        span_context: SpanContext | None = None,
+    ) -> ElementOutput:
+        """单跨：调用核（带跨间相干振幅），再统一走放大器/ASE。
+
+        振幅的参考面按契约是**本跨出纤处**（放大器之前）。冻结层
+        :func:`~network_nlo_eval.models.route.apply_amplifier_and_roadm` 在相干档
+        只把振幅按 ROADM 损耗缩放，不乘行内放大器增益——这与纯功率档"NLI 不被
+        行内放大器放大"的口径一致。
+
+        Args:
+            fiber_config: 该跨的光纤参数。
+            edfa_config: 跨段放大器配置。
+            power_in_w: 入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            span_context: 本跨在链路里的位置；给出时核据此给出相对相位。
+        Returns:
+            :class:`~network_nlo_eval.models.base.ElementOutput`。
+        """
+        kernel = self.kernel_for(fiber_config)
+        fiber_output = kernel.evaluate(power_in_w, span_length_m, 1, span_context=span_context)
+        nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
+        return apply_amplifier_and_roadm(
+            power_in_w=power_in_w,
+            fiber_output=fiber_output,
+            edfa_config=edfa_config,
+            roadm_config=None,
+            nf_lin=nf_lin,
+            f_abs_hz=self.f_abs_hz,
+            bandwidth_hz=self.channel_bandwidth_hz_channels,
         )
 
 
