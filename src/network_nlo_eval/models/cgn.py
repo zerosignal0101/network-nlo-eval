@@ -1755,7 +1755,9 @@ class CGNModel(RouteModel):
         self.nsp_convention = str(nsp_convention)
         self.isrs_segments = int(isrs_segments)
         #: 当前光路的相干累加跨段数；只在 :meth:`evaluate_path` 调用期间有效。
-        self._n_coherent_spans = 1
+        #: ``None`` 表示"不在路径评估中"，此时 :meth:`span_step` 按
+        #: ``span_context.total_spans`` 推断，避免直接调用时静默退化成非相干。
+        self._n_coherent_spans: int | None = None
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         """构造该光纤参数下的单跨核（按 ``FiberSpanConfig`` 记忆化）。"""
@@ -1810,7 +1812,12 @@ class CGNModel(RouteModel):
         不维护任何跨计数器。
         """
         kernel = self.kernel_for(fiber_config)
-        kernel.n_coherent_spans = self._n_coherent_spans
+        if self._n_coherent_spans is None:
+            # 直接调用（不经过 evaluate_path）：只能用 SpanContext 的总跨数，
+            # 无法判断跨段是否全同，按等跨处理。
+            kernel.n_coherent_spans = span_context.total_spans if span_context is not None else 1
+        else:
+            kernel.n_coherent_spans = self._n_coherent_spans
         fiber_output = kernel.evaluate(power_in_w, span_length_m, 1, span_context=span_context)
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
         return apply_amplifier_and_roadm(
