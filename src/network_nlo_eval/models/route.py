@@ -18,6 +18,7 @@ from network_nlo_eval.models.base import (
     MultiSpanOpticalPath,
     PathQoTResult,
     QoTModel,
+    SpanContext,
     SpanFiberOutput,
     SpanKernel,
 )
@@ -186,6 +187,13 @@ def accumulate_route(
     amp_spm = np.zeros_like(power, dtype=np.complex128)
     amp_xpm = np.zeros_like(power, dtype=np.complex128)
     span_count = 0
+    # 预先算出路径的总跨数，供需要跨间相位的模型使用（见 SpanContext）。
+    total_spans = sum(
+        max(1, int(np.ceil(fiber.length_km / fiber.max_span_length_km)))
+        for fiber in optical_path.fiber_configs
+    )
+    cumulative_m = 0.0
+    wants_context = bool(getattr(model, "supports_span_context", False))
     roadm_configs = optical_path.roadm_configs or [None] * len(optical_path.fiber_configs)
     hop_count = len(optical_path.fiber_configs)
 
@@ -196,7 +204,21 @@ def accumulate_route(
         while remaining_km > 1e-12:
             span_km = min(remaining_km, fiber.max_span_length_km)
             previous_power = power
-            step = model.span_step(fiber, edfa, power, span_km * 1e3)
+            if wants_context:
+                step = model.span_step(
+                    fiber,
+                    edfa,
+                    power,
+                    span_km * 1e3,
+                    span_context=SpanContext(
+                        span_index=span_count,
+                        total_spans=total_spans,
+                        cumulative_length_m=cumulative_m,
+                        span_length_m=span_km * 1e3,
+                    ),
+                )
+            else:
+                step = model.span_step(fiber, edfa, power, span_km * 1e3)
             power = step.power_out_w
             transfer = np.divide(power, previous_power, out=np.zeros_like(power), where=previous_power > 0)
             step_amp = getattr(step, "nli_amplitude_spm", None)
@@ -226,6 +248,7 @@ def accumulate_route(
                 total_ase *= transfer
                 total_ase += step.ase_noise_w
             span_count += 1
+            cumulative_m += span_km * 1e3
             remaining_km -= span_km
 
         if roadm is None:

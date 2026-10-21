@@ -32,6 +32,7 @@ __all__ = [
     "MODEL_REGISTRY",
     "ModelInfo",
     "MultiSpanOpticalPath",
+    "SpanContext",
     "PathQoTResult",
     "QoTModel",
     "SpanFiberOutput",
@@ -106,6 +107,21 @@ class SpanFiberOutput:
     xpm_noise_w: NDArrayFloat
     nli_amplitude_spm: NDArrayComplex | None = None
     nli_amplitude_xpm: NDArrayComplex | None = None
+
+
+@dataclass(frozen=True)
+class SpanContext:
+    """一跨在整条链路中的位置。
+
+    跨间相干累加需要知道"这是第几跨"以及到接收端还有多长，否则模型无法给出各跨
+    NLI 振幅之间的相对相位。路由层按路径顺序填充这个结构，只传给声明了
+    ``supports_span_context = True`` 的模型；其余模型继续走纯功率口径，行为不变。
+    """
+
+    span_index: int
+    total_spans: int
+    cumulative_length_m: float
+    span_length_m: float
 
 
 @dataclass(frozen=True)

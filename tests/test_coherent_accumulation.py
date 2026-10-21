@@ -124,3 +124,23 @@ def test_power_only_outputs_keep_the_bit_identical_path() -> None:
     )
     assert getattr(step, "nli_amplitude_spm", None) is None
     assert np.all(np.isfinite(result.snr_db))
+
+
+def test_span_context_reaches_models_that_ask_for_it() -> None:
+    """声明了 supports_span_context 的模型必须拿到逐跨递增的序号与累积长度。"""
+    seen: list[tuple[int, int, float]] = []
+
+    class _ContextAware(_ToyModel):
+        supports_span_context = True
+
+        def span_step(self, fiber, edfa, power, length_m, span_context=None):
+            seen.append(
+                (span_context.span_index, span_context.total_spans, span_context.cumulative_length_m)
+            )
+            return super().span_step(fiber, edfa, power, length_m)
+
+    accumulate_route(_ContextAware((1.0 + 0j, 1.0 + 0j, 1.0 + 0j)), _path(3), np.full(N, 1e-3))
+
+    assert [index for index, _, _ in seen] == [0, 1, 2]
+    assert {total for _, total, _ in seen} == {3}
+    assert [round(cum, 1) for _, _, cum in seen] == [0.0, 80000.0, 160000.0]
