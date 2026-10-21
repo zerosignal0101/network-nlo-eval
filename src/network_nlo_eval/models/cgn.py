@@ -44,6 +44,9 @@ Eq. (62)/(63)/(64) 相干累加   :func:`_dirichlet_weight`（核）
                              :func:`_island_core`（逐点加权的链路级矩阵）
                              :func:`_equivalent_phase_ramp`（等效相位斜坡）
 Eq. (64) 的标量压缩           :func:`_coherent_ratio`（目标相干因子）
+MCI 图元（第一波/第二波都在带外）:func:`_mci_slot_table`（槽位表）
+                             :func:`_mci_core`（核心积分）
+                             :func:`_mci_from_core`（PSD 聚合）
 ============================  ==================================================
 
 **跨间相干累加（复振幅口径）**
@@ -109,13 +112,65 @@ GN 参考式（论文 Eq. (1)）给出的是 NLI **PSD**，它在信道带内**�
 物理量、求积节点与权重、图元集合都没有改动；等价性由
 ``tests/test_cgn_coldstart.py`` 逐位守住。
 
-**与官方 MEX 的已知差异（结构性，非口径）**
+**MCI 型图元（第一波与第二波都在被测信道带外）**
 
-本实现的 island 分解把**第一波钉在被测信道带内**，第二波与第三波逐信道
-枚举，靠 GN 积分对 :math:`(f_1, f_2)` 的对称性补上"另一波在带内"的图元。
-因此**两束相互作用波都在被测信道带外**的 MCI 型图元被略去：该份额随色散
-减小而增大（官方 MEX 分解：β2 = −21.7 ps²/km 时 0.6%，β2 = −1 ps²/km 时
-3.3%），在低色散多信道算例里表现为 0.1–0.15 dB 的残差。
+GN 参考式（论文 Eq. (1)）的双重积分域是"三个场各自落在某个信道带内"的
+**全部**三元组 :math:`(c_1, c_2, c_3)`：
+
+.. math::
+
+    R(c_1,c_2,c_3) = \big\{ (f_1,f_2) : f_1 \in B(c_1),\ f_2 \in B(c_2),\
+    f_1+f_2-f \in B(c_3) \big\} .
+
+本实现把**第一波钉在被测信道带内**（:math:`c_1 = \mathrm{CUT}`），第二波与
+第三波逐信道枚举，再靠 GN 积分对 :math:`(f_1,f_2)` 的对称性补上"另一波
+在带内"的图元。这样覆盖的是 :math:`c_1 = \mathrm{CUT}` 与
+:math:`c_2 = \mathrm{CUT}` 两族；**两束相互作用波都在被测信道带外**
+（:math:`c_1 \neq \mathrm{CUT}` 且 :math:`c_2 \neq \mathrm{CUT}`，被测信道
+由第三波 :math:`c_3` 决定）的那一族——即 **MCI 型图元**——需要单独枚举。
+
+该族的物理来源：第三波落在被测信道带内时，:math:`f_1+f_2 \approx 2 f_c`，
+即两束相互作用波来自被测信道**左右对称**的近邻信道。低色散时相位失配小，
+这族图元的份额显著（官方 MEX 分解：β2 = −21.7 ps²/km 时 0.2%，
+β2 = −1 ps²/km 时 7.1%），在低色散多信道算例里表现为 0.30 dB 的残差。
+
+本实现把 MCI 图元作为**独立的一套积分域**加进现有的带内积分：
+
+* 槽位表 :func:`_mci_slot_table` 枚举每个被测信道的
+  :math:`(c_1, c_2, c_3)` 三元组，并按 :math:`(f_1,f_2)` 对称性把
+  :math:`c_1 \ne c_2` 的两条合并（权重 2）；
+* 核心积分 :func:`_mci_core` 复用**同一套融合内核**
+  （:func:`_fused_integrand_plain` / :func:`_fused_integrand_isrs`），
+  把 ``(CUT, 槽位)`` 压成一条轴，几何与 NSP 指数按 MCI 的定义重算；
+* PSD 聚合 :func:`_mci_from_core` 给出逐信道的 MCI 噪声功率，并入 XCI 桶。
+
+MCI 图元的 NSP 指数按论文 Eq. (6)/(9) 的**一般形式**取
+
+.. math::
+
+    \alpha_x = \frac{\alpha_{c_1}+\alpha_{c_2}+\alpha_{c_3}-\alpha_c}{2}
+    \quad (\text{"gn" 档}),
+
+即只有当第一波落在被测信道内时它才与被测信道项相消（这正是既有带内图元
+的情形），MCI 图元没有这个相消。
+
+MCI 图元的**枚举范围**由既有数值口径决定：相关域的自然尺度是
+:math:`\xi_0 = \alpha_x/(4\pi^2|\beta_2|)`，既有实现对每个图元的
+:math:`\xi` 积分只保留宽度 :data:`TRUNCATION_FACTOR` :math:`\cdot\xi_0`
+的窗口（见 :func:`_island_core`）。落在该窗口之外的图元，其贡献已经在既有
+实现的数值底噪之下，故 MCI 枚举同样只保留
+:math:`\xi_{\min} \le` :data:`TRUNCATION_FACTOR` :math:`\cdot\xi_0`
+的图元（:func:`_mci_slot_table` 用的判据是该式的保守下界）。
+**不引入新的拟合常数**：阈值就是既有实现已经在用的那个常数。
+
+**两档的差异（已知限制）**
+
+MCI 图元只在**带内积分档**（``band_points > 1``）启用。默认档
+（``band_points = 1``，"带内 NLI PSD 取常数"）被冻结的"单跨逐位一致"契约
+钉死（``tests/test_cgn.py`` 的单跨硬编码读数），本轮不改该档的输出，
+故默认档仍然略去 MCI 图元：三信道、β2 = −1 ps²/km 时相对官方带心值差
+0.17 dB（同一算例在带内积分档相对官方带内值差 0.0005 dB）。默认档要不要
+一起补齐，需要总指挥决定（见交付报告的"未解决"）。
 
 **ISRS（信道间受激拉曼散射）**
 
@@ -199,6 +254,12 @@ import 任何兄弟模型（``pcfm`` / ``ecz`` / ``numerical`` 等），以便�
 * 相干口径的精确性要求逐跨功率传输因子为 1（EDFA 补偿跨损的常规配置）。
   跨间若存在额外损耗（如 ROADM 或未补偿的跨损），路由层按 :math:`\\sqrt{t}`
   加权各跨振幅，等效斜坡不再与链路总量严格相等。
+* MCI 图元在**零色散极限**（:math:`\\beta_2 = 0`）不枚举：此时相关域窗口
+  退化为无穷（:math:`\\xi_0 = \\infty`），判据失去意义，而"全部图元"的
+  枚举是 :math:`O(N^3)`。该极限下 MCI 图元占 GN 总量的 33%（三信道），
+  带内积分档因此在零色散处仍偏约 1.7 dB。
+* MCI 图元的槽位数有上限 :data:`MCI_MAX_SLOTS`（病态栅格，例如相邻信道
+  谱重叠的亚奈奎斯特算例，触顶时该被测信道的 MCI 贡献被截断）。
 """
 
 from __future__ import annotations
@@ -315,6 +376,15 @@ DELTA_F_CO_HZ = 15e12
 #: 故 :math:`\\xi` 超过该尺度几十倍后积分贡献可忽略。截断把每个矩形的求积
 #: 区间限制在有物理意义的范围内，避免在远处浪费求积点。
 TRUNCATION_FACTOR = 40.0
+
+#: 每个被测信道的 MCI 图元槽位上限（安全上限）。
+#:
+#: 正常栅格（相邻信道谱不重叠）下，每个被测信道的 MCI 槽位数是几十量级：
+#: 枚举范围由 :data:`TRUNCATION_FACTOR` 给出的相关域窗口决定，而该窗口随
+#: 色散减小而放大。上限只用来挡住病态栅格（例如亚奈奎斯特算例里相邻信道
+#: 谱重叠 22%，第一波的失谐下界退化为 0）把核心矩阵撑爆；触顶时该被测
+#: 信道的 MCI 贡献被截断（见交付报告的"已知限制"）。
+MCI_MAX_SLOTS = 4096
 
 #: 构造期的临时数组规模上限（元素数）。分块处理 CUT 信道用。
 _CHUNK_ELEMENTS = 4_000_000
@@ -1783,6 +1853,569 @@ def _island_core(
     return core, dirichlet
 
 
+def _mci_slot_table(
+    f_abs_hz: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    alpha_npm: NDArrayFloat,
+    beta2_s2_m: float,
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    r"""每个被测信道的 MCI 图元槽位表。
+
+    MCI 图元是"第一波与第二波都在被测信道带外"的那一族 GN 积分域：
+    :math:`c_1 \ne \mathrm{CUT}` 且 :math:`c_2 \ne \mathrm{CUT}`，被测信道由
+    第三波 :math:`c_3` 决定（见模块 docstring 的"MCI 型图元"一节）。
+
+    **枚举范围**由既有数值口径决定。相关域的自然尺度是
+
+    .. math::
+
+        \xi_0 = \frac{\alpha_x}{4\pi^2|\beta_2|},
+
+    既有实现对每个图元的 :math:`\xi` 积分只保留宽度
+    :data:`TRUNCATION_FACTOR` :math:`\cdot\xi_0` 的窗口。MCI 图元若整条
+    :math:`\xi` 区间都落在这个窗口之外，其贡献已经在既有实现的数值底噪
+    之下，故同样不枚举。
+
+    图元内第一波（第二波）的失谐 :math:`x`（:math:`y`）满足
+    :math:`|x| \ge |f_{c_1}-f_c| - B_{c_1}/2 - B_c/2`（被测信道带内积分把
+    观测频率在带内移动了 :math:`B_c/2`，故要再减一次），于是图元的
+    :math:`\xi_{\min} = |x||y|` 的**保守下界**是
+
+    .. math::
+
+        \xi_{\min} \ge
+        \big(|f_{c_1}-f_c| - B_{c_1}/2 - B_c/2\big)
+        \big(|f_{c_2}-f_c| - B_{c_2}/2 - B_c/2\big) ,
+
+    本函数用这个下界做筛选（下界超标即剔除，故不会漏掉有贡献的图元）。
+    筛选判据逐被测信道写成
+    :math:`\mathrm{detune}_{\min}(c_2) \le \xi_{\max}/\mathrm{detune}_{\min}(c_1)`
+    （:math:`\mathrm{detune}_{\min}(c_1)=0` 时恒成立），实现上把失谐排序后
+    用"允许的第二波是前缀"来定位，整张槽位表按被测信道向量化构造。
+
+    第三波 :math:`c_3` 由**可达性**给出：观测频率 :math:`f \in B_c` 要满足
+    :math:`f_{c_3} = f_{c_1}+f_{c_2}-f`，故
+
+    .. math::
+
+        f_{c_3} \in \big[f_{c_1}-B_1/2+f_{c_2}-B_2/2-f_c-B_c/2,\;
+        f_{c_1}+B_1/2+f_{c_2}+B_2/2-f_c+B_c/2\big] .
+
+    Args:
+        f_abs_hz: ``(N,)`` 信道中心频率 (Hz)。
+        b_hz: ``(N,)`` 信道带宽 (Hz)。
+        alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
+        beta2_s2_m: 参考波长处的二阶色散 (s²/m)。
+
+    Returns
+    -------
+        ``(index, weight)``：``index`` 形状 ``(N, M, 3)``（``(c1, c2, c3)``
+        信道索引，-1 表示空槽），``weight`` 形状 ``(N, M)``（``(f1, f2)``
+        对称权重：``c1 != c2`` 时为 2（镜像图元的积分相等），否则为 1）。
+    """
+    n_ch = int(f_abs_hz.size)
+    half = 0.5 * np.asarray(b_hz, dtype=np.float64)
+    order = np.argsort(f_abs_hz, kind="stable")
+    f_sorted = f_abs_hz[order]
+    half_sorted = half[order]
+    # 带宽不等时带边未必单调，取累积极值保证 searchsorted 的前提（单调不减）。
+    lower_edge = np.maximum.accumulate(f_sorted - half_sorted)
+    upper_edge = np.maximum.accumulate(f_sorted + half_sorted)
+    rank = np.empty(n_ch, dtype=np.int64)
+    rank[order] = np.arange(n_ch, dtype=np.int64)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # alpha_x 的逐通道上界：同一跨段内各信道共用一根光纤，故取最大衰减
+        # 即可（异构情形下这是保守的上界）。
+        alpha_ref = float(np.max(np.asarray(alpha_npm, dtype=np.float64)))
+        xi_scale = alpha_ref / (4.0 * np.pi**2 * abs(float(beta2_s2_m)))
+    xi_scale = xi_scale if np.isfinite(xi_scale) and xi_scale > 0.0 else np.inf
+    if not np.isfinite(xi_max := TRUNCATION_FACTOR * xi_scale):
+        # 零色散极限：相关域窗口退化为无穷，判据失去意义，而"全部图元"的
+        # 枚举是 O(N^3)。该极限下不枚举 MCI 图元（见交付报告的"已知限制"）。
+        return np.zeros((n_ch, 0, 3), dtype=np.int64), np.zeros((n_ch, 0), dtype=np.float64)
+
+    rows: list[list[tuple[int, int, int, float]]] = []
+    for cut in range(n_ch):
+        f_cut = float(f_abs_hz[cut])
+        offset = np.abs(f_abs_hz - f_cut)
+        # 图元内第一波/第二波失谐的绝对值下界。
+        detune_min = np.maximum(0.0, offset - half - half[cut])
+        # 候选第一波/第二波（被测信道本身排除）。
+        by_distance = np.argsort(offset, kind="stable")
+        cand = by_distance[by_distance != cut]
+        if cand.size == 0:
+            rows.append([])
+            continue
+        # 允许的第二波集合：detune_min[c2] <= xi_max / detune_min[c1]。
+        # detune_min[c1] == 0（信道带与被测带重叠）时判据恒成立。
+        reach = detune_min[cand]
+        thr = np.full(reach.shape, np.inf)
+        positive = reach > 0.0
+        np.divide(float(xi_max), reach, out=thr, where=positive)
+        # 按失谐排序后，"允许的第二波"是前缀，用 searchsorted 定位长度。
+        by_detune = np.argsort(reach, kind="stable")
+        detune_sorted = reach[by_detune]
+        count = np.searchsorted(detune_sorted, thr, side="right")
+        max_count = int(count.max()) if count.size else 0
+        if max_count == 0:
+            rows.append([])
+            continue
+        pool = by_detune[:max_count]
+        allowed = detune_sorted[:max_count][None, :] <= thr[:, None]
+        # (f1, f2) 对称：只保留频率序较小者在第一波的那一条。
+        rank_cand = rank[cand]
+        allowed &= rank_cand[pool][None, :] <= rank_cand[:, None]
+        first_pos, pool_pos = np.nonzero(allowed)
+        if first_pos.size == 0:
+            rows.append([])
+            continue
+        first_idx = cand[first_pos]
+        second_idx = cand[pool[pool_pos]]
+        sum_low = (
+            f_abs_hz[first_idx] - half[first_idx]
+            + f_abs_hz[second_idx] - half[second_idx]
+            - f_cut
+            - half[cut]
+        )
+        sum_high = (
+            f_abs_hz[first_idx] + half[first_idx]
+            + f_abs_hz[second_idx] + half[second_idx]
+            - f_cut
+            + half[cut]
+        )
+        k_lo = np.searchsorted(upper_edge, sum_low, side="left")
+        k_hi = np.searchsorted(lower_edge, sum_high, side="right")
+        entries: list[tuple[int, int, int, float]] = []
+        for pos in range(first_pos.size):
+            first_int = int(first_idx[pos])
+            second_int = int(second_idx[pos])
+            weight = 2.0 if first_int != second_int else 1.0
+            for k in range(int(k_lo[pos]), int(k_hi[pos])):
+                entries.append((first_int, second_int, int(order[k]), weight))
+            if len(entries) > MCI_MAX_SLOTS:
+                break
+        rows.append(entries[:MCI_MAX_SLOTS])
+
+    n_slots = max((len(row) for row in rows), default=0)
+    index = np.full((n_ch, n_slots, 3), -1, dtype=np.int64)
+    weight = np.zeros((n_ch, n_slots), dtype=np.float64)
+    for cut, entries in enumerate(rows):
+        for slot, (first, second, third, sym) in enumerate(entries):
+            index[cut, slot] = (first, second, third)
+            weight[cut, slot] = sym
+    return index, weight
+
+
+def _mci_stimulus_attenuation(
+    alpha_npm: NDArrayFloat,
+    first: NDArrayFloat,
+    second: NDArrayFloat,
+    third: NDArrayFloat,
+    cut_alpha: NDArrayFloat,
+    convention: str = NSP_CONVENTION_DEFAULT,
+) -> NDArrayFloat:
+    r"""MCI 图元的 NSP 指数衰减率 :math:`\alpha_x` (Np/m)。
+
+    论文 Eq. (6)/(9) 的一般形式是
+
+    .. math::
+
+        \alpha_x = \alpha_1 + \alpha_2 + \alpha_3 - \alpha_c ,
+
+    其中 :math:`\alpha_c` 是**被测信道**（信号波）的衰减。第一波落在被测
+    信道内时它与 :math:`\alpha_c` 相消（既有带内图元正是这种情形）；MCI
+    图元的第一波在带外，没有这个相消。
+
+    两档口径（见 :data:`NSP_CONVENTIONS`）：
+
+    ``"gn"``（默认）
+        指数除以 2（GN 模型的空间积分因子是
+        :math:`\sqrt{\rho_1\rho_2\rho_3/\rho_c}`）。
+    ``"paper_product"``
+        指数不除以 2。
+
+    Args:
+        alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
+        first: 第一波的信道索引。
+        second: 第二波的信道索引。
+        third: 第三波的信道索引。
+        cut_alpha: 被测信道的衰减 (Np/m)。
+        convention: 见 :data:`NSP_CONVENTIONS`。
+
+    Returns
+    -------
+        与 ``first`` 同形的指数衰减率 (Np/m)。
+    """
+    if convention not in NSP_CONVENTIONS:
+        raise ValueError(f"nsp convention must be one of {NSP_CONVENTIONS}, got {convention!r}.")
+    total = (
+        np.asarray(alpha_npm)[first]
+        + np.asarray(alpha_npm)[second]
+        + np.asarray(alpha_npm)[third]
+        - np.asarray(cut_alpha)
+    )
+    if convention == "gn":
+        return 0.5 * total
+    return total
+
+
+def _mci_core(
+    *,
+    f_abs_hz: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    alpha_npm: NDArrayFloat,
+    gamma_w_m: NDArrayFloat,
+    beta2_s2_m: float,
+    beta3_s3_m: float,
+    dispersion_convention: str,
+    nsp_convention: str,
+    length_m: float,
+    mci_index: NDArrayFloat,
+    correlation_points: int,
+    island_cells: int,
+    n_coherent_spans: int,
+    isrs_gain: NDArrayFloat | None = None,
+    isrs_rate: NDArrayFloat | None = None,
+    isrs_z_mid: NDArrayFloat | None = None,
+    isrs_seg_length_m: float = 0.0,
+    band_points: int = DEFAULT_BAND_POINTS,
+) -> tuple[NDArrayFloat, NDArrayFloat | None]:
+    r"""MCI 图元的核心积分矩阵。
+
+    对每个 ``(CUT, 槽位)`` 三元组，给出与 :func:`_island_core` 同口径的
+    一维积分
+
+    .. math::
+
+        K^{(m,m)} = \int S_p(B^2 \xi) W(\xi) \, \mathrm{d}\xi ,
+
+    其中 :math:`W` 是矩形权重（论文 Eq. (27)/(29)），:math:`S_p` 是 NSP
+    能量谱（论文 Eq. (22)）。与带内图元的差别只有两点：
+
+    1. 第一波（第二波）的频带是**被测信道带外**的信道带，故
+       :math:`x`（:math:`y`）的区间来自 :math:`c_1`（:math:`c_2`）而不是
+       被测信道；
+    2. NSP 指数按论文 Eq. (6)/(9) 的一般形式取（第一波不与被测信道相消）。
+
+    实现上把 ``(CUT, 槽位)`` 压成一条轴，**复用同一套融合内核**
+    (:func:`_fused_integrand_plain` / :func:`_fused_integrand_isrs`)，逐位
+    语义与带内图元完全一致。
+
+    内核调用前先做一次**空矩形压缩**：第三波够不着的那些矩形片，其相关域积分
+    区间被压成长度 0，被积函数恒为 0，故只把"积分跨度非零"的片送进内核
+    （压缩后内核工作量降到实测的 ~28%，数值结果不变，只差末位求和次序）。
+    压缩把 ``(CUT, 槽位, 片)`` 三轴压成一条 ``(活矩形)`` 轴，故内核看到的
+    ``cells`` 维长度为 1：numba 的类型签名按维数与 dtype 走，``cells`` 只是
+    运行期长度，故这里**不会**触发新的内核重编译。
+
+    Args:
+        f_abs_hz: ``(N,)`` 信道中心频率 (Hz)。
+        b_hz: ``(N,)`` 信道带宽 (Hz)。
+        alpha_npm: ``(N,)`` 逐信道功率衰减 (Np/m)。
+        gamma_w_m: ``(N,)`` 逐信道非线性系数 (1/(W·m))。
+        beta2_s2_m: 参考波长处的二阶色散 (s²/m)。
+        beta3_s3_m: 参考波长处的三阶色散 (s³/m)。
+        dispersion_convention: 见 :data:`DISPERSION_CONVENTIONS`。
+        nsp_convention: 见 :data:`NSP_CONVENTIONS`。
+        length_m: 跨段长度 (m)。
+        mci_index: ``(N, M, 3)`` MCI 槽位的 ``(c1, c2, c3)`` 信道索引。
+        correlation_points: 相关域求积点数。
+        island_cells: 每个 island 的矩形覆盖片数。
+        n_coherent_spans: 相干累加的跨段数（1 表示非相干）。
+        isrs_gain: ``(n_segments, N)`` 逐段中点的归一化 ISRS 增益因子。
+        isrs_rate: ``(N,)`` 逐信道有效 ISRS 衰减率 (Np/m)。
+        isrs_z_mid: ``(n_segments,)`` 段中点位置 (m)。
+        isrs_seg_length_m: 段长 (m)。
+        band_points: 带内积分的观测频率求积点数。
+
+    Returns
+    -------
+        ``(plain, dirichlet)``：``plain`` 是 MCI 的单跨核心积分 ``(N, M)``；
+        ``dirichlet`` 是逐点乘上相干累加核的链路级核心积分 ``(N, M)``
+        （``n_coherent_spans == 1`` 时为 ``None``）。
+    """
+    n_ch = int(f_abs_hz.size)
+    n_slots = int(mci_index.shape[1])
+    core = np.zeros((n_ch, n_slots), dtype=np.float64)
+    dirichlet = None
+    if n_coherent_spans > 1:
+        dirichlet = np.zeros((n_ch, n_slots), dtype=np.float64)
+    if n_slots == 0 or length_m <= 0.0:
+        return core, dirichlet
+
+    half = 0.5 * np.asarray(b_hz, dtype=np.float64)
+    use_isrs = isrs_gain is not None and isrs_rate is not None
+
+    integrate_band = int(band_points) > 1
+    band_nodes = _band_quadrature(int(band_points)) if integrate_band else ((0.0, 1.0),)
+
+    u_nodes = (np.arange(correlation_points, dtype=np.float64) + 0.5) / float(correlation_points)
+    u_edges = np.arange(correlation_points + 1, dtype=np.float64) / float(correlation_points)
+    quad_u = u_nodes**2
+    quad_w = u_edges[1:] ** 2 - u_edges[:-1] ** 2
+
+    four_pi2 = 4.0 * np.pi**2
+
+    # 每个分块的临时数组规模：(CUT, 槽位, 片, 象限, 积分点)。
+    per_c = max(1, n_slots * island_cells * 4 * max(correlation_points, 1))
+    chunk = max(1, min(n_ch, int(_CHUNK_ELEMENTS // per_c)))
+
+    def _chunk_body(start: int, stop: int) -> tuple[NDArrayFloat, NDArrayFloat | None]:
+        """CUT 信道 ``[start, stop)`` 的 MCI 核心积分。
+
+        ``(CUT, 槽位)`` 被压成一条轴 ``C'``，几何与融合内核的数组布局与
+        带内图元一致（第一波在第一轴，第二波与第三波各占一条长度为 1 的轴）。
+        """
+        idx = slice(start, stop)
+        n_c = stop - start
+        flat = n_c * n_slots
+        slots = mci_index[idx]
+        valid = slots[..., 0] >= 0
+        first = np.where(valid, slots[..., 0], 0).reshape(flat)
+        second = np.where(valid, slots[..., 1], 0).reshape(flat)
+        third = np.where(valid, slots[..., 2], 0).reshape(flat)
+        f_cut = np.repeat(f_abs_hz[idx], n_slots)
+        d1 = f_abs_hz[first] - f_cut
+        d2 = f_abs_hz[second] - f_cut
+        d3 = f_abs_hz[third] - f_cut
+
+        alpha_x = _mci_stimulus_attenuation(
+            alpha_npm,
+            first,
+            second,
+            third,
+            np.repeat(alpha_npm[idx], n_slots),
+            convention=nsp_convention,
+        )
+        residual_view = None
+        magnitude = None
+        expm1_neg = None
+        if use_isrs:
+            # 与带内图元同一口径：ISRS 有效衰减率按参与波求和，被测信道项相消。
+            scale = 0.5 if nsp_convention == "gn" else 1.0
+            alpha_x = alpha_x + scale * (
+                isrs_rate[first]
+                + isrs_rate[second]
+                + isrs_rate[third]
+                - np.repeat(isrs_rate[idx], n_slots)
+            )
+            residual = np.empty((flat, 1, 1, isrs_gain.shape[0]), dtype=np.float64)
+            for seg in range(isrs_gain.shape[0]):
+                gain_seg = isrs_gain[seg]
+                residual[..., seg] = (
+                    (
+                        gain_seg[first] * gain_seg[second] * gain_seg[third]
+                    )
+                    * np.exp(
+                        (isrs_rate[first] + isrs_rate[second] + isrs_rate[third])
+                        * isrs_z_mid[seg]
+                    )
+                ).reshape(flat, 1, 1)
+            residual_view = residual
+            decay = float(isrs_seg_length_m)
+            exponent = alpha_x * decay
+            magnitude = np.exp(-exponent)
+            expm1_neg = np.expm1(-exponent)
+
+        gamma2 = np.repeat(gamma_w_m[idx] ** 2, n_slots)
+        # 压缩后每个"活矩形"独占 C 轴的一条，故 C 轴上限是 flat * cells。
+        integrand = np.empty(
+            (flat * island_cells, 1, 1, 1, correlation_points), dtype=np.float64
+        )
+
+        acc = np.zeros(flat, dtype=np.float64)
+        acc_dirichlet = None if dirichlet is None else np.zeros(flat, dtype=np.float64)
+        for node, node_weight in band_nodes:
+            shift = np.repeat(0.5 * b_hz[idx] * node, n_slots)[:, None]
+            x1 = (d1 - half[first])[:, None] - shift
+            x2 = (d1 + half[first])[:, None] - shift
+            y1 = (d2 - half[second])[:, None] - shift
+            y2 = (d2 + half[second])[:, None] - shift
+            u1 = ((d3 - half[third])[:, None] - shift)[:, :, None]
+            u2 = ((d3 + half[third])[:, None] - shift)[:, :, None]
+            xa, xb, ylo, yhi = _island_cover(x1, x2, y1, y2, u1, u2, island_cells)
+            x_center = 0.5 * (xa + xb)
+            y_center = 0.5 * (ylo + yhi)
+            beta2_eff = _effective_beta2(
+                beta2_s2_m,
+                beta3_s3_m,
+                x_center,
+                y_center,
+                f_center_hz=np.repeat(f_abs_hz[idx], n_slots)[:, None, None, None],
+                convention=dispersion_convention,
+            )
+            # 空矩形（第三波够不着）直接置零：把积分区间压成零长度即可。
+            empty = ylo > yhi
+            band_scale = (
+                np.ones(flat, dtype=np.float64)
+                if not integrate_band
+                else np.repeat(node_weight * 0.5 * b_hz[idx], n_slots)
+            )
+            for a, b, c, d in _quadrant_pieces(xa, xb, ylo, yhi):
+                xi_min = a * c
+                xi_max = b * d
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    xi_scale = alpha_x.reshape(flat, 1, 1)[..., None] / (
+                        four_pi2 * np.abs(beta2_eff)
+                    )
+                xi_scale = np.where(np.isfinite(xi_scale) & (xi_scale > 0.0), xi_scale, np.inf)
+                xi_cut = np.minimum(xi_max, xi_min + TRUNCATION_FACTOR * xi_scale)
+                xi_end = np.maximum(xi_cut, xi_min)
+                xi_min = np.where(empty, 0.0, xi_min)
+                xi_end = np.where(empty, 0.0, xi_end)
+                xi_span = xi_end - xi_min
+
+                # 压缩：只保留"积分跨度非零"的矩形。空矩形（第三波够不着
+                # 的那些片）的积分区间被压成长度 0，被积函数恒为 0，故丢掉
+                # 它们不改变结果，却能把内核工作量降到实测的 ~28%。
+                span2 = xi_span.reshape(flat, island_cells)
+                live_rows, live_cells = np.nonzero(span2 > 0.0)
+                if live_rows.size == 0:
+                    continue
+                n_live = int(live_rows.size)
+                a_flat = np.ascontiguousarray(
+                    a.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None]
+                b_flat = np.ascontiguousarray(
+                    b.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None]
+                c_flat = np.ascontiguousarray(
+                    c.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None, None, None]
+                d_flat = np.ascontiguousarray(
+                    d.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None, None, None]
+                alpha_flat = np.ascontiguousarray(alpha_x.reshape(flat)[live_rows])[:, None, None]
+                beta_flat = np.ascontiguousarray(
+                    beta2_eff.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None, None, None]
+                xi_min_flat = np.ascontiguousarray(
+                    xi_min.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None, None, None]
+                xi_span_flat = np.ascontiguousarray(span2[live_rows, live_cells])[:, None, None, None]
+                xi_end_flat = np.ascontiguousarray(
+                    xi_end.reshape(flat, island_cells)[live_rows, live_cells]
+                )[:, None, None, None]
+                gamma_live = np.ascontiguousarray(gamma2.reshape(flat)[live_rows])
+                band_live = band_scale.reshape(flat)[live_rows]
+                out = integrand[:n_live]
+                if use_isrs:
+                    _fused_integrand_isrs(
+                        out,
+                        alpha_flat,
+                        np.ascontiguousarray(
+                            residual_view.reshape(flat, residual_view.shape[3])[live_rows]
+                        )[:, None, None, :],
+                        np.ascontiguousarray(magnitude.reshape(flat)[live_rows])[:, None, None],
+                        np.ascontiguousarray(expm1_neg.reshape(flat)[live_rows])[:, None, None],
+                        beta_flat,
+                        xi_min_flat,
+                        xi_span_flat,
+                        quad_u,
+                        quad_w,
+                        a_flat,
+                        b_flat,
+                        c_flat,
+                        d_flat,
+                        gamma_live,
+                        float(isrs_seg_length_m),
+                        four_pi2,
+                    )
+                else:
+                    _fused_integrand_plain(
+                        out,
+                        alpha_flat,
+                        float(length_m),
+                        beta_flat,
+                        xi_min_flat,
+                        xi_span_flat,
+                        quad_u,
+                        quad_w,
+                        a_flat,
+                        b_flat,
+                        c_flat,
+                        d_flat,
+                        gamma_live,
+                        four_pi2,
+                    )
+                values = band_live * np.sum(out, axis=(-2, -1)).reshape(n_live)
+                acc += np.bincount(live_rows, weights=values, minlength=flat)
+                if acc_dirichlet is not None:
+                    nodes, _ = _xi_quadrature(
+                        xi_min_flat,
+                        xi_end_flat,
+                        correlation_points,
+                    )
+                    theta = four_pi2 * beta_flat[..., None] * float(length_m) * nodes
+                    weighted = out * _dirichlet_weight(theta, n_coherent_spans)
+                    weighted = np.where(np.isfinite(weighted), weighted, 0.0)
+                    dirichlet_values = band_live * np.sum(weighted, axis=(-2, -1)).reshape(n_live)
+                    acc_dirichlet += np.bincount(
+                        live_rows, weights=dirichlet_values, minlength=flat
+                    )
+        acc = np.where(np.isfinite(acc), acc, 0.0)
+        if acc_dirichlet is not None:
+            acc_dirichlet = np.where(np.isfinite(acc_dirichlet), acc_dirichlet, 0.0)
+        return acc.reshape(n_c, n_slots), (
+            None if acc_dirichlet is None else acc_dirichlet.reshape(n_c, n_slots)
+        )
+
+    ranges = [(start, min(start + chunk, n_ch)) for start in range(0, n_ch, chunk)]
+    workers = _core_workers(len(ranges))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda item: _chunk_body(*item), ranges))
+    else:
+        results = [_chunk_body(*item) for item in ranges]
+    for (start, stop), (acc, acc_dirichlet) in zip(ranges, results, strict=True):
+        core[start:stop] = acc
+        if dirichlet is not None:
+            dirichlet[start:stop] = acc_dirichlet
+    return core, dirichlet
+
+
+def _mci_from_core(
+    mci_core: NDArrayFloat,
+    mci_index: NDArrayFloat,
+    mci_weight: NDArrayFloat,
+    g_psd: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    apply_bandwidth: bool = True,
+) -> NDArrayFloat:
+    r"""MCI 核心积分的 PSD 聚合（逐信道噪声功率, W）。
+
+    每个 MCI 槽位带三个信号波（信道 :math:`c_1, c_2, c_3`），故 PSD 因子是
+    :math:`G_{c_1} G_{c_2} G_{c_3}`；:math:`(f_1,f_2)` 对称权重
+    （:math:`c_1 \ne c_2` 时为 2）由 :func:`_mci_slot_table` 给出。
+
+    Args:
+        mci_core: ``(N, M)`` MCI 核心积分矩阵。
+        mci_index: ``(N, M, 3)`` MCI 槽位的信道索引（-1 表示空槽）。
+        mci_weight: ``(N, M)`` 对称权重。
+        g_psd: ``(N,)`` 逐信道 PSD (W/Hz)。
+        b_hz: ``(N,)`` 信道带宽 (Hz)。
+        apply_bandwidth: 是否再乘一次信道带宽（默认档需要，带内积分档不需要）。
+
+    Returns
+    -------
+        ``(N,)`` 逐信道的 MCI 噪声功率 (W)。
+    """
+    g_pad = np.concatenate([[0.0], np.asarray(g_psd, dtype=np.float64)])
+    padded = np.where(mci_index >= 0, mci_index + 1, 0)
+    values = (
+        mci_core
+        * mci_weight
+        * g_pad[padded[..., 0]]
+        * g_pad[padded[..., 1]]
+        * g_pad[padded[..., 2]]
+    )
+    total = (16.0 / 27.0) * values.sum(axis=1)
+    if apply_bandwidth:
+        return total * b_hz
+    return total
+
+
 @dataclass(frozen=True)
 class _CoreEntry:
     """核心矩阵缓存的条目。
@@ -1790,11 +2423,17 @@ class _CoreEntry:
     Attributes
     ----------
         plain: ``(N, N, J)`` 单跨核心积分矩阵。
+        mci_plain: ``(N, M)`` MCI 图元的单跨核心积分矩阵。
+        mci_index: ``(N, M, 3)`` MCI 槽位的 ``(c1, c2, c3)`` 信道索引（-1 表示空槽）。
+        mci_weight: ``(N, M)`` MCI 槽位的 ``(f1, f2)`` 对称权重。
         ramp_spm: ``(N,)`` SPM 的等效逐跨相位增量 (rad)；``None`` 表示非相干档。
         ramp_xpm: ``(N,)`` XPM 的等效逐跨相位增量 (rad)；``None`` 表示非相干档。
     """
 
     plain: NDArrayFloat
+    mci_plain: NDArrayFloat
+    mci_index: NDArrayFloat
+    mci_weight: NDArrayFloat
     ramp_spm: NDArrayFloat | None = None
     ramp_xpm: NDArrayFloat | None = None
 
@@ -1973,8 +2612,8 @@ class CGNSpanKernel:
         canonical_power: NDArrayFloat,
         span_length_m: float,
         n_coherent_spans: int,
-    ) -> tuple[NDArrayFloat, NDArrayFloat | None]:
-        """构造该跨段的核心积分矩阵（单跨 + 链路级相干总量）。
+    ) -> tuple[NDArrayFloat, NDArrayFloat | None, NDArrayFloat, NDArrayFloat | None, NDArrayFloat, NDArrayFloat]:
+        """构造该跨段的核心积分矩阵（单跨 + 链路级相干总量 + MCI 图元）。
 
         Args:
             canonical_power: 规范化后的入纤功率 (W)；矩阵只依赖它，故矩阵是
@@ -1984,9 +2623,23 @@ class CGNSpanKernel:
 
         Returns
         -------
-            ``(plain, dirichlet)``：单跨核心积分与链路级相干总量核心积分
-            （非相干档后者为 ``None``）。
+            ``(plain, dirichlet, mci_plain, mci_dirichlet, mci_index, mci_weight)``：
+            前两项是带内图元的单跨与链路级核心积分，后两项是 MCI 图元的对应
+            量，最后两项是 MCI 槽位表。
         """
+        # MCI 图元只在**带内积分档**启用：默认档（带内 NLI PSD 取常数）被
+        # 冻结的"单跨逐位一致"契约钉死（tests/test_cgn.py），故该档的输出
+        # 保持不变；两档的差异见交付报告的"已知限制"。
+        if self.band_points > 1:
+            mci_index, mci_weight = _mci_slot_table(
+                self.f_abs_hz,
+                self.b_hz,
+                self.alpha_npm,
+                self.beta2_s2_m,
+            )
+        else:
+            mci_index = np.zeros((self.n_nodes, 0, 3), dtype=np.int64)
+            mci_weight = np.zeros((self.n_nodes, 0), dtype=np.float64)
         if self.include_isrs:
             z_mid, gain, rate = _isrs_span_profile(
                 self.f_rel_hz,
@@ -1998,7 +2651,7 @@ class CGNSpanKernel:
                 float(span_length_m),
                 self.isrs_segments,
             )
-            return _island_core(
+            plain, dirichlet = _island_core(
                 f_abs_hz=self.f_abs_hz,
                 b_hz=self.b_hz,
                 alpha_npm=self.alpha_npm,
@@ -2018,7 +2671,28 @@ class CGNSpanKernel:
                 isrs_seg_length_m=float(span_length_m) / float(self.isrs_segments),
                 band_points=self.band_points,
             )
-        return _island_core(
+            mci_plain, mci_dirichlet = _mci_core(
+                f_abs_hz=self.f_abs_hz,
+                b_hz=self.b_hz,
+                alpha_npm=self.alpha_npm,
+                gamma_w_m=self.gamma_w_m,
+                beta2_s2_m=self.beta2_s2_m,
+                beta3_s3_m=self.beta3_s3_m,
+                dispersion_convention=self.dispersion_convention,
+                nsp_convention=self.nsp_convention,
+                length_m=float(span_length_m),
+                mci_index=mci_index,
+                correlation_points=self.correlation_points,
+                island_cells=self.island_cells,
+                n_coherent_spans=int(n_coherent_spans),
+                isrs_gain=gain,
+                isrs_rate=rate,
+                isrs_z_mid=z_mid,
+                isrs_seg_length_m=float(span_length_m) / float(self.isrs_segments),
+                band_points=self.band_points,
+            )
+            return plain, dirichlet, mci_plain, mci_dirichlet, mci_index, mci_weight
+        plain, dirichlet = _island_core(
             f_abs_hz=self.f_abs_hz,
             b_hz=self.b_hz,
             alpha_npm=self.alpha_npm,
@@ -2034,11 +2708,32 @@ class CGNSpanKernel:
             n_coherent_spans=int(n_coherent_spans),
             band_points=self.band_points,
         )
+        mci_plain, mci_dirichlet = _mci_core(
+            f_abs_hz=self.f_abs_hz,
+            b_hz=self.b_hz,
+            alpha_npm=self.alpha_npm,
+            gamma_w_m=self.gamma_w_m,
+            beta2_s2_m=self.beta2_s2_m,
+            beta3_s3_m=self.beta3_s3_m,
+            dispersion_convention=self.dispersion_convention,
+            nsp_convention=self.nsp_convention,
+            length_m=float(span_length_m),
+            mci_index=mci_index,
+            correlation_points=self.correlation_points,
+            island_cells=self.island_cells,
+            n_coherent_spans=int(n_coherent_spans),
+            band_points=self.band_points,
+        )
+        return plain, dirichlet, mci_plain, mci_dirichlet, mci_index, mci_weight
 
     def _link_ramps(
         self,
         plain: NDArrayFloat,
         dirichlet: NDArrayFloat,
+        mci_plain: NDArrayFloat,
+        mci_dirichlet: NDArrayFloat,
+        mci_index: NDArrayFloat,
+        mci_weight: NDArrayFloat,
         canonical_power: NDArrayFloat,
         n_spans: int,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
@@ -2053,6 +2748,10 @@ class CGNSpanKernel:
         Args:
             plain: ``(N, N, J)`` 单跨核心积分矩阵。
             dirichlet: ``(N, N, J)`` 链路级相干总量核心积分矩阵。
+            mci_plain: ``(N, M)`` MCI 的单跨核心积分矩阵。
+            mci_dirichlet: ``(N, M)`` MCI 的链路级核心积分矩阵。
+            mci_index: ``(N, M, 3)`` MCI 槽位的信道索引。
+            mci_weight: ``(N, M)`` MCI 槽位的对称权重。
             canonical_power: 规范化后的入纤功率 (W)。
             n_spans: 跨段数。
 
@@ -2069,6 +2768,12 @@ class CGNSpanKernel:
         )
         link_spm, link_xpm = _nli_from_core(
             dirichlet, g_psd, third_psd, self.b_hz, apply_bandwidth
+        )
+        single_xpm = single_xpm + _mci_from_core(
+            mci_plain, mci_index, mci_weight, g_psd, self.b_hz, apply_bandwidth
+        )
+        link_xpm = link_xpm + _mci_from_core(
+            mci_dirichlet, mci_index, mci_weight, g_psd, self.b_hz, apply_bandwidth
         )
         ramp_spm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_spm, single_spm))
         ramp_xpm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_xpm, single_xpm))
@@ -2100,17 +2805,23 @@ class CGNSpanKernel:
             ``(spm, xpm)``：链路级 SCI / XCI 噪声功率 (W)，各 ``(N,)``。
         """
         canonical, _ = _canonical_power(power_in_w)
-        plain, dirichlet = self._core_matrix(canonical, span_length_m, int(n_spans))
+        plain, dirichlet, mci_plain, mci_dirichlet, mci_index, mci_weight = self._core_matrix(
+            canonical, span_length_m, int(n_spans)
+        )
         g_psd = np.where(canonical > 0.0, canonical / self.b_hz, 0.0)
         g_pad = np.concatenate([[0.0], g_psd])
         third_psd = g_pad[self._r_index_padded]
+        apply_bandwidth = self.band_points == 1
         if dirichlet is None:
-            return _nli_from_core(
-                plain, g_psd, third_psd, self.b_hz, self.band_points == 1
-            )
-        return _nli_from_core(
-            dirichlet, g_psd, third_psd, self.b_hz, self.band_points == 1
+            spm, xpm = _nli_from_core(plain, g_psd, third_psd, self.b_hz, apply_bandwidth)
+            mci_source = mci_plain
+        else:
+            spm, xpm = _nli_from_core(dirichlet, g_psd, third_psd, self.b_hz, apply_bandwidth)
+            mci_source = mci_dirichlet
+        xpm = xpm + _mci_from_core(
+            mci_source, mci_index, mci_weight, g_psd, self.b_hz, apply_bandwidth
         )
+        return spm, xpm
 
     def _core_for(
         self,
@@ -2132,14 +2843,40 @@ class CGNSpanKernel:
         )
         cached = self._core_cache.get(key)
         if cached is None:
-            plain, dirichlet = self._core_matrix(canonical, span_length_m, n_coherent_spans)
+            (
+                plain,
+                dirichlet,
+                mci_plain,
+                mci_dirichlet,
+                mci_index,
+                mci_weight,
+            ) = self._core_matrix(canonical, span_length_m, n_coherent_spans)
             if dirichlet is None:
-                cached = _CoreEntry(plain=plain)
+                cached = _CoreEntry(
+                    plain=plain,
+                    mci_plain=mci_plain,
+                    mci_index=mci_index,
+                    mci_weight=mci_weight,
+                )
             else:
                 ramp_spm, ramp_xpm = self._link_ramps(
-                    plain, dirichlet, canonical, int(n_coherent_spans)
+                    plain,
+                    dirichlet,
+                    mci_plain,
+                    mci_dirichlet,
+                    mci_index,
+                    mci_weight,
+                    canonical,
+                    int(n_coherent_spans),
                 )
-                cached = _CoreEntry(plain=plain, ramp_spm=ramp_spm, ramp_xpm=ramp_xpm)
+                cached = _CoreEntry(
+                    plain=plain,
+                    mci_plain=mci_plain,
+                    mci_index=mci_index,
+                    mci_weight=mci_weight,
+                    ramp_spm=ramp_spm,
+                    ramp_xpm=ramp_xpm,
+                )
             self._store_core(key, cached)
         return cached
 
@@ -2206,6 +2943,15 @@ class CGNSpanKernel:
         third_psd = g_pad[self._r_index_padded]
         spm_noise, xpm_noise = _nli_from_core(
             core, g_psd, third_psd, self.b_hz, self.band_points == 1
+        )
+        # MCI 图元（两束相互作用波都在被测信道带外）并入 XCI 桶。
+        xpm_noise = xpm_noise + _mci_from_core(
+            entry.mci_plain,
+            entry.mci_index,
+            entry.mci_weight,
+            g_psd,
+            self.b_hz,
+            self.band_points == 1,
         )
         spm_noise = np.where(active, spm_noise, 0.0)
         xpm_noise = np.where(active, xpm_noise, 0.0)
