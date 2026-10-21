@@ -64,23 +64,57 @@ between the spans.  The noise is not a single tone, though: it is a continuum
 over the channel band, and the mismatch is a product of two frequency offsets
 (two intra-band ones for the self-beating, an intra-band and an inter-channel
 one for the cross-beating).  The physically relevant quantity is therefore the
-*band-averaged visibility*
+*visibility*
 
 .. math::
 
-    V(d) = \left\langle \cos\!\big(4\pi^2 |\beta_2| \, \nu \nu' d\big)
-    \right\rangle_{\nu, \nu'} = \frac{\mathrm{Si}(z)}{z},\qquad
-    z = \pi^2 |\beta_2| d B^2 ,
+    V(d) = \left\langle \cos\big(\rho\, d\big)\right\rangle_W ,
 
-for the self-beating (SPM) part, and
+where the average is taken over the **NLI noise density** ``W`` and ``rho`` is
+the phase-mismatch *rate* of a signal pair.  The averaging weight is the
+crucial point: the quantity that adds coherently across spans is the *noise*,
+not the signal spectrum, so the pair ``(f1, f2)`` has to be weighted with the
+NLI power it generates,
 
 .. math::
 
-    V_{\mathrm{cross}}(d) = \mathrm{sinc}\!\big(2\pi^2 |\beta_2| d
-    \Delta B\big) ,
+    W(\rho) = \frac{\left|1 - e^{-(\alpha + j\rho)L}\right|^2}{\alpha^2 + \rho^2},
+    \qquad \rho = 4\pi^2 |k_{\mathrm{mix}}| (f_1-f)(f_2-f) ,
 
-for the cross-beating (XPM) part, whose phase mismatch carries the
-inter-channel offset ``Delta`` on top of the intra-band one.
+i.e. the closed-form GN weight of the pair (the Lorentzian ``1/(alpha^2 +
+rho^2)`` times the coherent numerator of a fibre of length ``L``).  A *uniform*
+band average of the cosine -- ``Si(z)/z`` with ``z = pi^2 |beta2| d B^2`` -- is
+the visibility of two copies of the **signal** spectrum, not of the noise: it
+gives the same weight to the strongly mismatched pairs that the GN kernel
+barely sees, and it underestimates the coherence by a factor of about six on
+the C band (see the module's own docstring section "口径" and the delivery
+report).
+
+The reduction to a *one-dimensional* quadrature is exact.  With
+``t = |rho|/alpha`` both the weight and the cosine depend on ``t`` alone,
+
+.. math::
+
+    W(\rho)\,\mathrm{d}\rho =
+    \frac{\left|1 - e^{-(\alpha + j\rho)L}\right|^2}{1+t^2}\,\mathrm{d}t ,
+    \qquad
+    \int_0^t \frac{\cos(m\alpha L s)}{1+s^2}\,\mathrm{d}s =: C_m(t) ,
+
+and the inner integral over the second signal frequency therefore has the
+closed-form antiderivative
+
+.. math::
+
+    \int \left|1 - e^{-(\alpha+j\rho)L}\right|^2 \cos(k\rho L)
+    \frac{\mathrm{d}t}{1+t^2}
+    = (1+e^{-2\alpha L})\,C_k(t) - e^{-\alpha L}
+      \left(C_{|k-1|}(t) + C_{k+1}(t)\right) ,
+
+because ``2\cos(\alpha L s)\cos(k\alpha L s) = \cos((k-1)\alpha L s) +
+\cos((k+1)\alpha L s)``.  The remaining ``C_m(t)`` is tabulated once per
+fibre; its infinite limit is the Fourier transform of a Lorentzian,
+``C_m(\infty) = (\pi/2) e^{-m\alpha L}``, which also anchors the asymptotic
+tail used beyond the table.
 
 ``V`` is the visibility of the two copies of
 the noise: ``V = 1`` means the copies add coherently, ``V = 0`` means they add
@@ -116,10 +150,10 @@ not speed.
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import numpy as np
-from scipy.special import sici
 
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import (
@@ -173,6 +207,42 @@ DEFAULT_QUADRATURE_POINTS = 64
 #: resolve the ramp to far below double precision.
 _RAMP_BISECTION_STEPS = 60
 
+#: Number of observed frequencies across the channel band in the NLI-weighted
+#: visibility quadrature.
+#:
+#: The visibility integrand is steep at the band edges (the admissible
+#: three-wave region degenerates there) and smooth in the middle, so the
+#: observed frequencies sit on a cosine grid.  41 points put the C-band
+#: coherent factor within 3e-5 of the value obtained with 161 points.
+VISIBILITY_FREQUENCY_POINTS = 41
+
+#: Gauss-Legendre nodes per integration sub-interval of the visibility
+#: quadrature.
+#:
+#: The integrand of the outer (observed frequency) integral is smooth, so
+#: 200 nodes per sub-interval are already converged to 1e-5; the node count is
+#: fixed so that the cost of the cached ramp does not depend on the case.
+VISIBILITY_QUADRATURE_POINTS = 200
+
+#: Step of the tabulated antiderivative ``C_m(t)``.
+#:
+#: The table is built with the corrected trapezoid rule, whose error is
+#: fourth order in the step; 1e-3 keeps the visibility accurate to 1e-6.
+VISIBILITY_TABLE_STEP = 1.0e-3
+
+#: Largest ``t`` covered by the tabulated antiderivative.
+#:
+#: Beyond it the asymptotic expansion of the Lorentzian tail is used, which is
+#: accurate to better than 1e-8 at ``t = 30``.
+VISIBILITY_TABLE_LIMIT = 30.0
+
+#: Smallest ``t`` range the tabulated antiderivative covers.
+#:
+#: A very small dispersion would give a table of a few points; the minimum
+#: keeps the table well conditioned (and the asymptotic tail, which is only
+#: valid for large ``t``, is never reached in that case).
+VISIBILITY_TABLE_MINIMUM = 1.0
+
 NUMERICAL_MODEL_INFO = ModelInfo(
     name="numerical",
     summary="Numerical ISRS-GN reference: ODE power profile plus double-integral NLI.",
@@ -187,42 +257,304 @@ NUMERICAL_MODEL_INFO = ModelInfo(
 
 def _self_beating_visibility(
     beta2_abs_s2_m: float,
+    alpha_npm_m: float,
     bandwidth_hz: NDArrayFloat,
-    distance_m: float,
+    span_length_m: float,
+    distances_m: NDArrayFloat,
+    n_frequency: int = VISIBILITY_FREQUENCY_POINTS,
+    n_quadrature: int = VISIBILITY_QUADRATURE_POINTS,
 ) -> NDArrayFloat:
-    """Band-averaged visibility of two self-beating (SPM) NLI copies.
+    """NLI-weighted visibility of two self-beating (SPM) NLI copies.
 
-    Eq. (4) of the paper gives the self-interference the phase mismatch
-    ``4 pi^2 |beta2| x y L``, where ``x`` and ``y`` are the offsets of the two
-    input waves inside the channel band.  Two copies of the same noise
-    component generated ``d`` metres apart therefore differ in phase by
-    ``a x y`` with ``a = 4 pi^2 |beta2| d``, and the fraction that still
-    interferes coherently is the band average of the cosine,
+    The visibility of two noise components generated ``d`` metres apart is the
+    average of ``cos(rho d)`` over the **NLI density** of the signal pairs
+    that generate the noise, not over the signal spectrum.  For a pair
+    ``(f1, f2)`` observed at the frequency ``f`` the closed-form GN weight is
 
-    ``V(d) = <cos(a x y)> = Si(a B^2 / 4) / (a B^2 / 4)``,
+    ``W(rho) = |1 - exp(-(alpha + j rho) L)|^2 / (alpha^2 + rho^2)``,
+    ``rho = 4 pi^2 |k_mix| (f1 - f)(f2 - f)``,
 
-    where ``Si`` is the sine integral.  The closed form is used because the
-    integrand oscillates faster and faster towards the band edge (the local
-    period shrinks like ``1/nu``), which no fixed-point quadrature resolves
-    at acceptable cost.
+    and the signal pairs are those whose three waves (the two inputs and the
+    generated idler ``f1 + f2 - f``) all fall inside the channel band.  The
+    observed frequency ``f`` is integrated over the band, so the result is the
+    frequency-resolved coherence of the NLI.
+
+    The two-dimensional pair integral is reduced to a one-dimensional
+    quadrature: with ``t = |rho|/alpha`` the inner integral over the second
+    input frequency has the closed-form antiderivative built from
+    ``C_m(t) = int_0^t cos(m alpha L s)/(1+s^2) ds`` (see the module
+    docstring).  No two-dimensional integration is done anywhere.
 
     Args
     ----
         beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
         bandwidth_hz: ``(N,)`` channel bandwidths (Hz).
-        distance_m: Distance between the two copies (m).
+        span_length_m: Length of one span (m); the noise is generated in it.
+        distances_m: ``(K,)`` distances between the two copies (m).
+        n_frequency: Number of observed frequencies across the channel band.
+        n_quadrature: Gauss-Legendre nodes per integration sub-interval.
 
     Returns
     -------
-        ``(N,)`` visibility in ``[-1, 1]``; ``1`` without dispersion.
+        ``(K, N)`` visibility in ``[-1, 1]``; ``1`` without dispersion.
     """
-    bandwidth = np.asarray(bandwidth_hz, dtype=np.float64)
-    argument = np.pi**2 * beta2_abs_s2_m * distance_m * bandwidth**2
-    visibility = np.ones_like(bandwidth)
-    nonzero = argument > 0.0
-    if np.any(nonzero):
-        visibility[nonzero] = sici(argument[nonzero])[0] / argument[nonzero]
+    bandwidths = np.asarray(bandwidth_hz, dtype=np.float64)
+    distances = np.asarray(distances_m, dtype=np.float64)
+    visibility = np.ones((distances.size, bandwidths.size), dtype=np.float64)
+    if distances.size == 0 or bandwidths.size == 0:
+        return visibility
+    if beta2_abs_s2_m == 0.0 or alpha_npm_m <= 0.0:
+        # Without dispersion the two copies are perfectly coherent.
+        return visibility
+    unique, inverse = np.unique(bandwidths, return_inverse=True)
+    for index, bandwidth in enumerate(unique):
+        column = _gn_weighted_spm_visibility(
+            beta2_abs_s2_m,
+            alpha_npm_m,
+            float(bandwidth),
+            span_length_m,
+            distances,
+            n_frequency,
+            n_quadrature,
+        )
+        visibility[:, inverse == index] = column[:, None]
     return visibility
+
+
+def _gn_weighted_spm_visibility(
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: float,
+    span_length_m: float,
+    distances_m: NDArrayFloat,
+    n_frequency: int,
+    n_quadrature: int,
+) -> NDArrayFloat:
+    """NLI-weighted SPM visibility of one bandwidth (see :func:`_self_beating_visibility`).
+
+    Args
+    ----
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        bandwidth_hz: Channel bandwidth (Hz).
+        span_length_m: Length of one span (m).
+        distances_m: ``(K,)`` distances between the two copies (m).
+        n_frequency: Number of observed frequencies across the channel band.
+        n_quadrature: Gauss-Legendre nodes per integration sub-interval.
+
+    Returns
+    -------
+        ``(K,)`` visibility in ``[-1, 1]``.
+    """
+    distances = np.asarray(distances_m, dtype=np.float64)
+    half_band = 0.5 * bandwidth_hz
+    # Mismatch rate per unit frequency product: rho = rate * u * v.
+    rate = 4.0 * np.pi**2 * beta2_abs_s2_m
+    exp_alpha_l = float(np.exp(-alpha_npm_m * span_length_m))
+    t_lo, t_hi, measure = _spm_visibility_nodes(
+        half_band,
+        rate,
+        alpha_npm_m,
+        n_frequency,
+        n_quadrature,
+    )
+    tables = _LorentzianAntiderivative(
+        alpha_npm_m,
+        span_length_m,
+        int(distances.size) + 1,
+        float(np.max(np.abs(t_hi))),
+    )
+    # Denominator: the NLI power itself, i.e. the weight without the cosine.
+    weight_hi = (1.0 + exp_alpha_l**2) * tables.C(0, t_hi) - 2.0 * exp_alpha_l * tables.C(1, t_hi)
+    weight_lo = (1.0 + exp_alpha_l**2) * tables.C(0, t_lo) - 2.0 * exp_alpha_l * tables.C(1, t_lo)
+    total = float(np.sum(measure * (weight_hi - weight_lo)))
+    visibility = np.zeros_like(distances)
+    for index in range(distances.size):
+        k = index + 1
+        cosine_hi = (
+            (1.0 + exp_alpha_l**2) * tables.C(k, t_hi)
+            - exp_alpha_l * (tables.C(abs(k - 1), t_hi) + tables.C(k + 1, t_hi))
+        )
+        cosine_lo = (
+            (1.0 + exp_alpha_l**2) * tables.C(k, t_lo)
+            - exp_alpha_l * (tables.C(abs(k - 1), t_lo) + tables.C(k + 1, t_lo))
+        )
+        visibility[index] = float(np.sum(measure * (cosine_hi - cosine_lo))) / total
+    return visibility
+
+
+def _spm_visibility_nodes(
+    half_band_hz: float,
+    rate: float,
+    alpha_npm_m: float,
+    n_frequency: int,
+    n_quadrature: int,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    """Geometry of the SPM three-wave region for the visibility quadrature.
+
+    The observed frequency ``f`` runs over the channel band; for every ``f``
+    the two input offsets ``u = f1 - f`` and ``v = f2 - f`` and the idler
+    offset ``u + v`` must stay inside the band.  The inner integral over
+    ``v`` is analytic, so the quadrature only needs the ``(f, u)`` nodes.
+
+    The observed frequencies are distributed on a cosine grid: the integrand
+    is steep at the band edges (where the admissible region degenerates) and
+    smooth in the middle, and the cosine grid converges where a uniform grid
+    still drifts.
+
+    Args
+    ----
+        half_band_hz: Half of the channel bandwidth (Hz).
+        rate: ``4 pi^2 |beta2|``, the mismatch rate per unit frequency product.
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        n_frequency: Number of observed frequencies.
+        n_quadrature: Gauss-Legendre nodes per integration sub-interval.
+
+    Returns
+    -------
+        ``(t_lo, t_hi, measure)``: the limits of the reduced variable
+        ``t = |rho| / alpha`` and the quadrature measure of every node.
+    """
+    if n_frequency > 1:
+        index = np.arange(n_frequency, dtype=np.float64)
+        frequencies = -half_band_hz * np.cos(np.pi * index / (n_frequency - 1))
+        # Composite trapezoid weights of the (non-uniform) frequency grid.
+        frequency_weights = np.empty(n_frequency, dtype=np.float64)
+        frequency_weights[0] = 0.5 * (frequencies[1] - frequencies[0])
+        frequency_weights[-1] = 0.5 * (frequencies[-1] - frequencies[-2])
+        frequency_weights[1:-1] = 0.5 * (frequencies[2:] - frequencies[:-2])
+    else:
+        frequencies = np.zeros(1, dtype=np.float64)
+        frequency_weights = np.ones(1, dtype=np.float64)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    lo_parts: list[NDArrayFloat] = []
+    hi_parts: list[NDArrayFloat] = []
+    measure_parts: list[NDArrayFloat] = []
+    for frequency, frequency_weight in zip(frequencies, frequency_weights, strict=True):
+        low = -half_band_hz - float(frequency)
+        high = half_band_hz - float(frequency)
+        for start, stop in ((low, 0.0), (0.0, high)):
+            if stop - start <= 0.0:
+                continue
+            u = 0.5 * (stop - start) * (nodes + 1.0) + start
+            weight = 0.5 * (stop - start) * weights
+            # The second offset is limited by its own band and by the idler.
+            v_low = np.maximum(low, low - u)
+            v_high = np.minimum(high, high - u)
+            valid = v_high > v_low
+            if not np.any(valid):
+                continue
+            u = u[valid]
+            weight = weight[valid]
+            v_low = v_low[valid]
+            v_high = v_high[valid]
+            # dv = dt / (rate |u| alpha) with t = |rho| / alpha.
+            measure = weight * frequency_weight / (rate * np.abs(u) * alpha_npm_m)
+            t_low = rate * u * v_low / alpha_npm_m
+            t_high = rate * u * v_high / alpha_npm_m
+            lo_parts.append(np.minimum(t_low, t_high))
+            hi_parts.append(np.maximum(t_low, t_high))
+            measure_parts.append(measure)
+    return (
+        np.concatenate(lo_parts),
+        np.concatenate(hi_parts),
+        np.concatenate(measure_parts),
+    )
+
+
+class _LorentzianAntiderivative:
+    r"""``C_m(t) = int_0^t cos(m alpha L s)/(1+s^2) ds`` for ``m >= 1``.
+
+    The table is built with the composite trapezoid rule, corrected by the
+    leading Euler-Maclaurin term so that the fourth-order accuracy is
+    recovered at a fraction of the cost of a Simpson grid.  ``C_0(t) =
+    arctan(t)``.  Beyond the table the asymptotic expansion of the tail
+    ``int_t^oo cos(beta s)/(1+s^2) ds`` is used; it is anchored by
+    ``C_m(oo) = (pi/2) exp(-m alpha L)``, the Fourier transform of a
+    Lorentzian.
+
+    Args
+    ----
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        span_length_m: Length of one span (m).
+        m_max: Largest index ``m`` to tabulate.
+        t_end: Largest ``t`` the table has to cover.
+    """
+
+    def __init__(
+        self,
+        alpha_npm_m: float,
+        span_length_m: float,
+        m_max: int,
+        t_end: float,
+        step: float = VISIBILITY_TABLE_STEP,
+    ) -> None:
+        self.alpha = float(alpha_npm_m)
+        self.span_length = float(span_length_m)
+        self.beta = self.alpha * self.span_length
+        limit = min(max(float(t_end), VISIBILITY_TABLE_MINIMUM), VISIBILITY_TABLE_LIMIT)
+        n_points = max(3, int(math.ceil(limit / step)) + 1)
+        if n_points % 2 == 0:
+            n_points += 1
+        self.t = np.linspace(0.0, limit, n_points)
+        h = float(self.t[1] - self.t[0])
+        self.tables: dict[int, NDArrayFloat] = {}
+        for m in range(1, int(m_max) + 1):
+            f = np.cos(m * self.beta * self.t) / (1.0 + self.t * self.t)
+            derivative = (
+                -m * self.beta * np.sin(m * self.beta * self.t) / (1.0 + self.t * self.t)
+                - 2.0 * self.t * np.cos(m * self.beta * self.t) / (1.0 + self.t * self.t) ** 2
+            )
+            self.tables[m] = self._cumulative(f, derivative, h)
+
+    @staticmethod
+    def _cumulative(
+        values: NDArrayFloat, derivative: NDArrayFloat, h: float
+    ) -> NDArrayFloat:
+        """Cumulative integral of ``values`` on a uniform grid (corrected trapezoid)."""
+        integral = np.zeros_like(values)
+        integral[1:] = np.cumsum(0.5 * h * (values[:-1] + values[1:]))
+        # Euler-Maclaurin: int = T - h^2/12 (f'(b) - f'(a)) + O(h^4).
+        integral[1:] -= h * h / 12.0 * (derivative[1:] - derivative[0])
+        return integral
+
+    def C(self, m: int, t: NDArrayFloat) -> NDArrayFloat:
+        """``C_m(t)`` for an array of (possibly negative) ``t``."""
+        if m == 0:
+            return np.arctan(np.asarray(t, dtype=np.float64))
+        t = np.asarray(t, dtype=np.float64)
+        out = np.empty_like(t)
+        sign = np.sign(t)
+        magnitude = np.abs(t)
+        inside = magnitude <= self.t[-1]
+        if np.any(inside):
+            out[inside] = sign[inside] * np.interp(magnitude[inside], self.t, self.tables[m])
+        outside = ~inside
+        if np.any(outside):
+            beta = m * self.beta
+            tail = _lorentzian_tail(beta, magnitude[outside])
+            out[outside] = sign[outside] * (0.5 * math.pi * math.exp(-beta) - tail)
+        return out
+
+
+def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
+    """``int_t^oo cos(beta s)/(1+s^2) ds`` by repeated integration by parts."""
+    denominator = 1.0 + t * t
+    f = 1.0 / denominator
+    df = -2.0 * t / denominator**2
+    d2f = (6.0 * t * t - 2.0) / denominator**3
+    d3f = -24.0 * t * (t * t - 1.0) / denominator**4
+    d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
+    sin_beta = np.sin(beta * t)
+    cos_beta = np.cos(beta * t)
+    return (
+        -f * sin_beta / beta
+        - df * cos_beta / beta**2
+        + d2f * sin_beta / beta**3
+        + d3f * cos_beta / beta**4
+        - d4f * sin_beta / beta**5
+    )
 
 
 def _cross_beating_visibility(
@@ -242,6 +574,14 @@ def _cross_beating_visibility(
     ``V(d) = sinc(c B / 2)``,
 
     which vanishes unless the mismatch stays below a radian.
+
+    This part keeps the uniform band average on purpose: the inter-channel
+    offset is so large that the pairs which survive the GN kernel are already
+    incoherent, and both conventions give the same (nearly non-coherent)
+    answer -- the independent audit measures an XPM buildup of 1.008 (GN
+    weighted) against 1.000 (uniform), i.e. below the noise floor of the
+    cross-span phase.  Switching the weight would therefore move nothing and
+    would only add cost; the delivery report gives the numbers.
 
     Args
     ----
@@ -414,6 +754,12 @@ class NumericalISRSGNKernel:
         # Magnitude of the second-order dispersion, the only quantity the
         # cross-span visibility depends on.
         self.beta2_abs = abs(self.beta2)
+        # Power attenuation used by the NLI-weighted visibility.  The weight
+        # of a signal pair is |1 - exp(-(alpha + j rho) L)|^2 / (alpha^2 +
+        # rho^2), and the attenuation of the fibre varies by well under a per
+        # cent over the C band, so a single fibre-level value is used for the
+        # whole channel plan.
+        self.alpha_visibility_npm = float(np.mean(self.alpha_npm))
         # Offset to the closest other channel (Hz).  The cross-beating (XPM)
         # part of the NLI is dominated by the nearest neighbours, because the
         # FWM kernel of Eq. (4) falls off with the inter-channel offset.
@@ -449,11 +795,12 @@ class NumericalISRSGNKernel:
         if cached is not None:
             return cached
         distances = np.arange(1, max(int(n_spans), 1), dtype=np.float64) * float(span_length_m)
-        visibility_spm = np.stack(
-            [
-                _self_beating_visibility(self.beta2_abs, self.b_hz, distance)
-                for distance in distances
-            ]
+        visibility_spm = _self_beating_visibility(
+            self.beta2_abs,
+            self.alpha_visibility_npm,
+            self.b_hz,
+            float(span_length_m),
+            distances,
         )
         visibility_xpm = np.stack(
             [

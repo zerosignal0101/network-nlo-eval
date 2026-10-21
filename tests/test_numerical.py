@@ -266,7 +266,14 @@ def test_coherent_accumulation_is_deterministic() -> None:
 
 
 def test_coherent_limits_zero_and_large_dispersion() -> None:
-    """解析极限：色散趋零时完全相干（NLI ∝ N²），色散很大时非相干（NLI ∝ N）。"""
+    """解析极限：色散趋零时完全相干（NLI ∝ N²），色散很大时非相干（NLI ∝ N）。
+
+    ``numerical`` 的跨间可见度按 **NLI 噪声功率** 加权（GN 核把权重压在相位
+    匹配的对上，见 ``tests/test_numerical_visibility.py``），因此"非相干极限"
+    比频带均匀平均口径来得慢：D = 1000 ps/(nm·km) 时仍有约 11 % 的相干份额
+    （10 跨增长 11.0 而不是 10.0），D = 1e6 时才落到增长 10.0。论文口径的
+    ``carena2014`` 有同一现象（交付报告给了对照数字）。
+    """
     case = build_case("scaling_40ch")
     power = launch_profile(case, None)
 
@@ -286,17 +293,20 @@ def test_coherent_limits_zero_and_large_dispersion() -> None:
         result = make_model("numerical", case).evaluate_path(path, power)
         return np.asarray(result.spm_noise_w) + np.asarray(result.xpm_noise_w)
 
-    for dispersion, expected, label in (
-        (0.0, 100.0, "zero dispersion"),
-        (1000.0, 10.0, "very large dispersion"),
+    for dispersion, expected, tolerance, label in (
+        (0.0, 100.0, 0.1, "zero dispersion"),
+        (1000.0, 11.0, 0.02, "large dispersion"),
+        (1.0e6, 10.0, 0.1, "very large dispersion"),
     ):
         single = _run(1, dispersion)
         ten = _run(10, dispersion)
         ratio = ten / single
         print(f"{label}: ten-span / one-span NLI ratio {ratio[0]:.3f} (expect {expected:.0f})")
         assert np.all(np.isfinite(ratio))
-        assert np.all(ratio > 0.9 * expected) and np.all(ratio < 1.1 * expected), (
-            f"{label}: NLI growth {ratio} is not within 10 % of {expected}"
+        assert np.all(ratio > (1.0 - tolerance) * expected) and np.all(
+            ratio < (1.0 + tolerance) * expected
+        ), (
+            f"{label}: NLI growth {ratio} is not within {tolerance:.0%} of {expected}"
         )
 
 

@@ -6,8 +6,10 @@
   （``|nu_N(p)|^2 = N + 2 sum_Delta (N-Delta) cos(Delta·2 psi(p))``，逐点恒等式）；
 * 论文口径下的 SCI GN 累加因子等于**按噪声密度加权**的逐对可见度之和
   ``R = N + 2 sum_Delta (N-Delta) <cos(Delta theta)>``；
-* 同一积分换成**均匀**（频带平均）权重就落到 ``numerical``/``semrau2019`` 的口径上，
+* 同一积分换成**均匀**（频带平均）权重就落到 ``semrau2019`` 的口径上，
   这就是两个模型 buildup 相差 1.95 dB 的全部来源——不是 bug；
+  （``numerical`` 自 2026-10-21 起也改成了 NLI 加权口径，见
+  ``tests/test_numerical_visibility.py``，不再属于频带平均这一类）；
 * 两个口径在零色散（buildup = N）与单跨（buildup = 1）处收敛。
 
 参考积分在这里**独立重写**：直接按论文的 ``zeta``/``nu`` 公式做嵌套复合
@@ -277,9 +279,13 @@ def test_both_conventions_give_unit_buildup_for_one_span() -> None:
 
 
 def test_carena_buildup_stays_above_the_band_average_convention() -> None:
-    """名义算例上 ``carena2014`` 的 buildup 明显高于频带平均口径的两个模型。
+    """名义算例上 ``carena2014`` 的 buildup 明显高于频带平均口径的 ``semrau2019``。
 
     差距的量级（1.6 对 1.02）就是审计结论本身：口径差异，不是实现错误。
+
+    ``numerical`` 不再属于频带均匀平均这一类：它的跨间可见度改成了 **NLI
+    噪声功率加权** 口径（见 ``tests/test_numerical_visibility.py``），buildup
+    因此从 1.019 抬到 1.132，与论文口径的差距从 1.95 dB 缩到 1.49 dB。
     """
     case = build_case(CASE_NAME)
     fiber = build_path(case).fiber_configs[0]
@@ -287,9 +293,11 @@ def test_carena_buildup_stays_above_the_band_average_convention() -> None:
     numerical = _buildup("numerical", fiber, N_SPANS)
     semrau = _buildup("semrau2019", fiber, N_SPANS)
     assert carena == pytest.approx(1.595, abs=0.01)
-    assert numerical == pytest.approx(1.019, abs=0.005)
     assert semrau == pytest.approx(1.022, abs=0.005)
-    assert 10.0 * np.log10(carena / numerical) == pytest.approx(1.95, abs=0.05)
+    # NLI 加权口径：numerical 的 buildup 从 1.019 抬到 1.132。
+    assert numerical == pytest.approx(1.132, abs=0.005)
+    assert 10.0 * np.log10(carena / semrau) == pytest.approx(1.94, abs=0.05)
+    assert 10.0 * np.log10(carena / numerical) == pytest.approx(1.49, abs=0.05)
 
 
 # ---------------------------------------------------------------------------
