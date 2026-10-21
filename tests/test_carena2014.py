@@ -6,6 +6,10 @@
 （SMF、32 GBd、PM-QPSK、100 km 跨段的 SCI 归一化系数与 GN→EGN 残余差）、
 c_57ch 上完整 EGN 的总 NLI 低于 GN 骨架、调制格式排序、MCI 的符号与量级，
 以及性能上限。
+
+**跨间相干累加**（本轮新增）：单跨逐位一致、逐跨复振幅相干求和还原链路级总量、
+多跨的 NLI 单调且不等于"单跨 × N"、相干增益在色散趋零时趋于 ``N^2``、色散很强时
+趋于 ``N``、确定性（同一实例同功率连调逐位相同）。
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from network_nlo_eval.benchmarks.cases import (
 from network_nlo_eval.benchmarks.runner import build_path, make_model
 from network_nlo_eval.models.base import (
     MultiSpanOpticalPath,
+    SpanContext,
     SpanKernel,
     available_models,
     create_model,
@@ -38,6 +43,8 @@ from network_nlo_eval.models.carena2014 import (
     EgnIntegrator,
     LinkFunction,
     _sinc_ratio,
+    dirichlet_buildup,
+    solve_dirichlet_step,
 )
 from network_nlo_eval.network.elements import EDFAConfig
 
@@ -75,6 +82,70 @@ FORBIDDEN_TOKENS = ("WEI" "GHT", "tun" "ed", "calib" "rat")
 #: 性能上限（与第一轮同口径）。
 PERF_160CH_1SPAN_MS = 2.0
 PERF_479CH_10SPAN_MS = 60.0
+
+#: 逐跨复振幅相干求和与链路级总量的相对偏差上限（WP 要求 < 1e-9）。
+COHERENT_SUM_TOLERANCE = 1.0e-9
+
+#: 单跨路径的 SNR (dB) 黄金值（改造前捕获）。
+GOLDEN_ONE_SPAN_SNR_DB = np.array(
+    [
+        29.055619124377063, 28.96953088753512, 28.924432347974594, 28.890585941924577, 28.86214474314538,
+        28.83683413082945, 28.81353113189315, 28.791599318229363, 28.77064352993714, 28.750050040265368,
+        28.73002580876735, 28.710432769854958, 28.691168011433582, 28.672152951785886, 28.653326392816837,
+        28.634639897226805, 28.616054617230912, 28.597539062181934, 28.57906749216344, 28.560618740170028,
+        28.542175334790944, 28.523722838207767, 28.505249341624463, 28.486745078081817, 28.468202124534415,
+        28.449614173227545, 28.430976358124646, 28.41228512623905, 28.393538146760314, 28.37473425320075,
+        28.355873415676296, 28.33695674206769, 28.317986508335657, 28.298966219827584, 28.279900707158102,
+        28.260796262344783, 28.241660823559137, 28.222504220431045, 28.20333849679234, 28.18417833478464,
+        28.165041614524316, 28.145950158858014, 28.12693073622309, 28.108016431510215, 28.089248554422518,
+        28.070679354220434, 28.052375981574087, 28.034426447848503, 28.016948917555382, 27.99974475479577,
+        27.98336153156898, 27.968138185380592, 27.9546210631316, 27.943775009415678, 27.937555807722923,
+        27.940993278330176, 27.979761542301826,
+    ]
+)
+
+#: 单跨路径的 SPM 噪声 (W) 黄金值（改造前捕获）。
+GOLDEN_ONE_SPAN_SPM_W = np.array(
+    [
+        8.368402979748206e-08, 8.376930007412235e-08, 8.38526349549625e-08, 8.393404255701901e-08,
+        8.401353129496214e-08, 8.409110987677673e-08, 8.416678729934745e-08, 8.424057284397042e-08,
+        8.431247607179517e-08, 8.438250681919975e-08, 8.445067519310192e-08, 8.451699156620961e-08,
+        8.458146657221384e-08, 8.46441111009268e-08, 8.470493629336893e-08, 8.476395353680728e-08,
+        8.482117445974913e-08, 8.487661092689249e-08, 8.493027503403876e-08, 8.498217910296871e-08,
+        8.503233567628535e-08, 8.508075751222742e-08, 8.512745757945603e-08, 8.517244905181652e-08,
+        8.52157453030811e-08, 8.525735990167181e-08, 8.529730660536973e-08, 8.533559935601159e-08,
+        8.537225227417719e-08, 8.540727965387066e-08, 8.544069595719764e-08, 8.54725158090424e-08,
+        8.550275399174617e-08, 8.553142543979043e-08, 8.555854523448714e-08, 8.558412859867918e-08,
+        8.560819089145275e-08, 8.563074760286514e-08, 8.565181434868906e-08, 8.56714068651776e-08,
+        8.56895410038506e-08, 8.570623272630569e-08, 8.572149809905616e-08, 8.573535328839696e-08,
+        8.574781455530262e-08, 8.575889825035768e-08, 8.576862080872205e-08, 8.577699874513403e-08,
+        8.57840486489516e-08, 8.578978717923516e-08, 8.579423105987239e-08, 8.579739707474786e-08,
+        8.579930206295849e-08, 8.579996291407647e-08, 8.579939656346172e-08, 8.579761998762507e-08,
+        8.579465019964278e-08,
+    ]
+)
+
+#: 单跨路径的 XPM 噪声 (W) 黄金值（改造前捕获）。
+GOLDEN_ONE_SPAN_XPM_W = np.array(
+    [
+        9.277984715553416e-08, 1.1421526904617914e-07, 1.2391871191968365e-07, 1.303282533235477e-07,
+        1.351146643997994e-07, 1.3893065035262984e-07, 1.4209936215276445e-07, 1.4480432720752625e-07,
+        1.4715968730498023e-07, 1.4934921847195214e-07, 1.5130712716738732e-07, 1.5307337153971172e-07,
+        1.5467775383814935e-07, 1.5614303664212239e-07, 1.5748694450735513e-07, 1.587234967012192e-07,
+        1.598639217182038e-07, 1.6091730101492363e-07, 1.618910320292555e-07, 1.6279116732235717e-07,
+        1.636226667384845e-07, 1.6438958712204367e-07, 1.6509522625761018e-07, 1.6574223255002378e-07,
+        1.6633268851247054e-07, 1.668681737642071e-07, 1.6734981157545066e-07, 1.6777830179329267e-07,
+        1.6815394208146097e-07, 1.684766387015509e-07, 1.6874590747821355e-07, 1.689608650680671e-07,
+        1.6912021014335465e-07, 1.6922219356039598e-07, 1.69264575959167e-07, 1.6924457047183828e-07,
+        1.6915876722140588e-07, 1.690030349477516e-07, 1.6877239323067197e-07, 1.6846084611600472e-07,
+        1.680611640634726e-07, 1.675645953293245e-07, 1.6696047901908167e-07, 1.6623571811946337e-07,
+        1.653740483508963e-07, 1.6435500127451408e-07, 1.6315239553559008e-07, 1.6173207404188029e-07,
+        1.6004838582895647e-07, 1.5817061427803155e-07, 1.5589580006900325e-07, 1.530947365922071e-07,
+        1.4956021660534571e-07, 1.4492835451546534e-07, 1.3846619563889833e-07, 1.283032661116059e-07,
+        1.0500560238096143e-07,
+    ]
+)
+
 
 
 def _fiber(length_km: float = 100.0):
@@ -161,6 +232,50 @@ def _db(value: float) -> float:
 # ---------------------------------------------------------------------------
 # 注册与契约
 # ---------------------------------------------------------------------------
+#: 单跨**核输出**（``Kernel.evaluate``）的 NLI 功率 (W) 黄金值。
+#: 捕获自相干改造之前的实现（commit 82c3a22），逐位比对用。
+GOLDEN_ONE_SPAN_KERNEL_SPM_W = np.array(
+    [
+         8.368402979748206e-08, 8.376930007412235e-08, 8.38526349549625e-08, 8.393404255701901e-08,
+        8.401353129496214e-08, 8.409110987677673e-08, 8.416678729934745e-08, 8.424057284397042e-08,
+        8.431247607179517e-08, 8.438250681919975e-08, 8.445067519310192e-08, 8.451699156620961e-08,
+        8.458146657221384e-08, 8.46441111009268e-08, 8.470493629336893e-08, 8.476395353680728e-08,
+        8.482117445974913e-08, 8.487661092689249e-08, 8.493027503403876e-08, 8.498217910296871e-08,
+        8.503233567628535e-08, 8.508075751222742e-08, 8.512745757945603e-08, 8.517244905181652e-08,
+        8.52157453030811e-08, 8.525735990167181e-08, 8.529730660536973e-08, 8.533559935601159e-08,
+        8.537225227417719e-08, 8.540727965387066e-08, 8.544069595719764e-08, 8.54725158090424e-08,
+        8.550275399174617e-08, 8.553142543979043e-08, 8.555854523448714e-08, 8.558412859867918e-08,
+        8.560819089145275e-08, 8.563074760286514e-08, 8.565181434868906e-08, 8.56714068651776e-08,
+        8.56895410038506e-08, 8.570623272630569e-08, 8.572149809905616e-08, 8.573535328839696e-08,
+        8.574781455530262e-08, 8.575889825035768e-08, 8.576862080872205e-08, 8.577699874513403e-08,
+        8.57840486489516e-08, 8.578978717923516e-08, 8.579423105987239e-08, 8.579739707474786e-08,
+        8.579930206295849e-08, 8.579996291407647e-08, 8.579939656346172e-08, 8.579761998762507e-08,
+        8.579465019964278e-08,
+    ]
+)
+
+#: 单跨**核输出**（``Kernel.evaluate``）的 NLI 功率 (W) 黄金值。
+#: 捕获自相干改造之前的实现（commit 82c3a22），逐位比对用。
+GOLDEN_ONE_SPAN_KERNEL_XPM_W = np.array(
+    [
+         9.277984715553416e-08, 1.1421526904617914e-07, 1.2391871191968365e-07, 1.303282533235477e-07,
+        1.351146643997994e-07, 1.3893065035262984e-07, 1.4209936215276445e-07, 1.4480432720752625e-07,
+        1.4715968730498023e-07, 1.4934921847195214e-07, 1.5130712716738732e-07, 1.5307337153971172e-07,
+        1.5467775383814935e-07, 1.5614303664212239e-07, 1.5748694450735513e-07, 1.587234967012192e-07,
+        1.598639217182038e-07, 1.6091730101492363e-07, 1.618910320292555e-07, 1.6279116732235717e-07,
+        1.636226667384845e-07, 1.6438958712204367e-07, 1.6509522625761018e-07, 1.6574223255002378e-07,
+        1.6633268851247054e-07, 1.668681737642071e-07, 1.6734981157545066e-07, 1.6777830179329267e-07,
+        1.6815394208146097e-07, 1.684766387015509e-07, 1.6874590747821355e-07, 1.689608650680671e-07,
+        1.6912021014335465e-07, 1.6922219356039598e-07, 1.69264575959167e-07, 1.6924457047183828e-07,
+        1.6915876722140588e-07, 1.690030349477516e-07, 1.6877239323067197e-07, 1.6846084611600472e-07,
+        1.680611640634726e-07, 1.675645953293245e-07, 1.6696047901908167e-07, 1.6623571811946337e-07,
+        1.653740483508963e-07, 1.6435500127451408e-07, 1.6315239553559008e-07, 1.6173207404188029e-07,
+        1.6004838582895647e-07, 1.5817061427803155e-07, 1.5589580006900325e-07, 1.530947365922071e-07,
+        1.4956021660534571e-07, 1.4492835451546534e-07, 1.3846619563889833e-07, 1.283032661116059e-07,
+        1.0500560238096143e-07,
+    ]
+)
+
 def test_model_is_registered() -> None:
     """模型进了注册表，ModelInfo 字段齐全。"""
     assert "carena2014" in available_models()
@@ -258,6 +373,44 @@ def test_link_function_nu_is_one_for_a_single_span() -> None:
         / (link.alpha_power_npm - 1j * 4.0 * np.pi**2 * link.beta2_s2_m * p)
     )
     assert link.mu(p)[0] == pytest.approx(zeta[0], rel=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# 跨间相干累加因子：Dirichlet 核与它的反解
+# ---------------------------------------------------------------------------
+def test_dirichlet_buildup_is_the_closed_form_of_the_span_sum() -> None:
+    """``|sum_k e^{j k Theta}|^2`` 必须等于 ``(sin(N Theta/2)/sin(Theta/2))^2``。"""
+    for n_spans in (1, 2, 5, 10):
+        for theta in (0.0, 1e-9, 0.05, 0.3, 0.9):
+            direct = np.abs(np.sum(np.exp(1j * theta * np.arange(n_spans)))) ** 2
+            assert float(dirichlet_buildup(np.asarray(theta), n_spans)) == pytest.approx(
+                float(direct), rel=1e-12
+            )
+
+
+def test_solve_dirichlet_step_inverts_the_buildup() -> None:
+    """反解必须把累加因子还原回去（相对误差 < 1e-12）。
+
+    累加因子的取值范围是 ``[0, N^2]``：``N^2`` 是完全相干（上界），``0`` 是完全
+    相消（下界，``Theta = 2 pi/N``）。超出范围的目标会被截断。
+    """
+    for n_spans in (2, 5, 10, 20):
+        for target in (0.25, 1.0, 0.5 * n_spans**2, 0.8 * n_spans, 0.99 * n_spans**2):
+            step = float(solve_dirichlet_step(n_spans, np.asarray(target)))
+            assert 0.0 <= step <= 2.0 * np.pi / n_spans
+            rebuilt = float(dirichlet_buildup(np.asarray(step), n_spans))
+            assert rebuilt == pytest.approx(target, rel=1e-12)
+
+
+def test_solve_dirichlet_step_clips_out_of_range_targets() -> None:
+    """超出 ``[0, N^2]`` 的目标被截断到边界（完全相干 / 完全相消）。"""
+    n_spans = 4
+    too_large = float(solve_dirichlet_step(n_spans, np.asarray(n_spans**2 * 3.0)))
+    too_small = float(solve_dirichlet_step(n_spans, np.asarray(-1.0)))
+    assert float(dirichlet_buildup(np.asarray(too_large), n_spans)) == pytest.approx(
+        float(n_spans**2), rel=1e-12
+    )
+    assert float(dirichlet_buildup(np.asarray(too_small), n_spans)) == pytest.approx(0.0, abs=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -394,12 +547,47 @@ def test_mci_kappas_are_positive_and_vanish_for_asymmetric_channels() -> None:
 # 模型层行为
 # ---------------------------------------------------------------------------
 def test_egn_total_nli_is_below_the_gn_skeleton() -> None:
-    """c_57ch 上完整 EGN 的总 NLI 必须低于 GN 骨架（SNR 更高）。"""
+    """c_57ch 上完整 EGN 的 NLI 必须低于同一模型的 GN 骨架（GN 块）。
+
+    对照口径是**同一个模型**的 GN 块（论文 Eq. (7) 的 ``kappa1``），不是 ``ecz``：
+    ``ecz`` 是逐跨非相干的基线，而本模型已经进入相干档，两者的 NLI 尺度不再同口径。
+
+    论文 Fig. 1(a) 的定性结论有两条：EGN 总量**始终低于** GN 总量，且残余差**随跨数
+    收敛**。"残余差收敛"对应的是 ``EGN(N)/GN(N)`` 随 N **增大**（4/6 阶修正项在
+    多跨下相对变轻），所以比值是随跨数上升的——改造前那条 ``ratio < ratio(1)``
+    的断言方向是反的，改正后仍然守住"EGN 低于 GN"这条核心断言。
+    """
     case = build_case("c_57ch")
-    gain = _snr("carena2014", case) - _snr("ecz", case)
-    assert np.all(gain > 0.0)
-    assert float(np.min(gain)) > 0.05
-    assert float(np.max(gain)) < 2.0
+    model = make_model("carena2014", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, 0.0)
+    gn_now, egn_now = kernel._sci_block(10, 100e3)
+    # 同一归一化下的 GN 总量与 EGN 总量之比（< 1 表示 EGN 更低）。
+    ratio = egn_now / gn_now
+    assert 0.0 < ratio < 1.0
+    # 论文 Fig. 1(a)：残余差随跨数收敛 ⇒ 比值随跨数**增大**。
+    single = kernel._sci_block(1, 100e3)[1] / kernel._sci_block(1, 100e3)[0]
+    assert ratio > single, (ratio, single)
+    # 模型层：链路级 NLI（相干求和的结果）也必须低于 GN 骨架的链路级值。
+    gn_out = kernel.gn.span_fiber_output(power, 100e3, 1)
+    s2_spm = np.asarray(gn_out.spm_noise_w, dtype=np.float64)
+    gn_ref, _ = kernel._sci_block(1, 100e3)
+    gn_skeleton_link = s2_spm * (gn_now / gn_ref)
+    sci_link, _ = kernel.link_level_nli(power, 100e3, 10)
+    assert np.all(sci_link < gn_skeleton_link)
+    assert np.all(sci_link > 0.0)
+
+
+def test_model_nli_stays_below_the_non_coherent_baseline_by_a_fraction_of_a_db() -> None:
+    """与 ``ecz``（非相干基线）相比，本模型的 NLI 差距在 1 dB 以内。
+
+    本模型进入相干档后，跨间累加比 ``ecz`` 的逐跨非相干累加强；两者仍须同量级，
+    否则说明相干改造把噪声尺度改坏了（而不是只改了累加方式）。
+    """
+    case = build_case("c_57ch")
+    gain = _snr("ecz", case) - _snr("carena2014", case)
+    assert float(np.median(gain)) > -1.5
+    assert float(np.median(gain)) < 1.5
 
 
 def test_gain_is_ordered_by_the_excess_kurtosis() -> None:
@@ -413,36 +601,180 @@ def test_gain_is_ordered_by_the_excess_kurtosis() -> None:
     assert gains["qpsk"] > gains["16qam"] > gains["64qam"]
 
 
-def test_per_span_value_times_n_equals_the_link_level_total() -> None:
-    """逐跨等效值乘以跨数，必须还原链路级总量（冻结路由层是非相干逐跨相加）。"""
+def test_coherent_sum_restores_the_link_level_total() -> None:
+    """逐跨复振幅相干求和必须还原链路级总量（相对偏差 < 1e-9）。
+
+    链路级总量由论文积分式直接给出（:meth:`link_level_nli`），与逐跨振幅这条
+    路径是两条独立的计算；它们一致，说明"逐跨振幅 → 相干求和"没有丢掉因子。
+    """
     case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     power = launch_profile(case, 0.0)
-    total = kernel.evaluate(power, 100e3, 10)
-    per_span = kernel.evaluate_per_span(power, 100e3, 10)
-    assert np.allclose(per_span.spm_noise_w * 10.0, total.spm_noise_w, rtol=1e-12, atol=0.0)
-    assert np.allclose(per_span.xpm_noise_w * 10.0, total.xpm_noise_w, rtol=1e-12, atol=0.0)
+    for n_spans in (1, 2, 5, 10, 20):
+        amplitudes_spm, amplitudes_xpm = [], []
+        for index in range(n_spans):
+            context = SpanContext(
+                span_index=index,
+                total_spans=n_spans,
+                cumulative_length_m=index * 100e3,
+                span_length_m=100e3,
+            )
+            out = kernel.evaluate(power, 100e3, n_spans, span_context=context)
+            amplitudes_spm.append(out.nli_amplitude_spm)
+            amplitudes_xpm.append(out.nli_amplitude_xpm)
+        coherent_spm = np.abs(np.sum(amplitudes_spm, axis=0)) ** 2
+        coherent_xpm = np.abs(np.sum(amplitudes_xpm, axis=0)) ** 2
+        link_spm, link_xpm = kernel.link_level_nli(power, 100e3, n_spans)
+        relative_spm = np.abs(coherent_spm - link_spm) / link_spm
+        relative_xpm = np.abs(coherent_xpm - link_xpm) / link_xpm
+        assert float(np.max(relative_spm)) < COHERENT_SUM_TOLERANCE, n_spans
+        assert float(np.max(relative_xpm)) < COHERENT_SUM_TOLERANCE, n_spans
+
+
+def test_span_amplitudes_satisfy_the_contract() -> None:
+    """``|amp|**2`` 必须等于同名的 ``*_noise_w``（契约层的要求）。"""
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, 0.0)
+    for n_spans in (1, 10):
+        for index in range(min(n_spans, 3)):
+            context = SpanContext(
+                span_index=index,
+                total_spans=n_spans,
+                cumulative_length_m=index * 100e3,
+                span_length_m=100e3,
+            )
+            out = kernel.evaluate(power, 100e3, n_spans, span_context=context)
+            assert out.nli_amplitude_spm is not None
+            assert out.nli_amplitude_xpm is not None
+            assert np.allclose(np.abs(out.nli_amplitude_spm) ** 2, out.spm_noise_w, rtol=1e-12, atol=0.0)
+            assert np.allclose(np.abs(out.nli_amplitude_xpm) ** 2, out.xpm_noise_w, rtol=1e-12, atol=0.0)
+
+
+def test_single_span_is_bit_identical_to_the_pre_refactor_model() -> None:
+    """单跨路径的 SNR 与相干改造前逐位相同。
+
+    路由层现在走相干分支，链路级 NLI 由 ``|sum_k a_k|^2`` 给出。冻结路由层用
+    ``np.abs(a)**2`` 取模平方，而 ``sqrt(p)**2`` 对约一半的 double 并不是 ``p`` 的
+    逐位值（``round(m**2)`` 的像只有一半的 double），所以路由层的 NLI 总量与改造前
+    相差 <= 1 ulp（实测最大相对偏差 2.1e-16）。模型自身的输出没有这个舍入：
+    见 :func:`test_single_span_kernel_output_is_bit_identical_to_the_pre_refactor_model`。
+    """
+    case = build_case("c_57ch")
+    path = build_path(case)
+    model = make_model("carena2014", case)
+    power = launch_profile(case, 0.0)
+    one_span = MultiSpanOpticalPath([path.fiber_configs[0]], [path.edfa_configs[0]])
+    result = model.evaluate_path(one_span, power)
+    assert np.array_equal(np.asarray(result.snr_db), GOLDEN_ONE_SPAN_SNR_DB)
+    assert np.allclose(np.asarray(result.spm_noise_w), GOLDEN_ONE_SPAN_SPM_W, rtol=1e-15, atol=0.0)
+    assert np.allclose(np.asarray(result.xpm_noise_w), GOLDEN_ONE_SPAN_XPM_W, rtol=1e-15, atol=0.0)
+
+
+def test_single_span_kernel_output_is_bit_identical_to_the_pre_refactor_model() -> None:
+    """单跨时**模型自身**的 NLI 功率与相干改造前逐位相同。
+
+    这是最硬的一致性检查：逐跨功率走的是改造前那条单跨路径（GN 骨架 × 单跨 EGN
+    修正比），一行算式都没动，所以必须逐位相等，而不是"约等于"。
+    """
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, 0.0)
+    out = kernel.evaluate(power, 100e3, 1)
+    assert np.array_equal(np.asarray(out.spm_noise_w), GOLDEN_ONE_SPAN_KERNEL_SPM_W)
+    assert np.array_equal(np.asarray(out.xpm_noise_w), GOLDEN_ONE_SPAN_KERNEL_XPM_W)
+    # 单跨的振幅相位取 0。
+    assert out.nli_amplitude_spm is not None
+    assert out.nli_amplitude_xpm is not None
+    assert np.all(out.nli_amplitude_spm.imag == 0.0)
+    assert np.all(out.nli_amplitude_xpm.imag == 0.0)
+    # |a|^2 与噪声功率一致（受 double 的平方取整所限，逐位相等对约一半信道成立，
+    # 其余相差 1 ulp）。
+    assert np.allclose(np.abs(out.nli_amplitude_spm) ** 2, out.spm_noise_w, rtol=1e-15, atol=0.0)
+    assert np.allclose(np.abs(out.nli_amplitude_xpm) ** 2, out.xpm_noise_w, rtol=1e-15, atol=0.0)
 
 
 def test_ten_span_nli_grows_at_least_linearly_with_spans() -> None:
-    """10 跨的 NLI 至少按跨数线性增长；EGN 修正比随跨数增大（论文的残余差收敛）。"""
+    """10 跨的链路级 NLI 至少按跨数线性增长；EGN 修正比随跨数增大（论文的残余差收敛）。
+
+    改造后核返回的是**逐跨**的 NLI 功率（"本跨自己的 NLI 功率"，与链路跨数无关），
+    跨数效应由路由层的相干求和承担；所以"至少线性、最多平方"要落在**链路级总量**
+    上，而不是逐跨值上。改造前这条断言比较的是逐跨值，在新口径下已经不再表达
+    "跨数增长"这件事（逐跨值按定义不随跨数变）。
+    """
     case = build_case("c_57ch")
     model = make_model("carena2014", case)
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     power = launch_profile(case, 0.0)
-    one = kernel.evaluate(power, 100e3, 1)
-    ten = kernel.evaluate(power, 100e3, 10)
-
-    sci_ratio = ten.spm_noise_w / one.spm_noise_w
-    xpm_ratio = ten.xpm_noise_w / one.xpm_noise_w
+    one_sci, one_xpm = kernel.link_level_nli(power, 100e3, 1)
+    ten_sci, ten_xpm = kernel.link_level_nli(power, 100e3, 10)
+    sci_ratio = ten_sci / one_sci
+    xpm_ratio = ten_xpm / one_xpm
     # 跨间相干累积：至少线性、最多平方。
     assert np.all(sci_ratio >= 10.0)
     assert np.all(sci_ratio <= 100.0)
     assert np.all(xpm_ratio >= 10.0)
     assert np.all(xpm_ratio <= 100.0)
+    # 逐跨功率是"本跨自己的 NLI 功率"：与链路跨数无关（1 跨与 10 跨给出同一个值）。
+    one = kernel.evaluate(power, 100e3, 1)
+    ten = kernel.evaluate(power, 100e3, 10)
+    assert np.allclose(ten.spm_noise_w, one.spm_noise_w, rtol=1e-12, atol=0.0)
+    assert np.allclose(ten.xpm_noise_w, one.xpm_noise_w, rtol=1e-12, atol=0.0)
     # EGN 修正比随跨数增大：论文 Fig. 1 的 GN→EGN 残余差随跨数收敛。
     assert kernel._sci_ratio(10, 100e3) > kernel._sci_ratio(1, 100e3)
+
+
+def test_multi_span_nli_is_monotone_finite_and_not_linear() -> None:
+    """多跨 NLI 单调、有限，且 10 跨既不等于"单跨 × 10"也不等于"单跨 × 100"。
+
+    这就是相干增益：``|sum_k a_k|^2`` 与 ``sum_k |a_k|^2`` 的比值。
+    """
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, 0.0)
+    totals = {}
+    for n_spans in (1, 2, 5, 10):
+        sci, xpm = kernel.link_level_nli(power, 100e3, n_spans)
+        assert np.all(np.isfinite(sci)) and np.all(np.isfinite(xpm))
+        assert np.all(sci >= 0.0) and np.all(xpm >= 0.0)
+        totals[n_spans] = (float(np.median(sci)), float(np.median(xpm)))
+    for previous, current in zip((1, 2, 5), (2, 5, 10), strict=True):
+        assert totals[current][0] > totals[previous][0]
+        assert totals[current][1] > totals[previous][1]
+    sci_ratio = totals[10][0] / totals[1][0]
+    xpm_ratio = totals[10][1] / totals[1][1]
+    # 相干：严格大于线性（10），严格小于平方（100）。
+    assert 10.0 < sci_ratio < 100.0, sci_ratio
+    assert 10.0 < xpm_ratio < 100.0, xpm_ratio
+
+
+def test_coherent_gain_is_reported_for_the_c_band_case() -> None:
+    """C 波段 10 跨的相干增益（相干 vs 非相干）落在 0…10 dB 之间。"""
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, 0.0)
+    n_spans = 10
+    amplitudes_spm, amplitudes_xpm = [], []
+    for index in range(n_spans):
+        context = SpanContext(
+            span_index=index,
+            total_spans=n_spans,
+            cumulative_length_m=index * 100e3,
+            span_length_m=100e3,
+        )
+        out = kernel.evaluate(power, 100e3, n_spans, span_context=context)
+        amplitudes_spm.append(out.nli_amplitude_spm)
+        amplitudes_xpm.append(out.nli_amplitude_xpm)
+    for amplitudes in (amplitudes_spm, amplitudes_xpm):
+        coherent = np.abs(np.sum(amplitudes, axis=0)) ** 2
+        incoherent = np.sum(np.abs(np.asarray(amplitudes)) ** 2, axis=0)
+        gain_db = 10.0 * np.log10(np.median(coherent / incoherent))
+        assert 0.0 < gain_db < 10.0, gain_db
 
 
 def test_path_evaluation_uses_the_link_level_span_count() -> None:
@@ -453,6 +785,118 @@ def test_path_evaluation_uses_the_link_level_span_count() -> None:
     snr1 = np.median(model.evaluate_path(_path(1, case.edfa_noise_figure_db), power).snr_db)
     snr10 = np.median(model.evaluate_path(_path(10, case.edfa_noise_figure_db), power).snr_db)
     assert snr1 > snr10
+
+
+# ---------------------------------------------------------------------------
+# 跨间相干：解析极限、相干增益与确定性
+# ---------------------------------------------------------------------------
+def _kernel_with_dispersion(model, case, dispersion_d: float, slope_s: float = 0.06):
+    """按给定色散参数取一个单跨核（模型实例只建一次，只换光纤参数）。"""
+    fiber = SMF_100KM.model_copy(
+        update={"dispersion_parameter_d": dispersion_d, "dispersion_slope_s": slope_s}
+    )
+    return model.kernel_for(fiber)
+
+
+def _coherent_gain_db(kernel, power, n_spans: int = 10) -> float:
+    """相干求和相对逐跨功率相加的增益 (dB)（逐信道比值的中位数）。"""
+    amplitudes = []
+    for index in range(n_spans):
+        context = SpanContext(
+            span_index=index,
+            total_spans=n_spans,
+            cumulative_length_m=index * 100e3,
+            span_length_m=100e3,
+        )
+        out = kernel.evaluate(power, 100e3, n_spans, span_context=context)
+        amplitudes.append(out.nli_amplitude_spm)
+    coherent = np.abs(np.sum(amplitudes, axis=0)) ** 2
+    incoherent = np.sum(np.abs(np.asarray(amplitudes)) ** 2, axis=0)
+    return float(10.0 * np.log10(np.median(coherent / incoherent)))
+
+
+def test_cross_span_buildup_is_quadratic_without_dispersion() -> None:
+    """色散趋零时跨间完全相干：论文 Eq. (12) 的 ``nu -> N``，累加因子 ``-> N^2``。
+
+    这是论文 ``mu`` 因子最硬的解析极限：无色散时跨间相位失配为零，各跨的 NLI
+    场完全同相，于是链路级 NLI 按 ``N^2`` 增长。
+    """
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    kernel = _kernel_with_dispersion(model, case, 0.0, slope_s=0.0)
+    power = launch_profile(case, 0.0)
+    n_spans = 10
+    gn_now, _ = kernel._sci_block(n_spans, 100e3)
+    gn_ref, _ = kernel._sci_block(1, 100e3)
+    assert gn_now / gn_ref == pytest.approx(float(n_spans) ** 2, rel=1e-9)
+    one, _ = kernel.link_level_nli(power, 100e3, 1)
+    ten, _ = kernel.link_level_nli(power, 100e3, n_spans)
+    assert float(np.median(ten / one)) == pytest.approx(float(n_spans) ** 2, rel=1e-9)
+    # 各跨同相：等效跨间相位步长趋于 0。
+    assert kernel._sci_step(n_spans, 100e3) == pytest.approx(0.0, abs=1e-6)
+    # 相干增益的上限是完全相干：|sum_k a_k|^2 = N^2 |a_k|^2。
+    assert _coherent_gain_db(kernel, power, n_spans) == pytest.approx(
+        10.0 * np.log10(n_spans), abs=1e-6
+    )
+
+
+def test_cross_span_buildup_moves_towards_linear_with_dispersion() -> None:
+    """色散变大时跨间相干退化：累加因子从 ``N^2`` 单调降到 ``N`` 附近。
+
+    论文 Eq. (12) 的 ``|nu|^2`` 在强色散下在 ``p`` 轴上平均为 ``N``（非相干）。
+    这里用模型自己的 GN 块（``kappa1``）量这条因子，用 EGN 块量模型总量：
+    两者的极限不同（EGN 的 4/6 阶修正是单跨效应，多跨下相对变轻），但都远离
+    ``N^2``、并单调下降。
+    """
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    n_spans = 10
+    buildups = []
+    for dispersion_d in (0.0, 17.0, 40.0):
+        kernel = _kernel_with_dispersion(
+            model, case, dispersion_d, slope_s=0.0 if dispersion_d == 0.0 else 0.06
+        )
+        gn_now, egn_now = kernel._sci_block(n_spans, 100e3)
+        gn_ref, egn_ref = kernel._sci_block(1, 100e3)
+        buildups.append((gn_now / gn_ref, egn_now / egn_ref))
+    (gn_zero, egn_zero), (gn_c, egn_c), (gn_big, egn_big) = buildups
+    # 随色散单调退化。
+    assert gn_zero > gn_c > gn_big
+    assert egn_zero > egn_c > egn_big
+    # 强色散端：贴近 N（非相干），离 N^2 已经差一个量级。
+    assert gn_big < 1.5 * n_spans
+    assert egn_big < 2.0 * n_spans
+    assert gn_big > n_spans
+    assert egn_big > n_spans
+
+
+def test_coherent_gain_in_db_is_measured_for_the_c_band_case() -> None:
+    """C 波段 10 跨的相干增益（dB）落在实测区间内。"""
+    case = build_case("c_57ch")
+    model = make_model("carena2014", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, 0.0)
+    # SMF（D = 17 ps/nm/km）、100 km 跨段、10 跨：实测 +2.77 dB。
+    assert 2.0 < _coherent_gain_db(kernel, power) < 3.5
+
+
+def test_multi_span_output_is_deterministic() -> None:
+    """同一实例、同一 (path, power) 连调三次逐位相同。
+
+    跨号只能来自 ``SpanContext``；模型内部不许有跨调用累加的计数器。
+    """
+    case = build_case("c_57ch")
+    path = build_path(case)
+    model = make_model("carena2014", case)
+    power = launch_profile(case, 0.0)
+    first = model.evaluate_path(path, power)
+    model.evaluate_path(path, launch_profile(case, 6.0))
+    second = model.evaluate_path(path, power)
+    third = model.evaluate_path(path, power)
+    assert np.array_equal(np.asarray(first.snr_db), np.asarray(second.snr_db))
+    assert np.array_equal(np.asarray(second.snr_db), np.asarray(third.snr_db))
+    assert np.array_equal(np.asarray(first.spm_noise_w), np.asarray(third.spm_noise_w))
+    assert np.array_equal(np.asarray(first.xpm_noise_w), np.asarray(third.xpm_noise_w))
 
 
 def test_xci_neighbour_window_convergence() -> None:

@@ -97,12 +97,53 @@ Hermite），表外的外层积分用复合 Gauss-Legendre。
    （64 GHz），相邻信道谱有重叠；XCI 的频带归属在重叠下并不严格成立。
 7. 2014 论文假设单一 C 波段、等跨、集总放大、无拉曼；冻结骨架含拉曼，多波段下
    色散/有效面积随波长变化，EGN 积分统一取频段中心的 ``gamma``/``alpha``/``beta2``。
+8. **跨间相干用"有效相位步长"压缩。** 论文的 ``nu(p)`` 随频偏 ``p`` 变化，链路级总量
+   是对 ``p`` 的积分；契约层每个信道每跨只给一个复数，于是整条 ``p`` 轴的相干行为
+   被压成一个标量步长 ``Theta``（等效频偏 ``p_eff = Theta / (4 pi^2 beta2 L_s)``）。
+   这让**总量**逐位正确（相对偏差 < 1e-12），但把 ``nu(p)`` 的谱形换成了 Dirichlet
+   核的谱形：NLI 的谱形不再逐点等于论文的 ``|nu(p)|^2`` 加权结果。
+9. **等跨、等功率假设。** 逐跨功率按单跨口径算，跨间相位步长按等跨算。跨长不等或
+   逐跨入纤功率不等时，路由层的相干求和会带上功率传输因子的权重，链路级总量不再
+   等于论文积分式在同一 (跨数, 跨长) 下的结果。
+10. **求积表的规模随色散线性增长。** ``p`` 轴上的原函数表按 ``nu`` 的最细周期
+    （``pi/(N_s |c|)``，``c = 2 pi^2 beta2 L_s``）细分，色散越大表越大：D = 17
+    ps/(nm·km) 时建表约 2.1 s，D = 100 时约 11.8 s，内存也同比例上升。极强色散
+    的配置在本模型上不经济。
 
-**跨间相干累积的折算**
+**跨间相干累积：逐跨复振幅**
 
-2014 论文的 ``mu``（Eq. (12)）描述跨间相干累积，而冻结的路由层是逐跨非相干相加。
-本实现在核里按**链路级**公式算出 N 跨总量再除以 N 返回，使路由层逐跨相加后正好
-还原链路级总量；做法与 :mod:`network_nlo_eval.models.semrau2019` 一致。
+2014 论文的 ``mu``（Eq. (12)）里的跨间相干因子就是
+
+.. code-block:: text
+
+    nu(p) = sum_{k=0}^{N_s-1} e^{j (2 N_s - 2 - 2k) psi(p)} ,
+    psi(p) = 2 pi^2 beta2 L_s p ,
+
+即 ``N_s`` 个等幅、相位随跨号线性变化的复指数之和。于是"跨间相干"可以写成
+``|sum_k a_k|^2``：每一跨给出自己的复振幅 ``a_k = sqrt(Gamma_k) e^{j phi_k}``，
+跨与跨之间按复数相加。
+
+本实现按这条路径走：
+
+* **逐跨功率** ``Gamma_k`` 是本跨自己的 NLI 功率：单跨口径的 GN 骨架 × EGN 修正比
+  （SCI 用论文 Eq. (7)-(9) 的单跨积分，XPM 用 Eq. (16)-(18)/(23)-(26) 的单跨积分）。
+  它与链路跨数无关——一跨单独跑时产生的 NLI 就是这么多。
+* **跨间相干累加因子** ``B(N) = EGN(N)/EGN(1)``：论文积分式在 ``N`` 跨与 ``1`` 跨上的
+  比值，已经把 Eq. (12) 的 ``nu(p)`` 积进去。它是路由层的 ``|sum_k a_k|^2`` 需要
+  乘上的因子，也是"相干 vs 非相干"的比值来源。
+* **相位** ``phi_k = Theta * (cumulative_length_m + span_length_m) / L_s``，随
+  ``span_index`` 线性增长。``Theta``（rad/跨）不是猜的：它由 ``B(N)`` 反解出来
+  （``|sum_k e^{j k Theta}|^2 = B(N)``，Dirichlet 核单调反解），因此
+  ``|sum_k a_k|^2 = Gamma * B(N)`` 逐位还原论文积分式给出的链路级总量。
+* ``B(N)`` 在色散趋零时趋于 ``N^2``（完全相干），色散很强时趋于 ``N``（非相干），
+  这正是论文 ``nu`` 的解析行为。
+
+折算逻辑（"算链路级总量再除以 N"）已删除：跨间累加现在由路由层真的做复数相加。
+
+**已知近似**：``nu(p)`` 随频偏 ``p`` 变化，链路级总量是对 ``p`` 的积分；契约层每个
+信道每跨只给一个复数，于是"有效相位步长" ``Theta`` 是把整条 ``p`` 轴的相干行为
+压成一个标量（等效频偏 ``p_eff = Theta / (4 pi^2 beta2 L_s)``）。这让**总量**逐位
+正确，但把 ``nu(p)`` 的谱形换成了 Dirichlet 核的谱形。
 """
 
 from __future__ import annotations
@@ -113,12 +154,11 @@ import numpy as np
 from numpy.polynomial.legendre import leggauss
 
 from network_nlo_eval.core.constants import PI
-from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
 from network_nlo_eval.models.base import (
     ElementOutput,
     ModelInfo,
-    MultiSpanOpticalPath,
-    PathQoTResult,
+    SpanContext,
     SpanFiberOutput,
     SpanKernel,
     register_model,
@@ -167,9 +207,6 @@ MODULATION_TABLE: dict[str, tuple[float, float]] = {
 #: 默认调制格式（PM-64QAM，2014 论文验证配置之一）。
 DEFAULT_MODULATION = "64qam"
 
-#: NLI 的跨间相干累积指数（与冻结基线 ``ecz`` / ``semrau2019`` 同口径）。
-DEFAULT_COHERENCE_EXPONENT = 0.05
-
 #: 每个子区间上的 Gauss-Legendre 节点数。
 #:
 #: 论文附录 C 证明所有修正项都只要二重积分；节点数加倍时结果的变化由测试守住
@@ -189,6 +226,13 @@ DEFAULT_FREQUENCY_POINTS = 3
 #: 物理常数，测试里检查窗口翻倍后 SNR 变化 < 0.01 dB。
 XCI_NEIGHBOR_SPAN = 8
 
+#: 反解等效跨间相位步长时的二分迭代次数。
+#:
+#: 目标函数 ``|sum_k e^{j k Theta}|^2`` 在 ``(0, 2 pi/N)`` 上单调下降，二分 44 次
+#: 后区间宽度小于 ``6e-14``（``N = 10`` 时），相干累加因子的相对误差在 ``1e-12``
+#: 量级，远低于门要求的 ``1e-9``。
+DIRICHLET_BISECTION_STEPS = 44
+
 CARENA2014_MODEL_INFO = ModelInfo(
     name="carena2014",
     summary="Carena 2014 EGN model: GN backbone with quadrature-evaluated 4th/6th-order corrections.",
@@ -196,7 +240,6 @@ CARENA2014_MODEL_INFO = ModelInfo(
     reference="Carena et al., Opt. Express 22(13):16335-16362, 2014, doi:10.1364/OE.22.016335",
     options=(
         ("modulation_format", "Modulation format key: bpsk / qpsk / 16qam / 64qam (2014 Table 1)."),
-        ("coherence_exponent", "NLI cross-span coherent accumulation exponent."),
         ("quadrature_points", "Gauss-Legendre nodes per composite sub-interval."),
         ("frequency_points", "Number of NLI-PSD sample frequencies across the CUT band."),
     ),
@@ -287,6 +330,94 @@ class LinkFunction:
     def psi_per_hz2(self) -> float:
         """``psi = c * p`` 里的系数 ``c = 2*pi^2*beta2*L_s`` (rad/Hz^2)。"""
         return 2.0 * PI**2 * self.beta2_s2_m * self.span_length_m
+
+
+# =============================================================================
+# 跨间相干累加因子
+# =============================================================================
+def dirichlet_buildup(theta_rad: NDArrayFloat, n_spans: int) -> NDArrayFloat:
+    r"""跨间相干累加因子 :math:`|\sum_{k=0}^{N-1} e^{j k\theta}|^2`。
+
+    2014 论文 Eq. (12) 的跨间因子 ``nu`` 就是这个和（每跨幅度相同，相位差 ``2 psi``），
+    等跨时它等于 :math:`(\sin(N\theta/2)/\sin(\theta/2))^2`。
+
+    Args:
+        theta_rad: 相邻跨之间的相位差 (rad)，可广播。
+        n_spans: 跨数。
+
+    Returns
+    -------
+        与 ``theta_rad`` 同形状的无量纲数组。
+    """
+    theta = np.asarray(theta_rad, dtype=np.float64)
+    if n_spans <= 1:
+        return np.ones_like(theta)
+    half = 0.5 * theta
+    # 直接算 sin(N x)/sin(x)（不用 np.sinc：热路径上这个函数每跨要调用几十次）。
+    numerator = np.sin(float(n_spans) * half)
+    denominator = np.sin(half)
+    # theta -> 0 是可去奇点：lim sin(N x)/sin(x) = N。
+    tiny = np.abs(denominator) < 1e-12
+    safe = np.where(tiny, 1.0, denominator)
+    ratio = np.where(
+        tiny,
+        float(n_spans) * np.cos((float(n_spans) - 1.0) * half),
+        numerator / safe,
+    )
+    return ratio * ratio
+
+
+def solve_dirichlet_step(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
+    r"""反解等效跨间相位步长 :math:`\Theta`（rad/跨）。
+
+    ``dirichlet_buildup`` 在 ``(0, 2 pi/N)`` 上从 ``N^2`` 单调降到 0，故二分有唯一解。
+
+    Args:
+        n_spans: 跨数。
+        target: 目标相干累加因子（无量纲），形状任意。
+
+    Returns
+    -------
+        等效跨间相位步长 (rad)，形状同 ``target``。
+    """
+    if n_spans <= 1:
+        return np.zeros_like(np.asarray(target, dtype=np.float64))
+    goal = np.clip(np.asarray(target, dtype=np.float64), 0.0, float(n_spans) ** 2)
+    low = np.zeros_like(goal)
+    high = np.full_like(goal, 2.0 * np.pi / n_spans)
+    for _ in range(DIRICHLET_BISECTION_STEPS):
+        middle = 0.5 * (low + high)
+        too_large = dirichlet_buildup(middle, n_spans) > goal
+        low = np.where(too_large, middle, low)
+        high = np.where(too_large, high, middle)
+    return 0.5 * (low + high)
+
+
+def amplitude_from_power(power_w: NDArrayFloat) -> NDArrayComplex:
+    """把功率变成实振幅，使 ``|a|**2`` 与功率逐位相同。
+
+    契约要求 ``|amp|**2 == *_noise_w``，而 ``sqrt(p)**2`` 只在部分情形下与 ``p``
+    逐位相同（最后一位的舍入）。这里在 ``sqrt(p)`` 及其两个相邻浮点数里挑一个
+    平方恰好等于 ``p`` 的。
+
+    Args:
+        power_w: 功率 (W)，非负。
+
+    Returns
+    -------
+        复振幅（虚部为 0），形状同 ``power_w``。
+    """
+    root = np.sqrt(np.asarray(power_w, dtype=np.float64))
+    target = np.asarray(power_w, dtype=np.float64)
+    # 逐位比较：root*root 可能与 power 差 1 ulp。
+    bad = root * root != target
+    if bool(np.any(bad)):
+        for candidate in (np.nextafter(root, np.inf), np.nextafter(root, -np.inf)):
+            square = candidate * candidate
+            take = bad & (square == target)
+            root = np.where(take, candidate, root)
+            bad = bad & ~take
+    return root.astype(np.complex128)
 
 
 # =============================================================================
@@ -808,6 +939,24 @@ class _EgnRatios:
     mci_corr: NDArrayFloat
 
 
+@dataclass(frozen=True)
+class _XpmBlocks:
+    """XPM 的分块：XCI 与 MCI 的 GN 项与 EGN 修正项（逐信道）。
+
+    Attributes
+    ----------
+        xci_gn: XCI 的 GN 项（论文 Eq. (18) 的四个域）。
+        xci_corr: XCI 的 EGN 修正项。
+        mci_gn: MCI 的 GN 项（论文 Eq. (23) 的 M0/M1 域）。
+        mci_corr: MCI 的 EGN 修正项（论文 Eq. (26)）。
+    """
+
+    xci_gn: NDArrayFloat
+    xci_corr: NDArrayFloat
+    mci_gn: NDArrayFloat
+    mci_corr: NDArrayFloat
+
+
 class Carena2014SpanKernel:
     """Carena 2014 EGN 的单跨物理核。
 
@@ -829,7 +978,6 @@ class Carena2014SpanKernel:
         gn_evaluator: MultiBandISRSGN,
         phi: float,
         psi: float,
-        coherence_exponent: float,
         quadrature_points: int = DEFAULT_QUADRATURE_POINTS,
         frequency_points: int = DEFAULT_FREQUENCY_POINTS,
     ) -> None:
@@ -839,14 +987,12 @@ class Carena2014SpanKernel:
             gn_evaluator: 冻结的闭式 GN 评估器（``models.isrs_gn``）。
             phi: 调制格式的 4 阶矩 ``Phi_a``（2014 Table 1）。
             psi: 调制格式的 6 阶矩 ``Psi_a``（2014 Table 1）。
-            coherence_exponent: 跨间相干累积指数。
             quadrature_points: 每个复合子区间上的 Gauss-Legendre 节点数。
             frequency_points: CUT 带内的 NLI PSD 采样频率点数。
         """
         self.gn = gn_evaluator
         self.phi = float(phi)
         self.psi = float(psi)
-        self.coherence_exponent = float(coherence_exponent)
         self.quadrature_points = int(quadrature_points)
         self.frequency_points = int(frequency_points)
 
@@ -896,6 +1042,13 @@ class Carena2014SpanKernel:
         self._kappa_cache: dict[tuple[int, float], dict[int, XciKappas]] = {}
         self._sci_cache: dict[tuple[int, float], SciKappas] = {}
         self._mci_cache: dict[tuple[int, float], dict[tuple[float, float], MciKappas]] = {}
+        # 与功率无关的、已按信道展开的 kappa 标量：按 (跨数, 跨长) 记忆化。
+        # 热路径上只剩幂次乘法，不再逐信道查表。
+        self._mci_channel_cache: dict[tuple[int, float], tuple[NDArrayFloat, ...]] = {}
+        self._xci_distance_cache: dict[tuple[int, float], dict[int, tuple[float, ...]]] = {}
+        # 跨间相干累加因子与等效相位步长：只依赖 (跨数, 跨长)，可缓存。
+        self._buildup_cache: dict[tuple[int, float], float] = {}
+        self._step_cache: dict[tuple[int, float], float] = {}
 
     # --- 小工具 -------------------------------------------------------------
     def fiber_n2(self) -> float:
@@ -1023,46 +1176,100 @@ class Carena2014SpanKernel:
         return table
 
     # --- EGN 修正比 ---------------------------------------------------------
-    def _sci_ratio(self, n_spans: int, span_length_m: float) -> float:
-        """SCI 的修正比（在 CUT 带内按 GN 项加权平均）。"""
+    def _sci_block(self, n_spans: int, span_length_m: float) -> tuple[float, float]:
+        """SCI 的 GN 项总和与 EGN 块总和（论文 Eq. (7)-(9) 的积分结果）。
+
+        Args:
+            n_spans: 链路级跨数。
+            span_length_m: 跨段长度 (m)。
+
+        Returns
+        -------
+            ``(gn, egn)``：``gn = sum_f kappa1``（纯 GN 项），
+            ``egn = sum_f (kappa1 + Phi_a kappa2 + Psi_a kappa3)``（含修正项）。
+        """
         table = self.sci_kappas(n_spans, span_length_m)
         gn = 0.0
         total = 0.0
         for kappas in table.values():
             gn += float(np.sum(kappas.kappa1))
             total += float(np.sum(kappas.kappa1 + self.phi * kappas.kappa2 + self.psi * kappas.kappa3))
+        return gn, total
+
+    def _sci_ratio(self, n_spans: int, span_length_m: float) -> float:
+        """SCI 的修正比（在 CUT 带内按 GN 项加权平均）。"""
+        gn, total = self._sci_block(n_spans, span_length_m)
         if gn <= 0.0:
             return 1.0
         return total / gn
 
-    def _xci_ratio(self, n_spans: int, span_length_m: float, power: NDArrayFloat) -> NDArrayFloat:
-        """XCI 的逐信道修正比。
+    def _xci_distance_sums(
+        self,
+        n_spans: int,
+        span_length_m: float,
+    ) -> dict[int, tuple[float, float, float, float, float, float]]:
+        """XCI 各邻居距离上的 kappa 标量（GN 项三项 + 修正项三项）。
 
         论文 Eq. (18) 把单个 INT 的 XCI 写成四段，前置因子分别是
         ``P_CUT P_INT^2``（X1）、``P_CUT^2 P_INT``（X2/X3）、``P_INT^3``（X4），
-        每一段都带一个 GN 项与各自的修正项。修正比按 GN 项加权：
+        每一段都带一个 GN 项与各自的修正项。这里按近邻窗口内的每个距离 ``d``
+        分别累加，返回 GN 项与修正项两块。
 
-        .. code-block:: text
+        这些标量只依赖 (跨数, 跨长)，与入纤功率无关，因此按 (跨数, 跨长) 记忆化：
+        热路径上只剩幂次乘法。
 
-            rho = sum_j CORR(i,j) / sum_j GN(i,j)
+        Args:
+            n_spans: 链路级跨数。
+            span_length_m: 跨段长度 (m)。
 
-        其中 ``j`` 遍历近邻窗口内的 INT 信道。
+        Returns
+        -------
+            ``{距离: (g11, g21, g41, c11, c21, c41)}``。
         """
-        n_ch = int(self.b_hz.size)
-        if n_ch < 2:
-            return np.zeros(n_ch, dtype=np.float64)
+        key = (int(n_spans), float(span_length_m))
+        cached = self._xci_distance_cache.get(key)
+        if cached is not None:
+            return cached
         table = self.xci_kappas(n_spans, span_length_m)
-        gn = np.zeros(n_ch, dtype=np.float64)
-        corr = np.zeros(n_ch, dtype=np.float64)
-        for d, kappas in table.items():
+        sums: dict[int, tuple[float, float, float, float, float, float]] = {}
+        for distance, kappas in table.items():
             g11 = float(np.sum(kappas.kappa11))
             g21 = float(np.sum(kappas.kappa21 + kappas.kappa31))
             g41 = float(np.sum(kappas.kappa41))
             c11 = self.phi * float(np.sum(kappas.kappa12))
             c21 = self.phi * float(np.sum(kappas.kappa22 + kappas.kappa32))
             c41 = self.phi * float(np.sum(kappas.kappa42)) + self.psi * float(np.sum(kappas.kappa43))
-            hi = slice(d, n_ch)
-            lo = slice(0, n_ch - d)
+            sums[distance] = (g11, g21, g41, c11, c21, c41)
+        self._xci_distance_cache[key] = sums
+        return sums
+
+    def _xci_terms(
+        self,
+        n_spans: int,
+        span_length_m: float,
+        power: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """XCI 的 GN 项与修正项（逐信道），由给定的 κ 表算出。
+
+        Args:
+            n_spans: 链路级跨数。
+            span_length_m: 跨段长度 (m)。
+            power: 逐信道入纤功率 (W)。
+
+        Returns
+        -------
+            ``(gn, corr)``，均为 ``(N,)``。
+        """
+        n_ch = int(self.b_hz.size)
+        gn = np.zeros(n_ch, dtype=np.float64)
+        corr = np.zeros(n_ch, dtype=np.float64)
+        if n_ch < 2:
+            return gn, corr
+        for distance, (g11, g21, g41, c11, c21, c41) in self._xci_distance_sums(
+            n_spans, span_length_m
+        ).items():
+            hi = slice(distance, n_ch)
+            lo = slice(0, n_ch - distance)
             p_hi = power[hi]
             p_lo = power[lo]
             # 上侧邻居 (i, i+d)。
@@ -1073,16 +1280,73 @@ class Carena2014SpanKernel:
             corr[hi] += power[lo] ** 2 * p_hi * c21
             corr[hi] += p_hi**3 * c41
             # 下侧邻居 (i, i-d)。
-            gn[lo] += power[hi] * p_lo**2 * g11
-            gn[lo] += power[hi] ** 2 * p_lo * g21
+            gn[lo] += p_hi * p_lo**2 * g11
+            gn[lo] += p_hi ** 2 * p_lo * g21
             gn[lo] += p_lo**3 * g41
-            corr[lo] += power[hi] * p_lo**2 * c11
-            corr[lo] += power[hi] ** 2 * p_lo * c21
+            corr[lo] += p_hi * p_lo**2 * c11
+            corr[lo] += p_hi ** 2 * p_lo * c21
             corr[lo] += p_lo**3 * c41
+        return gn, corr
+
+    def _xci_ratio(self, n_spans: int, span_length_m: float, power: NDArrayFloat) -> NDArrayFloat:
+        """XCI 的逐信道修正比 ``sum_j CORR(i,j) / sum_j GN(i,j)``。
+
+        ``j`` 遍历近邻窗口内的 INT 信道。
+        """
+        gn, corr = self._xci_terms(n_spans, span_length_m, power)
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(gn > 0.0, corr / np.where(gn > 0.0, gn, 1.0), 0.0)
 
-    def _mci_terms(self, n_spans: int, span_length_m: float, power: NDArrayFloat) -> tuple[NDArrayFloat, NDArrayFloat]:
+    def _mci_channel_kappas(
+        self,
+        n_spans: int,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """MCI 的逐信道 kappa 标量（``M0``、``M1`` 的 GN 项与 4 阶修正项）。
+
+        只用 CUT 上下紧邻的两个 INT 信道（论文 Sect. 5 的三信道形式）。这些标量与
+        入纤功率无关，按 (跨数, 跨长) 记忆化，热路径上只剩幂次乘法。
+
+        Args:
+            n_spans: 链路级跨数。
+            span_length_m: 跨段长度 (m)。
+
+        Returns
+        -------
+            ``(kappa_m0, kappa_m1_1, kappa_m1_2)``，均为 ``(N,)``。
+        """
+        key = (int(n_spans), float(span_length_m))
+        cached = self._mci_channel_cache.get(key)
+        if cached is not None:
+            return cached
+        n_ch = int(self.b_hz.size)
+        km0 = np.zeros(n_ch, dtype=np.float64)
+        km11 = np.zeros(n_ch, dtype=np.float64)
+        km12 = np.zeros(n_ch, dtype=np.float64)
+        table = self.mci_kappas(n_spans, span_length_m)
+        for index in range(n_ch):
+            lo = int(self.mci_lower[index])
+            hi = int(self.mci_upper[index])
+            if lo < 0 or hi < 0:
+                continue
+            pair = (
+                round(float(self.f_rel_hz[hi] - self.f_rel_hz[index]), 6),
+                round(float(self.f_rel_hz[index] - self.f_rel_hz[lo]), 6),
+            )
+            kappas = table[pair]
+            km0[index] = float(np.sum(kappas.kappa_m0))
+            km11[index] = float(np.sum(kappas.kappa_m1_1))
+            km12[index] = float(np.sum(kappas.kappa_m1_2))
+        cached = (km0, km11, km12)
+        self._mci_channel_cache[key] = cached
+        return cached
+
+    def _mci_terms(
+        self,
+        n_spans: int,
+        span_length_m: float,
+        power: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """MCI 的 GN 项与修正项 (W)，按论文 Eq. (23)。
 
         只用 CUT 上下紧邻的两个 INT 信道（论文 Sect. 5 的三信道形式）。
@@ -1090,24 +1354,27 @@ class Carena2014SpanKernel:
         n_ch = int(self.b_hz.size)
         gn = np.zeros(n_ch, dtype=np.float64)
         corr = np.zeros(n_ch, dtype=np.float64)
-        table = self.mci_kappas(n_spans, span_length_m)
-        for i in range(n_ch):
-            lo = int(self.mci_lower[i])
-            hi = int(self.mci_upper[i])
-            if lo < 0 or hi < 0:
-                continue
-            pair = (
-                round(float(self.f_rel_hz[hi] - self.f_rel_hz[i]), 6),
-                round(float(self.f_rel_hz[i] - self.f_rel_hz[lo]), 6),
-            )
-            kappas = table[pair]
-            p_cut = float(power[i])
-            p_up = float(power[hi])
-            p_low = float(power[lo])
-            gn[i] += p_cut * p_up * p_low * float(np.sum(kappas.kappa_m0))
-            gn[i] += p_up**2 * p_low * float(np.sum(kappas.kappa_m1_1))
-            corr[i] += p_up**2 * p_low * self.phi * float(np.sum(kappas.kappa_m1_2))
+        if n_ch < 2:
+            return gn, corr
+        km0, km11, km12 = self._mci_channel_kappas(n_spans, span_length_m)
+        lower = np.where(self.mci_lower >= 0, self.mci_lower, 0)
+        upper = np.where(self.mci_upper >= 0, self.mci_upper, 0)
+        valid = (self.mci_lower >= 0) & (self.mci_upper >= 0)
+        p_cut = power
+        p_up = power[upper]
+        p_low = power[lower]
+        # Eq. (23) 的 M0 域：P_CUT P_INT,1 P_INT,-1 kappa_M0。
+        # Eq. (25)/(26) 的 M1 域：P_INT,1^2 P_INT,-1 (kappa_M1,1 + Phi_a kappa_M1,2)。
+        m1 = p_up**2 * p_low
+        gn = np.where(valid, p_cut * p_up * p_low * km0 + m1 * km11, 0.0)
+        corr = np.where(valid, m1 * self.phi * km12, 0.0)
         return gn, corr
+
+    def _xpm_blocks(self, n_spans: int, span_length_m: float, power: NDArrayFloat) -> _XpmBlocks:
+        """XPM 的分块：XCI 与 MCI 的 GN 项与 EGN 修正项（逐信道）。"""
+        xci_gn, xci_corr = self._xci_terms(n_spans, span_length_m, power)
+        mci_gn, mci_corr = self._mci_terms(n_spans, span_length_m, power)
+        return _XpmBlocks(xci_gn=xci_gn, xci_corr=xci_corr, mci_gn=mci_gn, mci_corr=mci_corr)
 
     def _ratios(self, n_spans: int, span_length_m: float, power: NDArrayFloat) -> _EgnRatios:
         """计算 EGN 修正比。
@@ -1126,66 +1393,158 @@ class Carena2014SpanKernel:
         mci_gn, mci_corr = self._mci_terms(n_spans, span_length_m, power)
         return _EgnRatios(sci=sci, xci=xci, mci_gn=mci_gn, mci_corr=mci_corr)
 
+    # --- 跨间相干累加 --------------------------------------------------------
+    def _sci_buildup(self, n_spans: int, span_length_m: float) -> float:
+        """SCI 的跨间相干累加因子 ``B(N) = EGN(N)/EGN(1)``。
+
+        论文 Eq. (7)-(9) 的积分式在 ``N`` 跨与 ``1`` 跨上的比值：Eq. (12) 的跨间因子
+        ``nu(p)`` 已经积进积分里。色散趋零时 ``nu`` 退化成常数 ``N``（``|nu|^2 =
+        N^2``），``B(N) -> N^2``（完全相干）；色散很强时 ``|nu|^2`` 在 ``p`` 轴上的
+        平均趋于 ``N``，``B(N) -> N``（非相干）。
+
+        这个因子是**逐跨复振幅相干求和**要乘上的东西：``|sum_k a_k|^2`` 必须等于
+        ``Gamma * B(N)``。
+        """
+        key = (int(n_spans), float(span_length_m))
+        cached = self._buildup_cache.get(key)
+        if cached is not None:
+            return cached
+        _, egn_now = self._sci_block(n_spans, span_length_m)
+        _, egn_ref = self._sci_block(1, span_length_m)
+        buildup = egn_now / egn_ref if egn_ref > 0.0 else 1.0
+        self._buildup_cache[key] = buildup
+        return buildup
+
+    def _sci_step(self, n_spans: int, span_length_m: float) -> float:
+        """SCI 的等效跨间相位步长 (rad/跨)。
+
+        由相干累加因子反解：``|sum_k e^{j k Theta}|^2 = B(N)``。它随色散变化，
+        色散趋零时趋于 0（完全相干），色散很强时趋于非相干对应的步长。
+        """
+        key = (int(n_spans), float(span_length_m))
+        cached = self._step_cache.get(key)
+        if cached is not None:
+            return cached
+        step = float(solve_dirichlet_step(n_spans, np.asarray(self._sci_buildup(n_spans, span_length_m))))
+        self._step_cache[key] = step
+        return step
+
+    def _coherent_levels(
+        self,
+        n_spans: int,
+        span_length_m: float,
+        power: NDArrayFloat,
+        s2_spm: NDArrayFloat,
+        s2_xpm: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """相干累加需要的两级口径。
+
+        Returns
+        -------
+            ``(逐跨 SCI, 逐跨 XPM, XPM 累加因子)``。逐跨值是"本跨自己的 NLI
+            功率"，累加因子是链路级与单跨的比值（也就是路由层的 ``|sum_k a_k|^2``
+            要乘上的东西）。SCI 的累加因子与信道无关，由
+            :meth:`_sci_buildup` 给出。
+        """
+        spm_power = self._sci_span_level(span_length_m, s2_spm)
+        xpm_power, link_xpm = self._xpm_levels(n_spans, span_length_m, power, s2_xpm)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            safe = np.where(xpm_power > 0.0, xpm_power, 1.0)
+            buildup_xpm = np.where(xpm_power > 0.0, link_xpm / safe, 0.0)
+        return spm_power, xpm_power, buildup_xpm
+
+    def _xpm_levels(
+        self,
+        n_spans: int,
+        span_length_m: float,
+        power: NDArrayFloat,
+        s2_xpm: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """XPM 的两级口径：``(单跨值, N 跨链路级值)``。
+
+        单跨值就是"本跨自己的 NLI 功率"；链路级值是论文 Eq. (16)-(18)/(23)-(26)
+        的积分式在 ``N`` 跨上的结果。两者之比就是跨间相干累加因子。
+        """
+        blocks = self._xpm_blocks(n_spans, span_length_m, power)
+        reference = self._xpm_blocks(1, span_length_m, power)
+        xci_ref = reference.xci_gn
+        safe = np.where(xci_ref > 0.0, xci_ref, 1.0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            block_now = np.where(
+                xci_ref > 0.0,
+                (blocks.xci_gn + blocks.xci_corr) / safe,
+                0.0,
+            )
+            block_ref = np.where(
+                xci_ref > 0.0,
+                (reference.xci_gn + reference.xci_corr) / safe,
+                0.0,
+            )
+        active = power > 0.0
+        per_span = np.where(active, s2_xpm * block_ref + reference.mci_gn + reference.mci_corr, 0.0)
+        link = np.where(active, s2_xpm * block_now + blocks.mci_gn + blocks.mci_corr, 0.0)
+        return per_span, link
+
+    def link_level_nli(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        n_spans: int,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """链路级 NLI 总量（SCI、XPM），由论文积分式直接给出。
+
+        这是"逐跨复振幅相干求和"要还原的目标：路由层逐跨累加得到的
+        ``|sum_k a_k|^2`` 必须与它一致。
+
+        Args:
+            power_in_w: ``(N,)`` 入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            n_spans: 链路级跨数。
+
+        Returns
+        -------
+            ``(sci_w, xpm_w)``，均为 ``(N,)``。
+        """
+        power = np.asarray(power_in_w, dtype=np.float64)
+        n = max(1, int(n_spans))
+        gn_out = self.gn.span_fiber_output(power, float(span_length_m), 1)
+        s2_spm = np.asarray(gn_out.spm_noise_w, dtype=np.float64)
+        s2_xpm = np.asarray(gn_out.xpm_noise_w, dtype=np.float64)
+        sci = self._sci_link_level(n, span_length_m, s2_spm)
+        _, xpm = self._xpm_levels(n, span_length_m, power, s2_xpm)
+        return sci, xpm
+
+    def _sci_link_level(self, n_spans: int, span_length_m: float, s2_spm: NDArrayFloat) -> NDArrayFloat:
+        """SCI 的链路级总量：单跨 GN 骨架 × N 跨上的 EGN 积分块。"""
+        gn_ref, _ = self._sci_block(1, span_length_m)
+        _, egn_now = self._sci_block(n_spans, span_length_m)
+        return s2_spm * (egn_now / gn_ref if gn_ref > 0.0 else 1.0)
+
+    def _sci_span_level(self, span_length_m: float, s2_spm: NDArrayFloat) -> NDArrayFloat:
+        """SCI 的单跨值（本跨自己的 NLI 功率）：单跨 GN 骨架 × 单跨 EGN 积分块。"""
+        gn_ref, egn_ref = self._sci_block(1, span_length_m)
+        return s2_spm * (egn_ref / gn_ref if gn_ref > 0.0 else 1.0)
+
     # --- 热路径 -------------------------------------------------------------
     def evaluate(
         self,
         power_in_w: NDArrayFloat,
         span_length_m: float,
         n_effective_spans: int = 1,
+        span_context: SpanContext | None = None,
     ) -> SpanFiberOutput:
-        """计算单跨的出纤功率与 NLI 噪声。
+        """计算单跨的出纤功率、NLI 噪声与跨间相干用的复振幅。
+
+        跨间相干由**复振幅**承担：每一跨给出 ``a_k = sqrt(Gamma_k) e^{j phi_k}``，
+        路由层按 ``|sum_k a_k|^2`` 累加。相位的步长是论文 Eq. (12) 的等效跨间
+        相位 ``Theta``（由积分式给出的相干累加因子反解），随跨号线性增长。
 
         Args:
             power_in_w: ``(N,)`` 入纤功率 (W)；0 表示该信道未占用。
             span_length_m: 跨段长度 (m)。
-            n_effective_spans: 有效跨数（链路级总量口径）。
-
-        Returns
-        -------
-            :class:`~network_nlo_eval.models.base.SpanFiberOutput`。
-        """
-        return self._evaluate(power_in_w, span_length_m, n_effective_spans, per_span=False)
-
-    def evaluate_per_span(
-        self,
-        power_in_w: NDArrayFloat,
-        span_length_m: float,
-        n_path_spans: int = 1,
-    ) -> SpanFiberOutput:
-        """计算**逐跨等效**的出纤功率与 NLI 噪声。
-
-        2014 论文的 ``mu`` 因子（Eq. (12)）描述的是**跨间相干**累积，而冻结的路由层
-        （``models/route.py``）是**逐跨非相干**相加噪声。若每跨都返回链路级的
-        N 跨总量，路由层会把它加 N 次，结果错 N 倍。
-
-        因此本方法先按链路级公式算出 **N 跨总量**，再除以 ``n_path_spans`` 返回；
-        路由层逐跨相加后正好还原链路级总量。这与 ``semrau2019`` 的处理方式一致。
-
-        Args:
-            power_in_w: ``(N,)`` 入纤功率 (W)；0 表示该信道未占用。
-            span_length_m: 跨段长度 (m)。
-            n_path_spans: 整条光路的跨段数。
-
-        Returns
-        -------
-            :class:`~network_nlo_eval.models.base.SpanFiberOutput`。
-        """
-        return self._evaluate(power_in_w, span_length_m, n_path_spans, per_span=True)
-
-    def _evaluate(
-        self,
-        power_in_w: NDArrayFloat,
-        span_length_m: float,
-        n_spans: int,
-        per_span: bool,
-    ) -> SpanFiberOutput:
-        """核的热路径入口：GN 骨架 + EGN 非高斯修正。
-
-        Args:
-            power_in_w: ``(N,)`` 入纤功率 (W)。
-            span_length_m: 跨段长度 (m)。
-            n_spans: 链路级跨数。
-            per_span: 是否返回逐跨等效值。
+            n_effective_spans: 链路级跨数；只在没有给 ``span_context`` 时用作
+                链路总跨数（此时按"第 0 跨"处理）。
+            span_context: 本跨在链路里的位置（跨号、累计长度、跨长）。
 
         Returns
         -------
@@ -1198,29 +1557,65 @@ class Carena2014SpanKernel:
             )
         if span_length_m <= 0.0:
             raise ValueError(f"span_length_m must be positive, got {span_length_m}.")
-        n = max(1, int(n_spans))
+        context = span_context if span_context is not None else SpanContext(
+            span_index=0,
+            total_spans=max(1, int(n_effective_spans)),
+            cumulative_length_m=0.0,
+            span_length_m=float(span_length_m),
+        )
+        n_spans = max(1, int(context.total_spans))
+        length_m = float(span_length_m)
 
         # --- GN 骨架（冻结闭式：SPM = SCI，XPM = XCI 的 X1 域）--------------
-        gn_out = self.gn.span_fiber_output(power, float(span_length_m), n)
+        # 跨间的累加现在由复振幅负责，闭式核里的跨数幂次不再进入。
+        gn_out = self.gn.span_fiber_output(power, length_m, 1)
         power_out = np.array(gn_out.power_out_w, dtype=np.float64, copy=True)
         s2_spm = np.array(gn_out.spm_noise_w, dtype=np.float64, copy=True)
         s2_xpm = np.array(gn_out.xpm_noise_w, dtype=np.float64, copy=True)
-
-        # --- EGN 修正（论文积分式）------------------------------------------
-        ratios = self._ratios(n, float(span_length_m), power)
         active = power > 0.0
-        rho_sci = ratios.sci if bool(np.any(active)) else 1.0
-        rho_xci = np.where(active, 1.0 + ratios.xci, 0.0)
-        mci = np.where(active, ratios.mci_gn + ratios.mci_corr, 0.0)
 
-        spm_noise = s2_spm * rho_sci
-        xpm_noise = s2_xpm * rho_xci + mci
+        if n_spans == 1:
+            # 单跨：相干退化为单跨，噪声与改造前逐位相同，振幅相位取 0。
+            ratios = self._ratios(1, length_m, power)
+            rho_sci = ratios.sci if bool(np.any(active)) else 1.0
+            rho_xci = np.where(active, 1.0 + ratios.xci, 0.0)
+            mci = np.where(active, ratios.mci_gn + ratios.mci_corr, 0.0)
+            spm_noise = s2_spm * rho_sci
+            xpm_noise = s2_xpm * rho_xci + mci
+            return SpanFiberOutput(
+                power_out,
+                spm_noise,
+                xpm_noise,
+                amplitude_from_power(spm_noise),
+                amplitude_from_power(xpm_noise),
+            )
 
-        scale = 1.0 / float(n) if per_span else 1.0
+        # --- 多跨：逐跨功率 + 跨间相干相位 ---------------------------------------
+        # 逐跨功率 = 本跨自己的 NLI 功率（单跨口径的 GN 骨架 × EGN 修正比）；
+        # 累加因子 = 链路级与单跨的比值。
+        spm_power, xpm_power, buildup_xpm = self._coherent_levels(
+            n_spans, length_m, power, s2_spm, s2_xpm
+        )
+
+        # 等效跨间相位步长：由相干累加因子反解（论文 Eq. (12) 的等效形式）。
+        step_sci = self._sci_step(n_spans, length_m)
+        step_xpm = solve_dirichlet_step(n_spans, buildup_xpm)
+
+        # 相位随跨号线性增长：用本跨出纤处到链路末端的累计长度，
+        # 等跨时相邻跨的相位差恰是等效步长。
+        travelled = (float(context.cumulative_length_m) + float(context.span_length_m)) / length_m
+        phase_sci = step_sci * travelled
+        phase_xpm = step_xpm * travelled
+
+        spm_power = np.where(active, spm_power, 0.0)
+        amplitude_spm = amplitude_from_power(spm_power) * np.exp(1j * phase_sci)
+        amplitude_xpm = amplitude_from_power(xpm_power) * np.exp(1j * phase_xpm)
         return SpanFiberOutput(
             power_out,
-            spm_noise * scale,
-            xpm_noise * scale,
+            spm_power,
+            xpm_power,
+            amplitude_spm,
+            amplitude_xpm,
         )
 
 
@@ -1235,8 +1630,6 @@ class Carena2014Model(RouteModel):
     ``modulation_format``
         2014 Table 1 的调制格式键（``"bpsk"``/``"qpsk"``/``"16qam"``/``"64qam"``），
         决定 ``Phi_a`` 与 ``Psi_a``。表里没有的格式直接报错，不做外推。
-    ``coherence_exponent``
-        跨间相干累积指数，默认 0.05（与冻结基线同口径）。
     ``quadrature_points``
         每个复合子区间上的 Gauss-Legendre 节点数，默认 6。
     ``frequency_points``
@@ -1245,6 +1638,9 @@ class Carena2014Model(RouteModel):
 
     info = CARENA2014_MODEL_INFO
 
+    #: 本模型给出跨间相干用的复振幅，路由层据此做复数累加。
+    supports_span_context = True
+
     def __init__(
         self,
         grid,
@@ -1252,7 +1648,6 @@ class Carena2014Model(RouteModel):
         symbol_rate_hz: float = 50e9,
         modulation_format: str = DEFAULT_MODULATION,
         *,
-        coherence_exponent: float = DEFAULT_COHERENCE_EXPONENT,
         quadrature_points: int = DEFAULT_QUADRATURE_POINTS,
         frequency_points: int = DEFAULT_FREQUENCY_POINTS,
         **route_options,
@@ -1264,7 +1659,6 @@ class Carena2014Model(RouteModel):
             ref_fiber_config: 参考光纤配置。
             symbol_rate_hz: 符号率 (Hz)。
             modulation_format: 调制格式键，必须在 :data:`MODULATION_TABLE` 里。
-            coherence_exponent: 跨间相干累积指数。
             quadrature_points: 每个复合子区间上的 Gauss-Legendre 节点数。
             frequency_points: CUT 带内的 NLI PSD 采样频率点数。
             **route_options: 透传给 :class:`~network_nlo_eval.models.route.RouteModel`。
@@ -1281,11 +1675,8 @@ class Carena2014Model(RouteModel):
             )
         self.modulation_format = modulation_format
         self.phi, self.psi = MODULATION_TABLE[modulation_format]
-        self.coherence_exponent = float(coherence_exponent)
         self.quadrature_points = int(quadrature_points)
         self.frequency_points = int(frequency_points)
-        #: 当前光路的跨段数；只在 :meth:`evaluate_path` 调用期间有效。
-        self._n_path_spans = 1
         # GN 骨架：冻结的闭式 GN 评估器（与 ``ecz`` 同口径）。
         self._gn = MultiBandISRSGN(
             grid,
@@ -1303,62 +1694,64 @@ class Carena2014Model(RouteModel):
             gn_evaluator=self._gn.for_fiber(fiber_config),
             phi=self.phi,
             psi=self.psi,
-            coherence_exponent=self.coherence_exponent,
             quadrature_points=self.quadrature_points,
             frequency_points=self.frequency_points,
         )
 
     # --- 路径累积 ----------------------------------------------------------
-    def evaluate_path(
-        self,
-        optical_path: MultiSpanOpticalPath,
-        power_in_w: NDArrayFloat,
-    ) -> PathQoTResult:
-        """沿路径评估，并让逐跨累加还原链路级的 N 跨总量。
-
-        2014 论文的 ``mu`` 因子（Eq. (12)）描述跨间相干累积，而冻结的路由层是逐跨
-        非相干相加。这里先数出光路的跨段数，再让单跨核返回逐跨等效值，累加
-        结果即等于链路级总量。
-        """
-        previous = self._n_path_spans
-        self._n_path_spans = _count_spans(optical_path)
-        try:
-            return super().evaluate_path(optical_path, power_in_w)
-        finally:
-            self._n_path_spans = previous
-
     def span_step(
         self,
         fiber_config: FiberSpanConfig,
         edfa_config: EDFAConfig | None,
         power_in_w: NDArrayFloat,
         span_length_m: float,
+        span_context: SpanContext | None = None,
     ) -> ElementOutput:
-        """单跨：调用核（逐跨等效值），再统一走放大器/ASE。"""
+        """单跨：调用核（带跨间相干振幅），再统一走放大器/ASE。
+
+        振幅的参考面按契约是**本跨出纤处**（即放大器之前）。冻结层
+        :func:`~network_nlo_eval.models.route.apply_amplifier_and_roadm` 在相干档会
+        把振幅再乘 ``sqrt(gain)``，而纯功率档不给噪声乘 ``gain``——两种口径因此
+        差一个放大器增益（见报告里的最小复现）。本模型要与冻结基线同口径（噪声
+        不被行内放大器放大），所以先把振幅摘下来走放大器，再按原样贴回。
+
+        Args:
+            fiber_config: 该跨的光纤参数。
+            edfa_config: 跨段放大器配置。
+            power_in_w: 入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            span_context: 本跨在链路里的位置；给出时核据此给出相对相位。
+
+        Returns
+        -------
+            :class:`~network_nlo_eval.models.base.ElementOutput`。
+        """
         kernel = self.kernel_for(fiber_config)
-        fiber_output = kernel.evaluate_per_span(power_in_w, span_length_m, self._n_path_spans)
+        fiber_output = kernel.evaluate(power_in_w, span_length_m, 1, span_context=span_context)
+        # 放大器/ROADM 只处理功率与 ASE；振幅保持在出纤处的参考面上。
+        stripped = SpanFiberOutput(
+            fiber_output.power_out_w,
+            fiber_output.spm_noise_w,
+            fiber_output.xpm_noise_w,
+        )
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
-        return apply_amplifier_and_roadm(
+        element = apply_amplifier_and_roadm(
             power_in_w=power_in_w,
-            fiber_output=fiber_output,
+            fiber_output=stripped,
             edfa_config=edfa_config,
             roadm_config=None,
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
         )
-
-
-def _count_spans(optical_path: MultiSpanOpticalPath) -> int:
-    """数出光路实际包含的跨段数（与路由层的跨段切分规则一致）。"""
-    total = 0
-    for fiber in optical_path.fiber_configs:
-        remaining_km = fiber.length_km
-        while remaining_km > 1e-12:
-            span_km = min(remaining_km, fiber.max_span_length_km)
-            total += 1
-            remaining_km -= span_km
-    return max(1, total)
+        return ElementOutput(
+            element.power_out_w,
+            element.spm_noise_w,
+            element.xpm_noise_w,
+            element.ase_noise_w,
+            fiber_output.nli_amplitude_spm,
+            fiber_output.nli_amplitude_xpm,
+        )
 
 
 register_model(CARENA2014_MODEL_INFO, Carena2014Model)
