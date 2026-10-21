@@ -126,11 +126,9 @@ def apply_amplifier_and_roadm(
         power_out = power_out_fiber * gain
         ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
         ase[power_in_w <= 0] = 0
-        if amp_spm is not None:
-            # 噪声功率被放大 gain 倍，振幅只放大 sqrt(gain)。
-            amp_root = np.sqrt(gain)
-            amp_spm = amp_spm * amp_root
-            amp_xpm = amp_xpm * amp_root
+        # 注意：功率口径的 NLI 在本层**不**乘放大器增益（黄金向量锁定该口径），
+        # 因此复振幅也不能乘 sqrt(gain)，否则 |amp|**2 与 *_noise_w 不再相等，
+        # 跨模型比较会整体差一个跨增益。
 
     if roadm_config is not None:
         loss_lin = 10 ** (roadm_config.path_loss_db() / 10)

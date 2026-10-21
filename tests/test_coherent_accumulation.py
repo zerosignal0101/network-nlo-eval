@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from network_nlo_eval.models.base import ElementOutput, MultiSpanOpticalPath, SpanFiberOutput
+from network_nlo_eval.models.base import ElementOutput, MultiSpanOpticalPath
 from network_nlo_eval.models.route import accumulate_route
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
@@ -144,3 +144,36 @@ def test_span_context_reaches_models_that_ask_for_it() -> None:
     assert [index for index, _, _ in seen] == [0, 1, 2]
     assert {total for _, total, _ in seen} == {3}
     assert [round(cum, 1) for _, _, cum in seen] == [0.0, 80000.0, 160000.0]
+
+
+def test_amplitude_magnitude_matches_noise_power_through_amplifier_and_roadm() -> None:
+    """|amp|**2 必须始终等于同名噪声功率，包括经放大与 ROADM 衰减之后。
+
+    功率口径的 NLI 不在这一层乘放大器增益，振幅若乘 sqrt(gain)，两条口径就会相差
+    一个跨增益，跨模型比较会整体偏 20 dB 量级。这条测试就是防这个。
+    """
+    from network_nlo_eval.models.base import SpanFiberOutput
+    from network_nlo_eval.models.route import apply_amplifier_and_roadm
+    from network_nlo_eval.network.elements import ROADMConfig
+
+    power_in = np.full(N, 1e-3)
+    fiber_out = SpanFiberOutput(
+        power_out_w=np.full(N, 1e-5),
+        spm_noise_w=np.full(N, 2e-7),
+        xpm_noise_w=np.full(N, 3e-7),
+        nli_amplitude_spm=np.full(N, np.sqrt(2e-7), dtype=np.complex128) * np.exp(0.7j),
+        nli_amplitude_xpm=np.full(N, np.sqrt(3e-7), dtype=np.complex128) * np.exp(-1.1j),
+    )
+
+    for roadm in (None, ROADMConfig(loss_db=6.0, filtering_penalty_db=0.5)):
+        out = apply_amplifier_and_roadm(
+            power_in_w=power_in,
+            fiber_output=fiber_out,
+            edfa_config=EDFAConfig(),
+            roadm_config=roadm,
+            nf_lin=np.full(N, 10 ** (5.5 / 10)),
+            f_abs_hz=np.array([193.1e12, 193.2e12]),
+            bandwidth_hz=np.full(N, 64e9),
+        )
+        assert np.allclose(np.abs(out.nli_amplitude_spm) ** 2, out.spm_noise_w, rtol=1e-12)
+        assert np.allclose(np.abs(out.nli_amplitude_xpm) ** 2, out.xpm_noise_w, rtol=1e-12)
