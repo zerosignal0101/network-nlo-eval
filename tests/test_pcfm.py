@@ -36,13 +36,18 @@ from network_nlo_eval.benchmarks.cases import (
     launch_profile,
 )
 from network_nlo_eval.benchmarks.runner import make_model
-from network_nlo_eval.models.base import MultiSpanOpticalPath
+from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.models.base import MultiSpanOpticalPath, SpanContext
 from network_nlo_eval.models.pcfm import (
     EGN_A_COEFFICIENTS,
     EGN_PHI,
     PCFM_MODEL_INFO,
     PCFMModel,
     PCFMSpanKernel,
+    _coherent_factor,
+    _equivalent_phase_ramp,
+    _gn_weighted_xpm_visibility,
+    _self_beating_visibility,
     egn_rho_cut,
     egn_rho_nch,
 )
@@ -60,6 +65,42 @@ BIAS_POWER_DBM = -1.0
 TEST_BANDWIDTH_HZ = 64e9
 #: Span length of the kernel-level equivalence tests (m).
 TEST_SPAN_LENGTH_M = 10e3
+
+#: Pre-change (pure power convention) bit-exact baseline of the single-span
+#: link, for ``(case, egn) -> (SNR_dB, SPM_W, XPM_W)`` at the mid channel.
+#:
+#: The inter-span coherence degenerates to the single span when the link has
+#: one span: the route layer keeps the pure power branch, so every bit of the
+#: noise and of the SNR must be the one of the implementation without
+#: coherence.  The numbers are taken from the implementation at the commit
+#: before the coherence was added.
+PRE_CHANGE_SINGLE_SPAN = {
+    ("scaling_40ch", False): (27.774925839000055, 1.5657871571852133e-07, 3.0948944394444263e-07),
+    ("scaling_40ch", True): (27.803266272644372, 1.32279264826164e-07, 3.2298318370042034e-07),
+    ("scaling_160ch", False): (27.589510907224284, 1.264131064364181e-07, 3.352181851990189e-07),
+    ("scaling_160ch", True): (27.602119772219286, 1.0679505644855038e-07, 3.498336980736962e-07),
+    ("c_57ch", False): (26.520897523858203, 8.556243108642051e-07, 1.855548265913478e-06),
+    ("c_57ch", True): (26.57892953449453, 7.228399740611891e-07, 1.936450170307306e-06),
+    ("cl_152ch", False): (27.425820112126246, 7.489518949850022e-08, 1.951868545624842e-07),
+    ("cl_152ch", True): (27.43485281929605, 6.327220504022797e-08, 2.0369700142140856e-07),
+    ("escl_479ch", False): (22.636569650334728, 5.072100113450804e-08, 2.194110831711496e-07),
+    ("escl_479ch", True): (22.63452402288508, 4.2849608968443736e-08, 2.2897740639741178e-07),
+}
+
+#: ``c_57ch``, 10 spans, SMF: the SPM inter-span buildup.
+#:
+#: The brief asks for ``1.40 +- 0.03``; the reference values are the
+#: independent quadrature of the work package (1.402) and the numerical GN
+#: model of the repository (1.4079).  The visibility caliber of this model is
+#: the one of the numerical model, so the value must land on 1.4079.
+SPM_BUILDUP_TARGET = 1.4079
+SPM_BUILDUP_TOLERANCE = 0.03
+
+#: Number of spans of the buildup tests.
+COHERENCE_SPANS = 10
+
+#: Span length of the coherence tests (m).
+COHERENCE_SPAN_LENGTH_M = 100e3
 
 
 def _single_span_path(case) -> MultiSpanOpticalPath:
@@ -226,36 +267,54 @@ def test_poly_degree_stability() -> None:
     assert max_delta < 0.1, f"SNR difference between N_p=5 and N_p=9 is {max_delta:.4f} dB"
 
 
-def test_transparent_spans_accumulate_linearly() -> None:
-    """Over transparent spans the NLI adds up, Eq. (8).
+def test_transparent_spans_accumulate_with_the_coherent_factor() -> None:
+    """Over transparent spans the NLI follows the coherent factor, not Eq. (8).
 
     The EDFA is left without a target gain, so the route layer compensates the
     span loss exactly and the signal power at the input of every span is the
     launch power.  The transfer factor of Eq. (7) is then one and the NLI of
-    ``N`` spans must be ``N`` times the NLI of a single span.
+    ``N`` spans is the single-span NLI times the coherent factor
+    ``R(N) = N + 2 sum_k (N-k) V(k L)``.
+
+    Eq. (8) of the paper, the linear accumulation, is the *incoherent* limit
+    of that relation (``V = 0`` gives ``R = N``).  The inter-span coherence
+    replaces it: on SMF the factor is above ``N``, because the GN kernel
+    concentrates the NLI power on the phase-matched frequency pairs, and those
+    pairs stay coherent across the spans.  The test therefore asserts the
+    analytic factor (an exact statement) instead of the old "five times the
+    single span" (which only held in the incoherent limit).
     """
     case = build_case("scaling_40ch")
     fiber = build_path(case).fiber_configs[0]
     power = launch_profile(case, None)
+    model = make_model("pcfm", case)
+    kernel = model.kernel_for(fiber)
 
     def _run(span_count: int):
         path = MultiSpanOpticalPath(
             [fiber] * span_count,
             [EDFAConfig(noise_figure_db=case.edfa_noise_figure_db)] * span_count,
         )
-        return make_model("pcfm", case).evaluate_path(path, power)
+        return model.evaluate_path(path, power)
 
     single = _run(1)
     five = _run(5)
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(5, 100e3)
 
-    single_nli = np.asarray(single.spm_noise_w) + np.asarray(single.xpm_noise_w)
-    five_nli = np.asarray(five.spm_noise_w) + np.asarray(five.xpm_noise_w)
-    relative_error = np.abs(five_nli / (5.0 * single_nli) - 1.0)
+    spm_ratio = np.asarray(five.spm_noise_w) / np.asarray(single.spm_noise_w)
+    xpm_ratio = np.asarray(five.xpm_noise_w) / np.asarray(single.xpm_noise_w)
+    assert np.allclose(spm_ratio, factor_spm, rtol=1e-9, atol=0.0)
+    assert np.allclose(xpm_ratio, factor_xpm, rtol=1e-9, atol=0.0)
+
+    # The coherent gain must be real: the old linear law (a factor of five)
+    # no longer holds, otherwise the assertion above would be vacuous.
+    assert np.all(factor_spm > 5.0)
+    assert np.max(np.abs(spm_ratio / 5.0 - 1.0)) > 0.02
     print(
-        "transparent spans: max relative NLI error over 5 spans "
-        f"{float(np.max(relative_error)):.3e}, max deviation {float(np.max(np.abs(five_nli / single_nli - 5.0))):.3e}"
+        "transparent spans: coherent factor "
+        f"{float(factor_spm[0]):.4f} (linear law: 5.0), max deviation "
+        f"{float(np.max(np.abs(spm_ratio / 5.0 - 1.0))):.3e}"
     )
-    assert np.max(relative_error) < 0.02, f"NLI does not accumulate linearly: {relative_error}"
 
 
 def test_lumped_loss_supported() -> None:
@@ -594,3 +653,504 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
             symbol_rate_hz=64e9,
             poly_degree=-1,
         )
+
+
+# ---------------------------------------------------------------------------
+# inter-span coherence (this round of work)
+# ---------------------------------------------------------------------------
+#
+# The PCFM paper accumulates the NLI linearly over transparent spans, Eq. (8).
+# That is the incoherent limit; the repository now uses the convention in
+# which the inter-span visibility is weighted by the NLI noise power and the
+# route layer sums |sum_k a_k|**2.  The caliber and the derivation are
+# documented in :mod:`network_nlo_eval.models.pcfm`.
+
+
+def _coherence_path(case, n_spans: int) -> MultiSpanOpticalPath:
+    """Path of ``n_spans`` identical spans of the benchmark fibre."""
+    fiber = build_path(case).fiber_configs[0]
+    return MultiSpanOpticalPath(
+        [fiber] * n_spans,
+        [EDFAConfig(noise_figure_db=case.edfa_noise_figure_db)] * n_spans,
+    )
+
+
+def _graded_grid(low: float, high: float, n_points: int, power: float = 2.0) -> NDArrayFloat:
+    """Grid on ``[low, high]`` clustered towards the band centre.
+
+    The GN weight ``1/(abar**2 + theta**2)`` peaks where the mismatch
+    vanishes, i.e. at the corner of the admissible region that contains the
+    origin.  A uniform grid under-resolves that peak, so the independent
+    reference below uses a clustered grid.
+    """
+    s = np.linspace(0.0, 1.0, n_points)
+    s = np.sign(s) * np.abs(s) ** power
+    return low + (high - low) * s
+
+
+def _independent_visibility(
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: float,
+    span_length_m: float,
+    distances_m: NDArrayFloat,
+    n_frequency: int = 21,
+    n_offset: int = 801,
+) -> NDArrayFloat:
+    """Direct two-dimensional quadrature of the NLI-weighted visibility.
+
+    This is an independent reference: it integrates the GN weight over the
+    whole ``(observed frequency, first offset, second offset)`` domain
+    without the one-dimensional reduction and without the tabulated
+    antiderivatives of the model.
+
+    Args:
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        bandwidth_hz: Channel bandwidth (Hz).
+        span_length_m: Length of one span (m).
+        distances_m: ``(K,)`` distances between the two copies (m).
+        n_frequency: Number of observed frequencies.
+        n_offset: Number of nodes per offset direction.
+
+    Returns
+    -------
+        The ``(K,)`` visibility.
+    """
+    half_band = 0.5 * bandwidth_hz
+    abar = alpha_npm_m * span_length_m
+    exp_abar = float(np.exp(-abar))
+    rate = 4.0 * np.pi**2 * beta2_abs_s2_m * span_length_m
+    index = np.arange(n_frequency, dtype=np.float64)
+    frequencies = -half_band * np.cos(np.pi * index / (n_frequency - 1))
+    frequency_weights = np.empty(n_frequency, dtype=np.float64)
+    frequency_weights[0] = 0.5 * (frequencies[1] - frequencies[0])
+    frequency_weights[-1] = 0.5 * (frequencies[-1] - frequencies[-2])
+    frequency_weights[1:-1] = 0.5 * (frequencies[2:] - frequencies[:-2])
+    numerator = np.zeros(distances_m.size, dtype=np.float64)
+    denominator = 0.0
+    for frequency, frequency_weight in zip(frequencies, frequency_weights, strict=True):
+        low = -half_band - float(frequency)
+        high = half_band - float(frequency)
+        axis = _graded_grid(low, high, n_offset)
+        weights = np.empty(n_offset, dtype=np.float64)
+        weights[0] = 0.5 * (axis[1] - axis[0])
+        weights[-1] = 0.5 * (axis[-1] - axis[-2])
+        weights[1:-1] = 0.5 * (axis[2:] - axis[:-2])
+        first, second = np.meshgrid(axis, axis, indexing="ij")
+        admissible = (first + second >= low) & (first + second <= high)
+        theta = np.abs(rate * first * second)
+        weight = np.where(
+            admissible,
+            (1.0 - 2.0 * exp_abar * np.cos(theta) + exp_abar**2) / (abar**2 + theta**2),
+            0.0,
+        )
+        measure = weights[:, None] * weights[None, :]
+        cosine = np.cos(theta[None, :, :] * (distances_m[:, None, None] / span_length_m))
+        numerator += frequency_weight * np.sum(
+            np.where(admissible[None, :, :], weight[None, :, :] * cosine, 0.0) * measure[None, :, :],
+            axis=(1, 2),
+        )
+        denominator += frequency_weight * np.sum(weight * measure)
+    return numerator / denominator
+
+
+def test_model_declares_span_context_support() -> None:
+    """The model must declare the inter-span coherence support."""
+    assert PCFMModel.supports_span_context is True
+    case = build_case("scaling_40ch")
+    model = make_model("pcfm", case)
+    assert getattr(model, "supports_span_context", False) is True
+
+
+def test_single_span_is_bit_identical_to_the_pre_change_model() -> None:
+    """A single-span link must be bit-for-bit identical to the pre-change model.
+
+    The inter-span coherence degenerates to the single span when the link has
+    one span: the route layer keeps the pure power branch, so every bit of the
+    noise and of the SNR must be the one of the implementation without
+    coherence.
+    """
+    for (case_name, egn), (snr_db, spm_w, xpm_w) in PRE_CHANGE_SINGLE_SPAN.items():
+        case = build_case(case_name)
+        power = launch_profile(case, None)
+        model = make_model("pcfm", case, egn=egn)
+        result = model.evaluate_path(_coherence_path(case, 1), power)
+        index = case.num_channels // 2
+        assert result.snr_db[index] == snr_db, f"{case_name} egn={egn}: the SNR changed"
+        assert result.spm_noise_w[index] == spm_w, f"{case_name} egn={egn}: the SPM changed"
+        assert result.xpm_noise_w[index] == xpm_w, f"{case_name} egn={egn}: the XPM changed"
+
+
+def test_single_span_uses_the_power_only_branch() -> None:
+    """With one span the kernel must not hand out complex amplitudes."""
+    case = build_case("scaling_40ch")
+    fiber = build_path(case).fiber_configs[0]
+    power = launch_profile(case, None)
+    model = make_model("pcfm", case)
+    step = model.span_step(
+        fiber,
+        EDFAConfig(noise_figure_db=case.edfa_noise_figure_db),
+        power,
+        100e3,
+        span_context=SpanContext(
+            span_index=0, total_spans=1, cumulative_length_m=0.0, span_length_m=100e3
+        ),
+    )
+    assert step.nli_amplitude_spm is None
+    assert step.nli_amplitude_xpm is None
+
+
+def test_amplitude_magnitude_equals_the_noise_power() -> None:
+    """``|a|**2`` must equal the noise power of the same name (``rtol=1e-12``)."""
+    case = build_case("scaling_40ch")
+    fiber = build_path(case).fiber_configs[0]
+    power = launch_profile(case, None)
+    model = make_model("pcfm", case)
+    step = model.span_step(
+        fiber,
+        EDFAConfig(noise_figure_db=case.edfa_noise_figure_db),
+        power,
+        100e3,
+        span_context=SpanContext(
+            span_index=2, total_spans=10, cumulative_length_m=200e3, span_length_m=100e3
+        ),
+    )
+    assert step.nli_amplitude_spm is not None
+    assert step.nli_amplitude_xpm is not None
+    assert np.allclose(np.abs(step.nli_amplitude_spm) ** 2, step.spm_noise_w, rtol=1e-12, atol=0.0)
+    assert np.allclose(np.abs(step.nli_amplitude_xpm) ** 2, step.xpm_noise_w, rtol=1e-12, atol=0.0)
+
+
+def test_c_57ch_ten_span_buildup_matches_the_brief() -> None:
+    """``c_57ch``, 10 spans: the SPM buildup must land on 1.40 +- 0.03.
+
+    Caliber: the visibility weighted by the NLI power.  The reference values
+    are 1.402 (independent quadrature of the work package) and 1.4079 (the
+    numerical GN model of the repository, whose caliber this model follows).
+    """
+    case = build_case("c_57ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    factor_spm, _ = kernel.inter_span_coherent_factor(COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M)
+    buildup = factor_spm / COHERENCE_SPANS
+    assert np.all(
+        np.abs(buildup - SPM_BUILDUP_TARGET) <= SPM_BUILDUP_TOLERANCE
+    ), f"SPM buildup {buildup.min():.4f}..{buildup.max():.4f} outside the brief"
+    assert np.allclose(buildup, SPM_BUILDUP_TARGET, rtol=1e-4)
+
+
+def test_buildup_table_is_monotone_in_the_span_count() -> None:
+    """The buildup grows with the span count and starts at one."""
+    case = build_case("c_57ch")
+    power = launch_profile(case, 0.0)
+    model = make_model("pcfm", case)
+    single = model.evaluate_path(_coherence_path(case, 1), power)
+    values = []
+    for n_spans in (1, 2, 5, 10):
+        result = model.evaluate_path(_coherence_path(case, n_spans), power)
+        values.append(
+            float(
+                np.mean(
+                    np.asarray(result.spm_noise_w) / np.asarray(single.spm_noise_w) / n_spans
+                )
+            )
+        )
+    assert values[0] == pytest.approx(1.0, rel=1e-12)
+    assert values == sorted(values)
+    assert values[-1] == pytest.approx(SPM_BUILDUP_TARGET, abs=SPM_BUILDUP_TOLERANCE)
+    print(f"SPM buildup over the span count: {values}")
+
+
+def test_zero_dispersion_gives_full_coherence() -> None:
+    """Without dispersion the inter-span accumulation is fully coherent.
+
+    With ``D -> 0`` the visibility goes to one, so the coherent factor goes
+    to ``N**2`` and the buildup to ``N``.  The *noise* of the PCFM itself is
+    singular at exactly zero dispersion (the kernels carry ``1/beta2``), so
+    the test asserts on the coherent factor, which is the quantity the
+    inter-span coherence is about.
+    """
+    case = build_case("c_57ch")
+    fiber = build_path(case).fiber_configs[0]
+    near_zero = fiber.model_copy(
+        update={"dispersion_parameter_d": 1e-9, "dispersion_slope_s": 1e-9}
+    )
+    model = make_model("pcfm", case)
+    kernel = model.kernel_for(near_zero)
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(
+        COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M
+    )
+    assert np.allclose(factor_spm, 100.0, rtol=1e-4)
+    assert np.allclose(factor_xpm, 100.0, rtol=1e-6)
+    print(
+        f"zero dispersion: R_spm({COHERENCE_SPANS}) = {factor_spm[0]:.6f}, "
+        f"buildup = {factor_spm[0] / COHERENCE_SPANS:.6f}"
+    )
+
+
+def test_strong_dispersion_stays_below_full_coherence() -> None:
+    """A strong dispersion must not reach the fully coherent limit."""
+    case = build_case("c_57ch")
+    fiber = build_path(case).fiber_configs[0]
+    strong = fiber.model_copy(update={"dispersion_parameter_d": 100.0, "dispersion_slope_s": 0.0})
+    model = make_model("pcfm", case)
+    kernel = model.kernel_for(strong)
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(
+        COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M
+    )
+    # The coherent factor is above N (the GN kernel keeps the phase-matched
+    # pairs coherent) but far below N**2.
+    assert np.all(factor_spm > 10.0)
+    assert np.all(factor_spm < 20.0)
+    # The XPM part is essentially incoherent at any dispersion.
+    assert np.all(np.abs(factor_xpm - 10.0) < 0.2)
+
+
+def test_visibility_matches_the_numerical_reference() -> None:
+    """The visibility must be the one of the numerical GN model, bit for bit.
+
+    The caliber of the work package is the one of the numerical model: the
+    visibility is weighted by the NLI noise power.  The two implementations
+    are independent (no import between the models), so the equality is a
+    genuine cross-check of the algorithm.
+    """
+    if not _NUMERICAL_AVAILABLE:
+        pytest.skip("the numerical GN reference is not available")
+    from network_nlo_eval.models.numerical import (
+        _self_beating_visibility as numerical_self_beating_visibility,
+    )
+
+    case = build_case("c_57ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    distances = np.arange(1, COHERENCE_SPANS, dtype=np.float64) * COHERENCE_SPAN_LENGTH_M
+    mine = _self_beating_visibility(
+        kernel.beta2_abs_s2_m,
+        kernel.alpha_visibility_npm,
+        kernel.b_hz,
+        COHERENCE_SPAN_LENGTH_M,
+        distances,
+    )
+    reference = numerical_self_beating_visibility(
+        kernel.beta2_abs_s2_m,
+        kernel.alpha_visibility_npm,
+        kernel.b_hz,
+        COHERENCE_SPAN_LENGTH_M,
+        distances,
+    )
+    assert np.array_equal(mine, reference)
+    assert float(mine[0, 0]) == pytest.approx(0.113769, rel=1e-4)
+
+
+def test_visibility_matches_an_independent_quadrature() -> None:
+    """The reduced quadrature must agree with a direct two-dimensional one."""
+    case = build_case("c_57ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    distances = np.array([COHERENCE_SPAN_LENGTH_M], dtype=np.float64)
+    mine = _self_beating_visibility(
+        kernel.beta2_abs_s2_m,
+        kernel.alpha_visibility_npm,
+        kernel.b_hz,
+        COHERENCE_SPAN_LENGTH_M,
+        distances,
+    )[0, 0]
+    reference = _independent_visibility(
+        kernel.beta2_abs_s2_m,
+        kernel.alpha_visibility_npm,
+        float(kernel.b_hz[0]),
+        COHERENCE_SPAN_LENGTH_M,
+        distances,
+    )[0]
+    assert float(mine) == pytest.approx(float(reference), rel=1e-3)
+
+
+def test_visibility_is_converged_in_the_quadrature() -> None:
+    """Doubling the quadrature points must not move the visibility much."""
+    case = build_case("c_57ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    distances = np.arange(1, COHERENCE_SPANS, dtype=np.float64) * COHERENCE_SPAN_LENGTH_M
+    coarse = _self_beating_visibility(
+        kernel.beta2_abs_s2_m,
+        kernel.alpha_visibility_npm,
+        kernel.b_hz,
+        COHERENCE_SPAN_LENGTH_M,
+        distances,
+        n_frequency=21,
+        n_quadrature=100,
+    )
+    fine = _self_beating_visibility(
+        kernel.beta2_abs_s2_m,
+        kernel.alpha_visibility_npm,
+        kernel.b_hz,
+        COHERENCE_SPAN_LENGTH_M,
+        distances,
+        n_frequency=41,
+        n_quadrature=200,
+    )
+    assert np.max(np.abs(fine - coarse)) < 5.0e-4
+
+
+def test_phase_comes_only_from_the_span_context() -> None:
+    """The phase of the amplitudes must come from the span context only.
+
+    The model keeps no cross-span counter of its own: the same context gives
+    the same amplitude bit for bit, and a context with another span index but
+    the same accumulated length gives the same amplitude, because the phase
+    follows the accumulated length.
+    """
+    case = build_case("scaling_40ch")
+    fiber = build_path(case).fiber_configs[0]
+    power = launch_profile(case, None)
+    model = make_model("pcfm", case)
+    edfa = EDFAConfig(noise_figure_db=case.edfa_noise_figure_db)
+    context = SpanContext(
+        span_index=3, total_spans=10, cumulative_length_m=300e3, span_length_m=100e3
+    )
+    first = model.span_step(fiber, edfa, power, 100e3, span_context=context)
+    second = model.span_step(fiber, edfa, power, 100e3, span_context=context)
+    assert np.array_equal(first.nli_amplitude_spm, second.nli_amplitude_spm)
+    assert np.array_equal(first.nli_amplitude_xpm, second.nli_amplitude_xpm)
+
+    # Same accumulated length, different span index: the phase is unchanged.
+    other = model.span_step(
+        fiber,
+        edfa,
+        power,
+        100e3,
+        span_context=SpanContext(
+            span_index=7, total_spans=10, cumulative_length_m=300e3, span_length_m=100e3
+        ),
+    )
+    assert np.array_equal(first.nli_amplitude_spm, other.nli_amplitude_spm)
+
+
+def test_result_is_deterministic() -> None:
+    """The same path must give bit-identical results."""
+    case = build_case("c_57ch")
+    power = launch_profile(case, 0.0)
+    model = make_model("pcfm", case)
+    first = model.evaluate_path(_coherence_path(case, 10), power)
+    second = model.evaluate_path(_coherence_path(case, 10), power)
+    for name in ("spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        assert np.array_equal(getattr(first, name), getattr(second, name)), name
+
+
+def test_route_accumulation_matches_the_analytic_coherent_factor() -> None:
+    """The route layer must reproduce the analytic coherent factor.
+
+    The route layer sums the complex amplitudes span by span, so the NLI of
+    the link must be the single-span NLI times the coherent factor
+    ``R(N) = N + 2 sum_k (N-k) V(k L)``.
+    """
+    case = build_case("c_57ch")
+    power = launch_profile(case, 0.0)
+    model = make_model("pcfm", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    single = model.evaluate_path(_coherence_path(case, 1), power)
+    many = model.evaluate_path(_coherence_path(case, 10), power)
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(
+        10, COHERENCE_SPAN_LENGTH_M
+    )
+    assert np.allclose(
+        np.asarray(many.spm_noise_w),
+        np.asarray(single.spm_noise_w) * factor_spm,
+        rtol=1e-9,
+        atol=0.0,
+    )
+    assert np.allclose(
+        np.asarray(many.xpm_noise_w),
+        np.asarray(single.xpm_noise_w) * factor_xpm,
+        rtol=1e-9,
+        atol=0.0,
+    )
+
+
+def test_xpm_inter_span_coherence_is_negligible() -> None:
+    """The XPM inter-span coherence is negligible, in both calibers.
+
+    Audit (``c_57ch``, 75 GHz spacing, 100 km SMF, mid channel):
+
+    * band average (the convention kept): ``V_xpm(1 span) = -0.0046`` and a
+      coherent factor of ``R_xpm(10) = 9.943`` (buildup 0.994);
+    * NLI-weighted: ``V_xpm(1 span) = 3.08e-4`` and ``R_xpm(10) = 10.008``
+      (buildup 1.001).
+
+    The weight moves the XPM noise by 0.028 dB, i.e. below the 0.05 dB
+    threshold of the work package, so the band average is kept.
+    """
+    case = build_case("c_57ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    _, factor_xpm = kernel.inter_span_coherent_factor(10, COHERENCE_SPAN_LENGTH_M)
+    assert np.all(factor_xpm < 10.05)
+    assert np.all(factor_xpm > 9.90)
+
+    # The NLI-weighted caliber moves the XPM noise by less than 0.05 dB.
+    bandwidth = float(kernel.b_hz[0])
+    offset = float(kernel.partner_offset_hz[0])
+    distances = np.arange(1, 10, dtype=np.float64) * COHERENCE_SPAN_LENGTH_M
+    weighted = np.array(
+        [
+            _gn_weighted_xpm_visibility(
+                kernel.beta2_abs_s2_m,
+                kernel.alpha_visibility_npm,
+                bandwidth,
+                COHERENCE_SPAN_LENGTH_M,
+                distance,
+                offset,
+            )
+            for distance in distances
+        ]
+    )
+    argument = (
+        2.0 * np.pi**2 * kernel.beta2_abs_s2_m * distances * offset * bandwidth
+    )
+    band_average = np.sin(argument) / argument
+    factor_weighted = _coherent_factor(10, weighted[:, None])[0]
+    factor_band = _coherent_factor(10, band_average[:, None])[0]
+    effect_db = 10.0 * np.log10(factor_weighted / factor_band)
+    assert abs(effect_db) < 0.05, f"the XPM weight moves the noise by {effect_db:.4f} dB"
+    print(
+        f"XPM weight effect: {effect_db:+.4f} dB "
+        f"(R band {factor_band:.5f}, R weighted {factor_weighted:.5f})"
+    )
+
+
+def test_equivalent_phase_ramp_inverts_the_coherent_factor() -> None:
+    """The phase ramp must reproduce the coherent factor it was built from."""
+    case = build_case("c_57ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    factor_spm, _ = kernel.inter_span_coherent_factor(10, COHERENCE_SPAN_LENGTH_M)
+    ramp = _equivalent_phase_ramp(10, factor_spm)
+    rebuilt = (np.sin(0.5 * 10 * ramp) / np.sin(0.5 * ramp)) ** 2
+    assert np.allclose(rebuilt, factor_spm, rtol=1e-9)
+
+
+def test_coherent_accumulation_does_not_regress_the_latency() -> None:
+    """The coherence must not slow the hot path down.
+
+    The inter-span quantities are cached per (span count, span length) and
+    per (span count, span length, accumulated length), so the hot path only
+    pays an ``O(N)`` complex multiplication per span.
+    """
+    import time
+
+    case = build_case("cl_152ch")
+    power = launch_profile(case, None)
+    model = make_model("pcfm", case)
+
+    def median_ms(n_spans: int) -> float:
+        path = _coherence_path(case, n_spans)
+        model.evaluate_path(path, power)
+        samples = []
+        for _ in range(15):
+            started = time.perf_counter()
+            model.evaluate_path(path, power)
+            samples.append((time.perf_counter() - started) * 1e3)
+        return float(np.median(samples))
+
+    single = median_ms(1)
+    multi = median_ms(10)
+    print(f"PCFM hot path: single span {single:.3f} ms, 10 spans {multi:.3f} ms")
+    assert single < 2.34, f"the single-span hot path takes {single:.3f} ms"
+    assert multi / 10.0 < 2.0 * single, (
+        f"the per-span cost {multi / 10.0:.3f} ms is much higher than the single-span {single:.3f} ms"
+    )

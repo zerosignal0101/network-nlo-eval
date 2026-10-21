@@ -47,6 +47,65 @@ both change the numbers and both need to be visible to a reader of the code:
     The framework carries no fourth-order dispersion coefficient, so the
     ``beta4`` term of Eq. (A.15) is set to zero.  Over a C+L band this is a
     sub-per-mille effect on the effective dispersion.
+
+**Inter-span coherence (not a formula of the paper)**
+
+The paper accumulates the NLI linearly over transparent spans, Eq. (8): the
+NLI power of a link with ``N`` spans is ``N`` times the single-span value.
+That is the *incoherent* limit and it is systematically optimistic by
+0.2-0.3 dB on a 10-span link.  The rest of this repository
+(``numerical``, ``semrau2019``, ``carena2014``, ``damico2022``, ``cgn``) uses
+one common convention instead: the inter-span visibility is weighted by the
+**NLI noise power** (not by the signal spectrum), and the model hands the
+route layer a *complex amplitude* per span so that the route layer can sum
+``|sum_k a_k|**2``.
+
+This module follows that convention.  The PCFM paper contains no inter-span
+coherence formula of its own, so the physics used here is the one of the
+numerical GN reference of the repository, implemented from scratch in this
+file (no import from :mod:`network_nlo_eval.models.numerical`, so that the
+two models stay independent):
+
+* the NLI weight of a signal pair is the closed-form GN weight
+
+  .. code-block:: text
+
+      W(rho) = |1 - exp(-(alpha + j rho) L)|**2 / (alpha**2 + rho**2) ,
+      rho = 4 pi**2 |beta2| (f1 - f)(f2 - f) ,
+
+* the two copies of the same noise, generated ``d`` metres apart, differ in
+  phase by ``rho * d``, hence the visibility is the NLI-weighted average
+
+  .. code-block:: text
+
+      V(d) = <cos(rho d)>_{W} ,
+
+* the coherent factor of a link with ``N`` spans is the visibility-weighted
+  sum over the span pairs
+
+  .. code-block:: text
+
+      R(N) = N + 2 sum_{k=1}^{N-1} (N - k) V(k L) ,
+
+* the contract layer carries one complex number per channel and span, so the
+  factor ``R(N)`` is inverted into an *equivalent phase ramp* ``Theta``
+  (the Dirichlet kernel ``[sin(N Theta/2)/sin(Theta/2)]**2`` decreases
+  monotonically on ``(0, 2 pi/N)``, so a bisection is enough) and the phase
+  of span ``k`` is ``Theta * (accumulated length / span length)``.
+
+The single-span case (``total_spans == 1``) keeps the pure power convention
+and is bit-for-bit identical to the implementation without coherence.
+
+**Known approximation: equal spans**
+
+The coherent factor ``R(N)`` is the visibility-weighted sum over the span
+pairs, and the visibility only depends on the distance between the two
+copies of the noise.  The contract layer carries one complex number per
+channel and span, so the factor is inverted into an equivalent phase ramp
+that is computed for the *current* span length.  On a link whose spans all
+have the same length the route layer then reproduces ``R(N)`` exactly; on a
+link with unequal spans the phase step is folded with the accumulated
+length, and the link-level factor is only exact in the equal-span case.
 """
 
 from __future__ import annotations
@@ -58,8 +117,13 @@ import numpy as np
 from scipy.integrate import IntegrationWarning
 from scipy.special import sici
 
-from network_nlo_eval.core.types import NDArrayFloat
-from network_nlo_eval.models.base import ModelInfo, SpanFiberOutput, register_model
+from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
+from network_nlo_eval.models.base import (
+    ModelInfo,
+    SpanContext,
+    SpanFiberOutput,
+    register_model,
+)
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -277,6 +341,557 @@ def egn_rho_cut(
     return outer * inner
 
 
+# =============================================================================
+# Inter-span coherence: NLI-weighted visibility -> coherent factor -> phase ramp
+# =============================================================================
+#
+# The whole block is a self-contained implementation of the convention
+# documented in the module docstring.  It deliberately does not import the
+# helpers of the numerical model: two models that share the *physics* must not
+# share the *code*, otherwise a change in one of them silently changes the
+# other.
+
+#: Number of observed frequencies across the channel band in the visibility
+#: quadrature.  The integrand is steep at the band edges (the admissible
+#: region degenerates there) and smooth in the middle, so the observed
+#: frequencies sit on a cosine grid.
+VISIBILITY_FREQUENCY_POINTS = 41
+
+#: Number of Gauss-Legendre nodes per integration sub-interval of the
+#: visibility quadrature.
+VISIBILITY_QUADRATURE_POINTS = 200
+
+#: Step of the tabulated Lorentzian antiderivative (dimensionless variable
+#: ``t = |rho| / alpha``).
+VISIBILITY_TABLE_STEP = 1.0e-3
+
+#: Largest ``t`` covered by the table.  Beyond it the asymptotic expansion of
+#: the tail is used.
+VISIBILITY_TABLE_LIMIT = 30.0
+
+#: Smallest ``t`` interval the table covers.  A very small dispersion would
+#: give a table of a few points only, and the asymptotic tail (valid for large
+#: ``t``) would then be used where it is not valid.
+VISIBILITY_TABLE_MINIMUM = 1.0
+
+#: Number of bisection steps of the equivalent phase ramp.
+RAMP_BISECTION_STEPS = 60
+
+
+def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
+    r"""Compute ``int_t^oo cos(beta s)/(1+s**2) ds`` by integration by parts.
+
+    The integrand is ``f(s) = 1/(1+s**2)``.  Four integrations by parts give
+
+    .. code-block:: text
+
+        -f sin(beta t)/beta - f' cos(beta t)/beta**2
+        + f'' sin(beta t)/beta**3 + f''' cos(beta t)/beta**4
+        - f'''' sin(beta t)/beta**5 ,
+
+    and the remainder is bounded by ``|f'''''| / beta**6``.
+
+    Args:
+        beta: Angular frequency of the cosine (rad per unit of ``t``).
+        t: Lower limit of the integral (positive).
+
+    Returns
+    -------
+        The value of the tail integral, same shape as ``t``.
+    """
+    denominator = 1.0 + t * t
+    f = 1.0 / denominator
+    df = -2.0 * t / denominator**2
+    d2f = (6.0 * t * t - 2.0) / denominator**3
+    d3f = -24.0 * t * (t * t - 1.0) / denominator**4
+    d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
+    sin_beta = np.sin(beta * t)
+    cos_beta = np.cos(beta * t)
+    return (
+        -f * sin_beta / beta
+        - df * cos_beta / beta**2
+        + d2f * sin_beta / beta**3
+        + d3f * cos_beta / beta**4
+        - d4f * sin_beta / beta**5
+    )
+
+
+class _LorentzianAntiderivative:
+    r"""Tabulate ``C_m(t) = int_0^t cos(m alpha L s)/(1+s**2) ds``.
+
+    The table is built with the composite trapezoid rule corrected by the
+    leading Euler-Maclaurin term, so that the quadrature error is fourth
+    order in the step.  ``C_0(t) = arctan(t)`` is exact and is not tabulated.
+    Beyond the table the asymptotic expansion of the tail is used, anchored
+    by the Fourier transform of a Lorentzian, ``C_m(oo) = (pi/2) exp(-m
+    alpha L)``.
+
+    Args:
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        span_length_m: Length of one span (m).
+        m_max: Largest index ``m`` to tabulate.
+        t_end: Largest ``t`` the table has to cover.
+        step: Step of the table.
+    """
+
+    def __init__(
+        self,
+        alpha_npm_m: float,
+        span_length_m: float,
+        m_max: int,
+        t_end: float,
+        step: float = VISIBILITY_TABLE_STEP,
+    ) -> None:
+        """Build the tables of ``C_m`` (see the class docstring)."""
+        self.alpha = float(alpha_npm_m)
+        self.span_length = float(span_length_m)
+        self.beta = self.alpha * self.span_length
+        limit = min(max(float(t_end), VISIBILITY_TABLE_MINIMUM), VISIBILITY_TABLE_LIMIT)
+        n_points = max(3, int(np.ceil(limit / step)) + 1)
+        if n_points % 2 == 0:
+            n_points += 1
+        self.t = np.linspace(0.0, limit, n_points)
+        h = float(self.t[1] - self.t[0])
+        self.tables: dict[int, NDArrayFloat] = {}
+        for m in range(1, int(m_max) + 1):
+            argument = m * self.beta * self.t
+            values = np.cos(argument) / (1.0 + self.t * self.t)
+            derivative = (
+                -m * self.beta * np.sin(argument) / (1.0 + self.t * self.t)
+                - 2.0 * self.t * np.cos(argument) / (1.0 + self.t * self.t) ** 2
+            )
+            self.tables[m] = self._cumulative(values, derivative, h)
+
+    @staticmethod
+    def _cumulative(
+        values: NDArrayFloat, derivative: NDArrayFloat, h: float
+    ) -> NDArrayFloat:
+        """Integrate ``values`` on the uniform grid (Euler-Maclaurin corrected)."""
+        integral = np.zeros_like(values)
+        integral[1:] = np.cumsum(0.5 * h * (values[:-1] + values[1:]))
+        # Euler-Maclaurin: int = T - h^2/12 (f'(b) - f'(a)) + O(h^4).
+        integral[1:] -= h * h / 12.0 * (derivative[1:] - derivative[0])
+        return integral
+
+    def C(self, m: int, t: NDArrayFloat) -> NDArrayFloat:
+        """Evaluate ``C_m(t)`` for an array of (possibly negative) ``t``."""
+        if m == 0:
+            return np.arctan(np.asarray(t, dtype=np.float64))
+        t = np.asarray(t, dtype=np.float64)
+        out = np.empty_like(t)
+        sign = np.sign(t)
+        magnitude = np.abs(t)
+        inside = magnitude <= self.t[-1]
+        if np.any(inside):
+            out[inside] = sign[inside] * np.interp(magnitude[inside], self.t, self.tables[m])
+        outside = ~inside
+        if np.any(outside):
+            beta = m * self.beta
+            tail = _lorentzian_tail(beta, magnitude[outside])
+            out[outside] = sign[outside] * (0.5 * np.pi * np.exp(-beta) - tail)
+        return out
+
+
+def _spm_visibility_nodes(
+    half_band_hz: float,
+    rate: float,
+    alpha_npm_m: float,
+    n_frequency: int,
+    n_quadrature: int,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    """Build the geometry of the SPM three-wave region for the quadrature.
+
+    The observed frequency ``f`` runs over the channel band.  For every ``f``
+    the two input offsets ``u = f1 - f`` and ``v = f2 - f`` and the idler
+    offset ``u + v`` must stay inside the band, i.e.
+
+    .. code-block:: text
+
+        u in [-b - f, b - f],  v in [-b - f, b - f],
+        v in [-b - f - u, b - f - u] .
+
+    The inner integral over ``v`` is analytic (see
+    :func:`_gn_weighted_spm_visibility`), so the quadrature only needs the
+    ``(f, u)`` nodes.  The returned ``t`` limits are the dimensionless
+    mismatch ``t = |rho| / alpha`` of the two ends of the ``v`` interval.
+
+    Args:
+        half_band_hz: Half of the channel bandwidth (Hz).
+        rate: ``4 pi**2 |beta2|``, the mismatch rate per unit frequency
+            product (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        n_frequency: Number of observed frequencies.
+        n_quadrature: Number of Gauss-Legendre nodes per sub-interval.
+
+    Returns
+    -------
+        The tuple ``(t_lo, t_hi, measure)``: the limits of the reduced
+        variable and the quadrature measure of every node.
+    """
+    if n_frequency > 1:
+        index = np.arange(n_frequency, dtype=np.float64)
+        frequencies = -half_band_hz * np.cos(np.pi * index / (n_frequency - 1))
+        # Composite trapezoid weights of the (non-uniform) frequency grid.
+        frequency_weights = np.empty(n_frequency, dtype=np.float64)
+        frequency_weights[0] = 0.5 * (frequencies[1] - frequencies[0])
+        frequency_weights[-1] = 0.5 * (frequencies[-1] - frequencies[-2])
+        frequency_weights[1:-1] = 0.5 * (frequencies[2:] - frequencies[:-2])
+    else:
+        frequencies = np.zeros(1, dtype=np.float64)
+        frequency_weights = np.ones(1, dtype=np.float64)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    lo_parts: list[NDArrayFloat] = []
+    hi_parts: list[NDArrayFloat] = []
+    measure_parts: list[NDArrayFloat] = []
+    for frequency, frequency_weight in zip(frequencies, frequency_weights, strict=True):
+        low = -half_band_hz - float(frequency)
+        high = half_band_hz - float(frequency)
+        for start, stop in ((low, 0.0), (0.0, high)):
+            if stop - start <= 0.0:
+                continue
+            u = 0.5 * (stop - start) * (nodes + 1.0) + start
+            weight = 0.5 * (stop - start) * weights
+            # The second offset is limited by its own band and by the idler.
+            v_low = np.maximum(low, low - u)
+            v_high = np.minimum(high, high - u)
+            valid = v_high > v_low
+            if not np.any(valid):
+                continue
+            u = u[valid]
+            weight = weight[valid]
+            v_low = v_low[valid]
+            v_high = v_high[valid]
+            # The mismatch is rho = rate * u * v and t = |rho| / alpha, so
+            # dv = alpha dt/(rate |u|).  The factor alpha**2 that separates
+            # this from the measure used below is constant over the whole
+            # band and cancels in the visibility ratio.
+            measure = weight * frequency_weight / (rate * np.abs(u) * alpha_npm_m)
+            t_low = rate * u * v_low / alpha_npm_m
+            t_high = rate * u * v_high / alpha_npm_m
+            lo_parts.append(np.minimum(t_low, t_high))
+            hi_parts.append(np.maximum(t_low, t_high))
+            measure_parts.append(measure)
+    return (
+        np.concatenate(lo_parts),
+        np.concatenate(hi_parts),
+        np.concatenate(measure_parts),
+    )
+
+
+def _gn_weighted_spm_visibility(
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: float,
+    span_length_m: float,
+    distances_m: NDArrayFloat,
+    n_frequency: int,
+    n_quadrature: int,
+) -> NDArrayFloat:
+    """Compute the NLI-weighted SPM visibility of one bandwidth.
+
+    The GN weight of a signal pair is
+
+    .. code-block:: text
+
+        W(rho) = |1 - exp(-(alpha + j rho) L)|**2 / (alpha**2 + rho**2)
+               = L**2 (1 + e**(-2 abar) - 2 e**(-abar) cos(theta)) / (abar**2 + theta**2)
+
+    with ``abar = alpha L`` and ``theta = rho L``.  The factor ``L**2`` is
+    constant and drops out of the visibility ratio, and so does the constant
+    ``abar**2`` between the two integrals; what is left is a one-dimensional
+    quadrature over ``t = |rho| / alpha`` with the antiderivatives
+    ``C_m(t) = int_0^t cos(m abar s)/(1+s**2) ds`` of
+    :class:`_LorentzianAntiderivative`:
+
+    .. code-block:: text
+
+        denominator:  (1 + e**(-2 abar)) C_0 - 2 e**(-abar) C_1
+        numerator:    (1 + e**(-2 abar)) C_k - e**(-abar) (C_(k-1) + C_(k+1))
+
+    where ``k`` is the number of spans between the two copies of the noise
+    (the extra phase of a copy generated ``k`` spans later is ``k theta``).
+
+    Args:
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        bandwidth_hz: Channel bandwidth (Hz).
+        span_length_m: Length of one span (m).
+        distances_m: ``(K,)`` distances between the two copies (m).
+        n_frequency: Number of observed frequencies across the band.
+        n_quadrature: Number of Gauss-Legendre nodes per sub-interval.
+
+    Returns
+    -------
+        The ``(K,)`` visibility, in ``[-1, 1]``; ``1`` without dispersion.
+    """
+    distances = np.asarray(distances_m, dtype=np.float64)
+    half_band = 0.5 * bandwidth_hz
+    # Mismatch rate per unit frequency product: rho = rate * u * v.
+    rate = 4.0 * np.pi**2 * beta2_abs_s2_m
+    exp_alpha_l = float(np.exp(-alpha_npm_m * span_length_m))
+    t_lo, t_hi, measure = _spm_visibility_nodes(
+        half_band,
+        rate,
+        alpha_npm_m,
+        n_frequency,
+        n_quadrature,
+    )
+    tables = _LorentzianAntiderivative(
+        alpha_npm_m,
+        span_length_m,
+        int(distances.size) + 1,
+        float(np.max(np.abs(t_hi))),
+    )
+    # Denominator: the NLI power itself, i.e. the weight without the cosine.
+    weight_hi = (1.0 + exp_alpha_l**2) * tables.C(0, t_hi) - 2.0 * exp_alpha_l * tables.C(1, t_hi)
+    weight_lo = (1.0 + exp_alpha_l**2) * tables.C(0, t_lo) - 2.0 * exp_alpha_l * tables.C(1, t_lo)
+    total = float(np.sum(measure * (weight_hi - weight_lo)))
+    visibility = np.zeros_like(distances)
+    for index in range(distances.size):
+        k = index + 1
+        cosine_hi = (
+            (1.0 + exp_alpha_l**2) * tables.C(k, t_hi)
+            - exp_alpha_l * (tables.C(abs(k - 1), t_hi) + tables.C(k + 1, t_hi))
+        )
+        cosine_lo = (
+            (1.0 + exp_alpha_l**2) * tables.C(k, t_lo)
+            - exp_alpha_l * (tables.C(abs(k - 1), t_lo) + tables.C(k + 1, t_lo))
+        )
+        visibility[index] = float(np.sum(measure * (cosine_hi - cosine_lo))) / total
+    return visibility
+
+
+def _self_beating_visibility(
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: NDArrayFloat,
+    span_length_m: float,
+    distances_m: NDArrayFloat,
+    n_frequency: int = VISIBILITY_FREQUENCY_POINTS,
+    n_quadrature: int = VISIBILITY_QUADRATURE_POINTS,
+) -> NDArrayFloat:
+    """Compute the NLI-weighted visibility of two self-beating (SPM) copies.
+
+    The visibility is the average of ``cos(rho d)`` over the **NLI density**
+    of the signal pairs that generate the noise, not over the signal
+    spectrum.  The GN weight of a pair is ``1/(abar**2 + theta**2)``, so the
+    NLI power concentrates on the phase-matched pairs, and those pairs are
+    the ones that stay coherent across spans.
+
+    Channels that share a bandwidth share a visibility, so the quadrature is
+    run once per distinct bandwidth.
+
+    Args:
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        bandwidth_hz: ``(N,)`` channel bandwidths (Hz).
+        span_length_m: Length of one span (m).
+        distances_m: ``(K,)`` distances between the two copies (m).
+        n_frequency: Number of observed frequencies across the band.
+        n_quadrature: Number of Gauss-Legendre nodes per sub-interval.
+
+    Returns
+    -------
+        The ``(K, N)`` visibility, in ``[-1, 1]``; ``1`` without dispersion.
+    """
+    bandwidths = np.asarray(bandwidth_hz, dtype=np.float64)
+    distances = np.asarray(distances_m, dtype=np.float64)
+    visibility = np.ones((distances.size, bandwidths.size), dtype=np.float64)
+    if distances.size == 0 or bandwidths.size == 0:
+        return visibility
+    if beta2_abs_s2_m == 0.0 or alpha_npm_m <= 0.0:
+        # Without dispersion the two copies are perfectly coherent.
+        return visibility
+    unique, inverse = np.unique(bandwidths, return_inverse=True)
+    for index, bandwidth in enumerate(unique):
+        column = _gn_weighted_spm_visibility(
+            beta2_abs_s2_m,
+            alpha_npm_m,
+            float(bandwidth),
+            span_length_m,
+            distances,
+            n_frequency,
+            n_quadrature,
+        )
+        visibility[:, inverse == index] = column[:, None]
+    return visibility
+
+
+def _cross_beating_visibility(
+    beta2_abs_s2_m: float,
+    bandwidth_hz: NDArrayFloat,
+    distance_m: float,
+    partner_offset_hz: NDArrayFloat,
+) -> NDArrayFloat:
+    """Compute the band-averaged visibility of two cross-beating (XPM) copies.
+
+    The phase mismatch of a cross pair is ``4 pi**2 |beta2| (Delta + y) L``
+    for the first wave and ``x`` for the second one: the inter-channel offset
+    ``Delta`` dominates the intra-band offset, so the visibility degenerates
+    into the band average of ``cos(c x)`` with ``c = 4 pi**2 |beta2| d
+    Delta``,
+
+    .. code-block:: text
+
+        V(d) = sinc(c B / 2) ,
+
+    which vanishes as soon as the mismatch exceeds a radian.
+
+    Args:
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        bandwidth_hz: ``(N,)`` channel bandwidths (Hz).
+        distance_m: Distance between the two copies (m).
+        partner_offset_hz: ``(N,)`` offset to the interfering channel (Hz).
+
+    Returns
+    -------
+        The ``(N,)`` visibility, in ``[-1, 1]``; ``1`` without dispersion.
+    """
+    bandwidth = np.asarray(bandwidth_hz, dtype=np.float64)
+    offset = np.asarray(partner_offset_hz, dtype=np.float64)
+    argument = 2.0 * np.pi**2 * beta2_abs_s2_m * distance_m * offset * bandwidth
+    visibility = np.ones_like(bandwidth)
+    nonzero = argument != 0.0
+    if np.any(nonzero):
+        visibility[nonzero] = np.sin(argument[nonzero]) / argument[nonzero]
+    return visibility
+
+
+def _gn_weighted_xpm_visibility(
+    beta2_abs_s2_m: float,
+    alpha_npm_m: float,
+    bandwidth_hz: float,
+    span_length_m: float,
+    distance_m: float,
+    partner_offset_hz: float,
+    n_offset: int = 32,
+    n_mismatch: int = 400,
+) -> float:
+    """Audit the NLI-weighted visibility of a cross-beating (XPM) pair.
+
+    This is the XPM counterpart of :func:`_gn_weighted_spm_visibility`: the
+    same GN weight is applied to the pairs of one channel and of its
+    interfering channel.  The idler of a cross pair falls outside the band,
+    so it is not constrained, and the mismatch of such a pair is
+    ``theta = 4 pi**2 |beta2| L x (Delta + y)``.
+
+    Because ``Delta`` is two orders of magnitude above the channel bandwidth,
+    the weight ``1/(abar**2 + theta**2)`` only survives in a narrow strip
+    around ``x = 0``; a quadrature over the raw offset would miss it.  The
+    integral is therefore reduced to the dimensionless mismatch
+    ``t = theta/abar`` (the variable in which the weight is smooth) and the
+    offset of the interfering channel is integrated separately.
+
+    The function is a *diagnostic*: it quantifies how much the GN weighting
+    would move the XPM inter-span structure, it is not used in the hot path.
+
+    Args:
+        beta2_abs_s2_m: ``|beta_2|`` (s^2/m).
+        alpha_npm_m: Power attenuation of the fibre (Np/m).
+        bandwidth_hz: Channel bandwidth (Hz).
+        span_length_m: Length of one span (m).
+        distance_m: Distance between the two copies (m).
+        partner_offset_hz: Offset to the interfering channel (Hz).
+        n_offset: Number of Gauss-Legendre nodes of the interfering channel.
+        n_mismatch: Number of Gauss-Legendre nodes of the mismatch variable.
+
+    Returns
+    -------
+        The visibility of the pair, in ``[-1, 1]``.
+    """
+    half_band = 0.5 * bandwidth_hz
+    rate = 4.0 * np.pi**2 * beta2_abs_s2_m * span_length_m
+    abar = alpha_npm_m * span_length_m
+    exp_abar = float(np.exp(-abar))
+    offset_nodes, offset_weights = np.polynomial.legendre.leggauss(n_offset)
+    offsets = partner_offset_hz + half_band * offset_nodes
+    offset_weights = half_band * offset_weights
+    mismatch_nodes, mismatch_weights = np.polynomial.legendre.leggauss(n_mismatch)
+    numerator = 0.0
+    denominator = 0.0
+    for offset, offset_weight in zip(offsets, offset_weights, strict=True):
+        # theta = rate * x * offset with |x| <= half_band, so the mismatch
+        # reaches rate * half_band * offset at the band edge.
+        t_max = rate * half_band * offset / abar
+        mismatch = 0.5 * t_max * (mismatch_nodes + 1.0)
+        weights = 0.5 * t_max * mismatch_weights
+        theta = abar * mismatch
+        numerator_factor = 1.0 - 2.0 * exp_abar * np.cos(theta) + exp_abar**2
+        # du = abar dt/(rate offset) and the two signs of x give a factor two.
+        integrand = (
+            numerator_factor
+            / (abar * (1.0 + mismatch * mismatch))
+            / (rate * offset)
+        )
+        numerator += offset_weight * float(
+            np.sum(weights * integrand * np.cos(theta * distance_m / span_length_m))
+        )
+        denominator += offset_weight * float(np.sum(weights * integrand))
+    return numerator / denominator
+
+
+def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
+    """Compute the frequency-resolved inter-span coherent factor ``R``.
+
+    ``visibility`` holds the visibility of the copies separated by one, two,
+    ... spans.  The coherent factor is the visibility-weighted sum over the
+    span pairs,
+
+    .. code-block:: text
+
+        R = N + 2 sum_{k=1}^{N-1} (N - k) V(k L) .
+
+    A vanishing visibility gives ``R = N`` (incoherent accumulation), a
+    visibility of one gives ``R = N**2`` (coherent accumulation).
+
+    Args:
+        n_spans: Number of spans of the link.
+        visibility: ``(N_spans - 1, N_channels)`` visibility.
+
+    Returns
+    -------
+        The ``(N_channels,)`` coherent factor.
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return np.ones(visibility.shape[-1], dtype=np.float64)
+    weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
+    return n + 2.0 * (weights * visibility).sum(axis=0)
+
+
+def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
+    """Invert the coherent factor into an equivalent per-span phase ramp.
+
+    The route layer sums the span amplitudes coherently, so ``N`` spans with
+    a linear phase ramp ``psi`` give the Dirichlet kernel
+    ``[sin(N psi/2)/sin(psi/2)]**2`` times the single-span noise.  That
+    kernel decreases monotonically from ``N**2`` at ``psi = 0`` to ``0`` at
+    ``psi = 2 pi/N``, so the wanted factor has a unique inverse and a
+    bisection finds it.
+
+    Args:
+        n_spans: Number of spans of the link.
+        target: ``(N_channels,)`` wanted coherent factor.
+
+    Returns
+    -------
+        The ``(N_channels,)`` phase increment per span (rad).
+    """
+    n = int(n_spans)
+    if n <= 1:
+        return np.zeros(np.shape(target), dtype=np.float64)
+    goal = np.clip(np.asarray(target, dtype=np.float64), 0.0, float(n) ** 2)
+    low = np.zeros_like(goal)
+    high = np.full_like(goal, 2.0 * np.pi / n)
+    for _ in range(RAMP_BISECTION_STEPS):
+        middle = 0.5 * (low + high)
+        factor = (np.sin(0.5 * n * middle) / np.sin(0.5 * middle)) ** 2
+        too_large = factor > goal
+        low = np.where(too_large, middle, low)
+        high = np.where(too_large, high, middle)
+    return 0.5 * (low + high)
+
+
 PCFM_MODEL_INFO = ModelInfo(
     name="pcfm",
     summary="Polynomial closed-form GN model (SCI+XCI) with polynomial SPP fit.",
@@ -385,6 +1000,38 @@ class PCFMSpanKernel:
         # of Eq. (A.15) of the paper is dropped (it is a sub-per-mille effect
         # on the effective dispersion over a C+L band).
         self.beta4 = 0.0
+
+        # --- inter-span coherence -------------------------------------------
+        # Magnitude of the second-order dispersion (s^2/m): the only quantity
+        # the inter-span visibility depends on.
+        self.beta2_abs_s2_m = abs(self.beta2)
+        # Fibre-level attenuation used by the NLI-weighted visibility.  The
+        # weight of a signal pair is |1 - exp(-(alpha + j rho) L)|^2/(alpha^2
+        # + rho^2) and the attenuation of the fibre varies by well under a
+        # per cent over the C band, so a single fibre-level value is used for
+        # the whole channel plan (the convention of the numerical model).
+        self.alpha_visibility_npm = float(np.mean(self.alpha_npm))
+        # Offset to the closest other channel (Hz): the cross-beating (XPM)
+        # visibility is dominated by the nearest neighbours.
+        if self.n_nodes > 1:
+            offsets = np.abs(self.f_abs_hz[:, None] - self.f_abs_hz[None, :])
+            np.fill_diagonal(offsets, np.inf)
+            self.partner_offset_hz = offsets.min(axis=1)
+        else:
+            self.partner_offset_hz = np.zeros(self.n_nodes, dtype=np.float64)
+        # Equivalent phase ramps, cached by (span count, span length), and the
+        # unit phase factors, cached by (span count, span length, accumulated
+        # length over span length).  All of them are pure functions of the
+        # fibre constants and of those two or three numbers, so the caches
+        # are idempotent.
+        self._ramp_cache: dict[tuple[int, float], tuple[NDArrayFloat, NDArrayFloat]] = {}
+        self._factor_cache: dict[tuple[int, float, float], tuple[NDArrayComplex, NDArrayComplex]] = {}
+        self._visibility_cache: dict[tuple[int, float], tuple[NDArrayFloat, NDArrayFloat]] = {}
+        # Permutation from the internal order (descending frequency) back to
+        # the model order.  It is the inverse of ``self.order`` and is built
+        # once, because the hot path needs it for every span.
+        self.inverse_order = np.empty(self.n_nodes, dtype=np.int64)
+        self.inverse_order[self.order] = np.arange(self.n_nodes)
 
         # --- island constants ------------------------------------------------
         # Effective dispersion of the SCI island, Eq. (A.15) with
@@ -692,6 +1339,158 @@ class PCFMSpanKernel:
             )
         return profile_norm, power_out
 
+    # -- inter-span coherence ---------------------------------------------
+    def _visibilities(
+        self,
+        n_spans: int,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """Compute the inter-span visibility of the SPM and XPM parts.
+
+        Args:
+            n_spans: Number of spans of the link.
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            The tuple ``(visibility_spm, visibility_xpm)``, both
+            ``(N_spans - 1, N_channels)``, in the internal channel order.
+        """
+        n = max(1, int(n_spans))
+        distances = np.arange(1, n, dtype=np.float64) * float(span_length_m)
+        if n <= 1:
+            empty = np.zeros((0, self.b_hz.size), dtype=np.float64)
+            return empty, empty
+        key = (n, float(span_length_m))
+        cached = self._visibility_cache.get(key)
+        if cached is not None:
+            return cached
+        # SPM: weighted by the NLI power, see _self_beating_visibility.
+        visibility_spm = _self_beating_visibility(
+            self.beta2_abs_s2_m,
+            self.alpha_visibility_npm,
+            self.b_hz,
+            float(span_length_m),
+            distances,
+        )
+        # XPM: the mismatch of a cross pair is one to two orders of magnitude
+        # above alpha*L, so the pairs are already incoherent across spans;
+        # the band average of the numerical model is kept (the delivery
+        # report gives the GN-weighted audit of that choice).
+        visibility_xpm = np.stack(
+            [
+                _cross_beating_visibility(
+                    self.beta2_abs_s2_m,
+                    self.b_hz,
+                    distance,
+                    self.partner_offset_hz,
+                )
+                for distance in distances
+            ]
+        )
+        self._visibility_cache[key] = (visibility_spm, visibility_xpm)
+        return visibility_spm, visibility_xpm
+
+    def _inter_span_ramps(
+        self,
+        n_spans: int,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """Compute the equivalent per-span phase ramps of SPM and XPM.
+
+        The coherent factor ``R`` of the link is inverted into a phase
+        increment per span, because the contract layer carries a single
+        complex number per channel and span.
+
+        Args:
+            n_spans: Number of spans of the link.
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            The tuple ``(ramp_spm, ramp_xpm)``: the phase increment per span
+            (rad) that the route layer needs to reproduce the coherent
+            factor of the link, in the internal channel order.
+        """
+        key = (int(n_spans), float(span_length_m))
+        cached = self._ramp_cache.get(key)
+        if cached is not None:
+            return cached
+        n = max(1, int(n_spans))
+        visibility_spm, visibility_xpm = self._visibilities(n, span_length_m)
+        result = (
+            _equivalent_phase_ramp(n, _coherent_factor(n, visibility_spm)),
+            _equivalent_phase_ramp(n, _coherent_factor(n, visibility_xpm)),
+        )
+        self._ramp_cache[key] = result
+        return result
+
+    def _span_phase_factors(
+        self,
+        span_context: SpanContext,
+        span_length_m: float,
+    ) -> tuple[NDArrayComplex, NDArrayComplex]:
+        """Compute the unit phase factors of the NLI amplitudes of one span.
+
+        The phase grows linearly with the length accumulated in the link, so
+        the noise generated in span ``k`` differs from the noise generated in
+        the first span by the phase mismatch accumulated over ``k L``.  The
+        phase therefore comes from the span context only; the model keeps no
+        cross-span counter of its own.
+
+        Args:
+            span_context: Position of the span in the link.
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            The tuple ``(factor_spm, factor_xpm)``: the complex numbers
+            ``exp(1j phi)`` of the SPM and XPM amplitudes, in the internal
+            channel order.
+        """
+        scale = span_context.cumulative_length_m / float(span_length_m)
+        key = (int(span_context.total_spans), float(span_length_m), float(scale))
+        cached = self._factor_cache.get(key)
+        if cached is None:
+            ramp_spm, ramp_xpm = self._inter_span_ramps(
+                span_context.total_spans, span_length_m
+            )
+            cached = (
+                np.exp(1j * ramp_spm * scale),
+                np.exp(1j * ramp_xpm * scale),
+            )
+            self._factor_cache[key] = cached
+        return cached
+
+    def inter_span_coherent_factor(
+        self,
+        n_spans: int,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """Return the coherent factors ``R`` of the SPM and XPM parts.
+
+        The factor is the visibility-weighted sum over the span pairs,
+        ``R = N + 2 sum_k (N-k) V(k L)``.  ``R = N`` is the incoherent
+        accumulation, ``R = N**2`` the coherent one.
+
+        Args:
+            n_spans: Number of spans of the link.
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            The tuple ``(factor_spm, factor_xpm)``, in the model order (the
+            order of the noise powers of :class:`SpanFiberOutput`).
+        """
+        n = max(1, int(n_spans))
+        visibility_spm, visibility_xpm = self._visibilities(n, span_length_m)
+        factor_spm = _coherent_factor(n, visibility_spm)
+        factor_xpm = _coherent_factor(n, visibility_xpm)
+        return (
+            np.ascontiguousarray(factor_spm[self.inverse_order]),
+            np.ascontiguousarray(factor_xpm[self.inverse_order]),
+        )
+
     # -- kernel protocol -------------------------------------------------
     def evaluate(
         self,
@@ -701,6 +1500,7 @@ class PCFMSpanKernel:
         *,
         span_index: int = 0,
         beta2_accum_ps2: NDArrayFloat | None = None,
+        span_context: SpanContext | None = None,
     ) -> SpanFiberOutput:
         """Evaluate one span of the polynomial closed-form model.
 
@@ -714,6 +1514,10 @@ class PCFMSpanKernel:
                 Used by the EGN correction.
             beta2_accum_ps2: ``(N,)`` accumulated effective dispersion at the
                 input of the span (ps^2).  Used by the EGN correction.
+            span_context: Position of the span in the link.  When it is given
+                and the link has more than one span, the output carries the
+                complex NLI amplitudes whose relative phase the route layer
+                needs for the coherent accumulation.
 
         Returns
         -------
@@ -758,12 +1562,30 @@ class PCFMSpanKernel:
         spm = np.where(active, g_sci * self.b_hz, 0.0)
         xpm = np.where(active, g_xci * self.b_hz, 0.0)
 
-        inverse = np.empty(self.n_nodes, dtype=np.int64)
-        inverse[self.order] = np.arange(self.n_nodes)
+        inverse = self.inverse_order
+        n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
+        if span_context is None or n_spans <= 1:
+            # Single span (or no context at all): the route layer keeps the
+            # pure power convention.  This branch is bit-for-bit identical to
+            # the implementation without inter-span coherence.
+            return SpanFiberOutput(
+                power_out_w=np.ascontiguousarray(power_out[inverse]),
+                spm_noise_w=np.ascontiguousarray(spm[inverse]),
+                xpm_noise_w=np.ascontiguousarray(xpm[inverse]),
+            )
+        # Multi-span link: hand the route layer the complex NLI amplitudes.
+        # Their modulus is the square root of the noise power of this span
+        # and their phase is the inter-span phase, so that the route layer
+        # can sum |sum_k a_k|**2.
+        factor_spm, factor_xpm = self._span_phase_factors(span_context, float(span_length_m))
+        amplitude_spm = np.sqrt(spm) * factor_spm
+        amplitude_xpm = np.sqrt(xpm) * factor_xpm
         return SpanFiberOutput(
             power_out_w=np.ascontiguousarray(power_out[inverse]),
             spm_noise_w=np.ascontiguousarray(spm[inverse]),
             xpm_noise_w=np.ascontiguousarray(xpm[inverse]),
+            nli_amplitude_spm=np.ascontiguousarray(amplitude_spm[inverse]),
+            nli_amplitude_xpm=np.ascontiguousarray(amplitude_xpm[inverse]),
         )
 
 
@@ -782,6 +1604,11 @@ class PCFMModel(RouteModel):
     """
 
     info = PCFM_MODEL_INFO
+
+    #: This model provides the complex NLI amplitudes of the inter-span
+    #: coherence, so the route layer sums ``|sum_k a_k|**2`` instead of
+    #: ``sum_k |a_k|**2``.
+    supports_span_context = True
 
     def __init__(
         self,
@@ -823,20 +1650,44 @@ class PCFMModel(RouteModel):
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
         return super().evaluate_path(optical_path, power_in_w)
 
-    def span_step(self, fiber_config, edfa_config, power_in_w, span_length_m):
+    def span_step(
+        self,
+        fiber_config,
+        edfa_config,
+        power_in_w,
+        span_length_m,
+        span_context: SpanContext | None = None,
+    ):
         """Single span: the kernel, then the shared amplifier/ROADM handling.
 
         The span index and the accumulated effective dispersion are tracked
         here because the machine-learning factor of Zefreh et al. 2020 depends
         on them; both are reset at the beginning of every path.
+
+        Args:
+            fiber_config: Fibre parameters of the span.
+            edfa_config: Amplifier configuration of the span.
+            power_in_w: ``(N,)`` launch power per channel (W).
+            span_length_m: Span length (m).
+            span_context: Position of the span in the link.  It is handed to
+                the kernel, which uses it for the inter-span phase of the NLI
+                amplitudes.  ``None`` means the pure power convention.
+
+        Returns
+        -------
+            The :class:`~network_nlo_eval.models.base.ElementOutput` of the
+            span.
         """
         kernel = self.kernel_for(fiber_config)
         fiber_output = kernel.evaluate(
             power_in_w,
             span_length_m,
             1,
-            span_index=self._span_index,
+            span_index=(
+                self._span_index if span_context is None else int(span_context.span_index)
+            ),
             beta2_accum_ps2=self._beta2_accum_ps2,
+            span_context=span_context,
         )
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
         element = apply_amplifier_and_roadm(
