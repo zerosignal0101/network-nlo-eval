@@ -7,7 +7,7 @@
 * 单信道的 GN 自相位调制闭式解；
 * 频率求积的收敛性；
 * 零色散下的数值有限性；
-* 多跨���的非线性干涉累加；
+* 跨间相干累加：单跨逐位一致、多跨相干增益、解析极限、确定性；
 * 与闭式 ``ecz`` 基线的逐信道 SNR 一致性；
 * ``egn=True`` 被显式拒绝。
 """
@@ -20,7 +20,7 @@ import pytest
 from network_nlo_eval.benchmarks.cases import SMF_100KM, build_case, build_path, grid_for, launch_profile
 from network_nlo_eval.benchmarks.runner import make_model
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
+from network_nlo_eval.models.base import MultiSpanOpticalPath, SpanContext, create_model
 from network_nlo_eval.network.elements import EDFAConfig
 
 #: 参考波长，模型的色散展开以它为中心。
@@ -134,7 +134,13 @@ def test_zero_dispersion_finite() -> None:
 
 
 def test_multi_span_accumulation() -> None:
-    """十跨链路 SNR 必须低于单跨链路，且非线性噪声随跨数近似线性增长。"""
+    """十跨链路 SNR 必须低于单跨链路，且 NLI 以相干增益大于线性增长。
+
+    这条测试改造前锁的是**非相干**累加口径（十跨 = 单跨 x 10）。跨间相干
+    累加上线后，路由层按 ``|Σ a_k|²`` 相加，物理上正确的增长因子是
+    ``R = N + 2 Σ (N-Δs) V(Δs)``（``V`` 是跨间相干可见度）：色散不为零时
+    部分相干，增长因子严格大于 10，但离完全相干的 100 还差得远。
+    """
     case = build_case("scaling_40ch")
     power = launch_profile(case, None)
     fiber = SMF_100KM.model_copy(
@@ -162,7 +168,158 @@ def test_multi_span_accumulation() -> None:
     ten_nli = np.asarray(ten.spm_noise_w) + np.asarray(ten.xpm_noise_w)
     ratio = ten_nli / single_nli
     print(f"NLI growth over ten spans: min {ratio.min():.3f}, max {ratio.max():.3f}")
-    assert np.all(ratio > 9.5) and np.all(ratio < 10.5), f"NLI growth {ratio} is not linear in the span count"
+    # 相干增益：严格大于非相干基线 10，且远小于完全相干极限 100。
+    assert np.all(ratio > 10.0), f"NLI growth {ratio} shows no coherent gain over the incoherent sum"
+    assert np.all(ratio < 20.0), f"NLI growth {ratio} is closer to full coherence than the C-band visibility allows"
+
+
+def test_single_span_is_bit_identical_to_the_frozen_power_path() -> None:
+    """单跨链路必须与改造前逐位相同：相干口径退化为功率口径。
+
+    冻结的黄金值取自改造前的 ``numerical`` 模型（同一算例、同一入纤功率）。
+    比较的是逐位的 IEEE-754 位型，不是容差。
+    """
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+    fiber = SMF_100KM.model_copy(
+        update={
+            "length_km": case.span_length_km,
+            "max_span_length_km": case.span_length_km,
+        }
+    )
+    path = MultiSpanOpticalPath([fiber], [EDFAConfig(noise_figure_db=case.edfa_noise_figure_db)])
+    result = make_model("numerical", case).evaluate_path(path, power)
+
+    # 改造前的数值（同一 commit 的旧实现）。
+    assert float(np.sum(np.asarray(result.spm_noise_w))) == 6.115456062189079e-06
+    assert float(np.sum(np.asarray(result.xpm_noise_w))) == 1.1117805960227494e-05
+    assert float(np.sum(np.asarray(result.ase_noise_w))) == 4.796057499933039e-05
+    assert float(np.asarray(result.snr_db)[len(result.snr_db) // 2]) == 27.80040675089618
+
+    # 单跨时不给出复振幅：路由层走原来的纯功率累加，浮点求和顺序不变。
+    step = make_model("numerical", case).span_step(
+        fiber,
+        EDFAConfig(noise_figure_db=case.edfa_noise_figure_db),
+        power,
+        case.span_length_km * 1e3,
+    )
+    assert getattr(step, "nli_amplitude_spm", None) is None
+    assert getattr(step, "nli_amplitude_xpm", None) is None
+
+
+def test_kernel_amplitudes_match_the_span_noise_power() -> None:
+    """核给出的复振幅必须满足 ``|amp|² == 该跨的噪声功率``（契约要求）。"""
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+    fiber = SMF_100KM.model_copy(
+        update={
+            "length_km": case.span_length_km,
+            "max_span_length_km": case.span_length_km,
+        }
+    )
+    model = make_model("numerical", case)
+    kernel = model.kernel_for(fiber)
+    context = SpanContext(
+        span_index=3,
+        total_spans=10,
+        cumulative_length_m=3 * case.span_length_km * 1e3,
+        span_length_m=case.span_length_km * 1e3,
+    )
+    out = kernel.evaluate(power, case.span_length_km * 1e3, 1, span_context=context)
+
+    assert out.nli_amplitude_spm is not None and out.nli_amplitude_xpm is not None
+    assert np.allclose(np.abs(out.nli_amplitude_spm) ** 2, out.spm_noise_w, rtol=1e-12, atol=0.0)
+    assert np.allclose(np.abs(out.nli_amplitude_xpm) ** 2, out.xpm_noise_w, rtol=1e-12, atol=0.0)
+    # 跨 3 的相位必须已经转起来（第一跨相位为 0）。
+    assert float(np.angle(out.nli_amplitude_spm[0])) != 0.0
+
+
+def test_coherent_accumulation_is_deterministic() -> None:
+    """同一实例、同功率连调三次必须逐位相同：跨序号只能来自 SpanContext。"""
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+    fiber = SMF_100KM.model_copy(
+        update={
+            "length_km": case.span_length_km,
+            "max_span_length_km": case.span_length_km,
+        }
+    )
+    path = MultiSpanOpticalPath(
+        [fiber] * 10,
+        [EDFAConfig(noise_figure_db=5.5)] * 10,
+    )
+    model = make_model("numerical", case)
+
+    first = model.evaluate_path(path, power)
+    # 先用别的功率与别的跨数打乱调用历史。
+    other = MultiSpanOpticalPath([fiber] * 3, [EDFAConfig(noise_figure_db=5.5)] * 3)
+    model.evaluate_path(other, launch_profile(case, 3.0))
+    second = model.evaluate_path(path, power)
+    third = model.evaluate_path(path, power)
+
+    for name in ("spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        lhs = np.asarray(getattr(first, name)).view(np.int64)
+        rhs = np.asarray(getattr(second, name)).view(np.int64)
+        again = np.asarray(getattr(third, name)).view(np.int64)
+        assert np.array_equal(lhs, rhs), f"{name} changed after an unrelated call"
+        assert np.array_equal(lhs, again), f"{name} changed between two identical calls"
+
+
+def test_coherent_limits_zero_and_large_dispersion() -> None:
+    """解析极限：色散趋零时完全相干（NLI ∝ N²），色散很大时非相干（NLI ∝ N）。"""
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+
+    def _run(span_count: int, dispersion: float):
+        fiber = SMF_100KM.model_copy(
+            update={
+                "length_km": case.span_length_km,
+                "max_span_length_km": case.span_length_km,
+                "dispersion_parameter_d": dispersion,
+                "dispersion_slope_s": 0.0,
+            }
+        )
+        path = MultiSpanOpticalPath(
+            [fiber] * span_count,
+            [EDFAConfig(noise_figure_db=5.5)] * span_count,
+        )
+        result = make_model("numerical", case).evaluate_path(path, power)
+        return np.asarray(result.spm_noise_w) + np.asarray(result.xpm_noise_w)
+
+    for dispersion, expected, label in (
+        (0.0, 100.0, "zero dispersion"),
+        (1000.0, 10.0, "very large dispersion"),
+    ):
+        single = _run(1, dispersion)
+        ten = _run(10, dispersion)
+        ratio = ten / single
+        print(f"{label}: ten-span / one-span NLI ratio {ratio[0]:.3f} (expect {expected:.0f})")
+        assert np.all(np.isfinite(ratio))
+        assert np.all(ratio > 0.9 * expected) and np.all(ratio < 1.1 * expected), (
+            f"{label}: NLI growth {ratio} is not within 10 % of {expected}"
+        )
+
+
+def test_coherent_result_converges_with_resolution() -> None:
+    """相干结果对求积点数与积分步数的敏感性。"""
+    case = build_case("scaling_40ch")
+    power = launch_profile(case, None)
+    fiber = SMF_100KM.model_copy(
+        update={
+            "length_km": case.span_length_km,
+            "max_span_length_km": case.span_length_km,
+        }
+    )
+    path = MultiSpanOpticalPath([fiber] * 10, [EDFAConfig(noise_figure_db=5.5)] * 10)
+
+    def _run(**options):
+        return make_model("numerical", case, **options).evaluate_path(path, power)
+
+    coarse = _run(quadrature_points=64, ode_steps=64)
+    fine = _run(quadrature_points=128, ode_steps=128)
+    deviation = np.abs(np.asarray(fine.snr_db) - np.asarray(coarse.snr_db))
+    print(f"max per-channel SNR deviation (64/64 -> 128/128): {float(np.max(deviation)):.5f} dB")
+    assert float(np.max(deviation)) < 0.05, "the coherent result is not converged in the spatial/frequency resolution"
 
 
 def test_matches_ecz_within_a_few_db() -> None:
