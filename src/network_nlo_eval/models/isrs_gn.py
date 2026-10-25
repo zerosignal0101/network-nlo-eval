@@ -1,6 +1,17 @@
-"""多波段 ISRS-GN 评估器。
+r"""多波段 ISRS-GN 评估器。
 
 ISRS-GN = Inter-channel Stimulated Raman Scattering - Generalized Noise。
+
+注册表里的两个入口
+------------------
+* ``ecz``：本模块的 :class:`MultiBandISRSGN` 直接注册。它是 ECZ 论文的单跨闭式
+  结果，逐跨只给功率，路由层按 :math:`\sum|a_k|^2` 相干性无关地累加，因此
+  **不含跨间相干**，在多跨上比参考低 0.2…0.3 dB。保留它是为了：冻结的 14 个
+  黄金向量钉的就是这个类；它也让"补上相干项"的收益可被测量（C 波段 +0.28 →
+  +0.02 dB）。**不要拿 ``ecz`` 做多跨的绝对精度结论。**
+* ``ecz_coherent``：:class:`~network_nlo_eval.models.ecz.ECZCoherentModel`，同一套
+  单跨物理，逐跨给复振幅、由路由层按 :math:`|\sum a_k|^2` 累加。这是该论文口径下
+  多跨应使用的入口。
 """
 
 from collections.abc import Sequence
