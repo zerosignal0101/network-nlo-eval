@@ -1470,7 +1470,9 @@ class Carena2014SpanKernel:
             if lo < 0 or hi < 0:
                 continue
             f_upper = float(self.f_rel_hz[hi] - self.f_rel_hz[i])
-            f_lower = float(self.f_rel_hz[i] - self.f_rel_hz[lo])
+            # Eq. (24)-(26) 的 f2 取下侧 INT 带，相对 CUT 的频偏是负的；取正值会把
+            # 下侧带放到 CUT 的正侧，M0 域随之恒空（f1+f2 不可能落进 CUT 带）。
+            f_lower = float(self.f_rel_hz[lo] - self.f_rel_hz[i])
             pair = (round(f_upper, 6), round(f_lower, 6))
             if pair in table:
                 continue
@@ -1641,12 +1643,15 @@ class Carena2014SpanKernel:
                 continue
             pair = (
                 round(float(self.f_rel_hz[hi] - self.f_rel_hz[index]), 6),
-                round(float(self.f_rel_hz[index] - self.f_rel_hz[lo]), 6),
+                round(float(self.f_rel_hz[lo] - self.f_rel_hz[index]), 6),
             )
             kappas = table[pair]
-            km0[index] = float(np.sum(kappas.kappa_m0))
-            km11[index] = float(np.sum(kappas.kappa_m1_1))
-            km12[index] = float(np.sum(kappas.kappa_m1_2))
+            # 论文 Eq. (27) 是带内积分；kappa 是 f 的密度，直接求和会漏掉 Δf，
+            # 使 MCI 项比 XCI（走比值口径）小若干量级。
+            grid = self._frequency_grid()
+            km0[index] = float(np.trapz(kappas.kappa_m0, grid))
+            km11[index] = float(np.trapz(kappas.kappa_m1_1, grid))
+            km12[index] = float(np.trapz(kappas.kappa_m1_2, grid))
         cached = (km0, km11, km12)
         self._mci_channel_cache[key] = cached
         return cached
