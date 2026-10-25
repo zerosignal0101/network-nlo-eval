@@ -506,7 +506,17 @@ def _fma(typingctx, a, b, c):
     return sig, codegen
 
 
-@njit(cache=False, nogil=True)
+#: 融合内核的 JIT 落盘缓存：``cache=True``。
+#:
+#: 这些内核是模块级函数、只依赖参数，因此 numba 可以把编译产物写进
+#: ``__pycache__/*.nbc``；``_fma`` 是 ``@intrinsic``，但 intrinsic 不阻止缓存
+#: （实测 ``cgn._fused_integrand_isrs`` 的 ``.nbi/.nbc`` 正常写入并被后续进程读取）。
+#: 冷进程首次调用 0.686 s → 0.385 s。
+#:
+#: 会让缓存**静默失效**的写法（numba 只发 NumbaWarning，不报错）：函数定义在闭包里、
+#: 在 ``exec``/REPL 里定义（没有 ``__file__`` ⇒ "no locator available"）、或引用动态全局量
+#: （ctypes 指针、大数组）。改造时保持模块级定义即可。
+@njit(cache=True, nogil=True)
 def _complex_multiply(ar, ai, br, bi):
     """复数乘法，语义与 numpy 的复数乘法**逐位相同**。
 
@@ -528,7 +538,7 @@ def _complex_multiply(ar, ai, br, bi):
     return _fma(ar, br, -cross), _fma(ar, bi, cross2)
 
 
-@njit(cache=False, nogil=True)
+@njit(cache=True, nogil=True)
 def _np_maximum(a, b):
     """``numpy.maximum`` 的标量语义（NaN 传播）。
 
@@ -547,7 +557,7 @@ def _np_maximum(a, b):
     return a if a > b else b
 
 
-@njit(cache=False, nogil=True)
+@njit(cache=True, nogil=True)
 def _np_minimum(a, b):
     """``numpy.minimum`` 的标量语义（NaN 传播）。
 
@@ -566,7 +576,7 @@ def _np_minimum(a, b):
     return a if a < b else b
 
 
-@njit(cache=False, nogil=True)
+@njit(cache=True, nogil=True)
 def _square(value):
     """平方，语义与 numpy 的 ``array ** 2`` **逐位相同**。
 
@@ -583,7 +593,7 @@ def _square(value):
     return value * value
 
 
-@njit(cache=False, nogil=True)
+@njit(cache=True, nogil=True)
 def _fused_integrand_isrs(
     out,
     alpha_x,
@@ -704,7 +714,7 @@ def _fused_integrand_isrs(
     return out
 
 
-@njit(cache=False, nogil=True)
+@njit(cache=True, nogil=True)
 def _fused_integrand_plain(
     out,
     alpha_x,
