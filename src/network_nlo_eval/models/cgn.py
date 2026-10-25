@@ -390,6 +390,12 @@ MCI_MAX_SLOTS = 4096
 #: 构造期的临时数组规模上限（元素数）。分块处理 CUT 信道用。
 _CHUNK_ELEMENTS = 4_000_000
 
+#: 构造期**每块临时数组**的字节预算。分块大小按它来定：块太大时
+#: ``integrand`` / ``weighted`` 这几张 double 数组会反复冲出 L2/L3，带宽
+#: 成为瓶颈（实测 479 信道整网格从 3.4 s 降到 3.0 s，稀疏子集从 123 ms
+#: 降到 46 ms）。分块大小不改变任何输出位（每行的归约在自己的块内完成）。
+_CHUNK_BYTES = 4 * 1024 * 1024
+
 #: 功率规范化时保留的**有效数字**位数（绝对量级）。
 #:
 #: 核心矩阵（含 ISRS 时）依赖入纤功率的**绝对**值：拉曼功率倾斜的速率正比于
@@ -414,6 +420,10 @@ CANONICAL_SHAPE_DIGITS = 9
 #: 核心矩阵缓存的内存预算（字节）。核心矩阵是 ``(N, N, J)`` 的 double 数组，
 #: 479 信道时单个约 5.5 MiB；预算是为了在功率扫描时既不反复重建，也不无界增长。
 CORE_CACHE_BUDGET_BYTES = 256 * 1024 * 1024
+
+#: 活跃子集视图缓存的条目上限。视图只含几何量（每个约几百 KiB），但
+#: RWA/RL 场景里活跃集每步都变，故必须有上界。
+_VIEW_CACHE_ENTRIES = 64
 
 #: 等效相位斜坡的二分步数。
 #:
@@ -1597,6 +1607,8 @@ def _island_core(
     isrs_z_mid: NDArrayFloat | None = None,
     isrs_seg_length_m: float = 0.0,
     band_points: int = DEFAULT_BAND_POINTS,
+    compact_live: bool = False,
+    compact_scatter: bool = True,
 ) -> NDArrayFloat:
     r"""每个 (CUT, 第二波, 第三波) 三元组的相关系数核心积分。
 
@@ -1643,6 +1655,17 @@ def _island_core(
             ``>1`` 表示按官方 cGN 的做法在带内求 NLI PSD 并积分（见
             :func:`_band_quadrature`）。取值大于 1 时，返回的核心积分已经
             含带宽量纲，调用方**不得**再乘一次信道带宽。
+        compact_live: 是否启用"活矩形片"压缩。``False``（默认）走原路径，
+            其求和次序被 :file:`tests/test_cgn_coldstart.py` 逐位守住；
+            ``True`` 时只把"相关域积分跨度非零"的矩形片送进融合内核，
+            死片的被积函数恒为 0（等价变换，不是截断）。
+        compact_scatter: 压缩后的归约方式。``True``（默认）把活片的结果
+            **散射回整块数组**再用与原路径完全相同的
+            ``np.sum(integrand, axis=(-2,-1))`` 归约，故输出**逐位不变**
+            （全网格路径用它）；``False`` 直接对活片做 ``np.bincount``
+            归约，省掉整块数组的填充与读写（内存带宽友好），但**求和
+            次序**变了，末位有 ~1e-15 量级的差异 —— 只用在活跃子集路径
+            （那里只要求相对误差 < 1e-12）。
 
     Returns
     -------
@@ -1679,8 +1702,12 @@ def _island_core(
         alpha_x = alpha_x + scale * (isrs_rate[second] + isrs_rate[third])
 
     # 分块处理 CUT 信道，避免 (N, N, J, cells, 4, points) 的巨型临时数组。
-    per_c = max(1, n_ch * n_slots * island_cells * 4 * max(correlation_points, 1))
-    chunk = max(1, min(n_ch, int(_CHUNK_ELEMENTS // per_c)))
+    # 分块只影响临时数组的**规模**，不影响任何一个 (CUT, 第二波, 第三波) 行的
+    # 归约次序（每行的求和在自己的块内完成），故改分块大小不改变任何输出位。
+    # 块大小按"每块临时数组能进 L2/L3"来定：块太大时 integrand/weighted 这
+    # 几张 double 数组会反复冲出缓存，带宽成为瓶颈。
+    per_c = max(1, n_ch * n_slots * island_cells * max(correlation_points, 1))
+    chunk = max(1, min(n_ch, int(_CHUNK_BYTES // (per_c * 8))))
 
     # 观测频率（带内积分）的求积节点。默认档只有一个节点（信道中心），
     # 带内积分档用 Gauss-Legendre 节点铺满信道带。
@@ -1747,6 +1774,26 @@ def _island_core(
         gamma2 = gamma_w_m[idx] ** 2
         shape = (stop - start, n_ch, n_slots, island_cells, correlation_points)
         integrand = np.empty(shape, dtype=np.float64)
+        weighted_buf = None
+        compact_buf = None
+        if compact_live:
+            weighted_buf = np.empty(shape, dtype=np.float64)
+            # 压缩路径：把 (CUT, 第二波, 第三波) 压成一条"行"轴，矩形片轴
+            # 长度取 1（每条活片独占一行），与 _mci_core 的布局一致。
+            n_rows = (stop - start) * n_ch * n_slots
+            compact_buf = np.empty(
+                (n_rows * island_cells, 1, 1, 1, correlation_points), dtype=np.float64
+            )
+        # 压缩路径用的逐行索引（CUT/第二波/第三波 展平后的坐标）。
+        row_second = None
+        row_third = None
+        row_gamma = None
+        if compact_live:
+            row_second = np.ascontiguousarray(second[idx]).reshape(-1)
+            row_third = np.ascontiguousarray(third[idx]).reshape(-1)
+            row_gamma = np.ascontiguousarray(
+                np.broadcast_to(gamma2[:, None, None], (stop - start, n_ch, n_slots))
+            ).reshape(-1)
 
         acc = np.zeros((stop - start, n_ch, n_slots), dtype=np.float64)
         acc_dirichlet = (
@@ -1784,6 +1831,166 @@ def _island_core(
                 xi_scale = np.where(np.isfinite(xi_scale) & (xi_scale > 0.0), xi_scale, np.inf)
                 xi_cut = np.minimum(xi_max, xi_min + TRUNCATION_FACTOR * xi_scale)
                 xi_end = np.maximum(xi_cut, xi_min)
+
+                if compact_live:
+                    # ---- 活矩形片压缩（等价变换，不是截断） ----------------
+                    # "相关域积分跨度为零"的矩形片，其被积函数恒为 0（内核写
+                    # +0.0）。故只把跨度非零的片送进融合内核，再把结果散射回
+                    # 整块数组（死片写 0.0），最终仍用与原路径**完全相同**的
+                    # ``np.sum(integrand, axis=(-2,-1))`` 归约 —— 故输出逐位
+                    # 不变，而内核与相干累加核的求积只做"活片"那部分
+                    # （实测约 44% 的片是活的）。
+                    xi_span = xi_end - xi_min
+                    span_rows = xi_span.reshape(n_rows, island_cells)
+                    live_rows, live_cells = np.nonzero(span_rows > 0.0)
+                    n_live = int(live_rows.size)
+                    if compact_scatter:
+                        integrand.fill(0.0)
+                    if n_live:
+                        shape_rows = (stop - start, n_ch, n_slots, island_cells)
+                        a_rows = np.ascontiguousarray(
+                            np.broadcast_to(a, shape_rows)
+                        ).reshape(n_rows, island_cells)
+                        b_rows = np.ascontiguousarray(
+                            np.broadcast_to(b, shape_rows)
+                        ).reshape(n_rows, island_cells)
+                        c_rows = np.ascontiguousarray(c).reshape(n_rows, island_cells)
+                        d_rows = np.ascontiguousarray(d).reshape(n_rows, island_cells)
+                        beta_rows = beta2_eff.reshape(n_rows, island_cells)
+                        xi_min_rows = xi_min.reshape(n_rows, island_cells)
+                        xi_span_rows = span_rows
+                        alpha_rows = alpha_c.reshape(n_rows)
+                        a_live = np.ascontiguousarray(a_rows[live_rows, live_cells])[:, None]
+                        b_live = np.ascontiguousarray(b_rows[live_rows, live_cells])[:, None]
+                        c_live = np.ascontiguousarray(
+                            c_rows[live_rows, live_cells]
+                        )[:, None, None, None]
+                        d_live = np.ascontiguousarray(
+                            d_rows[live_rows, live_cells]
+                        )[:, None, None, None]
+                        beta_live = np.ascontiguousarray(
+                            beta_rows[live_rows, live_cells]
+                        )[:, None, None, None]
+                        xi_min_live = np.ascontiguousarray(
+                            xi_min_rows[live_rows, live_cells]
+                        )[:, None, None, None]
+                        xi_span_live = np.ascontiguousarray(
+                            xi_span_rows[live_rows, live_cells]
+                        )[:, None, None, None]
+                        alpha_live = np.ascontiguousarray(alpha_rows[live_rows])[:, None, None]
+                        gamma_live = np.ascontiguousarray(row_gamma[live_rows])
+                        if integrate_band:
+                            band_flat = np.ascontiguousarray(
+                                np.broadcast_to(band_scale, (stop - start, n_ch, n_slots))
+                            ).reshape(-1)
+                        else:
+                            band_flat = np.ones(n_rows, dtype=np.float64)
+                        band_live = band_flat[live_rows]
+                        residual_live = None
+                        magnitude_live = None
+                        expm1_live = None
+                        if use_isrs:
+                            second_live = row_second[live_rows]
+                            third_live = row_third[live_rows]
+                            residual_live = np.empty(
+                                (n_live, 1, 1, isrs_gain.shape[0]), dtype=np.float64
+                            )
+                            for seg in range(isrs_gain.shape[0]):
+                                gain_seg = isrs_gain[seg]
+                                residual_live[:, 0, 0, seg] = (
+                                    gain_seg[second_live] * gain_seg[third_live]
+                                ) * np.exp(
+                                    (isrs_rate[second_live] + isrs_rate[third_live])
+                                    * isrs_z_mid[seg]
+                                )
+                            magnitude_live = np.exp(-alpha_live * decay)
+                            expm1_live = np.expm1(-alpha_live * decay)
+                        out = compact_buf[:n_live]
+                        if use_isrs:
+                            _fused_integrand_isrs(
+                                out,
+                                alpha_live,
+                                residual_live,
+                                magnitude_live,
+                                expm1_live,
+                                beta_live,
+                                xi_min_live,
+                                xi_span_live,
+                                quad_u,
+                                quad_w,
+                                a_live,
+                                b_live,
+                                c_live,
+                                d_live,
+                                gamma_live,
+                                decay,
+                                four_pi2,
+                            )
+                        else:
+                            _fused_integrand_plain(
+                                out,
+                                alpha_live,
+                                float(length_m),
+                                beta_live,
+                                xi_min_live,
+                                xi_span_live,
+                                quad_u,
+                                quad_w,
+                                a_live,
+                                b_live,
+                                c_live,
+                                d_live,
+                                gamma_live,
+                                four_pi2,
+                            )
+                        if compact_scatter:
+                            # 散射回整块数组：死片保持 0.0（与原路径的 +0.0 相同）。
+                            integrand_rows = integrand.reshape(
+                                n_rows, island_cells, correlation_points
+                            )
+                            integrand_rows[live_rows, live_cells, :] = out[:, 0, 0, 0, :]
+                    if compact_scatter:
+                        # 单跨核心积分：与原路径的归约完全相同（逐位不变）。
+                        acc += band_scale * np.sum(integrand, axis=(-2, -1))
+                    elif n_live:
+                        values = band_live * np.sum(out, axis=(-2, -1)).reshape(n_live)
+                        acc += np.bincount(live_rows, weights=values, minlength=n_rows).reshape(
+                            stop - start, n_ch, n_slots
+                        )
+                    if acc_dirichlet is not None:
+                        # 链路级相干总量：逐点乘上论文 Eq. (63) 的相干累加核。
+                        dirichlet_values = None
+                        if n_live:
+                            nodes = xi_min_live.reshape(n_live)[:, None] + xi_span_live.reshape(
+                                n_live
+                            )[:, None] * quad_u[None, :]
+                            theta = (
+                                four_pi2
+                                * beta_live.reshape(n_live)[:, None]
+                                * length_m
+                                * nodes
+                            )
+                            dirichlet_values = out[:, 0, 0, 0, :] * _dirichlet_weight(
+                                theta, n_coherent_spans
+                            )
+                        if compact_scatter:
+                            weighted_rows = weighted_buf.reshape(
+                                n_rows, island_cells, correlation_points
+                            )
+                            weighted_rows.fill(0.0)
+                            if n_live:
+                                weighted_rows[live_rows, live_cells, :] = dirichlet_values
+                            weighted = np.where(np.isfinite(weighted_buf), weighted_buf, 0.0)
+                            acc_dirichlet += band_scale * np.sum(weighted, axis=(-2, -1))
+                        elif n_live:
+                            weighted = np.where(
+                                np.isfinite(dirichlet_values), dirichlet_values, 0.0
+                            )
+                            dirichlet_sum = band_live * np.sum(weighted, axis=-1)
+                            acc_dirichlet += np.bincount(
+                                live_rows, weights=dirichlet_sum, minlength=n_rows
+                            ).reshape(stop - start, n_ch, n_slots)
+                    continue
 
                 # 融合内核：一次遍历算完"节点 → 矩形权重 → NSP 能量谱 →
                 # 求积权重 → 被积函数"，语义与 numpy 链路逐位相同。
@@ -2421,6 +2628,45 @@ def _mci_from_core(
 
 
 @dataclass(frozen=True)
+class _GridView:
+    """一个"信道视图"：全网格，或只含活跃信道的子集。
+
+    视图把"信道几何"从"功率"里剥出来：核心积分矩阵、ISRS 剖面与 NLI 聚合
+    都在视图上进行，全网格视图给出改造前的结果，活跃子集视图给出等价但
+    便宜得多的结果。
+
+    Attributes
+    ----------
+        act: 视图内信道在**全网格**中的索引 ``(n,)``；全网格视图是
+            ``arange(N)``。
+        inv: 全网格索引 -> 视图内索引的映射 ``(N,)``；不在视图内的信道为 -1。
+        f_abs_hz: ``(n,)`` 信道中心频率 (Hz)。
+        b_hz: ``(n,)`` 信道带宽 (Hz)。
+        f_rel_hz: ``(n,)`` 相对频率 (Hz)。
+        alpha_npm: ``(n,)`` 逐信道功率衰减 (Np/m)。
+        gamma_w_m: ``(n,)`` 逐信道非线性系数 (1/(W·m))。
+        r_index: ``(n, n, J)`` 第三波槽位（**视图内**索引，-1 表示空槽）。
+        r_index_padded: ``(n, n, J)`` 槽位索引 +1（0 号位是恒为 0 的哑元）。
+        mci_index: ``(n, M, 3)`` MCI 槽位的信道索引（**视图内**索引，-1 表示空槽）。
+        mci_weight: ``(n, M)`` MCI 槽位的 ``(f1, f2)`` 对称权重。
+        sparse: 该视图是否只含活跃信道（``True`` 时启用"活矩形片"压缩）。
+    """
+
+    act: NDArrayFloat
+    inv: NDArrayFloat
+    f_abs_hz: NDArrayFloat
+    b_hz: NDArrayFloat
+    f_rel_hz: NDArrayFloat
+    alpha_npm: NDArrayFloat
+    gamma_w_m: NDArrayFloat
+    r_index: NDArrayFloat
+    r_index_padded: NDArrayFloat
+    mci_index: NDArrayFloat
+    mci_weight: NDArrayFloat
+    sparse: bool = False
+
+
+@dataclass(frozen=True)
 class _CoreEntry:
     """核心矩阵缓存的条目。
 
@@ -2440,6 +2686,8 @@ class _CoreEntry:
     mci_weight: NDArrayFloat
     ramp_spm: NDArrayFloat | None = None
     ramp_xpm: NDArrayFloat | None = None
+    #: 该条目所属的信道视图（全网格或活跃子集）。
+    view: _GridView | None = None
 
 
 class CGNSpanKernel:
@@ -2578,6 +2826,141 @@ class CGNSpanKernel:
         self._core_cache: dict[tuple, NDArrayFloat] = {}
         #: 缓存占用的字节数（用于按预算淘汰）。
         self._core_cache_bytes = 0
+        #: MCI 槽位表（纯几何，与功率无关）：延迟构造并缓存一次。
+        self._mci_table_cache: tuple[NDArrayFloat, NDArrayFloat] | None = None
+        #: 活跃子集视图缓存：活跃索引的字节串 → 视图。
+        self._view_cache: dict[bytes, _GridView] = {}
+        #: 全网格视图（几何量，只依赖信道排布与光纤参数）。
+        self._full_view = _GridView(
+            act=np.arange(self.n_nodes, dtype=np.int64),
+            inv=np.arange(self.n_nodes, dtype=np.int64),
+            f_abs_hz=self.f_abs_hz,
+            b_hz=self.b_hz,
+            f_rel_hz=self.f_rel_hz,
+            alpha_npm=self.alpha_npm,
+            gamma_w_m=self.gamma_w_m,
+            r_index=self._r_index,
+            r_index_padded=self._r_index_padded,
+            mci_index=np.zeros((self.n_nodes, 0, 3), dtype=np.int64),
+            mci_weight=np.zeros((self.n_nodes, 0), dtype=np.float64),
+        )
+
+    def _mci_table(self) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """MCI 槽位表（纯几何，与功率无关），延迟构造并缓存。
+
+        槽位表只依赖信道排布、光纤的衰减与色散，与入纤功率无关，故它
+        **不**进核心矩阵的缓存键：整个核只构造一次（原来每个功率键都
+        重算一遍）。
+
+        Returns
+        -------
+            ``(index, weight)``：``index`` 形状 ``(N, M, 3)``（``(c1, c2, c3)``
+            信道索引，-1 表示空槽），``weight`` 形状 ``(N, M)``。
+        """
+        if self._mci_table_cache is None:
+            if self.band_points > 1:
+                index, weight = _mci_slot_table(
+                    self.f_abs_hz,
+                    self.b_hz,
+                    self.alpha_npm,
+                    self.beta2_s2_m,
+                )
+            else:
+                index = np.zeros((self.n_nodes, 0, 3), dtype=np.int64)
+                weight = np.zeros((self.n_nodes, 0), dtype=np.float64)
+            self._mci_table_cache = (index, weight)
+        return self._mci_table_cache
+
+    def _subset_view(self, act: NDArrayFloat) -> _GridView:
+        """活跃子集视图（纯几何，按活跃集缓存）。
+
+        第三波槽位与 MCI 槽位都取自**全网格**的几何表，再按活跃集过滤。
+        功率为零的信道对 NLI 的贡献恒为零（其 PSD 因子为 0），故过滤是
+        **等价变换**而不是截断：被保留的三元组与全网格路径逐个相同。
+
+        过滤保留原来的频率次序，但**求和次序**会变（被丢掉的槽位贡献恒为
+        0，求和分组因此不同），故稀疏路径与全网格路径的末位会有差异。
+
+        Args:
+            act: 活跃信道在全网格中的索引 ``(n,)``（升序）。
+
+        Returns
+        -------
+            该活跃集对应的视图。
+        """
+        key = np.ascontiguousarray(act, dtype=np.int64).tobytes()
+        cached = self._view_cache.get(key)
+        if cached is not None:
+            return cached
+        n_full = self.n_nodes
+        n = int(act.size)
+        inv = np.full(n_full, -1, dtype=np.int64)
+        inv[act] = np.arange(n, dtype=np.int64)
+        is_active = np.zeros(n_full, dtype=bool)
+        is_active[act] = True
+
+        # --- 第三波槽位：全网格表过滤到活跃集 -------------------------
+        sub = self._r_index[np.ix_(act, act)]
+        safe = np.where(sub >= 0, sub, 0)
+        keep = (sub >= 0) & is_active[safe]
+        counts = keep.sum(axis=2)
+        n_slots = int(counts.max()) if counts.size else 0
+        if n_slots:
+            # 稳定排序把"保留"的槽位挪到前面，频率次序不变。
+            order = np.argsort(~keep, axis=2, kind="stable")
+            ordered = np.take_along_axis(sub, order, axis=2)[..., :n_slots]
+            valid = np.arange(n_slots) < counts[..., None]
+            mapped = inv[np.where(ordered >= 0, ordered, 0)]
+            r_index = np.where(valid, mapped, -1).astype(np.int64)
+        else:
+            r_index = np.full((n, n, 0), -1, dtype=np.int64)
+        r_index_padded = np.where(r_index >= 0, r_index + 1, 0)
+
+        # --- MCI 槽位：全网格表过滤到"三个波都在活跃集"的槽位 ---------
+        mci_index_full, mci_weight_full = self._mci_table()
+        mci_index = np.full((n, 0, 3), -1, dtype=np.int64)
+        mci_weight = np.zeros((n, 0), dtype=np.float64)
+        if mci_index_full.shape[1]:
+            tri = mci_index_full[act]
+            weight = mci_weight_full[act]
+            valid_tri = (tri >= 0).all(axis=2)
+            safe_tri = np.where(valid_tri[:, :, None], tri, 0)
+            keep_tri = (
+                valid_tri
+                & is_active[safe_tri[..., 0]]
+                & is_active[safe_tri[..., 1]]
+                & is_active[safe_tri[..., 2]]
+            )
+            counts_tri = keep_tri.sum(axis=1)
+            m_slots = int(counts_tri.max()) if counts_tri.size else 0
+            if m_slots:
+                order = np.argsort(~keep_tri, axis=1, kind="stable")
+                ordered = np.take_along_axis(tri, order[:, :, None], axis=1)[:, :m_slots]
+                ordered_w = np.take_along_axis(weight, order, axis=1)[:, :m_slots]
+                valid_m = np.arange(m_slots) < counts_tri[:, None]
+                mapped = inv[np.where(ordered >= 0, ordered, 0)]
+                mci_index = np.where(valid_m[:, :, None], mapped, -1).astype(np.int64)
+                mci_weight = np.where(valid_m, ordered_w, 0.0)
+
+        view = _GridView(
+            act=np.ascontiguousarray(act, dtype=np.int64),
+            inv=inv,
+            f_abs_hz=np.ascontiguousarray(self.f_abs_hz[act]),
+            b_hz=np.ascontiguousarray(self.b_hz[act]),
+            f_rel_hz=np.ascontiguousarray(self.f_rel_hz[act]),
+            alpha_npm=np.ascontiguousarray(self.alpha_npm[act]),
+            gamma_w_m=np.ascontiguousarray(self.gamma_w_m[act]),
+            r_index=r_index,
+            r_index_padded=r_index_padded,
+            mci_index=mci_index,
+            mci_weight=mci_weight,
+            sparse=True,
+        )
+        self._view_cache[key] = view
+        # 视图缓存有上界：RWA/RL 场景里活跃集每步都变，无界增长会把内存吃光。
+        while len(self._view_cache) > _VIEW_CACHE_ENTRIES:
+            self._view_cache.pop(next(iter(self._view_cache)))
+        return view
 
     def _span_output_power(
         self,
@@ -2611,8 +2994,51 @@ class CGNSpanKernel:
             )
         return power * np.exp(-self.alpha_npm * length)
 
+    def _span_output_power_view(
+        self,
+        view: _GridView,
+        power: NDArrayFloat,
+        span_length_m: float,
+    ) -> NDArrayFloat:
+        """该跨段的出纤功率 (W)，只算视图内的信道。
+
+        功率为零的信道出纤功率也是零（内核对 ``p_in_w[i] <= 0`` 直接写 0），
+        故只在活跃信道上推进剖面是等价变换。被积的归一化因子
+        ``sum_k P_k exp(...)`` 在全网格与子集上只差求和次序（零功率项
+        贡献恒为 0），差异在 1 ulp 量级。
+
+        Args:
+            view: 信道视图。
+            power: 视图内的入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+
+        Returns
+        -------
+            视图内的出纤功率 (W)。
+        """
+        length = float(span_length_m)
+        if self.include_isrs:
+            total_w = float(power.sum())
+            r_f = _calc_raman_profile_jit(
+                view.f_rel_hz,
+                self.f_m_hz,
+                self.f_M_hz,
+                DELTA_F_CO_HZ,
+                total_w,
+            )
+            return _calc_span_out_power_jit(
+                np.ascontiguousarray(power, dtype=np.float64),
+                view.f_rel_hz,
+                np.ascontiguousarray(view.alpha_npm, dtype=np.float64),
+                length,
+                np.ascontiguousarray(r_f, dtype=np.float64),
+                float(self.k_bar),
+            )
+        return power * np.exp(-view.alpha_npm * length)
+
     def _core_matrix(
         self,
+        view: _GridView,
         canonical_power: NDArrayFloat,
         span_length_m: float,
         n_coherent_spans: int,
@@ -2620,8 +3046,9 @@ class CGNSpanKernel:
         """构造该跨段的核心积分矩阵（单跨 + 链路级相干总量 + MCI 图元）。
 
         Args:
-            canonical_power: 规范化后的入纤功率 (W)；矩阵只依赖它，故矩阵是
-                缓存键的纯函数。
+            view: 信道视图（全网格或活跃子集）。几何量全部取自视图。
+            canonical_power: 规范化后的入纤功率 (W)，**视图内**的功率；矩阵
+                只依赖它，故矩阵是缓存键的纯函数。
             span_length_m: 跨段长度 (m)。
             n_coherent_spans: 相干累加的跨段数。
 
@@ -2634,20 +3061,14 @@ class CGNSpanKernel:
         # MCI 图元只在**带内积分档**启用：默认档（带内 NLI PSD 取常数）被
         # 冻结的"单跨逐位一致"契约钉死（tests/test_cgn.py），故该档的输出
         # 保持不变；两档的差异见交付报告的"已知限制"。
-        if self.band_points > 1:
-            mci_index, mci_weight = _mci_slot_table(
-                self.f_abs_hz,
-                self.b_hz,
-                self.alpha_npm,
-                self.beta2_s2_m,
-            )
+        if view.sparse:
+            mci_index, mci_weight = view.mci_index, view.mci_weight
         else:
-            mci_index = np.zeros((self.n_nodes, 0, 3), dtype=np.int64)
-            mci_weight = np.zeros((self.n_nodes, 0), dtype=np.float64)
+            mci_index, mci_weight = self._mci_table()
         if self.include_isrs:
             z_mid, gain, rate = _isrs_span_profile(
-                self.f_rel_hz,
-                self.alpha_npm,
+                view.f_rel_hz,
+                view.alpha_npm,
                 canonical_power,
                 self.f_m_hz,
                 self.f_M_hz,
@@ -2656,16 +3077,16 @@ class CGNSpanKernel:
                 self.isrs_segments,
             )
             plain, dirichlet = _island_core(
-                f_abs_hz=self.f_abs_hz,
-                b_hz=self.b_hz,
-                alpha_npm=self.alpha_npm,
-                gamma_w_m=self.gamma_w_m,
+                f_abs_hz=view.f_abs_hz,
+                b_hz=view.b_hz,
+                alpha_npm=view.alpha_npm,
+                gamma_w_m=view.gamma_w_m,
                 beta2_s2_m=self.beta2_s2_m,
                 beta3_s3_m=self.beta3_s3_m,
                 dispersion_convention=self.dispersion_convention,
                 nsp_convention=self.nsp_convention,
                 length_m=float(span_length_m),
-                r_index=self._r_index,
+                r_index=view.r_index,
                 correlation_points=self.correlation_points,
                 island_cells=self.island_cells,
                 n_coherent_spans=int(n_coherent_spans),
@@ -2674,12 +3095,14 @@ class CGNSpanKernel:
                 isrs_z_mid=z_mid,
                 isrs_seg_length_m=float(span_length_m) / float(self.isrs_segments),
                 band_points=self.band_points,
+                compact_live=True,
+                compact_scatter=not view.sparse,
             )
             mci_plain, mci_dirichlet = _mci_core(
-                f_abs_hz=self.f_abs_hz,
-                b_hz=self.b_hz,
-                alpha_npm=self.alpha_npm,
-                gamma_w_m=self.gamma_w_m,
+                f_abs_hz=view.f_abs_hz,
+                b_hz=view.b_hz,
+                alpha_npm=view.alpha_npm,
+                gamma_w_m=view.gamma_w_m,
                 beta2_s2_m=self.beta2_s2_m,
                 beta3_s3_m=self.beta3_s3_m,
                 dispersion_convention=self.dispersion_convention,
@@ -2697,26 +3120,28 @@ class CGNSpanKernel:
             )
             return plain, dirichlet, mci_plain, mci_dirichlet, mci_index, mci_weight
         plain, dirichlet = _island_core(
-            f_abs_hz=self.f_abs_hz,
-            b_hz=self.b_hz,
-            alpha_npm=self.alpha_npm,
-            gamma_w_m=self.gamma_w_m,
+            f_abs_hz=view.f_abs_hz,
+            b_hz=view.b_hz,
+            alpha_npm=view.alpha_npm,
+            gamma_w_m=view.gamma_w_m,
             beta2_s2_m=self.beta2_s2_m,
             beta3_s3_m=self.beta3_s3_m,
             dispersion_convention=self.dispersion_convention,
             nsp_convention=self.nsp_convention,
             length_m=float(span_length_m),
-            r_index=self._r_index,
+            r_index=view.r_index,
             correlation_points=self.correlation_points,
             island_cells=self.island_cells,
             n_coherent_spans=int(n_coherent_spans),
             band_points=self.band_points,
+            compact_live=True,
+            compact_scatter=not view.sparse,
         )
         mci_plain, mci_dirichlet = _mci_core(
-            f_abs_hz=self.f_abs_hz,
-            b_hz=self.b_hz,
-            alpha_npm=self.alpha_npm,
-            gamma_w_m=self.gamma_w_m,
+            f_abs_hz=view.f_abs_hz,
+            b_hz=view.b_hz,
+            alpha_npm=view.alpha_npm,
+            gamma_w_m=view.gamma_w_m,
             beta2_s2_m=self.beta2_s2_m,
             beta3_s3_m=self.beta3_s3_m,
             dispersion_convention=self.dispersion_convention,
@@ -2732,6 +3157,7 @@ class CGNSpanKernel:
 
     def _link_ramps(
         self,
+        view: _GridView,
         plain: NDArrayFloat,
         dirichlet: NDArrayFloat,
         mci_plain: NDArrayFloat,
@@ -2750,34 +3176,35 @@ class CGNSpanKernel:
         :math:`|\sum_k a_k|^2` 恰好等于 Dirichlet 核算出的链路总量。
 
         Args:
-            plain: ``(N, N, J)`` 单跨核心积分矩阵。
-            dirichlet: ``(N, N, J)`` 链路级相干总量核心积分矩阵。
-            mci_plain: ``(N, M)`` MCI 的单跨核心积分矩阵。
-            mci_dirichlet: ``(N, M)`` MCI 的链路级核心积分矩阵。
-            mci_index: ``(N, M, 3)`` MCI 槽位的信道索引。
-            mci_weight: ``(N, M)`` MCI 槽位的对称权重。
-            canonical_power: 规范化后的入纤功率 (W)。
+            view: 信道视图（决定第三波槽位表与带宽）。
+            plain: ``(n, n, J)`` 单跨核心积分矩阵。
+            dirichlet: ``(n, n, J)`` 链路级相干总量核心积分矩阵。
+            mci_plain: ``(n, M)`` MCI 的单跨核心积分矩阵。
+            mci_dirichlet: ``(n, M)`` MCI 的链路级核心积分矩阵。
+            mci_index: ``(n, M, 3)`` MCI 槽位的信道索引。
+            mci_weight: ``(n, M)`` MCI 槽位的对称权重。
+            canonical_power: 规范化后的入纤功率 (W)，**视图内**的功率。
             n_spans: 跨段数。
 
         Returns
         -------
-            ``(ramp_spm, ramp_xpm)``：逐跨相位增量 (rad)，各 ``(N,)``。
+            ``(ramp_spm, ramp_xpm)``：逐跨相位增量 (rad)，各 ``(n,)``。
         """
-        g_psd = np.where(canonical_power > 0.0, canonical_power / self.b_hz, 0.0)
+        g_psd = np.where(canonical_power > 0.0, canonical_power / view.b_hz, 0.0)
         g_pad = np.concatenate([[0.0], g_psd])
-        third_psd = g_pad[self._r_index_padded]
+        third_psd = g_pad[view.r_index_padded]
         apply_bandwidth = self.band_points == 1
         single_spm, single_xpm = _nli_from_core(
-            plain, g_psd, third_psd, self.b_hz, apply_bandwidth
+            plain, g_psd, third_psd, view.b_hz, apply_bandwidth
         )
         link_spm, link_xpm = _nli_from_core(
-            dirichlet, g_psd, third_psd, self.b_hz, apply_bandwidth
+            dirichlet, g_psd, third_psd, view.b_hz, apply_bandwidth
         )
         single_xpm = single_xpm + _mci_from_core(
-            mci_plain, mci_index, mci_weight, g_psd, self.b_hz, apply_bandwidth
+            mci_plain, mci_index, mci_weight, g_psd, view.b_hz, apply_bandwidth
         )
         link_xpm = link_xpm + _mci_from_core(
-            mci_dirichlet, mci_index, mci_weight, g_psd, self.b_hz, apply_bandwidth
+            mci_dirichlet, mci_index, mci_weight, g_psd, view.b_hz, apply_bandwidth
         )
         ramp_spm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_spm, single_spm))
         ramp_xpm = _equivalent_phase_ramp(n_spans, _coherent_ratio(link_xpm, single_xpm))
@@ -2809,21 +3236,22 @@ class CGNSpanKernel:
             ``(spm, xpm)``：链路级 SCI / XCI 噪声功率 (W)，各 ``(N,)``。
         """
         canonical, _ = _canonical_power(power_in_w)
+        view = self._full_view
         plain, dirichlet, mci_plain, mci_dirichlet, mci_index, mci_weight = self._core_matrix(
-            canonical, span_length_m, int(n_spans)
+            view, canonical, span_length_m, int(n_spans)
         )
-        g_psd = np.where(canonical > 0.0, canonical / self.b_hz, 0.0)
+        g_psd = np.where(canonical > 0.0, canonical / view.b_hz, 0.0)
         g_pad = np.concatenate([[0.0], g_psd])
-        third_psd = g_pad[self._r_index_padded]
+        third_psd = g_pad[view.r_index_padded]
         apply_bandwidth = self.band_points == 1
         if dirichlet is None:
-            spm, xpm = _nli_from_core(plain, g_psd, third_psd, self.b_hz, apply_bandwidth)
+            spm, xpm = _nli_from_core(plain, g_psd, third_psd, view.b_hz, apply_bandwidth)
             mci_source = mci_plain
         else:
-            spm, xpm = _nli_from_core(dirichlet, g_psd, third_psd, self.b_hz, apply_bandwidth)
+            spm, xpm = _nli_from_core(dirichlet, g_psd, third_psd, view.b_hz, apply_bandwidth)
             mci_source = mci_dirichlet
         xpm = xpm + _mci_from_core(
-            mci_source, mci_index, mci_weight, g_psd, self.b_hz, apply_bandwidth
+            mci_source, mci_index, mci_weight, g_psd, view.b_hz, apply_bandwidth
         )
         return spm, xpm
 
@@ -2839,11 +3267,24 @@ class CGNSpanKernel:
         规范化后的功率构造，所以"同一个键"永远对应"同一个条目"，与调用历史
         无关。
         """
-        canonical, power_key = _canonical_power(power)
+        canonical_full, power_key = _canonical_power(power)
+        active = power > 0.0
+        if bool(active.all()):
+            # 全信道活跃：走全网格路径，求和次序与改造前完全一致（逐位不变）。
+            view = self._full_view
+            canonical = canonical_full
+            view_key = b""
+        else:
+            # 活跃子集：核心矩阵只在活跃信道上构造，功率为零的信道对 NLI
+            # 的贡献恒为零，故这是等价变换而不是截断。
+            view = self._subset_view(np.flatnonzero(active))
+            canonical = canonical_full[view.act]
+            view_key = view.act.tobytes()
         key = (
             float(span_length_m),
             int(n_coherent_spans),
             power_key if self.include_isrs else None,
+            view_key,
         )
         cached = self._core_cache.get(key)
         if cached is None:
@@ -2854,16 +3295,18 @@ class CGNSpanKernel:
                 mci_dirichlet,
                 mci_index,
                 mci_weight,
-            ) = self._core_matrix(canonical, span_length_m, n_coherent_spans)
+            ) = self._core_matrix(view, canonical, span_length_m, n_coherent_spans)
             if dirichlet is None:
                 cached = _CoreEntry(
                     plain=plain,
                     mci_plain=mci_plain,
                     mci_index=mci_index,
                     mci_weight=mci_weight,
+                    view=view,
                 )
             else:
                 ramp_spm, ramp_xpm = self._link_ramps(
+                    view,
                     plain,
                     dirichlet,
                     mci_plain,
@@ -2880,6 +3323,7 @@ class CGNSpanKernel:
                     mci_weight=mci_weight,
                     ramp_spm=ramp_spm,
                     ramp_xpm=ramp_xpm,
+                    view=view,
                 )
             self._store_core(key, cached)
         return cached
@@ -2938,27 +3382,41 @@ class CGNSpanKernel:
             raise ValueError(f"span_length_m must be positive, got {span_length_m}.")
 
         entry = self._core_for(power, span_length_m, self.n_coherent_spans)
-        core = entry.plain
-        power_out = self._span_output_power(power, span_length_m)
+        view = entry.view
         active = power > 0.0
-        g_psd = np.where(active, power / self.b_hz, 0.0)
-        # 第三波 PSD：(N, N, J)。槽位索引已 +1，哑元固定在 0 号位。
+        if view is not None and view.sparse:
+            # 活跃子集：核心矩阵、ISRS 剖面与出纤功率都只在活跃信道上算，
+            # 结果再散射回全网格（未占用信道的噪声恒为 0）。
+            act = view.act
+            power_out = np.zeros(self.n_nodes, dtype=np.float64)
+            power_out[act] = self._span_output_power_view(view, power[act], span_length_m)
+            g_psd = np.where(power[act] > 0.0, power[act] / view.b_hz, 0.0)
+        else:
+            power_out = self._span_output_power(power, span_length_m)
+            g_psd = np.where(active, power / self.b_hz, 0.0)
+        # 第三波 PSD：(n, n, J)。槽位索引已 +1，哑元固定在 0 号位。
         g_pad = np.concatenate([[0.0], g_psd])
-        third_psd = g_pad[self._r_index_padded]
-        spm_noise, xpm_noise = _nli_from_core(
-            core, g_psd, third_psd, self.b_hz, self.band_points == 1
+        third_psd = g_pad[view.r_index_padded]
+        spm_view, xpm_view = _nli_from_core(
+            entry.plain, g_psd, third_psd, view.b_hz, self.band_points == 1
         )
         # MCI 图元（两束相互作用波都在被测信道带外）并入 XCI 桶。
-        xpm_noise = xpm_noise + _mci_from_core(
+        xpm_view = xpm_view + _mci_from_core(
             entry.mci_plain,
             entry.mci_index,
             entry.mci_weight,
             g_psd,
-            self.b_hz,
+            view.b_hz,
             self.band_points == 1,
         )
-        spm_noise = np.where(active, spm_noise, 0.0)
-        xpm_noise = np.where(active, xpm_noise, 0.0)
+        if view is not None and view.sparse:
+            spm_noise = np.zeros(self.n_nodes, dtype=np.float64)
+            xpm_noise = np.zeros(self.n_nodes, dtype=np.float64)
+            spm_noise[view.act] = spm_view
+            xpm_noise[view.act] = xpm_view
+        else:
+            spm_noise = np.where(active, spm_view, 0.0)
+            xpm_noise = np.where(active, xpm_view, 0.0)
 
         if (
             span_context is None
@@ -2977,8 +3435,16 @@ class CGNSpanKernel:
         # 相干口径：相位随已传播的链路长度线性增长。齐次链上
         # cumulative_length_m / span_length_m 就是跨序号。
         scale = span_context.cumulative_length_m / float(span_length_m)
-        phase_spm = entry.ramp_spm * scale
-        phase_xpm = entry.ramp_xpm * scale
+        if view is not None and view.sparse:
+            # 相位斜坡是视图内信道的；散射回全网格（未占用信道的噪声为 0，
+            # 幅度也为 0）。
+            phase_spm = np.zeros(self.n_nodes, dtype=np.float64)
+            phase_xpm = np.zeros(self.n_nodes, dtype=np.float64)
+            phase_spm[view.act] = entry.ramp_spm * scale
+            phase_xpm[view.act] = entry.ramp_xpm * scale
+        else:
+            phase_spm = entry.ramp_spm * scale
+            phase_xpm = entry.ramp_xpm * scale
         amplitude_spm = np.sqrt(spm_noise) * np.exp(1j * phase_spm)
         amplitude_xpm = np.sqrt(xpm_noise) * np.exp(1j * phase_xpm)
         return SpanFiberOutput(
