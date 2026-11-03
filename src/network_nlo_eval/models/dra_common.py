@@ -579,12 +579,7 @@ def nli_power_from_profile(
             beta2_eff = beta2 + np.pi * beta3 * (
                 frequencies[index] + frequencies[interferer] - 2.0 * reference_frequency_hz
             )
-            coefficient = (
-                2.0
-                * np.pi**2
-                * (frequencies[interferer] - frequencies[index])
-                * beta2_eff
-            )
+            coefficient = 2.0 * np.pi**2 * (frequencies[interferer] - frequencies[index]) * beta2_eff
             link_squared = average_link_squared(
                 profile,
                 float(frequencies[interferer]),
@@ -631,6 +626,11 @@ class DRASpanKernelBase:
 
     #: Human-readable profile kind, used in diagnostics.
     profile_kind: ClassVar[str] = "generic"
+
+    #: 是否返回跨间复振幅。``True`` 时路由层按 ``|sum a_k|**2`` 相干累加；
+    #: ``False`` 时只返回功率，跨间按功率相加（但模型仍可读 ``SpanContext``，
+    #: 例如 Buglia Eq. (4) 的 ``n^epsilon`` 需要知道总跨数）。
+    emits_nli_amplitudes: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -702,22 +702,23 @@ class DRASpanKernelBase:
         self._include_isrs = bool(include_isrs)
         self._n_quadrature = int(n_quadrature)
         self._pump_alpha_npm = np.asarray(
-            [
-                float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3
-                for pump in self._pumps
-            ],
+            [float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3 for pump in self._pumps],
             dtype=np.float64,
         )
         pump_frequencies = np.asarray(
             [C_LIGHT / (float(pump.wavelength_nm) * 1e-9) for pump in self._pumps],
             dtype=np.float64,
         )
-        self._pump_a_eff_m2 = _calc_aeff_dynamic(
-            C_LIGHT / pump_frequencies if pump_frequencies.size else pump_frequencies,
-            fiber_config.effective_area_um2_ref,
-            fiber_config.aeff_slope_um2_nm,
-            fiber_config.reference_wavelength_nm,
-        ) if pump_frequencies.size else np.zeros(0, dtype=np.float64)
+        self._pump_a_eff_m2 = (
+            _calc_aeff_dynamic(
+                C_LIGHT / pump_frequencies if pump_frequencies.size else pump_frequencies,
+                fiber_config.effective_area_um2_ref,
+                fiber_config.aeff_slope_um2_nm,
+                fiber_config.reference_wavelength_nm,
+            )
+            if pump_frequencies.size
+            else np.zeros(0, dtype=np.float64)
+        )
         self._active = any(float(pump.power_w) > 0.0 for pump in self._pumps)
 
         self._input_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
@@ -793,6 +794,43 @@ class DRASpanKernelBase:
 
     def _fit_profile(self, profile_norm: NDArrayFloat, span_length_m: float) -> _Profile:
         raise NotImplementedError
+
+    def _nli_span(
+        self,
+        power_internal: NDArrayFloat,
+        profile: _Profile,
+        span_context: SpanContext | None,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """本跨 SPM/XPM 噪声功率 (W)，模型可替换的口径。
+
+        默认实现是 Buglia Eq. (6)-(8) 的 GN 双重积分（``nli_power_from_profile``），
+        即两个 DRA 对照模型最初共用的"积分基准"路径。子类可以换成论文的闭式
+        求积，或换成带跨间相位的相干累加。
+
+        Args:
+            power_internal: ``(N,)`` 本跨入纤功率 (W)，降序。
+            profile: 本跨拟合剖面。
+            span_context: 本跨在链路中的位置；只有声明了
+                ``supports_span_context`` 的模型才会收到非 ``None``。
+
+        Returns
+        -------
+            ``(spm_w, xpm_w)``，均为 ``(N,)``。
+        """
+        del span_context
+        return nli_power_from_profile(
+            profile,
+            self.f_abs_hz,
+            power_internal,
+            self.b_hz,
+            self.alpha_npm,
+            self.a_eff_m2,
+            self.beta2,
+            self.beta3,
+            self.reference_frequency_hz,
+            self.n2_m2_w,
+            n_quadrature=self._n_quadrature,
+        )
 
     def _profile_for(
         self,
@@ -879,19 +917,7 @@ class DRASpanKernelBase:
         solver = self._solver_for(span_length_m)
         result = solver.solve(power_internal, self._input_ase_internal)
         profile = self._profile_for(power_internal, span_length_m, result.profile_norm)
-        spm, xpm = nli_power_from_profile(
-            profile,
-            self.f_abs_hz,
-            power_internal,
-            self.b_hz,
-            self.alpha_npm,
-            self.a_eff_m2,
-            self.beta2,
-            self.beta3,
-            self.reference_frequency_hz,
-            self.n2_m2_w,
-            n_quadrature=self._n_quadrature,
-        )
+        spm, xpm = self._nli_span(power_internal, profile, span_context)
         self._last_raman_ase_internal = (
             np.ascontiguousarray(result.raman_ase_w)
             if self._raman_ase_enabled
@@ -905,7 +931,7 @@ class DRASpanKernelBase:
             xpm_noise_w=np.ascontiguousarray(xpm[self.inverse_order]),
         )
         total_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
-        if span_context is None or total_spans <= 1:
+        if not self.emits_nli_amplitudes or span_context is None or total_spans <= 1:
             return output
         factor = self._span_phase_factor(span_context)
         amplitude_spm = np.sqrt(spm) * factor

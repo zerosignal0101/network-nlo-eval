@@ -115,8 +115,8 @@ def main() -> None:
             "raman_lumped": "PCFM + lumped-equivalent Raman (span-end gain, NLI unchanged)",
             "hybrid_raman_paper": "de Moura/Buglia hybrid coupled-ODE subset with PCFM NLI kernel",
             "ecz": "ISRS reference only (no pumps); NOT part of the DRA group",
-            "buglia2024_ra_gn": "Buglia 2024 Eq. (2)/(6)-(8) subset",
-            "zhang2024_dra_egn": "Zhang 2024 Eq. (1)/(2)/(4) coherent-GN subset",
+            "buglia2024_ra_gn": "Buglia 2024 Eq. (2)/(9)-(12) closed form; Eq. (6)-(8) integral baseline",
+            "zhang2024_dra_egn": "Zhang 2024 Eq. (1)/(2)/(4) coherent GN; Sec. II-C calibration fitted in repo",
         },
         "pumps": {
             "single_backward_1450nm": SINGLE_PUMP.model_dump(),
@@ -157,9 +157,9 @@ def main() -> None:
         },
         "ecz_scope": "ecz is shown only as an ISRS reference without pumps; it is excluded from the DRA comparison.",
         "limitations": [
-            "The two DRA controls are paper-inspired subsets, not full reproductions.",
-            "Buglia SPM is about 2 dB below the PCFM single-span reference; XPM matches.",
-            "Zhang is a coherent-GN subset; the calibrated EGN correction is absent.",
+            "Buglia 2024: Eq. (9)/(11)/(12) closed form implemented; Eq. (9)/(11)/(12) printed forms are used, integral Eq. (6)-(8) is the baseline.",
+            "Buglia closed-form SPM is the paper form; the repo integral baseline differs by <0.05 dB on c_57ch.",
+            "Zhang eta_XPM_corr is not printed in the paper; the coherent GN + repo-fitted Sec. II-C calibration is implemented, but the paper-defined correction term is absent.",
             "No waveform model is called online by either control.",
         ],
     }
