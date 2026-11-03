@@ -1479,3 +1479,64 @@ def test_flexible_grid_e_band_edge_fix() -> None:
     old_delta = np.asarray(old.snr_db) - np.asarray(reference.snr_db)
     assert float(np.max(np.abs(fixed_delta))) < 0.15
     assert float(np.max(np.abs(old_delta))) > 1.0
+
+
+def test_modulation_labels_are_format_agnostic() -> None:
+    """The GN/EGN path does not branch on the connection's modulation label.
+
+    ``ConnectionSpec.modulation`` drives the slot count and the bit rate, but
+    the PCFM QoT kernel is the Gaussian-channel GN model (``EGN_PHI = 0``).
+    With identical bandwidth/power, QPSK/16QAM/64QAM must therefore produce
+    identical SNR; per-format EGN constants are not exposed by this model.
+    """
+    grid, _ = _flex_connections((4, 4, 4, 4))
+    path = MultiSpanOpticalPath(
+        [SMF_100KM, SMF_100KM],
+        [EDFAConfig(noise_figure_db=5.5), EDFAConfig(noise_figure_db=5.5)],
+    )
+    outputs = {}
+    for modulation, bits in (("QPSK", 2), ("16QAM", 4), ("64QAM", 6)):
+        connections = [
+            ConnectionSpec(
+                grid=grid,
+                connection_id=index,
+                first_slot=4 * index,
+                n_slots=4,
+                bit_rate_bps=bits * 50e9,
+                modulation=modulation,
+                symbol_rate_hz=50e9,
+                roll_off=0.0,
+                launch_power_w=1e-3,
+            )
+            for index in range(4)
+        ]
+        model = _flex_model(grid, connections)
+        outputs[modulation] = model.evaluate_path(path, np.ones(4) * 1e-3).snr_db
+    reference = outputs["QPSK"]
+    for modulation, values in outputs.items():
+        np.testing.assert_array_equal(values, reference, err_msg=f"{modulation} changed the GN result")
+
+
+def test_arbitrary_mixed_span_lengths() -> None:
+    """Unequal fibre lengths on one path are supported and stay close to numerical."""
+    lengths = (40.0, 80.0, 120.0)
+    fibers = [
+        SMF_100KM.model_copy(update={"length_km": length, "max_span_length_km": 120.0}) for length in lengths
+    ]
+    path = MultiSpanOpticalPath(
+        fibers,
+        [EDFAConfig(noise_figure_db=5.5) for _ in fibers],
+    )
+    grid = SpectrumGrid(8, 50e9, 193.1e12)
+    power = np.ones(8) * 1e-3
+    fixed = PCFMModel(
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+    ).evaluate_path(path, power)
+    reference = create_model("numerical", grid, SMF_100KM, symbol_rate_hz=50e9).evaluate_path(path, power)
+    delta = np.asarray(fixed.snr_db) - np.asarray(reference.snr_db)
+    assert float(np.max(np.abs(delta))) < 0.2, f"mixed lengths differ by {float(np.max(np.abs(delta))):.3f} dB"
