@@ -5,7 +5,7 @@ The module contains no model registration.  It provides the pieces that both
 identically in the two models:
 
 * the coupled signal/pump/ASE ODE is reused from
-  :class:`~network_nlo_eval.models.hybrid_raman.RamanPaperSpanSolver`, so the
+  :class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver`, so the
   two DRA controls do not duplicate the routing or the Raman solver;
 * the *fitted exponential profile* of the papers.  Buglia 2024 Eq. (2) and
   Zhang 2024 Eq. (1) are both sums of three exponentials in ``z``.  Fitting
@@ -35,7 +35,6 @@ from scipy.optimize import least_squares
 
 from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
 from network_nlo_eval.models.base import SpanContext, SpanFiberOutput
-from network_nlo_eval.models.hybrid_raman import RamanPaperSpanSolver
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -48,6 +47,7 @@ from network_nlo_eval.models.pcfm import (
     _self_beating_visibility,
 )
 from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel
+from network_nlo_eval.models.raman_ode import RamanPaperSpanSolver
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 

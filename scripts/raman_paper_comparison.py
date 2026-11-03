@@ -1,8 +1,11 @@
-"""Hybrid Raman 对照基准：PCFM、lumped、论文 ODE 子集与物理 RamanPump。
+"""Hybrid Raman 对照基准：PCFM、lumped、论文 Eq. (6)-(9) 与旧 PCFM 口径。
 
 输出 ``results/raman/paper_comparison.json``。所有解析模型走同一份
 ``build_path`` / ``launch_profile``，只比较单跨物理；物理 RamanPump 只用于
 增益形状对照（它本身也是未耗尽集总模型，不是论文 coupled ODE）。
+
+``hybrid_raman_paper`` 跑两次：``nli_form="paper"``（Eq. (6)-(9) 闭式，默认）
+与 ``nli_form="pcfm"``（升级前的 PCFM 核近似，回归对照）。
 
 运行：
 
@@ -173,7 +176,8 @@ def main() -> None:
         rows.append(_run(case, "pcfm_original"))
         rows.append(_run(case, "pcfm"))
         rows.append(_run(case, "pcfm", raman_model="lumped", raman_pumps=[PUMP]))
-        rows.append(_run(case, "hybrid_raman_paper", raman_pumps=[PUMP]))
+        rows.append(_run(case, "hybrid_raman_paper", raman_pumps=[PUMP], nli_form="paper"))
+        rows.append(_run(case, "hybrid_raman_paper", raman_pumps=[PUMP], nli_form="pcfm"))
 
     payload = {
         "generated_by": "scripts/raman_paper_comparison.py",
@@ -184,14 +188,16 @@ def main() -> None:
             "pcfm": "H3 PCFM (edge fix + span cache)",
             "raman_lumped": "PCFM + lumped-equivalent Raman (span-end gain, NLI unchanged)",
             "hybrid_raman_paper": (
-                "paper-inspired subset: coupled signal/pump/ASE ODE Eq. (2)/(4); "
-                "NLI uses PCFM closed-form kernels on the ODE profile (not Eq. 6-9)"
+                "Buglia 2024 hybrid: Eq. (2)/(4) coupled ODE, Eq. (10) five-coefficient "
+                "profile, Eq. (8)/(9) SPM/XPM closed forms, Eq. (6) n^epsilon "
             ),
         },
         "rows": rows,
         "physical_raman_pump": _physical_gain_comparison(build_case("c_57ch")),
         "limitations": [
-            "hybrid_raman_paper is not a full reproduction of the paper: NLI is not Eq. (6)-(9).",
+            "hybrid_raman_paper implements Eq. (6)-(9); the Raman gain spectrum is the "
+            "repository Gaussian/CZ approximation, not the measured silica spectrum.",
+            "nli_form='pcfm' keeps the previous PCFM-kernel approximation only for regression.",
             "Raman gain spectrum is the repository Gaussian/CZ approximation, not measured silica.",
             "Pump ASE is not solved separately; signal ASE coupling is included.",
             "The physical RamanPump is an undepleted lumped block, used only for gain-shape comparison.",

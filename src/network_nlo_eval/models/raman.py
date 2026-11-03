@@ -1,6 +1,6 @@
 """集总等效的分布式拉曼放大（DRA）组件。
 
-本模块只实现文献中的**集总等效**子集，不是对论文耦合 ODE 的复现：
+本模块只实现文献中的**集总等效**子集；论文耦合 ODE 与 Eq. (6)-(9) 的 NLI 见 ``models.hybrid_raman``：
 
     U. C. de Moura et al., "Ultra-Wideband Modeling of Optical Fibre
     Nonlinearity in Hybrid-Amplified Links" (hybrid Raman + lumped model),

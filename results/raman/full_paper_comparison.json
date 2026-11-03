@@ -1,0 +1,1003 @@
+{
+  "generated_by": "scripts/full_paper_comparison.py",
+  "papers": {
+    "buglia2024_ra_gn": {
+      "citation": "H. Buglia et al., JLT 42(2):636-648, 2024, doi:10.1109/jlt.2023.3315127",
+      "role": "distributed Raman amplification, closed-form RA-GN"
+    },
+    "hybrid_raman_paper": {
+      "citation": "H. Buglia, R. I. Killey, P. Bayvel, 'Ultra-Wideband Modeling of Optical Fibre Nonlinearity in Hybrid-Amplified Links', JLT 2024, doi:10.1109/JLT.2024.3439999",
+      "role": "hybrid Raman + lumped amplification, UWB NLI/ASE"
+    },
+    "zhang2024_dra_egn": {
+      "citation": "Zhang et al., OECC 2024, doi:10.1109/OECC54135.2024.10975528",
+      "role": "distributed Raman amplification, coherent EGN closed form"
+    }
+  },
+  "models": {
+    "pcfm_original": "unmodified PCFM paper configuration (EDFA only, no Raman)",
+    "pcfm": "H3 PCFM (edge fix + span cache), EDFA only",
+    "ecz": "ISRS reference only (no pumps); NOT part of the DRA group",
+    "raman_lumped": "PCFM + lumped-equivalent Raman (span-end gain, NLI unchanged)",
+    "hybrid_raman_paper": "Eq. (2)/(4) coupled ODE + Eq. (10) five-coefficient fit + Eq. (8)/(9) SPM/XPM closed forms + Eq. (6) n^epsilon (nli_form='paper')",
+    "buglia2024_ra_gn": "Eq. (2)/(9)-(12) closed form of the RA-GN paper; Eq. (6)-(8) integral baseline",
+    "zhang2024_dra_egn": "Eq. (1)/(2)/(4) coherent GN; Sec. II-C calibration fitted in repo"
+  },
+  "pumps": {
+    "single_backward_1450nm": {
+      "wavelength_nm": 1450.0,
+      "power_w": 0.2,
+      "direction": "backward",
+      "attenuation_db_per_km": 0.25
+    },
+    "six_backward_e_band": [
+      {
+        "wavelength_nm": 1340.0,
+        "power_w": 0.63,
+        "direction": "backward",
+        "attenuation_db_per_km": 0.25
+      },
+      {
+        "wavelength_nm": 1360.0,
+        "power_w": 0.63,
+        "direction": "backward",
+        "attenuation_db_per_km": 0.25
+      },
+      {
+        "wavelength_nm": 1427.0,
+        "power_w": 0.165,
+        "direction": "backward",
+        "attenuation_db_per_km": 0.25
+      },
+      {
+        "wavelength_nm": 1445.0,
+        "power_w": 0.131,
+        "direction": "backward",
+        "attenuation_db_per_km": 0.25
+      },
+      {
+        "wavelength_nm": 1476.0,
+        "power_w": 0.125,
+        "direction": "backward",
+        "attenuation_db_per_km": 0.25
+      },
+      {
+        "wavelength_nm": 1505.0,
+        "power_w": 0.075,
+        "direction": "backward",
+        "attenuation_db_per_km": 0.25
+      }
+    ],
+    "note": "single pump for C-band cases, six-pump E-band set for the C+L case"
+  },
+  "formula_map_hybrid": {
+    "Eq. (2)": "RamanPaperSpanSolver coupled signal/pump power equations",
+    "Eq. (3)": "RamanPaperSpanSolver with pumps=[] (LA limit, ASE neglected)",
+    "Eq. (4)": "RamanPaperSpanSolver signal ASE equations",
+    "Eq. (6)": "nli_closed_form span accumulation with n**epsilon",
+    "Eq. (7)": "sum over interferers inside nli_closed_form",
+    "Eq. (8)": "buglia2024_closed.eta_xpm_closed",
+    "Eq. (9)": "buglia2024_closed.eta_spm_closed",
+    "Eq. (10)": "buglia2024_closed.fit_buglia_profile_5param",
+    "Eq. (6)-(8) baseline": "buglia2024_closed.nli_integral (nli_form='integral')"
+  },
+  "implemented": {
+    "hybrid_raman_paper": [
+      "Eq. (2)/(4) coupled signal/pump/ASE ODE, forward and backward pumps",
+      "Eq. (10) five-coefficient profile fitted per channel to the ODE solution",
+      "Eq. (8) XPM with Upsilon, alpha_l, kappa_f/kappa_b, l1+l2 sum",
+      "Eq. (9) SPM with asinh/log terms of Appendix D",
+      "Eq. (6)/(7) n^epsilon span accumulation and interferer sum",
+      "Eq. (6)-(8) numerical integral baseline available as nli_form='integral'"
+    ],
+    "buglia2024_ra_gn": [
+      "Eq. (1) coupled signal/pump power equations (same RamanPaperSpanSolver)",
+      "Eq. (2) five-coefficient profile fitted to the Eq. (1) solution",
+      "Eq. (9)-(12) printed SPM/XPM closed forms",
+      "Eq. (4) per-span accumulation with epsilon = 0 (incoherent)"
+    ],
+    "zhang2024_dra_egn": [
+      "Eq. (1) three-exponential profile fitted to the ODE solution",
+      "Eq. (2) closed-form longitudinal link integral",
+      "Eq. (3)-(5) coherent complex sum of the NLI amplitudes over spans"
+    ]
+  },
+  "approximate_or_missing": {
+    "hybrid_raman_paper": [
+      "Raman gain spectrum is the repository Gaussian/CZ approximation, not the measured silica spectrum of the paper's Fig. 4",
+      "pump ASE is not solved separately; the signal ASE coupling of Eq. (4) is complete",
+      "pump-signal XPM omitted, as stated after Eq. (7)",
+      "epsilon is not printed in the paper; default 0 (incoherent span addition)",
+      "Eq. (8)/(9) printed signs follow the derivation of Appendix C/D (see buglia2024_closed)"
+    ],
+    "buglia2024_ra_gn": [
+      "Raman gain spectrum is the repository Gaussian/CZ approximation",
+      "paper has no ASE; this control still adds repository EDFA/Raman ASE",
+      "pump-induced XPM is omitted"
+    ],
+    "zhang2024_dra_egn": [
+      "eta_XPM_corr and the dataset calibration are not reproduced (not printed)",
+      "inter-span phase phi_q is unpublished; the repository NLI-weighted ramp is a proxy",
+      "only backward pumps are accepted"
+    ]
+  },
+  "ecz_scope": "ecz is shown only as an ISRS reference without pumps; it is excluded from the DRA comparison.",
+  "rows": [
+    {
+      "model": "pcfm_original",
+      "options": {},
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 26.665069462180025,
+      "min_snr_db": 26.43194258744483,
+      "max_snr_db": 27.768724033764244,
+      "mean_ase_w": 1.215951283227248e-06,
+      "mean_spm_w": 8.549076186802766e-07,
+      "mean_xpm_w": 1.7174501562778155e-06,
+      "mean_nli_w": 2.572357774958092e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 81.17331890389323,
+      "warm_median_ms": 0.20521343685686588
+    },
+    {
+      "model": "pcfm",
+      "options": {},
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 26.665069462180025,
+      "min_snr_db": 26.43194258744483,
+      "max_snr_db": 27.768724033764244,
+      "mean_ase_w": 1.215951283227248e-06,
+      "mean_spm_w": 8.549076186802766e-07,
+      "mean_xpm_w": 1.7174501562778155e-06,
+      "mean_nli_w": 2.572357774958092e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 6.871260236948729,
+      "warm_median_ms": 0.18281652592122555
+    },
+    {
+      "model": "ecz",
+      "options": {},
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 26.758820746631827,
+      "min_snr_db": 26.526567202784854,
+      "max_snr_db": 27.847911191922293,
+      "mean_ase_w": 1.2156539698665175e-06,
+      "mean_spm_w": 8.342268633939544e-07,
+      "mean_xpm_w": 1.6575288627038629e-06,
+      "mean_nli_w": 2.491755726097818e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 9.986788034439087,
+      "warm_median_ms": 0.11087791062891483
+    },
+    {
+      "model": "pcfm",
+      "options": {
+        "raman_model": "lumped",
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 27.68848680858307,
+      "min_snr_db": 27.499707898661086,
+      "max_snr_db": 28.786149041214273,
+      "mean_ase_w": 4.1940748828778073e-07,
+      "mean_spm_w": 8.549076186802766e-07,
+      "mean_xpm_w": 1.7174501562778155e-06,
+      "mean_nli_w": 2.572357774958092e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 3.0977539718151093,
+      "warm_median_ms": 0.3923026379197836
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "paper"
+      },
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 27.56924519982684,
+      "min_snr_db": 27.248334759065663,
+      "max_snr_db": 28.815249126278758,
+      "mean_ase_w": 4.921745837301163e-07,
+      "mean_spm_w": 8.737786913413633e-07,
+      "mean_xpm_w": 1.713287307928142e-06,
+      "mean_nli_w": 2.5870659992695053e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 2108.5349917411804,
+      "warm_median_ms": 2099.372452357784
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "pcfm"
+      },
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 27.43570636815443,
+      "min_snr_db": 27.122610405546453,
+      "max_snr_db": 28.709495708397007,
+      "mean_ase_w": 4.921745837301163e-07,
+      "mean_spm_w": 9.046766241712989e-07,
+      "mean_xpm_w": 1.7786544614989696e-06,
+      "mean_nli_w": 2.683331085670269e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 40.99086578935385,
+      "warm_median_ms": 38.326150039210916
+    },
+    {
+      "model": "buglia2024_ra_gn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "closed"
+      },
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 27.56924519982684,
+      "min_snr_db": 27.248334759065663,
+      "max_snr_db": 28.815249126278758,
+      "mean_ase_w": 4.921745837301163e-07,
+      "mean_spm_w": 8.737786913413633e-07,
+      "mean_xpm_w": 1.713287307928142e-06,
+      "mean_nli_w": 2.5870659992695053e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 2099.214402027428,
+      "warm_median_ms": 2100.1063210424036
+    },
+    {
+      "model": "zhang2024_dra_egn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 27.463693123895872,
+      "min_snr_db": 27.156706252591608,
+      "max_snr_db": 28.745617513057134,
+      "mean_ase_w": 4.921745837301163e-07,
+      "mean_spm_w": 9.234530655575053e-07,
+      "mean_xpm_w": 1.7398276514441471e-06,
+      "mean_nli_w": 2.6632807170016524e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 380.16106002032757,
+      "warm_median_ms": 383.92777228727937
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "nli_form": "paper"
+      },
+      "case": "c_57ch_1span",
+      "span_count": 1,
+      "mean_snr_db": 26.746912248467346,
+      "min_snr_db": 26.477486354512717,
+      "max_snr_db": 27.828051874856147,
+      "mean_ase_w": 1.2030898026879399e-06,
+      "mean_spm_w": 8.4050867256249e-07,
+      "mean_xpm_w": 1.6751027325017377e-06,
+      "mean_nli_w": 2.515611405064228e-06,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 5123.300577979535,
+      "warm_median_ms": 5134.604812366888
+    },
+    {
+      "model": "pcfm_original",
+      "options": {},
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 16.291166970329215,
+      "min_snr_db": 16.085246555380667,
+      "max_snr_db": 17.272100361450452,
+      "mean_ase_w": 1.215951283227248e-05,
+      "mean_spm_w": 1.2036064356362055e-05,
+      "mean_xpm_w": 1.7077251384976535e-05,
+      "mean_nli_w": 2.9113315741338586e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 54.59233373403549,
+      "warm_median_ms": 1.6508926637470722
+    },
+    {
+      "model": "pcfm",
+      "options": {},
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 16.291166970329222,
+      "min_snr_db": 16.085246555380674,
+      "max_snr_db": 17.272100361450452,
+      "mean_ase_w": 1.215951283227248e-05,
+      "mean_spm_w": 1.2036064356362022e-05,
+      "mean_xpm_w": 1.707725138497649e-05,
+      "mean_nli_w": 2.911331574133851e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 56.147460360080004,
+      "warm_median_ms": 0.8919825777411461
+    },
+    {
+      "model": "ecz",
+      "options": {},
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 16.75882074663183,
+      "min_snr_db": 16.526567202784854,
+      "max_snr_db": 17.847911191922293,
+      "mean_ase_w": 1.2156539698665173e-05,
+      "mean_spm_w": 8.342268633939547e-06,
+      "mean_xpm_w": 1.6575288627038634e-05,
+      "mean_nli_w": 2.491755726097818e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 1.042946707457304,
+      "warm_median_ms": 0.8735272567719221
+    },
+    {
+      "model": "pcfm",
+      "options": {
+        "raman_model": "lumped",
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 17.22071331335712,
+      "min_snr_db": 17.061868263617257,
+      "max_snr_db": 18.16737548644757,
+      "mean_ase_w": 4.194074882877808e-06,
+      "mean_spm_w": 1.2036064356362022e-05,
+      "mean_xpm_w": 1.707725138497649e-05,
+      "mean_nli_w": 2.9113315741338515e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 58.391024358570576,
+      "warm_median_ms": 3.4444385673850775
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "paper"
+      },
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 17.569228409821395,
+      "min_snr_db": 17.24831840027134,
+      "max_snr_db": 18.815227748439213,
+      "mean_ase_w": 4.921864393002349e-06,
+      "mean_spm_w": 8.737786913413633e-06,
+      "mean_xpm_w": 1.7132873079281423e-05,
+      "mean_nli_w": 2.5870659992695056e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 3278.370572719723,
+      "warm_median_ms": 3269.783429335803
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "pcfm"
+      },
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 16.969484036693274,
+      "min_snr_db": 16.669087401958876,
+      "max_snr_db": 18.150234276566067,
+      "mean_ase_w": 4.921864393002349e-06,
+      "mean_spm_w": 1.2736660127631031e-05,
+      "mean_xpm_w": 1.7685732431415222e-05,
+      "mean_nli_w": 3.042239255904625e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 455.53521206602454,
+      "warm_median_ms": 386.694221990183
+    },
+    {
+      "model": "buglia2024_ra_gn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "closed"
+      },
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 17.569228409821395,
+      "min_snr_db": 17.24831840027134,
+      "max_snr_db": 18.815227748439213,
+      "mean_ase_w": 4.921864393002349e-06,
+      "mean_spm_w": 8.737786913413633e-06,
+      "mean_xpm_w": 1.7132873079281423e-05,
+      "mean_nli_w": 2.5870659992695056e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 3262.0921139605343,
+      "warm_median_ms": 3240.084622055292
+    },
+    {
+      "model": "zhang2024_dra_egn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "c_57ch",
+      "span_count": 10,
+      "mean_snr_db": 17.984115080233867,
+      "min_snr_db": 17.57851290759399,
+      "max_snr_db": 19.58377388678889,
+      "mean_ase_w": 4.921864393002349e-06,
+      "mean_spm_w": 4.344082879245049e-06,
+      "mean_xpm_w": 1.8755705450228106e-05,
+      "mean_nli_w": 2.309978832947316e-05,
+      "mean_signal_power_w": 0.0017543859649122807,
+      "cold_ms": 1843.7358858063817,
+      "warm_median_ms": 1836.4233972970396
+    },
+    {
+      "model": "pcfm_original",
+      "options": {},
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 17.67467061617462,
+      "min_snr_db": 17.4702420859512,
+      "max_snr_db": 18.203630465957296,
+      "mean_ase_w": 1.1990069449012295e-05,
+      "mean_spm_w": 2.2015395483527375e-06,
+      "mean_xpm_w": 2.8245143757139725e-06,
+      "mean_nli_w": 5.02605392406671e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 53.79014788195491,
+      "warm_median_ms": 1.384140457957983
+    },
+    {
+      "model": "pcfm",
+      "options": {},
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 17.67467061617462,
+      "min_snr_db": 17.4702420859512,
+      "max_snr_db": 18.203630465957296,
+      "mean_ase_w": 1.1990069449012295e-05,
+      "mean_spm_w": 2.2015395483527375e-06,
+      "mean_xpm_w": 2.8245143757139725e-06,
+      "mean_nli_w": 5.02605392406671e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 54.7496909275651,
+      "warm_median_ms": 0.6688914727419615
+    },
+    {
+      "model": "ecz",
+      "options": {},
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 17.87488122659275,
+      "min_snr_db": 17.6667793950765,
+      "max_snr_db": 18.410774579948054,
+      "mean_ase_w": 1.1989381169150578e-05,
+      "mean_spm_w": 1.5258694704643762e-06,
+      "mean_xpm_w": 2.7348543289791156e-06,
+      "mean_nli_w": 4.260723799443491e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 0.903574749827385,
+      "warm_median_ms": 0.7831044495105743
+    },
+    {
+      "model": "pcfm",
+      "options": {
+        "raman_model": "lumped",
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 20.5106534756214,
+      "min_snr_db": 20.15656622747826,
+      "max_snr_db": 21.176137024491382,
+      "mean_ase_w": 3.836105476682643e-06,
+      "mean_spm_w": 2.2015395483527375e-06,
+      "mean_xpm_w": 2.8245143757139725e-06,
+      "mean_nli_w": 5.02605392406671e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 56.9031210616231,
+      "warm_median_ms": 2.882507862523198
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "paper"
+      },
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 20.52700413610158,
+      "min_snr_db": 20.22577232084077,
+      "max_snr_db": 21.137377646512164,
+      "mean_ase_w": 4.319183110147723e-06,
+      "mean_spm_w": 1.6335430535081117e-06,
+      "mean_xpm_w": 2.8733520898054225e-06,
+      "mean_nli_w": 4.506895143313534e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 1991.0498508252203,
+      "warm_median_ms": 1976.2947750277817
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "pcfm"
+      },
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 20.12317163395533,
+      "min_snr_db": 19.841862263855056,
+      "max_snr_db": 20.731805755422897,
+      "mean_ase_w": 4.319183110147723e-06,
+      "mean_spm_w": 2.3885271803653516e-06,
+      "mean_xpm_w": 2.977721263360707e-06,
+      "mean_nli_w": 5.366248443726059e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 397.8330702520907,
+      "warm_median_ms": 336.783891543746
+    },
+    {
+      "model": "buglia2024_ra_gn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "closed"
+      },
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 20.52700413610158,
+      "min_snr_db": 20.22577232084077,
+      "max_snr_db": 21.137377646512164,
+      "mean_ase_w": 4.319183110147723e-06,
+      "mean_spm_w": 1.6335430535081117e-06,
+      "mean_xpm_w": 2.8733520898054225e-06,
+      "mean_nli_w": 4.506895143313534e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 1980.7089320383966,
+      "warm_median_ms": 1969.7995269671082
+    },
+    {
+      "model": "zhang2024_dra_egn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1450.0,
+            "power_w": 0.2,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "scaling_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 20.78559301405814,
+      "min_snr_db": 20.49222765794633,
+      "max_snr_db": 21.466152747177553,
+      "mean_ase_w": 4.319183110147723e-06,
+      "mean_spm_w": 8.059742773891308e-07,
+      "mean_xpm_w": 3.1906965644680336e-06,
+      "mean_nli_w": 3.996670841857164e-06,
+      "mean_signal_power_w": 0.000995267926383743,
+      "cold_ms": 1138.0146308802068,
+      "warm_median_ms": 1143.8351324759424
+    },
+    {
+      "model": "pcfm_original",
+      "options": {},
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 15.114734700018015,
+      "min_snr_db": 14.926789211747346,
+      "max_snr_db": 15.985265536426162,
+      "mean_ase_w": 1.195708968776634e-05,
+      "mean_spm_w": 2.917609189455161e-05,
+      "mean_xpm_w": 3.597994808676087e-05,
+      "mean_nli_w": 6.515603998131247e-05,
+      "mean_signal_power_w": 0.002499999999999999,
+      "cold_ms": 54.09758584573865,
+      "warm_median_ms": 1.4112410135567188
+    },
+    {
+      "model": "pcfm",
+      "options": {},
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 15.114734700018015,
+      "min_snr_db": 14.926789211747346,
+      "max_snr_db": 15.985265536426162,
+      "mean_ase_w": 1.195708968776634e-05,
+      "mean_spm_w": 2.917609189455161e-05,
+      "mean_xpm_w": 3.597994808676087e-05,
+      "mean_nli_w": 6.515603998131247e-05,
+      "mean_signal_power_w": 0.002499999999999999,
+      "cold_ms": 54.56268787384033,
+      "warm_median_ms": 0.6861474830657244
+    },
+    {
+      "model": "ecz",
+      "options": {},
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 15.411612027777982,
+      "min_snr_db": 15.187694374944122,
+      "max_snr_db": 16.431335929123424,
+      "mean_ase_w": 1.1969540486046374e-05,
+      "mean_spm_w": 2.166663124725235e-05,
+      "mean_xpm_w": 3.8422370974239574e-05,
+      "mean_nli_w": 6.008900222149193e-05,
+      "mean_signal_power_w": 0.002499999999999999,
+      "cold_ms": 0.9074010886251926,
+      "warm_median_ms": 0.780794071033597
+    },
+    {
+      "model": "pcfm",
+      "options": {
+        "raman_model": "lumped",
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1340.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1360.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1427.0,
+            "power_w": 0.165,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1445.0,
+            "power_w": 0.131,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1476.0,
+            "power_w": 0.125,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1505.0,
+            "power_w": 0.075,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 15.565036583987629,
+      "min_snr_db": 15.361621457323352,
+      "max_snr_db": 16.485265994678272,
+      "mean_ase_w": 4.383121038123006e-06,
+      "mean_spm_w": 2.917609189455161e-05,
+      "mean_xpm_w": 3.597994808676087e-05,
+      "mean_nli_w": 6.515603998131247e-05,
+      "mean_signal_power_w": 0.002499999999999999,
+      "cold_ms": 58.9618980884552,
+      "warm_median_ms": 5.086145596578717
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1340.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1360.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1427.0,
+            "power_w": 0.165,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1445.0,
+            "power_w": 0.131,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1476.0,
+            "power_w": 0.125,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1505.0,
+            "power_w": 0.075,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "paper"
+      },
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 14.87689227878683,
+      "min_snr_db": 13.929237007390922,
+      "max_snr_db": 15.809352009173772,
+      "mean_ase_w": 2.8226892170863273e-06,
+      "mean_spm_w": 2.873212521720178e-05,
+      "mean_xpm_w": 5.015015762158421e-05,
+      "mean_nli_w": 7.888228283878598e-05,
+      "mean_signal_power_w": 0.0024999999999999996,
+      "cold_ms": 2254.9672829918563,
+      "warm_median_ms": 2238.69472858496
+    },
+    {
+      "model": "hybrid_raman_paper",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1340.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1360.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1427.0,
+            "power_w": 0.165,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1445.0,
+            "power_w": 0.131,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1476.0,
+            "power_w": 0.125,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1505.0,
+            "power_w": 0.075,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "pcfm"
+      },
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 14.074577272145266,
+      "min_snr_db": 12.871899962142862,
+      "max_snr_db": 14.77542385535995,
+      "mean_ase_w": 2.8226892170863273e-06,
+      "mean_spm_w": 4.368530739610255e-05,
+      "mean_xpm_w": 5.192052897378237e-05,
+      "mean_nli_w": 9.56058363698849e-05,
+      "mean_signal_power_w": 0.0024999999999999996,
+      "cold_ms": 555.5156129412353,
+      "warm_median_ms": 502.75521632283926
+    },
+    {
+      "model": "buglia2024_ra_gn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1340.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1360.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1427.0,
+            "power_w": 0.165,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1445.0,
+            "power_w": 0.131,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1476.0,
+            "power_w": 0.125,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1505.0,
+            "power_w": 0.075,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ],
+        "nli_form": "closed"
+      },
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 14.87689227878683,
+      "min_snr_db": 13.929237007390922,
+      "max_snr_db": 15.809352009173772,
+      "mean_ase_w": 2.8226892170863273e-06,
+      "mean_spm_w": 2.873212521720178e-05,
+      "mean_xpm_w": 5.015015762158421e-05,
+      "mean_nli_w": 7.888228283878598e-05,
+      "mean_signal_power_w": 0.0024999999999999996,
+      "cold_ms": 2267.4156362190843,
+      "warm_median_ms": 2244.992810767144
+    },
+    {
+      "model": "zhang2024_dra_egn",
+      "options": {
+        "raman_pumps": [
+          {
+            "wavelength_nm": 1340.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1360.0,
+            "power_w": 0.63,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1427.0,
+            "power_w": 0.165,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1445.0,
+            "power_w": 0.131,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1476.0,
+            "power_w": 0.125,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          },
+          {
+            "wavelength_nm": 1505.0,
+            "power_w": 0.075,
+            "direction": "backward",
+            "attenuation_db_per_km": 0.25
+          }
+        ]
+      },
+      "case": "cl_40ch_10span",
+      "span_count": 10,
+      "mean_snr_db": 14.78959017077132,
+      "min_snr_db": 13.52865631796016,
+      "max_snr_db": 16.367958008232936,
+      "mean_ase_w": 2.8226892170863273e-06,
+      "mean_spm_w": 2.2787180925060992e-05,
+      "mean_xpm_w": 5.834106054375351e-05,
+      "mean_nli_w": 8.112824146881451e-05,
+      "mean_signal_power_w": 0.0024999999999999996,
+      "cold_ms": 1293.6822110787034,
+      "warm_median_ms": 1293.132252059877
+    }
+  ]
+}

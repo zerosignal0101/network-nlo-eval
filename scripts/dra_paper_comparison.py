@@ -99,7 +99,7 @@ def main() -> None:
         else:
             pumps = [SINGLE_PUMP]
         rows.append(_run(case, "pcfm", raman_model="lumped", raman_pumps=pumps))
-        rows.append(_run(case, "hybrid_raman_paper", raman_pumps=pumps))
+        rows.append(_run(case, "hybrid_raman_paper", raman_pumps=pumps, nli_form="paper"))
         rows.append(_run(case, "buglia2024_ra_gn", raman_pumps=pumps))
         rows.append(_run(case, "zhang2024_dra_egn", raman_pumps=pumps))
 
@@ -113,7 +113,7 @@ def main() -> None:
             "pcfm_original": "unmodified PCFM paper configuration",
             "pcfm": "H3 PCFM (edge fix + span cache), EDFA only",
             "raman_lumped": "PCFM + lumped-equivalent Raman (span-end gain, NLI unchanged)",
-            "hybrid_raman_paper": "de Moura/Buglia hybrid coupled-ODE subset with PCFM NLI kernel",
+            "hybrid_raman_paper": "Buglia hybrid: Eq. (2)/(4) coupled ODE with Eq. (6)-(9) NLI",
             "ecz": "ISRS reference only (no pumps); NOT part of the DRA group",
             "buglia2024_ra_gn": "Buglia 2024 Eq. (2)/(9)-(12) closed form; Eq. (6)-(8) integral baseline",
             "zhang2024_dra_egn": "Zhang 2024 Eq. (1)/(2)/(4) coherent GN; Sec. II-C calibration fitted in repo",
@@ -157,9 +157,15 @@ def main() -> None:
         },
         "ecz_scope": "ecz is shown only as an ISRS reference without pumps; it is excluded from the DRA comparison.",
         "limitations": [
-            "Buglia 2024: Eq. (9)/(11)/(12) closed form implemented; Eq. (9)/(11)/(12) printed forms are used, integral Eq. (6)-(8) is the baseline.",
+            (
+                "Buglia 2024: the printed Eq. (9)/(11)/(12) closed forms are implemented; "
+                "the Eq. (6)-(8) integral is the baseline."
+            ),
             "Buglia closed-form SPM is the paper form; the repo integral baseline differs by <0.05 dB on c_57ch.",
-            "Zhang eta_XPM_corr is not printed in the paper; the coherent GN + repo-fitted Sec. II-C calibration is implemented, but the paper-defined correction term is absent.",
+            (
+                "Zhang eta_XPM_corr is not printed in the paper; the coherent GN + repo-fitted "
+                "Sec. II-C calibration is implemented, but the paper-defined correction term is absent."
+            ),
             "No waveform model is called online by either control.",
         ],
     }
