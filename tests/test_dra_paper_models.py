@@ -66,9 +66,9 @@ def test_dra_paper_models_are_independently_registered() -> None:
     assert zhang is ZHANG2024_DRA_MODEL_INFO
     assert "buglia" in buglia.reference.lower()
     assert "zhang" in zhang.reference.lower()
-    assert "subset" in buglia.summary.lower()
-    assert "subset" in zhang.summary.lower()
-    assert "not reproduced" in zhang.summary.lower()
+    assert "eq. (9)" in buglia.summary.lower()
+    assert "eq. (2)" in zhang.summary.lower()
+    assert "eta_xpm_corr" in zhang.summary.lower()
     assert "buglia2024_ra_gn" != "zhang2024_dra_egn"
 
 
@@ -207,8 +207,14 @@ def test_the_two_dra_controls_are_not_identical() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_zhang_uses_complex_amplitudes_across_spans() -> None:
-    """Multi-span Zhang returns NLI amplitudes consistent with the powers."""
+def test_zhang_kernel_defers_nli_to_the_link_layer() -> None:
+    """The Zhang kernel returns zero NLI because Eq. (4) needs the whole link.
+
+    The coherent inter-span phase lives *inside* the frequency integral, so a
+    per-span scalar amplitude cannot represent it.  The link layer performs
+    the coherent sum in :meth:`Zhang2024DRAModel.evaluate_path`; the kernel
+    therefore exposes no NLI amplitudes.
+    """
     power = launch_profile(CASE)
     fiber = build_path(CASE).fiber_configs[0]
     model = make_model("zhang2024_dra_egn", CASE, raman_pumps=[_pump()])
@@ -221,10 +227,10 @@ def test_zhang_uses_complex_amplitudes_across_spans() -> None:
         1,
         span_context=SpanContext(span_index=0, total_spans=2, cumulative_length_m=0.0, span_length_m=100e3),
     )
-    assert output.nli_amplitude_spm is not None
-    assert output.nli_amplitude_xpm is not None
-    np.testing.assert_allclose(np.abs(output.nli_amplitude_spm) ** 2, output.spm_noise_w, rtol=1e-12)
-    np.testing.assert_allclose(np.abs(output.nli_amplitude_xpm) ** 2, output.xpm_noise_w, rtol=1e-12)
+    assert output.nli_amplitude_spm is None
+    assert output.nli_amplitude_xpm is None
+    assert np.all(np.asarray(output.spm_noise_w) == 0.0)
+    assert np.all(np.asarray(output.xpm_noise_w) == 0.0)
 
 
 def test_zhang_two_span_nli_is_coherent_not_exactly_double() -> None:
@@ -282,3 +288,16 @@ def test_snr_case_with_dra_beats_edfa_only() -> None:
     assert float(np.mean(buglia.snr_db)) > float(np.mean(pcfm.snr_db))
     assert np.all(np.isfinite(zhang.snr_db))
     assert float(np.mean(zhang.snr_db)) > 0.0
+
+
+def test_buglia_closed_form_matches_integral_baseline() -> None:
+    """The Eq. (11)/(12) closed form stays within 0.05 dB of Eq. (6)-(8)."""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    pump = _pump()
+    closed = make_model("buglia2024_ra_gn", CASE, raman_pumps=[pump], nli_form="closed").evaluate_path(path, power)
+    integral = make_model("buglia2024_ra_gn", CASE, raman_pumps=[pump], nli_form="integral").evaluate_path(
+        path, power
+    )
+    delta = np.asarray(closed.snr_db) - np.asarray(integral.snr_db)
+    assert float(np.max(np.abs(delta))) < 0.05, f"closed/integral differ by {float(np.max(np.abs(delta))):.3f} dB"

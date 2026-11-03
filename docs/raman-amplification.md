@@ -161,9 +161,9 @@ model = create_model(
 
 | 文献 | 注册模型 | 实现程度 |
 |---|---|---|
-| Buglia 2024, JLT, `10.1109/jlt.2023.3315127` | `buglia2024_ra_gn` | Eq. (1)/(2) 功率剖面 + 拟合 + 精确 GN 双重积分；Eq. (9)/(11)/(12) 的印刷闭式未逐项复制 |
+| Buglia 2024, JLT, `10.1109/jlt.2023.3315127` | `buglia2024_ra_gn` | Eq. (2) 五参数剖面、Eq. (9)/(10) 链路函数、Eq. (11)/(12) SPM/XPM 闭式已实现；Eq. (6)-(8) 作为积分基准 |
 | Buglia 2024, JLT, `10.1109/jlt.2024.3439999` | `hybrid_raman_paper` | Eq. (2)/(4) coupled ODE；NLI 是 PCFM 核 + ODE 剖面近似 |
-| Zhang 2024, OECC, `10.1109/OECC54135.2024.10975528` | `zhang2024_dra_egn` | Eq. (1)/(2)/(4) 相干 GN 子集；标定 EGN 修正未实现 |
+| Zhang 2024, OECC, `10.1109/OECC54135.2024.10975528` | `zhang2024_dra_egn` | Eq. (1)/(2)/(4) 相干 GN；Sec. II-C 标定按本仓数据拟合；论文未印出的 `eta_XPM_corr` 未实现 |
 
 `ecz` / `semrau2019` 是 ISRS 对照，不是 DRA，不能混入上表。
 
@@ -178,12 +178,27 @@ model = create_model(
 | `zhang2024_dra_egn` | 27.760 | DRA coherent-GN 子集 |
 | `ecz` | 26.759 | 仅 ISRS 对照，不是 DRA |
 
-两个新 DRA 对照都是**paper-inspired subset**，不能声称完整复现：
+这两篇现在不再是“只有剖面 + 积分”的子集：
 
-- Buglia 的 Eq. (9)/(11)/(12) 印刷闭式没有逐项复制；用精确 GN 双重积分替代其近似；
-  SPM 子集约低于 PCFM 单跨参考 2 dB，XPM 基本吻合。
-- Zhang 的标定 EGN 系数/修正没有完整实现，只保留 Eq. (1)/(2)/(4) 的相干 GN 骨架。
+- Buglia：Eq. (9)/(10) 链路函数与 Eq. (11)/(12) SPM/XPM 闭式已接入，`nli_form="closed"` 为默认；
+  `nli_form="integral"` 保留 Eq. (6)-(8) 的双重积分基准。`c_57ch`、`c_57ch` 10 跨下
+  闭式与积分基准的平均 SNR 差 **<0.05 dB**。
+- Zhang：Eq. (1)/(2) 的 `(T,A,D,d)` 剖面拟合、Eq. (4)/(5) 的跨间相干求和、
+  Sec. II-C 的逐项标定都已实现；标定系数由本仓在 Table I 参数范围内生成的数据拟合。
+- 论文没有印出 `eta_XPM^corr` 的表达式和标定系数表，这是 Zhang 仍然**无法完整复现**的两项，
+  已在 `ModelInfo`/本文档标注，不能声称与论文逐位一致。
 - 两篇都不在线调用波形/数值模型。
+
+`c_57ch` 1 跨、1450nm/0.2W 后向泵的完整对照（`results/raman/paper_controls.json`）：
+
+| 模型 | 平均 SNR | 平均 NLI |
+|---|---:|---:|
+| `pcfm_original` | 26.665 | 2.572e-6 |
+| `raman_lumped` | 27.688 | 2.572e-6 |
+| `hybrid_raman_paper` | 27.436 | 2.683e-6 |
+| `buglia2024_ra_gn` | **27.569** | 2.587e-6 |
+| `zhang2024_dra_egn` | **27.464** | 2.663e-6 |
+| `ecz` | 26.759 | 2.492e-6（仅 ISRS） |
 
 ### 运行
 
