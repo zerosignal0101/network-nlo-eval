@@ -125,9 +125,7 @@ def model_bandwidths(case) -> np.ndarray:
 def _nli_snr_db(result) -> np.ndarray:
     """GSNR_NLI of Eq. (31): the signal-to-NLI ratio in dB."""
     power = np.asarray(result.signal_power_w, dtype=np.float64)
-    nli = np.asarray(result.spm_noise_w, dtype=np.float64) + np.asarray(
-        result.xpm_noise_w, dtype=np.float64
-    )
+    nli = np.asarray(result.spm_noise_w, dtype=np.float64) + np.asarray(result.xpm_noise_w, dtype=np.float64)
     return 10.0 * np.log10(power / nli)
 
 
@@ -168,9 +166,7 @@ def _appendix_c_np1(
     bracket = (
         2.0 * p1**2
         + 9.0 * b2b4 * (2.0 * p0**2 + 2.0 * length_m * p0 * p1 + length_m**2 * p1**2)
-        - 2.0
-        * (p1**2 + b2b4 * (9.0 * p0**2 + 9.0 * length_m * p0 * p1 + 4.0 * length_m**2 * p1**2))
-        * cosine
+        - 2.0 * (p1**2 + b2b4 * (9.0 * p0**2 + 9.0 * length_m * p0 * p1 + 4.0 * length_m**2 * p1**2)) * cosine
         + 6.0
         * np.pi**8
         * b2**4
@@ -359,9 +355,7 @@ def test_lumped_loss_supported() -> None:
     # The 3 dB element removes power, so the output power must drop by about
     # 3 dB on top of the span loss, and the NLI must stay in the same ballpark
     # as the lossless case (paper, Section IV-D).
-    drop_db = 10.0 * np.log10(
-        np.asarray(out_plain.power_out_w) / np.asarray(out_lossy.power_out_w)
-    )
+    drop_db = 10.0 * np.log10(np.asarray(out_plain.power_out_w) / np.asarray(out_lossy.power_out_w))
     assert np.all(drop_db > 2.9) and np.all(drop_db < 3.6), f"unexpected power drop {drop_db}"
 
     nli_plain = np.asarray(out_plain.spm_noise_w) + np.asarray(out_plain.xpm_noise_w)
@@ -470,18 +464,9 @@ def test_xci_kernel_matches_paper_eq24() -> None:
                 for k in range(n, z_basis.shape[0]):
                     weight = 1.0 if n == k else 2.0
                     symmetric += (
-                        weight
-                        * float(z_basis[n, nch])
-                        * float(z_basis[k, nch])
-                        * length_m ** (n + k)
-                        / (n + k + 1)
+                        weight * float(z_basis[n, nch]) * float(z_basis[k, nch]) * length_m ** (n + k) / (n + k + 1)
                     )
-            printed = (
-                length_m
-                / (2.0 * np.pi * abs(beta2))
-                * abs(float(kernel.log_xci[cut, nch]))
-                * symmetric
-            )
+            printed = length_m / (2.0 * np.pi * abs(beta2)) * abs(float(kernel.log_xci[cut, nch])) * symmetric
             modelled = float(kernel.xci_kernel(length_m, q_scaled)[cut, nch])
             assert abs(modelled / printed - 1.0) < 1e-9
             # The profile energy of the printed formula is int_0^L p^2 dz.
@@ -551,9 +536,7 @@ def test_spp_polynomial_fit_quality() -> None:
         relative = np.abs(fitted - reference_profile) / np.maximum(np.abs(reference_profile), 1e-12)
         max_error = float(np.max(relative))
         rms_error = float(np.sqrt(np.mean(relative**2)))
-        print(
-            f"N_p={degree}: max SPP fit error {max_error * 100:.4f} %, RMS {rms_error * 100:.4f} %"
-        )
+        print(f"N_p={degree}: max SPP fit error {max_error * 100:.4f} %, RMS {rms_error * 100:.4f} %")
         errors.append((degree, max_error, rms_error))
 
     by_degree = {degree: (max_error, rms_error) for degree, max_error, rms_error in errors}
@@ -581,20 +564,14 @@ def test_egn_rho_matches_paper_equation() -> None:
     phi = EGN_PHI
     acc = np.abs(beta2_acc)
     expected_nch = (1.0 + a["a19"] * roll_off ** a["a20"] + a["a21"] * roll_off ** a["a22"]) * (
-        a["a1"]
-        + a["a2"] * phi ** a["a3"]
-        + a["a4"] * phi ** a["a5"] * (1.0 + a["a6"] * (acc + a["a7"]) ** a["a8"])
+        a["a1"] + a["a2"] * phi ** a["a3"] + a["a4"] * phi ** a["a5"] * (1.0 + a["a6"] * (acc + a["a7"]) ** a["a8"])
     )
     expected_cut = (1.0 + a["a23"] * roll_off ** a["a24"]) * (
         a["a9"]
         + a["a10"] * phi ** a["a11"]
         + a["a12"]
         * phi ** a["a13"]
-        * (
-            1.0
-            + a["a14"] * (rate_hz / 1e12) ** a["a15"]
-            + a["a16"] * (acc + a["a17"]) ** a["a18"]
-        )
+        * (1.0 + a["a14"] * (rate_hz / 1e12) ** a["a15"] + a["a16"] * (acc + a["a17"]) ** a["a18"])
     )
 
     np.testing.assert_allclose(egn_rho_nch(beta2_acc), expected_nch, rtol=1e-12)
@@ -639,7 +616,12 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
     assert info.name == "pcfm"
     assert info.family == "gn"
     assert "10.1109/jlt.2026.3678322" in info.reference
-    assert [option[0] for option in info.options] == ["poly_degree", "egn"]
+    assert [option[0] for option in info.options] == [
+        "poly_degree",
+        "egn",
+        "edge_fix",
+        "cache_spans",
+    ]
     assert PCFM_MODEL_INFO == info
 
     case = build_case("scaling_40ch")
@@ -793,9 +775,7 @@ def test_single_span_uses_the_power_only_branch() -> None:
         EDFAConfig(noise_figure_db=case.edfa_noise_figure_db),
         power,
         100e3,
-        span_context=SpanContext(
-            span_index=0, total_spans=1, cumulative_length_m=0.0, span_length_m=100e3
-        ),
+        span_context=SpanContext(span_index=0, total_spans=1, cumulative_length_m=0.0, span_length_m=100e3),
     )
     assert step.nli_amplitude_spm is None
     assert step.nli_amplitude_xpm is None
@@ -812,9 +792,7 @@ def test_amplitude_magnitude_equals_the_noise_power() -> None:
         EDFAConfig(noise_figure_db=case.edfa_noise_figure_db),
         power,
         100e3,
-        span_context=SpanContext(
-            span_index=2, total_spans=10, cumulative_length_m=200e3, span_length_m=100e3
-        ),
+        span_context=SpanContext(span_index=2, total_spans=10, cumulative_length_m=200e3, span_length_m=100e3),
     )
     assert step.nli_amplitude_spm is not None
     assert step.nli_amplitude_xpm is not None
@@ -833,9 +811,9 @@ def test_c_57ch_ten_span_buildup_matches_the_brief() -> None:
     kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
     factor_spm, _ = kernel.inter_span_coherent_factor(COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M)
     buildup = factor_spm / COHERENCE_SPANS
-    assert np.all(
-        np.abs(buildup - SPM_BUILDUP_TARGET) <= SPM_BUILDUP_TOLERANCE
-    ), f"SPM buildup {buildup.min():.4f}..{buildup.max():.4f} outside the brief"
+    assert np.all(np.abs(buildup - SPM_BUILDUP_TARGET) <= SPM_BUILDUP_TOLERANCE), (
+        f"SPM buildup {buildup.min():.4f}..{buildup.max():.4f} outside the brief"
+    )
     assert np.allclose(buildup, SPM_BUILDUP_TARGET, rtol=1e-4)
 
 
@@ -848,13 +826,7 @@ def test_buildup_table_is_monotone_in_the_span_count() -> None:
     values = []
     for n_spans in (1, 2, 5, 10):
         result = model.evaluate_path(_coherence_path(case, n_spans), power)
-        values.append(
-            float(
-                np.mean(
-                    np.asarray(result.spm_noise_w) / np.asarray(single.spm_noise_w) / n_spans
-                )
-            )
-        )
+        values.append(float(np.mean(np.asarray(result.spm_noise_w) / np.asarray(single.spm_noise_w) / n_spans)))
     assert values[0] == pytest.approx(1.0, rel=1e-12)
     assert values == sorted(values)
     assert values[-1] == pytest.approx(SPM_BUILDUP_TARGET, abs=SPM_BUILDUP_TOLERANCE)
@@ -872,14 +844,10 @@ def test_zero_dispersion_gives_full_coherence() -> None:
     """
     case = build_case("c_57ch")
     fiber = build_path(case).fiber_configs[0]
-    near_zero = fiber.model_copy(
-        update={"dispersion_parameter_d": 1e-9, "dispersion_slope_s": 1e-9}
-    )
+    near_zero = fiber.model_copy(update={"dispersion_parameter_d": 1e-9, "dispersion_slope_s": 1e-9})
     model = make_model("pcfm", case)
     kernel = model.kernel_for(near_zero)
-    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(
-        COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M
-    )
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M)
     assert np.allclose(factor_spm, 100.0, rtol=1e-4)
     assert np.allclose(factor_xpm, 100.0, rtol=1e-6)
     print(
@@ -895,9 +863,7 @@ def test_strong_dispersion_stays_below_full_coherence() -> None:
     strong = fiber.model_copy(update={"dispersion_parameter_d": 100.0, "dispersion_slope_s": 0.0})
     model = make_model("pcfm", case)
     kernel = model.kernel_for(strong)
-    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(
-        COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M
-    )
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(COHERENCE_SPANS, COHERENCE_SPAN_LENGTH_M)
     # The coherent factor is above N (the GN kernel keeps the phase-matched
     # pairs coherent) but far below N**2.
     assert np.all(factor_spm > 10.0)
@@ -1002,9 +968,7 @@ def test_phase_comes_only_from_the_span_context() -> None:
     power = launch_profile(case, None)
     model = make_model("pcfm", case)
     edfa = EDFAConfig(noise_figure_db=case.edfa_noise_figure_db)
-    context = SpanContext(
-        span_index=3, total_spans=10, cumulative_length_m=300e3, span_length_m=100e3
-    )
+    context = SpanContext(span_index=3, total_spans=10, cumulative_length_m=300e3, span_length_m=100e3)
     first = model.span_step(fiber, edfa, power, 100e3, span_context=context)
     second = model.span_step(fiber, edfa, power, 100e3, span_context=context)
     assert np.array_equal(first.nli_amplitude_spm, second.nli_amplitude_spm)
@@ -1016,9 +980,7 @@ def test_phase_comes_only_from_the_span_context() -> None:
         edfa,
         power,
         100e3,
-        span_context=SpanContext(
-            span_index=7, total_spans=10, cumulative_length_m=300e3, span_length_m=100e3
-        ),
+        span_context=SpanContext(span_index=7, total_spans=10, cumulative_length_m=300e3, span_length_m=100e3),
     )
     assert np.array_equal(first.nli_amplitude_spm, other.nli_amplitude_spm)
 
@@ -1047,9 +1009,7 @@ def test_route_accumulation_matches_the_analytic_coherent_factor() -> None:
     kernel = model.kernel_for(build_path(case).fiber_configs[0])
     single = model.evaluate_path(_coherence_path(case, 1), power)
     many = model.evaluate_path(_coherence_path(case, 10), power)
-    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(
-        10, COHERENCE_SPAN_LENGTH_M
-    )
+    factor_spm, factor_xpm = kernel.inter_span_coherent_factor(10, COHERENCE_SPAN_LENGTH_M)
     assert np.allclose(
         np.asarray(many.spm_noise_w),
         np.asarray(single.spm_noise_w) * factor_spm,
@@ -1100,18 +1060,13 @@ def test_xpm_inter_span_coherence_is_negligible() -> None:
             for distance in distances
         ]
     )
-    argument = (
-        2.0 * np.pi**2 * kernel.beta2_abs_s2_m * distances * offset * bandwidth
-    )
+    argument = 2.0 * np.pi**2 * kernel.beta2_abs_s2_m * distances * offset * bandwidth
     band_average = np.sin(argument) / argument
     factor_weighted = _coherent_factor(10, weighted[:, None])[0]
     factor_band = _coherent_factor(10, band_average[:, None])[0]
     effect_db = 10.0 * np.log10(factor_weighted / factor_band)
     assert abs(effect_db) < 0.05, f"the XPM weight moves the noise by {effect_db:.4f} dB"
-    print(
-        f"XPM weight effect: {effect_db:+.4f} dB "
-        f"(R band {factor_band:.5f}, R weighted {factor_weighted:.5f})"
-    )
+    print(f"XPM weight effect: {effect_db:+.4f} dB (R band {factor_band:.5f}, R weighted {factor_weighted:.5f})")
 
 
 def test_equivalent_phase_ramp_inverts_the_coherent_factor() -> None:
@@ -1157,4 +1112,194 @@ def test_coherent_accumulation_does_not_regress_the_latency() -> None:
     assert single < 2.34, f"the single-span hot path takes {single:.3f} ms"
     assert multi / 10.0 < 2.0 * single, (
         f"the per-span cost {multi / 10.0:.3f} ms is much higher than the single-span {single:.3f} ms"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ultra-wideband edge fix (this round of work)
+# ---------------------------------------------------------------------------
+#
+# The E-band edge of the 479-channel comb crosses the zero-dispersion
+# wavelength of the benchmark fibre.  Two things happen there:
+#
+# * the XCI closed form, Eq. (24), is the asymptotic ``s >> 1`` limit of the
+#   frequency integral and diverges like ``1/|beta2_eff|`` when ``s -> 0``;
+# * the SCI recurrence divides by ``X**2`` and cancels catastrophically at the
+#   crossing, turning one channel's kernel negative.
+#
+# The fix is a validity-gated two-tier evaluation: the closed form stays in
+# place wherever it is valid, and the exact island integral / Taylor branch is
+# used only on the flagged CUT rows.
+
+#: CUT row of the XCI validity gate: above this fraction the exact island
+#: integral replaces the closed form for the whole row.
+EDGE_GATE_FRACTION = 0.03
+
+
+def _internal_index(case, model_index: int) -> int:
+    """Map a model-order channel index to the internal descending order."""
+    return case.num_channels - 1 - model_index
+
+
+def test_xci_edge_gate_selects_only_the_zero_dispersion_rows() -> None:
+    """The XCI gate must flag the E-band zero-crossing rows and nothing else."""
+    for name in ("c_57ch", "cl_152ch", "scl_277ch"):
+        case = build_case(name)
+        kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+        gated, fraction = kernel.xci_edge_audit(COHERENCE_SPAN_LENGTH_M)
+        assert not np.any(gated), f"{name}: the validated band must keep the closed form"
+        assert float(np.max(fraction)) < EDGE_GATE_FRACTION
+
+    case = build_case("escl_479ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    gated, fraction = kernel.xci_edge_audit(COHERENCE_SPAN_LENGTH_M)
+    assert np.any(gated), "the E-band edge must be flagged"
+    # 内部分布按频率降序：被修正的是高频率端（E 带高端）的行。
+    assert gated[0] and gated[_internal_index(case, 465)]
+    # 带中心远离零色散点，门控不能改它（否则已验证的 C/L 口径会被污染）。
+    assert not gated[kernel.n_nodes // 2]
+    assert float(np.max(fraction)) > 0.5
+    print(
+        f"XCI edge gate: {int(gated.sum())} of {kernel.n_nodes} CUT rows, "
+        f"max relative correction {float(np.max(fraction)):.3f}"
+    )
+
+
+def test_edge_fix_removes_the_dropped_channel() -> None:
+    """The E-band dropped channel must become finite and positive.
+
+    The old path returns a negative SCI kernel at the zero crossing (model
+    index 464 of ``escl_479ch``); the route layer then takes ``sqrt`` of the
+    negative power and drops the channel.  With ``edge_fix`` the small-X
+    Taylor branch and the exact XCI island integral keep the channel finite.
+    """
+    case = build_case("escl_479ch")
+    path = build_path(case)
+    power = launch_profile(case, None)
+    dropped_index = 464
+
+    import warnings
+
+    # 旧路径在零点给出负的 SPM，sqrt 会发 RuntimeWarning；这里断言的正是这个失效。
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        old = make_model("pcfm", case, edge_fix=False, cache_spans=False).evaluate_path(path, power)
+    fixed = make_model("pcfm", case, edge_fix=True, cache_spans=False).evaluate_path(path, power)
+
+    assert not np.all(np.isfinite(np.asarray(old.snr_db))), "the pre-fix path is expected to drop"
+    assert np.all(np.isfinite(np.asarray(fixed.snr_db)))
+    assert np.all(np.asarray(fixed.spm_noise_w) > 0.0)
+    assert np.all(np.asarray(fixed.xpm_noise_w) > 0.0)
+    assert np.isfinite(fixed.snr_db[dropped_index])
+    print(
+        f"edge channel {dropped_index}: old SPM {float(np.asarray(old.spm_noise_w)[dropped_index]):.3e} W "
+        f"(SNR {float(old.snr_db[dropped_index]):+.1f} dB), "
+        f"fixed SPM {float(np.asarray(fixed.spm_noise_w)[dropped_index]):.3e} W "
+        f"(SNR {float(fixed.snr_db[dropped_index]):+.2f} dB)"
+    )
+
+
+def test_sci_small_x_branch_is_continuous_at_the_crossing() -> None:
+    """The SCI kernel must stay positive and smooth across ``X = 0``."""
+    case = build_case("escl_479ch_1span")
+    fiber = build_path(case).fiber_configs[0]
+    power = launch_profile(case, None)
+    model = make_model("pcfm", case, edge_fix=True)
+    kernel = model.kernel_for(fiber)
+    q_scaled = kernel.profile_polynomial(COHERENCE_SPAN_LENGTH_M, power)
+    k_sci = kernel.sci_kernel(COHERENCE_SPAN_LENGTH_M, q_scaled)
+
+    crossing = _internal_index(case, 464)
+    x_all = kernel.beta2_eff_sci * np.pi**2 * kernel.b_hz**2 * COHERENCE_SPAN_LENGTH_M
+    assert abs(float(x_all[crossing])) < 0.5
+    assert np.all(np.isfinite(k_sci)) and np.all(k_sci > 0.0)
+    neighbours = 0.5 * (k_sci[crossing - 1] + k_sci[crossing + 1])
+    assert abs(float(k_sci[crossing] / neighbours - 1.0)) < 0.05
+
+    old_kernel = make_model("pcfm", case, edge_fix=False).kernel_for(fiber)
+    old_k = old_kernel.sci_kernel(
+        COHERENCE_SPAN_LENGTH_M, old_kernel.profile_polynomial(COHERENCE_SPAN_LENGTH_M, power)
+    )
+    assert float(old_k[crossing]) < 0.0, "the pre-fix kernel is expected to be negative"
+    print(
+        f"SCI crossing: X = {float(x_all[crossing]):+.5f}, "
+        f"fixed K {float(k_sci[crossing]):.4e}, neighbours {float(neighbours):.4e}, "
+        f"old K {float(old_k[crossing]):.4e}"
+    )
+
+
+def test_sci_small_x_taylor_coefficients_are_converged() -> None:
+    """The Taylor coefficients must not move when the series is lengthened."""
+    from network_nlo_eval.models.pcfm_kernels import _sci_small_x_coefficients
+
+    coarse = _sci_small_x_coefficients(21, 64)
+    fine = _sci_small_x_coefficients(21, 160)
+    assert coarse.shape[0] == fine.shape[0] == 22
+    np.testing.assert_allclose(coarse, fine[:, :64], rtol=1e-10, atol=1e-14)
+
+
+@pytest.mark.skipif(not _NUMERICAL_AVAILABLE, reason="the numerical GN reference is not available")
+def test_edge_fix_is_within_budget_against_the_numerical_reference() -> None:
+    """On the full 479-channel comb the edge fix must stay inside 1.5 dB.
+
+    The reference is the numerical GN model of the repository, at the
+    per-channel power of the case (nominal) and at 0 dBm/channel.  The work
+    package budget is no dropped channel and ``max |Delta SNR_NLI| < 1.5`` dB.
+    """
+    case = build_case("escl_479ch_1span")
+    path = build_path(case)
+    reference_model = make_model("numerical", case)
+    for power_dbm in (None, 0.0):
+        power = launch_profile(case, power_dbm)
+        fixed = make_model("pcfm", case).evaluate_path(path, power)
+        reference = reference_model.evaluate_path(path, power)
+        delta = np.asarray(fixed.snr_db) - np.asarray(reference.snr_db)
+        assert np.all(np.isfinite(delta)), "the fixed model must not drop a channel"
+        max_delta = float(np.max(np.abs(delta)))
+        rms_delta = float(np.sqrt(np.mean(delta**2)))
+        print(
+            f"escl_479ch_1span power={power_dbm if power_dbm is None else f'{power_dbm:+.1f}'} dBm: "
+            f"RMS {rms_delta:.4f} dB, max {max_delta:.4f} dB"
+        )
+        assert max_delta < 1.5, f"max |Delta SNR| {max_delta:.4f} dB exceeds 1.5 dB"
+
+
+def test_edge_fix_keeps_the_validated_bands_bit_identical() -> None:
+    """On C / C+L / S+C+L the gate must leave every number bit-for-bit unchanged."""
+    for name in ("c_57ch", "cl_152ch", "scl_277ch"):
+        case = build_case(name)
+        path = build_path(case)
+        power = launch_profile(case, None)
+        fixed = make_model("pcfm", case, edge_fix=True).evaluate_path(path, power)
+        old = make_model("pcfm", case, edge_fix=False).evaluate_path(path, power)
+        for field in ("snr_db", "spm_noise_w", "xpm_noise_w", "ase_noise_w"):
+            assert np.array_equal(np.asarray(getattr(fixed, field)), np.asarray(getattr(old, field))), (
+                f"{name}: {field} changed on a validated band"
+            )
+
+
+def test_span_cache_reuses_identical_transparent_spans() -> None:
+    """The memoisation must hit every span after the first and preserve the result.
+
+    The 10 spans of the benchmark are transparent and receive the same launch
+    power up to the last bits of the EDFA gain division.  The cache therefore
+    evaluates the SPP and the kernels once and reuses them nine times.
+    """
+    case = build_case("escl_479ch")
+    path = build_path(case)
+    power = launch_profile(case, None)
+    cached = make_model("pcfm", case, cache_spans=True)
+    uncached = make_model("pcfm", case, cache_spans=False)
+    cached_result = cached.evaluate_path(path, power)
+    uncached_result = uncached.evaluate_path(path, power)
+
+    kernel = cached.kernel_for(build_path(case).fiber_configs[0])
+    assert kernel.span_cache_hits == len(path.fiber_configs) - 1
+    assert kernel.span_cache_misses == 1
+
+    delta = np.abs(np.asarray(cached_result.snr_db) - np.asarray(uncached_result.snr_db))
+    assert float(np.max(delta)) < 0.01, f"the cache moved the SNR by {float(np.max(delta)):.3e} dB"
+    print(
+        f"span cache: {kernel.span_cache_hits} hits / {kernel.span_cache_misses} miss, "
+        f"max SNR change {float(np.max(delta)):.3e} dB"
     )
