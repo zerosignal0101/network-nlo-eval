@@ -41,6 +41,10 @@ Two numerical remarks that matter for the implementation:
 
 from __future__ import annotations
 
+from fractions import Fraction
+from functools import lru_cache
+from math import factorial
+
 import numpy as np
 from numba import njit
 
@@ -50,10 +54,12 @@ from network_nlo_eval.models.numerical_kernels import _raman_gain_jit
 __all__ = [
     "C_LIGHT",
     "J_SERIES_SWITCH",
+    "SCI_X_SERIES_SWITCH",
     "_isrs_coefficient_matrix_jit",
     "_j_batch_jit",
     "_profile_energy_jit",
     "_sci_kernel_batch_jit",
+    "_sci_small_x_coefficients",
     "_solve_spp_jit",
     "r_coefficient_matrix",
 ]
@@ -64,6 +70,20 @@ C_LIGHT: float = 299792458.0
 #: Below this ``|X|`` the Taylor series of ``J`` is used, above it the
 #: asymptotic expansion.  The switch sits where both are accurate to ~1e-13.
 J_SERIES_SWITCH: float = 26.0
+
+#: Below this ``|X|`` the SCI kernel is evaluated from its Taylor expansion in
+#: ``X = pi**2 beta2 B**2 L`` instead of the closed-form recurrence.
+#:
+#: The closed-form recurrence for the auxiliary functions ``b_p = B_p/X**(p+1)``
+#: divides by ``X**2`` at every step.  Near the zero-dispersion wavelength
+#: ``X`` crosses zero inside an ultra-wideband comb (E band, ~1367 nm on the
+#: SMF benchmark) and the recurrence loses every significant digit: the
+#: channel at the crossing returns a negative kernel two orders of magnitude
+#: too large.  The Taylor coefficients are exact (rational arithmetic) and the
+#: series is converged to 1e-9 at ``|X| = 0.5`` for every polynomial degree
+#: used by the model, so the branch below is used only where the recurrence is
+#: the unstable choice.
+SCI_X_SERIES_SWITCH: float = 0.5
 
 #: Constant of the asymptotic expansion of ``J``,
 #: ``C_r = int_0^1 Si(t)/t dt + int_1^inf [Si(t)-pi/2]/t dt``.
@@ -237,12 +257,7 @@ def _j_single_jit(x: float, c_const: float) -> float:
         while k < 90:
             total += term
             k += 1
-            term = (
-                -term
-                * x2
-                * (2 * k - 1) ** 2
-                / ((2 * k + 1) ** 2 * (2 * k + 1) * (2 * k))
-            )
+            term = -term * x2 * (2 * k - 1) ** 2 / ((2 * k + 1) ** 2 * (2 * k + 1) * (2 * k))
             if abs(term) < 1e-18 * max(abs(total), 1e-300):
                 break
         return total
@@ -308,6 +323,86 @@ def _j_batch_jit(x: NDArrayFloat, c_const: float) -> NDArrayFloat:
 # ---------------------------------------------------------------------------
 
 
+@lru_cache(maxsize=16)
+def _sci_small_x_coefficients(m_max: int, n_terms: int = 0) -> NDArrayFloat:
+    r"""Taylor coefficients of the auxiliary functions ``b_p(X)`` around zero.
+
+    The closed-form SCI kernel needs the scaled companions
+    ``b_p = B_p / X**(p+1)`` of the printed formula.  They are analytic at
+    ``X = 0`` (the ``1/X`` terms of the recurrence cancel between ``B_p`` and
+    the trigonometric terms), but the closed-form recurrence is numerically
+    unstable there.  This function builds the exact Taylor expansion
+
+    .. math::
+
+        b_p(X) = \sum_{j \ge 0} c_{p,j} X^j
+
+    with rational arithmetic, so that the truncated series is accurate to
+    double precision for every ``|X| < 0.5``.
+
+    The recurrence of the closed form,
+
+    .. math::
+
+        X^2 b_p = -X \cos X + p \sin X - p(p-1) b_{p-2} ,
+
+    becomes, coefficient by coefficient,
+
+    .. math::
+
+        c_{p,j} = t_{j+2} - p(p-1) c_{p-2,j+2} ,
+
+    where ``t_j`` is the coefficient of ``X^j`` in ``-X cos X + p sin X``.
+    ``c_{p,j}`` therefore depends only on ``c_{p-2}`` at a *higher* index, so
+    the coefficients are built from high ``j`` downwards.
+
+    Args:
+        m_max: Largest polynomial index ``p`` needed by the kernel.
+        n_terms: Number of series coefficients per row.  ``0`` selects
+            ``max(64, 8 * (m_max + 2))``, which is converged for every degree
+            used by the model.
+
+    Returns
+    -------
+        ``(m_max+1, n_terms)`` array; row ``p`` holds ``c_{p,0 ... n_terms-1}``.
+        The array is cached and must not be modified.
+    """
+    if n_terms <= 0:
+        n_terms = max(64, 8 * (m_max + 2))
+    n_terms = int(n_terms)
+    # 三角函数系数的精确有理表示；长度比级数多 2 项，供递推的高位边界使用。
+    n_trig = n_terms + 2
+    cos_coeff = [Fraction(0)] * n_trig
+    sin_coeff = [Fraction(0)] * n_trig
+    for k in range((n_trig + 1) // 2 + 1):
+        if 2 * k < n_trig:
+            cos_coeff[2 * k] = Fraction((-1) ** k, factorial(2 * k))
+        if 2 * k + 1 < n_trig:
+            sin_coeff[2 * k + 1] = Fraction((-1) ** k, factorial(2 * k + 1))
+
+    rows: list[list[Fraction]] = []
+    # p = 0: (1 - cos X)/X；p = 1: (sin X - X cos X)/X^2，直接由三角级数得到。
+    row0 = [-cos_coeff[j + 1] if j + 1 < n_trig else Fraction(0) for j in range(n_trig)]
+    row1 = [
+        (sin_coeff[j + 2] if j + 2 < n_trig else Fraction(0)) - (cos_coeff[j + 1] if j + 1 < n_trig else Fraction(0))
+        for j in range(n_trig)
+    ]
+    rows.append(row0)
+    if m_max >= 1:
+        rows.append(row1)
+    for p in range(2, m_max + 1):
+        row = [Fraction(0)] * n_trig
+        for j in range(n_trig - 3, -1, -1):
+            # t_{j+2} = -cos[j+1] + p * sin[j+2]
+            t_j2 = (-cos_coeff[j + 1] if j + 1 < n_trig else Fraction(0)) + p * (
+                sin_coeff[j + 2] if j + 2 < n_trig else Fraction(0)
+            )
+            row[j] = t_j2 - p * (p - 1) * rows[p - 2][j + 2]
+        rows.append(row)
+
+    return np.ascontiguousarray(np.array([[float(value) for value in row[:n_terms]] for row in rows], dtype=np.float64))
+
+
 @njit(cache=True)
 def _sci_kernel_batch_jit(
     r_coef: NDArrayFloat,
@@ -317,7 +412,10 @@ def _sci_kernel_batch_jit(
     cos_all: NDArrayFloat,
     j_all: NDArrayFloat,
     beta2_all: NDArrayFloat,
+    bw_sq_all: NDArrayFloat,
     length_m: float,
+    small_x_coeff: NDArrayFloat,
+    small_x_switch: float,
     out: NDArrayFloat,
 ) -> None:
     r"""Closed-form SCI kernel of Eq. (30), in a numerically stable form.
@@ -358,6 +456,22 @@ def _sci_kernel_batch_jit(
     form is O(1), and the result agrees with a direct numerical evaluation of
     Eq. (27) to 1e-13 for every polynomial degree.
 
+    The ``\tilde b_p`` recurrence still divides by ``X**2``; near a
+    zero-dispersion crossing (``X -> 0``) it cancels catastrophically.  For
+    ``|X| < small_x_switch`` the companions are therefore evaluated from the
+    exact Taylor series of :func:`_sci_small_x_coefficients`, and the bracket
+    is evaluated in the algebraically equivalent ``T/X`` form
+
+    .. math::
+
+        K_{SCI} = B^2 L^2 \Big[ \tilde R_0 \frac{J(X)}{X}
+        + \sum_{m=1}^{M} \frac{\tilde R_m}{m}
+        \frac{Si(X) - \tilde b_{m-1}}{X} \Big] ,
+
+    which stays finite at ``X = 0`` (there ``J/X -> 1`` and
+    ``(Si-b_p)/X -> 1 - c_{p,1}``).  With ``small_x_switch = 0`` the branch
+    is disabled and the implementation is bit-for-bit the old one.
+
     Args:
         r_coef: ``(N, M+1)`` coefficients ``\\tilde R_m`` of every channel.
         x_all: ``(N,)`` ``X = lambda L`` of every channel.
@@ -366,17 +480,42 @@ def _sci_kernel_batch_jit(
         cos_all: ``(N,)`` ``cos(X)`` of every channel.
         j_all: ``(N,)`` ``J(X)`` of every channel.
         beta2_all: ``(N,)`` effective dispersion of every channel (s^2/m).
+        bw_sq_all: ``(N,)`` squared channel bandwidth ``B**2`` (Hz^2).
         length_m: Span length (m).
+        small_x_coeff: ``(M+1, n_terms)`` Taylor coefficients of ``b_p``.
+        small_x_switch: ``|X|`` below which the Taylor branch is used.
         out: ``(N,)`` output buffer for the SCI kernel (Hz^2 m^2).
     """
     n_ch = r_coef.shape[0]
     m_max = r_coef.shape[1] - 1
     b_scaled = np.zeros(m_max + 2, dtype=np.float64)
+    b_series = np.zeros(m_max + 1, dtype=np.float64)
     for ch in range(n_ch):
         x = x_all[ch]
         si = si_all[ch]
         sin_x = sin_all[ch]
         cos_x = cos_all[ch]
+        if abs(x) < small_x_switch:
+            # 小 |X|：b_p 用精确泰勒系数求值，整体写成 T/X 形式，X=0 也有限。
+            if x == 0.0:
+                j_over_x = 1.0
+            else:
+                j_over_x = j_all[ch] / x
+            for p in range(m_max + 1):
+                acc = 0.0
+                for term in range(small_x_coeff.shape[1] - 1, -1, -1):
+                    acc = acc * x + small_x_coeff[p, term]
+                b_series[p] = acc
+            total = r_coef[ch, 0] * j_over_x
+            for m in range(1, m_max + 1):
+                if x == 0.0:
+                    # (Si(X) - b_{m-1}(X))/X 在 0 处的极限。
+                    diff_over_x = 1.0 - small_x_coeff[m - 1, 1]
+                else:
+                    diff_over_x = (si - b_series[m - 1]) / x
+                total += r_coef[ch, m] * diff_over_x / m
+            out[ch] = bw_sq_all[ch] * length_m * length_m * total
+            continue
         if x == 0.0:
             out[ch] = 0.0
             continue
@@ -384,11 +523,7 @@ def _sci_kernel_batch_jit(
         b_scaled[0] = (1.0 - cos_x) / x
         b_scaled[1] = -cos_x / x + sin_x / x**2
         for p in range(2, m_max + 1):
-            b_scaled[p] = (
-                -cos_x / x
-                + p * sin_x / x**2
-                - p * (p - 1) * b_scaled[p - 2] / x**2
-            )
+            b_scaled[p] = -cos_x / x + p * sin_x / x**2 - p * (p - 1) * b_scaled[p - 2] / x**2
         total = r_coef[ch, 0] * j_all[ch]
         for m in range(1, m_max + 1):
             total += r_coef[ch, m] * (si - b_scaled[m - 1]) / m

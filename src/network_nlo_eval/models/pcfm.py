@@ -132,10 +132,12 @@ from network_nlo_eval.models.numba_kernels import (
 )
 from network_nlo_eval.models.pcfm_kernels import (
     C_LIGHT,
+    SCI_X_SERIES_SWITCH,
     _isrs_coefficient_matrix_jit,
     _j_batch_jit,
     _profile_energy_jit,
     _sci_kernel_batch_jit,
+    _sci_small_x_coefficients,
     _solve_spp_jit,
     r_coefficient_matrix,
 )
@@ -159,6 +161,48 @@ __all__ = [
 #: the report).
 DEFAULT_SPP_STEPS: int = 32
 
+#: Dimensionless validity parameter of the XCI island closed form below which
+#: the exact island integral is evaluated for the pair.
+#:
+#: The printed XCI kernel, Eq. (24), is the asymptotic limit
+#: ``s = 4 pi**2 |beta2_eff| y B / (2 alpha) -> infinity`` of the frequency
+#: integral of the GN weight.  At ``s >> 1`` the weight is phase-mismatch
+#: limited and the closed form is accurate; at ``s ~ 1`` it overestimates the
+#: kernel like ``1/|beta2_eff|`` instead of saturating at the coherent limit.
+#: The E-band edge of the benchmark reaches ``s = 0.019`` at the zero
+#: dispersion crossing inside the comb (about 1367 nm on SMF), where the closed
+#: form is 12 dB high.  Pairs below this switch are recomputed from the exact
+#: island integral (see :func:`_xci_edge_weight_matrix`).
+XCI_EDGE_VALIDITY_SWITCH: float = 100.0
+
+#: Materiality threshold of the XCI edge correction, per CUT row.
+#:
+#: The exact correction is applied to a CUT only when it changes the total XCI
+#: weight of that row by more than this fraction.  C/L rows change by less
+#: than 2.3 % and keep the old, bit-identical path; the E-band rows next to the
+#: zero-dispersion crossing change by up to 91 %.  The threshold is therefore a
+#: physical applicability gate, not a tuning knob: below it the asymptotic
+#: breakdown is below the model's error budget (3 % of the XCI power is
+#: 0.13 dB, inside the C/L XCI error of the closed form against the numerical
+#: reference).
+XCI_EDGE_MATERIALITY: float = 0.03
+
+#: Gauss-Legendre nodes of the exact XCI island integral (per flagged pair).
+XCI_EDGE_QUADRATURE_POINTS: int = 24
+
+#: Relative power tolerance under which two span inputs are treated as the
+#: same state by the span memoisation.
+#:
+#: Transparent spans differ only by the last bits of the EDFA gain division
+#: (``2.2e-16`` relative on the benchmark), far below the ``0.01`` dB accuracy
+#: the cache must preserve.  A tighter tolerance would make every span a miss
+#: and remove the speedup; ``1e-12`` keeps the physics indistinguishable while
+#: still recognising the identical state.
+SPAN_CACHE_RTOL: float = 1.0e-12
+
+#: Maximum number of span states kept by one kernel's memoisation.
+SPAN_CACHE_MAX_ENTRIES: int = 8
+
 #: Machine-learning coefficients ``a1 ... a24`` of the EGN correction.
 #:
 #: Source: M. Ranjbar-Zefreh, F. Forghieri, S. Piciaccia, P. Poggiolini,
@@ -175,7 +219,7 @@ EGN_A_COEFFICIENTS: dict[str, float] = {
     "a1": +1.0436e0,
     "a2": -1.1878e0,
     "a3": +1.0573e0,
-    "a4": -1.8309e+1,
+    "a4": -1.8309e1,
     "a5": +1.6665e0,
     "a6": -1.0020e0,
     "a7": +9.0933e0,
@@ -183,12 +227,12 @@ EGN_A_COEFFICIENTS: dict[str, float] = {
     "a9": +8.4481e-1,
     "a10": -1.8530e0,
     "a11": +9.4539e-1,
-    "a12": -1.5421e+1,
+    "a12": -1.5421e1,
     "a13": +1.0229e0,
     "a14": -1.1440e0,
     "a15": +1.1393e-2,
-    "a16": +3.8070e+5,
-    "a17": +1.4785e+3,
+    "a16": +3.8070e5,
+    "a17": +1.4785e3,
     "a18": -2.2593e0,
     "a19": -6.7997e-1,
     "a20": +2.0215e0,
@@ -302,10 +346,8 @@ def egn_rho_nch(
     """
     a = EGN_A_COEFFICIENTS
     acc = np.abs(np.asarray(beta2_accum_ps2, dtype=np.float64))
-    inner = a["a1"] + a["a2"] * phi**a["a3"] + a["a4"] * phi**a["a5"] * (
-        1.0 + a["a6"] * (acc + a["a7"]) ** a["a8"]
-    )
-    outer = 1.0 + a["a19"] * roll_off_cut**a["a20"] + a["a21"] * roll_off_nch**a["a22"]
+    inner = a["a1"] + a["a2"] * phi ** a["a3"] + a["a4"] * phi ** a["a5"] * (1.0 + a["a6"] * (acc + a["a7"]) ** a["a8"])
+    outer = 1.0 + a["a19"] * roll_off_cut ** a["a20"] + a["a21"] * roll_off_nch ** a["a22"]
     return outer * inner
 
 
@@ -334,10 +376,14 @@ def egn_rho_cut(
     a = EGN_A_COEFFICIENTS
     acc = np.abs(np.asarray(beta2_accum_ps2, dtype=np.float64))
     rate_tbaud = float(symbol_rate_hz) / 1.0e12
-    inner = a["a9"] + a["a10"] * phi**a["a11"] + a["a12"] * phi**a["a13"] * (
-        1.0 + a["a14"] * rate_tbaud**a["a15"] + a["a16"] * (acc + a["a17"]) ** a["a18"]
+    inner = (
+        a["a9"]
+        + a["a10"] * phi ** a["a11"]
+        + a["a12"]
+        * phi ** a["a13"]
+        * (1.0 + a["a14"] * rate_tbaud ** a["a15"] + a["a16"] * (acc + a["a17"]) ** a["a18"])
     )
-    outer = 1.0 + a["a23"] * roll_off_cut**a["a24"]
+    outer = 1.0 + a["a23"] * roll_off_cut ** a["a24"]
     return outer * inner
 
 
@@ -463,9 +509,7 @@ class _LorentzianAntiderivative:
             self.tables[m] = self._cumulative(values, derivative, h)
 
     @staticmethod
-    def _cumulative(
-        values: NDArrayFloat, derivative: NDArrayFloat, h: float
-    ) -> NDArrayFloat:
+    def _cumulative(values: NDArrayFloat, derivative: NDArrayFloat, h: float) -> NDArrayFloat:
         """Integrate ``values`` on the uniform grid (Euler-Maclaurin corrected)."""
         integral = np.zeros_like(values)
         integral[1:] = np.cumsum(0.5 * h * (values[:-1] + values[1:]))
@@ -649,13 +693,11 @@ def _gn_weighted_spm_visibility(
     visibility = np.zeros_like(distances)
     for index in range(distances.size):
         k = index + 1
-        cosine_hi = (
-            (1.0 + exp_alpha_l**2) * tables.C(k, t_hi)
-            - exp_alpha_l * (tables.C(abs(k - 1), t_hi) + tables.C(k + 1, t_hi))
+        cosine_hi = (1.0 + exp_alpha_l**2) * tables.C(k, t_hi) - exp_alpha_l * (
+            tables.C(abs(k - 1), t_hi) + tables.C(k + 1, t_hi)
         )
-        cosine_lo = (
-            (1.0 + exp_alpha_l**2) * tables.C(k, t_lo)
-            - exp_alpha_l * (tables.C(abs(k - 1), t_lo) + tables.C(k + 1, t_lo))
+        cosine_lo = (1.0 + exp_alpha_l**2) * tables.C(k, t_lo) - exp_alpha_l * (
+            tables.C(abs(k - 1), t_lo) + tables.C(k + 1, t_lo)
         )
         visibility[index] = float(np.sum(measure * (cosine_hi - cosine_lo))) / total
     return visibility
@@ -818,16 +860,146 @@ def _gn_weighted_xpm_visibility(
         theta = abar * mismatch
         numerator_factor = 1.0 - 2.0 * exp_abar * np.cos(theta) + exp_abar**2
         # du = abar dt/(rate offset) and the two signs of x give a factor two.
-        integrand = (
-            numerator_factor
-            / (abar * (1.0 + mismatch * mismatch))
-            / (rate * offset)
-        )
-        numerator += offset_weight * float(
-            np.sum(weights * integrand * np.cos(theta * distance_m / span_length_m))
-        )
+        integrand = numerator_factor / (abar * (1.0 + mismatch * mismatch)) / (rate * offset)
+        numerator += offset_weight * float(np.sum(weights * integrand * np.cos(theta * distance_m / span_length_m)))
         denominator += offset_weight * float(np.sum(weights * integrand))
     return numerator / denominator
+
+
+def _xci_edge_weight_matrix(
+    w_xci: NDArrayFloat,
+    k_xci_matrix: NDArrayFloat,
+    log_xci: NDArrayFloat,
+    gamma_xci: NDArrayFloat,
+    beta2_eff_xci: NDArrayFloat,
+    f_abs_hz: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    alpha_npm_m: float,
+    length_m: float,
+    validity_switch: float = XCI_EDGE_VALIDITY_SWITCH,
+    materiality: float = XCI_EDGE_MATERIALITY,
+    n_quad: int = XCI_EDGE_QUADRATURE_POINTS,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    r"""Replace the XCI kernel by the exact island integral where it matters.
+
+    Eq. (24) of the paper is the asymptotic form of the XCI frequency integral
+    for ``s = 4 pi**2 |beta2_eff| y B_CUT / (2 alpha) >> 1``.  Its kernel
+    carries ``|log(...)| / (2 pi |beta2_eff|)``: as the effective dispersion of
+    a pair falls below the phase-matching scale, the closed form grows like
+    ``1/|beta2_eff|`` instead of saturating at the coherent limit.  On an
+    ultra-wideband comb the E-band edge reaches ``s = 0.019`` near the
+    zero-dispersion wavelength, and the channel there is 12 dB high.
+
+    This function restores the exact frequency integral for the pairs below
+    the validity switch.  With the GN weight
+    ``W(rho) = |1 - exp(-(alpha + j rho) L)|**2 / (alpha**2 + rho**2)`` and
+    the offsets ``x`` (CUT band) and ``y`` (interfering band) the integral is
+
+    .. code-block:: text
+
+        I = int_{y1}^{y2} dy (2 / (4 pi**2 |beta2| y))
+            int_0^{4 pi**2 |beta2| y B_CUT/2} W(t) dt ,
+
+    whose asymptotic limit (``t -> infinity``) is exactly the printed closed
+    form.  The antiderivative of ``W`` is the same Lorentzian table that the
+    inter-span visibility uses:
+
+    .. code-block:: text
+
+        F(s) = (1/alpha) [ (1 + e**(-2 ab)) arctan(s)
+                           - 2 e**(-ab) C_1(s) ] ,   s = t/alpha ,
+
+    and the corrected kernel is ``K = (pi / F_inf) I`` with
+    ``F_inf = (pi / (2 alpha)) (1 - e**(-ab))**2``.  The ratio to the closed
+    form contains no fitted constant: it is one at ``s -> infinity`` and
+    finite (not divergent) at ``beta2 = 0``.
+
+    The correction is applied per CUT row and only when it moves the row's
+    total XCI weight by more than ``materiality``.  Rows that pass the gate
+    keep the old matrix bit for bit, so the validated C/L/S+C+L cases do not
+    move; the gate is a statement of where the asymptotic breakdown is above
+    the model error budget.
+
+    Args:
+        w_xci: ``(N, N)`` closed-form XCI weight matrix, Eq. (24).
+        k_xci_matrix: ``(N, N)`` kernel factor ``log / (2 pi |beta2_eff|)``.
+        log_xci: ``(N, N)`` logarithmic frequency factor of Eq. (24).
+        gamma_xci: ``(N, N)`` nonlinear coefficient of the pair.
+        beta2_eff_xci: ``(N, N)`` effective dispersion of the pair (s^2/m).
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz).
+        b_hz: ``(N,)`` channel bandwidths (Hz).
+        alpha_npm_m: Fibre power attenuation (Np/m).
+        length_m: Span length (m).
+        validity_switch: Pairs with ``s`` below this value are recomputed.
+        materiality: Row-level relative change above which the correction is
+            applied.
+        n_quad: Gauss-Legendre nodes of the ``y`` integral.
+
+    Returns
+    -------
+        The tuple ``(w_edge, gated, fraction)``: the corrected weight matrix,
+        the boolean mask of the corrected CUT rows, and the relative change of
+        every row before gating.
+    """
+    n_ch = f_abs_hz.size
+    delta = np.abs(f_abs_hz[:, None] - f_abs_hz[None, :])
+    half_b = 0.5 * b_hz
+    y1 = delta - half_b[None, :]
+    y2 = delta + half_b[None, :]
+    # 适用域判据：相位失配相对线宽的量级 s。用干扰信道带上边缘 y2 与 CUT 带宽。
+    s_edge = 2.0 * np.pi**2 * np.abs(beta2_eff_xci) * y2 * half_b[:, None] / alpha_npm_m
+    valid = (log_xci != 0.0) & (y1 > 0.0) & (s_edge < validity_switch)
+
+    w_edge = np.array(w_xci, dtype=np.float64, copy=True)
+    gated = np.zeros(n_ch, dtype=bool)
+    fraction = np.zeros(n_ch, dtype=np.float64)
+    rows, cols = np.nonzero(valid)
+    if rows.size == 0:
+        return w_edge, gated, fraction
+
+    b_abs = np.abs(beta2_eff_xci[rows, cols])
+    b_cut = b_hz[rows]
+    b_nch = b_hz[cols]
+    y_lo = y1[rows, cols]
+    y_hi = y2[rows, cols]
+    c_mix = 4.0 * np.pi**2 * b_abs
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_quad))  # type: ignore[no-untyped-call]
+    y = 0.5 * (y_hi - y_lo)[:, None] * nodes[None, :] + 0.5 * (y_hi + y_lo)[:, None]
+
+    ab = alpha_npm_m * float(length_m)
+    exp_ab = float(np.exp(-ab))
+    exp_2ab = float(np.exp(-2.0 * ab))
+    # 覆盖所有有效 s 的查表范围；超出的尾部由类的渐近展开处理。
+    max_s = float(np.max(np.abs(c_mix[:, None] * y * (0.5 * b_cut)[:, None] / alpha_npm_m)))
+    table = _LorentzianAntiderivative(alpha_npm_m, float(length_m), 1, max_s)
+    s = c_mix[:, None] * y * (0.5 * b_cut)[:, None] / alpha_npm_m
+    # s 很小时 arctan(s) 与 C_1(s) 几乎相等，组合式会损失有效数字；用极限。
+    small = np.abs(s) < 1.0e-4
+    c1 = table.C(1, s)
+    bracket = (1.0 + exp_2ab) * np.arctan(s) - 2.0 * exp_ab * c1
+    bracket = np.where(small, (1.0 - exp_ab) ** 2 * s, bracket)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        integrand = 2.0 * bracket / (alpha_npm_m * c_mix[:, None] * y)
+    # Gauss-Legendre 权重作用在 [-1, 1] 上，乘以 y 区间的雅可比。
+    integral = np.sum(0.5 * (y_hi - y_lo)[:, None] * weights[None, :] * integrand, axis=1)
+
+    f_inf = (1.0 / alpha_npm_m) * 0.5 * np.pi * (1.0 - exp_ab) ** 2
+    k_corrected = np.pi * integral / f_inf
+    # beta2_eff 恰为零时上面的 1/(c y) 退化；此时积分就是 W(0) B_CUT B_NCH。
+    zero = b_abs == 0.0
+    if np.any(zero):
+        w0 = (1.0 - exp_ab) ** 2 / alpha_npm_m**2
+        k_corrected[zero] = 2.0 * b_cut[zero] * b_nch[zero] / alpha_npm_m
+
+    k_edge = np.array(k_xci_matrix, dtype=np.float64, copy=True)
+    k_edge[rows, cols] = k_corrected
+    w_candidate = gamma_xci**2 * k_edge
+    candidate_delta = np.abs(w_candidate - w_xci).sum(axis=1)
+    scale = w_xci.sum(axis=1)
+    fraction = np.divide(candidate_delta, scale, out=np.zeros_like(scale), where=scale > 0.0)
+    gated = fraction > materiality
+    w_edge[gated, :] = w_candidate[gated, :]
+    return w_edge, gated, fraction
 
 
 def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
@@ -900,6 +1072,15 @@ PCFM_MODEL_INFO = ModelInfo(
     options=(
         ("poly_degree", "SPP polynomial degree N_p (paper: 5 adequate, 9 reference)."),
         ("egn", "Adds the Zefreh 2020 EGN correction on top of the GN result."),
+        (
+            "edge_fix",
+            "Evaluates the exact XCI island integral where the closed form leaves its validity domain "
+            "(zero-dispersion edge); stabilises the SCI kernel at small X. Default True.",
+        ),
+        (
+            "cache_spans",
+            "Memoises the SPP/kernels of identical spans inside one path. Default True.",
+        ),
     ),
 )
 
@@ -924,6 +1105,12 @@ class PCFMSpanKernel:
             Section IV-D; the framework has no field for it, so it is
             available at kernel level only.
         spp_steps: Number of RK4 steps of the power-profile integration.
+        edge_fix: Evaluate the exact XCI island integral on the CUT rows whose
+            closed-form weight is materially outside its asymptotic validity
+            domain, and use the small-``X`` Taylor branch of the SCI kernel.
+        cache_spans: Memoise the SPP integration and the closed-form kernels of
+            a span state, so that the identical spans of a transparent link
+            are evaluated once.
     """
 
     def __init__(
@@ -936,6 +1123,8 @@ class PCFMSpanKernel:
         egn: bool = False,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         spp_steps: int = DEFAULT_SPP_STEPS,
+        edge_fix: bool = True,
+        cache_spans: bool = True,
     ) -> None:
         """Prepare the per-channel constants of the span.
 
@@ -954,6 +1143,19 @@ class PCFMSpanKernel:
         self.spp_steps = int(spp_steps)
         self.symbol_rate_hz = float(symbol_rate_hz)
         self.egn = bool(egn)
+        self.edge_fix = bool(edge_fix)
+        self.cache_spans = bool(cache_spans)
+        # 小 |X| 的 SCI 泰勒系数只依赖多项式阶数；edge_fix=False 时关闭该分支。
+        self._sci_small_x_switch = SCI_X_SERIES_SWITCH if self.edge_fix else 0.0
+        self._sci_small_x_coeff = (
+            _sci_small_x_coefficients(2 * self.n_poly + 1) if self.edge_fix else np.zeros((1, 1), dtype=np.float64)
+        )
+        # XCI 适用域修正按跨长惰性计算并缓存；键为跨长（微米取整）。
+        self._xci_edge_cache: dict[int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        # 跨段状态记忆化：同一路径内的透明跨输入只差末位，命中即复用 SPP 与核。
+        self._span_cache: list[tuple[NDArrayFloat, int, NDArrayFloat, NDArrayFloat, NDArrayFloat]] = []
+        self.span_cache_hits = 0
+        self.span_cache_misses = 0
 
         f_abs = np.asarray(f_abs_hz, dtype=np.float64)
         bandwidths = np.asarray(b_hz, dtype=np.float64)
@@ -1038,9 +1240,7 @@ class PCFMSpanKernel:
         # m = k = n = CUT.
         df_ref = self.f_abs_hz - self.f_ref_hz
         self.beta2_eff_sci = (
-            self.beta2
-            + np.pi * self.beta3 * 2.0 * df_ref
-            + (2.0 / 3.0) * np.pi**2 * self.beta4 * 3.0 * df_ref**2
+            self.beta2 + np.pi * self.beta3 * 2.0 * df_ref + (2.0 / 3.0) * np.pi**2 * self.beta4 * 3.0 * df_ref**2
         )
         # Effective dispersion of the XCI island, Eq. (A.15) with
         # m = interferer and k = CUT; the last term of Eq. (A.15) vanishes
@@ -1050,22 +1250,15 @@ class PCFMSpanKernel:
         self.beta2_eff_xci = (
             self.beta2
             + np.pi * self.beta3 * (self.f_abs_hz[:, None] + self.f_abs_hz[None, :] - 2.0 * self.f_ref_hz)
-            + (2.0 / 3.0)
-            * np.pi**2
-            * self.beta4
-            * (df_i**2 + df_i * df_j + df_j**2)
+            + (2.0 / 3.0) * np.pi**2 * self.beta4 * (df_i**2 + df_i * df_j + df_j**2)
         )
         # Nonlinear coefficient of the XCI islands, Eq. (16): the cross
         # effective area averages the areas of the CUT and of the interferer.
         a_sum = self.a_eff_m2[:, None] + self.a_eff_m2[None, :]
-        self.gamma_xci = (2.0 * np.pi * self.f_abs_hz[:, None] / C_LIGHT) * (
-            2.0 * self.n2_m2_w / a_sum
-        )
+        self.gamma_xci = (2.0 * np.pi * self.f_abs_hz[:, None] / C_LIGHT) * (2.0 * self.n2_m2_w / a_sum)
         # Nonlinear coefficient of the SCI islands, Eq. (A.8) with the four
         # effective areas equal to the area of the CUT.
-        self.gamma_sci = (2.0 * np.pi * self.f_abs_hz / C_LIGHT) * (
-            self.n2_m2_w / self.a_eff_m2
-        )
+        self.gamma_sci = (2.0 * np.pi * self.f_abs_hz / C_LIGHT) * (self.n2_m2_w / self.a_eff_m2)
         # Log term of the XCI kernel, Eq. (24).  The bandwidth of the
         # interfering channel enters the log.
         delta = self.f_abs_hz[None, :] - self.f_abs_hz[:, None]
@@ -1086,7 +1279,7 @@ class PCFMSpanKernel:
         np.fill_diagonal(self.k_xci_matrix, 0.0)
         # Assembled XCI weight matrix: gamma^2 of Eq. (21) times the kernel
         # factor of Eq. (24).
-        self.w_xci = self.gamma_xci**2 * self.k_xci_matrix
+        self.w_xci: NDArrayFloat = self.gamma_xci**2 * self.k_xci_matrix
 
         # Scaled polynomial coefficient operator of the SCI kernel.
         self.r_matrix = r_coefficient_matrix(self.n_poly)
@@ -1131,9 +1324,7 @@ class PCFMSpanKernel:
         losses = [1.0]
         for position, loss_db in self.lumped_loss:
             if position >= span_length_m:
-                raise ValueError(
-                    f"lumped loss at {position} m lies outside the span of {span_length_m} m."
-                )
+                raise ValueError(f"lumped loss at {position} m lies outside the span of {span_length_m} m.")
             edges.append(position)
             losses.append(10.0 ** (-loss_db / 10.0))
         edges.append(span_length_m)
@@ -1190,9 +1381,7 @@ class PCFMSpanKernel:
         cached = self._special_cache.get(key)
         if cached is not None:
             return cached
-        x_all = np.ascontiguousarray(
-            self.beta2_eff_sci * (np.pi**2) * self.b_hz**2 * float(span_length_m)
-        )
+        x_all = np.ascontiguousarray(self.beta2_eff_sci * (np.pi**2) * self.b_hz**2 * float(span_length_m))
         si_all, _ = sici(x_all)
         sin_all = np.ascontiguousarray(np.sin(x_all))
         cos_all = np.ascontiguousarray(np.cos(x_all))
@@ -1216,6 +1405,129 @@ class PCFMSpanKernel:
         """
         beta2_ps2_per_m = self.beta2_eff_sci * 1.0e24
         return beta2_ps2_per_m * float(span_length_m)
+
+    def _xci_weight_matrix(self, span_length_m: float) -> NDArrayFloat:
+        """Return the XCI weight matrix of a span length.
+
+        Without ``edge_fix`` this is the printed Eq. (24) matrix.  With the
+        fix, the CUT rows whose closed-form XCI leaves its asymptotic validity
+        domain are replaced by the exact island integral; see
+        :func:`_xci_edge_weight_matrix`.  The corrected matrix depends on the
+        span length (through ``alpha L`` and the island phase), so it is
+        cached per span length.
+
+        Args:
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``(N, N)`` XCI weight matrix, internal channel order.
+        """
+        if not self.edge_fix:
+            return self.w_xci
+        key = int(round(span_length_m * 1e6))
+        cached = self._xci_edge_cache.get(key)
+        if cached is not None:
+            return cached[0]
+        w_edge, gated, fraction = _xci_edge_weight_matrix(
+            self.w_xci,
+            self.k_xci_matrix,
+            self.log_xci,
+            self.gamma_xci,
+            self.beta2_eff_xci,
+            self.f_abs_hz,
+            self.b_hz,
+            self.alpha_visibility_npm,
+            float(span_length_m),
+        )
+        self._xci_edge_cache[key] = (w_edge, gated, fraction)
+        return w_edge
+
+    def xci_edge_audit(self, span_length_m: float) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """Return the CUT-row gate and the relative correction of the XCI edge fix.
+
+        Args:
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``(gated, fraction)``: the boolean mask of the corrected CUT rows
+            (internal order) and the relative change of every row before
+            gating.  Without ``edge_fix`` both are zero.
+        """
+        if not self.edge_fix:
+            empty = np.zeros(self.n_nodes, dtype=np.float64)
+            return np.zeros(self.n_nodes, dtype=bool), empty
+        self._xci_weight_matrix(span_length_m)
+        key = int(round(span_length_m * 1e6))
+        _, gated, fraction = self._xci_edge_cache[key]
+        return gated, fraction
+
+    def clear_span_cache(self) -> None:
+        """Forget the memoised span states and reset the hit/miss counters.
+
+        The model calls this at the beginning of every path evaluation, so the
+        memoisation only shares work between the identical (transparent) spans
+        of one link.  It never carries a state from one path to the next.
+        """
+        self._span_cache.clear()
+        self.span_cache_hits = 0
+        self.span_cache_misses = 0
+
+    def _span_cache_lookup(
+        self,
+        power_internal: NDArrayFloat,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat] | None:
+        """Look up the memoised kernels of a span state.
+
+        Args:
+            power_internal: ``(N,)`` launch power in the internal channel order.
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``(power_out, k_sci, profile_energy)`` or ``None`` on a miss.
+        """
+        if not self.cache_spans:
+            return None
+        key = int(round(span_length_m * 1e6))
+        for cached_power, cached_key, power_out, k_sci, energy in self._span_cache:
+            if cached_key != key:
+                continue
+            if np.array_equal(cached_power, power_internal):
+                self.span_cache_hits += 1
+                return power_out, k_sci, energy
+            # 透明跨的输入只差 EDFA 增益除法的末位；在这个容差内物理不可分辨。
+            if np.allclose(cached_power, power_internal, rtol=SPAN_CACHE_RTOL, atol=0.0):
+                self.span_cache_hits += 1
+                return power_out, k_sci, energy
+        self.span_cache_misses += 1
+        return None
+
+    def _span_cache_store(
+        self,
+        power_internal: NDArrayFloat,
+        span_length_m: float,
+        power_out: NDArrayFloat,
+        k_sci: NDArrayFloat,
+        energy: NDArrayFloat,
+    ) -> None:
+        """Store the memoised kernels of a span state (FIFO, bounded size)."""
+        if not self.cache_spans:
+            return
+        if len(self._span_cache) >= SPAN_CACHE_MAX_ENTRIES:
+            self._span_cache.pop(0)
+        key = int(round(span_length_m * 1e6))
+        self._span_cache.append(
+            (
+                np.array(power_internal, dtype=np.float64, copy=True),
+                key,
+                power_out,
+                k_sci,
+                energy,
+            )
+        )
 
     # -- closed-form kernels (exposed for cross-checking) -----------------
     def spp_samples(self, span_length_m: float, power_in_w: NDArrayFloat) -> tuple[NDArrayFloat, NDArrayFloat]:
@@ -1276,7 +1588,10 @@ class PCFMSpanKernel:
             np.ascontiguousarray(cos_all),
             np.ascontiguousarray(j_all),
             np.ascontiguousarray(self.beta2_eff_sci),
+            np.ascontiguousarray(self.b_hz**2),
             float(span_length_m),
+            np.ascontiguousarray(self._sci_small_x_coeff),
+            float(self._sci_small_x_switch),
             k_sci,
         )
         return k_sci
@@ -1452,9 +1767,7 @@ class PCFMSpanKernel:
         key = (int(span_context.total_spans), float(span_length_m), float(scale))
         cached = self._factor_cache.get(key)
         if cached is None:
-            ramp_spm, ramp_xpm = self._inter_span_ramps(
-                span_context.total_spans, span_length_m
-            )
+            ramp_spm, ramp_xpm = self._inter_span_ramps(span_context.total_spans, span_length_m)
             cached = (
                 np.exp(1j * ramp_spm * scale),
                 np.exp(1j * ramp_xpm * scale),
@@ -1525,16 +1838,22 @@ class PCFMSpanKernel:
             noise powers, all in model order.
         """
         power = np.ascontiguousarray(np.asarray(power_in_w, dtype=np.float64)[self.order])
-        profile_norm, power_out = self._integrate_spp(power, span_length_m)
 
-        # Polynomial representation of the SPP, Eq. (23).  The fit is done in
-        # the scaled variable u = z/L, which is the numerically sound basis;
-        # the coefficients of the z-basis follow as p_n = q_n / L^n.
-        pinv = self._fit_operator(span_length_m)
-        q_scaled = pinv @ profile_norm  # (N_p+1, N)
-
-        # --- SCI kernel, Eq. (30) ------------------------------------------
-        k_sci = self.sci_kernel(span_length_m, q_scaled)
+        # 跨段记忆化：透明链路的每一跨输入只差末位，SPP/SCI/能量只算一次。
+        cached = self._span_cache_lookup(power, span_length_m)
+        if cached is None:
+            profile_norm, power_out = self._integrate_spp(power, span_length_m)
+            # Polynomial representation of the SPP, Eq. (23).  The fit is done
+            # in the scaled variable u = z/L, which is the numerically sound
+            # basis; the coefficients of the z-basis follow as p_n = q_n/L^n.
+            pinv = self._fit_operator(span_length_m)
+            q_scaled = pinv @ profile_norm  # (N_p+1, N)
+            # --- SCI kernel, Eq. (30) --------------------------------------
+            k_sci = self.sci_kernel(span_length_m, q_scaled)
+            q_int = _profile_energy_jit(np.ascontiguousarray(q_scaled)) * float(span_length_m)
+            self._span_cache_store(power, span_length_m, power_out, k_sci, q_int)
+        else:
+            power_out, k_sci, q_int = cached
 
         # --- NLI PSDs, Eqs. (21) and (26) ----------------------------------
         active = power > 0.0
@@ -1554,9 +1873,8 @@ class PCFMSpanKernel:
         # kernel integrates.
         g_sci = (16.0 / 27.0) * self.gamma_sci**2 * psd**3 * k_sci * rho_cut
         # XCI: G_XCI = (32/27) p_CUT(L) G_CUT sum_nch gamma^2 G_nch^2 K_XCI.
-        q_int = _profile_energy_jit(np.ascontiguousarray(q_scaled)) * float(span_length_m)
         xci_weight = q_int * psd**2 * rho_nch
-        xci_acc = self.w_xci @ xci_weight
+        xci_acc = self._xci_weight_matrix(span_length_m) @ xci_weight
         g_xci = (32.0 / 27.0) * psd * xci_acc
 
         spm = np.where(active, g_sci * self.b_hz, 0.0)
@@ -1600,6 +1918,10 @@ class PCFMModel(RouteModel):
             paper finds ``N_p = 5`` adequate and ``N_p = 9`` the reference.
         egn: Apply the machine-learning correction of Zefreh et al. 2020 on
             top of the GN result.
+        edge_fix: Evaluate the exact XCI island integral where the closed form
+            leaves its validity domain, and stabilise the SCI kernel at small
+            ``X``.  See :class:`PCFMSpanKernel`.
+        cache_spans: Memoise the identical spans of one path.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
     """
 
@@ -1617,6 +1939,8 @@ class PCFMModel(RouteModel):
         symbol_rate_hz: float = 50e9,
         poly_degree: int = 5,
         egn: bool = False,
+        edge_fix: bool = True,
+        cache_spans: bool = True,
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -1630,6 +1954,8 @@ class PCFMModel(RouteModel):
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.poly_degree = int(poly_degree)
         self.egn = bool(egn)
+        self.edge_fix = bool(edge_fix)
+        self.cache_spans = bool(cache_spans)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
 
@@ -1642,12 +1968,24 @@ class PCFMModel(RouteModel):
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,
+            edge_fix=self.edge_fix,
+            cache_spans=self.cache_spans,
         )
 
     def evaluate_path(self, optical_path, power_in_w):
-        """Evaluate a path, resetting the span context of the EGN correction."""
+        """Evaluate a path, resetting the EGN context and the span memoisation.
+
+        The span memoisation is deliberately path-scoped: clearing it here
+        means that the identical (transparent) spans of one link share their
+        SPP integration, while a new path or a new launch power never reuses a
+        stale state.
+        """
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
+        for kernel in self._kernel_cache.values():
+            clear = getattr(kernel, "clear_span_cache", None)
+            if clear is not None:
+                clear()
         return super().evaluate_path(optical_path, power_in_w)
 
     def span_step(
@@ -1683,9 +2021,7 @@ class PCFMModel(RouteModel):
             power_in_w,
             span_length_m,
             1,
-            span_index=(
-                self._span_index if span_context is None else int(span_context.span_index)
-            ),
+            span_index=(self._span_index if span_context is None else int(span_context.span_index)),
             beta2_accum_ps2=self._beta2_accum_ps2,
             span_context=span_context,
         )
@@ -1700,9 +2036,7 @@ class PCFMModel(RouteModel):
             bandwidth_hz=self.channel_bandwidth_hz_channels,
         )
         self._span_index += 1
-        self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(
-            span_length_m
-        )
+        self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)
         return element
 
 
