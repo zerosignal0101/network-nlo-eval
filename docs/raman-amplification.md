@@ -154,6 +154,44 @@ model = create_model(
 所有数值均为平均 SNR (dB)，同一泵浦配置。论文子集始终低于 lumped，但仍高于
 纯 EDFA；这与“Raman 降低 ASE、但增加 NLI”的定性结论一致。
 
+
+## 3.1 三篇 DRA 论文对照（不是一篇）
+
+文献库 `~/Downloads/强化学习融合 QoT 信息/QoT 文献包 2026-10-20` 里，单模分布式拉曼放大的 QoT 模型至少三篇：
+
+| 文献 | 注册模型 | 实现程度 |
+|---|---|---|
+| Buglia 2024, JLT, `10.1109/jlt.2023.3315127` | `buglia2024_ra_gn` | Eq. (1)/(2) 功率剖面 + 拟合 + 精确 GN 双重积分；Eq. (9)/(11)/(12) 的印刷闭式未逐项复制 |
+| Buglia 2024, JLT, `10.1109/jlt.2024.3439999` | `hybrid_raman_paper` | Eq. (2)/(4) coupled ODE；NLI 是 PCFM 核 + ODE 剖面近似 |
+| Zhang 2024, OECC, `10.1109/OECC54135.2024.10975528` | `zhang2024_dra_egn` | Eq. (1)/(2)/(4) 相干 GN 子集；标定 EGN 修正未实现 |
+
+`ecz` / `semrau2019` 是 ISRS 对照，不是 DRA，不能混入上表。
+
+`c_57ch` 1 跨、1450nm/0.2W 后向泵的平均 SNR（`results/raman/paper_controls.json`）：
+
+| 模型 | 平均 SNR | 说明 |
+|---|---:|---|
+| `pcfm_original` | 26.665 | 无 Raman |
+| `raman_lumped` | 27.688 | 集总近似，NLI 不变 |
+| `hybrid_raman_paper` | 27.436 | ODE 剖面 + PCFM NLI |
+| `buglia2024_ra_gn` | 27.792 | RA-GN 子集 |
+| `zhang2024_dra_egn` | 27.760 | DRA coherent-GN 子集 |
+| `ecz` | 26.759 | 仅 ISRS 对照，不是 DRA |
+
+两个新 DRA 对照都是**paper-inspired subset**，不能声称完整复现：
+
+- Buglia 的 Eq. (9)/(11)/(12) 印刷闭式没有逐项复制；用精确 GN 双重积分替代其近似；
+  SPM 子集约低于 PCFM 单跨参考 2 dB，XPM 基本吻合。
+- Zhang 的标定 EGN 系数/修正没有完整实现，只保留 Eq. (1)/(2)/(4) 的相干 GN 骨架。
+- 两篇都不在线调用波形/数值模型。
+
+### 运行
+
+```bash
+PYTHONPATH=src pytest tests/test_dra_paper_models.py -q
+PYTHONPATH=src python scripts/dra_paper_comparison.py
+```
+
 ## 5. 限制与后续
 
 - 当前 NLI 仍是“PCFM 核 + ODE 剖面”的近似。若要 claim 论文 Eq. (6)-(9)，
@@ -172,9 +210,9 @@ model = create_model(
 ## 6. 复现命令
 
 ```bash
-PYTHONPATH=src pytest tests/test_raman.py tests/test_hybrid_raman.py -q
+PYTHONPATH=src pytest tests/test_raman.py tests/test_hybrid_raman.py tests/test_dra_paper_models.py -q
 PYTHONPATH=src pytest tests/test_pcfm.py -q
 PYTHONPATH=src python scripts/raman_paper_comparison.py
 ```
 
-结果：`results/raman/pump_sweep.json`、`results/raman/paper_comparison.json`。
+结果：`results/raman/pump_sweep.json`、`results/raman/paper_comparison.json`、`results/raman/paper_controls.json`。
