@@ -36,8 +36,10 @@ from network_nlo_eval.benchmarks.cases import (
     launch_profile,
 )
 from network_nlo_eval.benchmarks.runner import make_model
+from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
-from network_nlo_eval.models.base import MultiSpanOpticalPath, SpanContext
+from network_nlo_eval.models.base import MultiSpanOpticalPath, SpanContext, create_model
 from network_nlo_eval.models.pcfm import (
     EGN_A_COEFFICIENTS,
     EGN_PHI,
@@ -1329,3 +1331,151 @@ def test_span_cache_reuses_identical_transparent_spans() -> None:
         f"span cache: {kernel.span_cache_hits} hits / {kernel.span_cache_misses} miss, "
         f"max SNR change {float(np.max(delta)):.3e} dB"
     )
+
+
+# ---------------------------------------------------------------------------
+# 灵活栅格、连续多槽连接、任意功率谱
+# ---------------------------------------------------------------------------
+
+
+def _flex_connections(
+    widths: tuple[int, ...], center_hz: float = 193.1e12
+) -> tuple[FlexibleGrid, list[ConnectionSpec]]:
+    """Build contiguous multi-slot connections of the requested widths."""
+    total_slots = sum(widths)
+    grid = FlexibleGrid.from_legacy_grid(
+        max(1, (total_slots + 3) // 4),
+        50e9,
+        center_hz,
+        slots_per_channel=4,
+    )
+    connections: list[ConnectionSpec] = []
+    cursor = 0
+    for index, n_slots in enumerate(widths):
+        symbol_rate_hz = n_slots * 12.5e9
+        connections.append(
+            ConnectionSpec(
+                grid=grid,
+                connection_id=index,
+                first_slot=cursor,
+                n_slots=n_slots,
+                bit_rate_bps=2.0 * symbol_rate_hz,
+                modulation="QPSK",
+                symbol_rate_hz=symbol_rate_hz,
+                roll_off=0.0,
+                launch_power_w=1e-3,
+            )
+        )
+        cursor += n_slots
+    return grid, connections
+
+
+def _flex_model(grid: FlexibleGrid, connections: list[ConnectionSpec]):
+    """Build the reference PCFM model shared by the flexible-grid tests."""
+    return PCFMModel(
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        connections=connections,
+        slots_per_channel=4,
+        channel_bandwidth_source="occupied",
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+    )
+
+
+def test_flexible_grid_heterogeneous_bandwidths_and_power() -> None:
+    """PCFM must accept unequal occupied widths and arbitrary per-connection power."""
+    grid, connections = _flex_connections((4, 4, 8, 8))
+    path = MultiSpanOpticalPath(
+        [SMF_100KM, SMF_100KM],
+        [EDFAConfig(noise_figure_db=5.5), EDFAConfig(noise_figure_db=5.5)],
+    )
+    power = np.array([0.5, 1.0, 2.0, 1.0]) * 1e-3
+    model = _flex_model(grid, connections)
+    result = model.evaluate_path(path, power)
+    assert result.snr_db.shape == (4,)
+    assert np.all(np.isfinite(result.snr_db))
+    np.testing.assert_allclose(model.channel_bandwidth_hz_channels, np.array([50e9, 50e9, 100e9, 100e9]))
+
+    reference = create_model(
+        "numerical",
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        connections=connections,
+        slots_per_channel=4,
+        channel_bandwidth_source="occupied",
+    ).evaluate_path(path, power)
+    delta = np.asarray(result.snr_db) - np.asarray(reference.snr_db)
+    assert float(np.max(np.abs(delta))) < 0.2, f"flexible PCFM differs by {float(np.max(np.abs(delta))):.3f} dB"
+
+
+def test_flexible_grid_merged_connection() -> None:
+    """A contiguous superchannel occupying many slots is one PCFM node."""
+    grid, connections = _flex_connections((16,))
+    path = MultiSpanOpticalPath([SMF_100KM], [EDFAConfig(noise_figure_db=5.5)])
+    model = _flex_model(grid, connections)
+    result = model.evaluate_path(path, np.array([4.0e-3]))
+    assert result.snr_db.shape == (1,)
+    assert np.isfinite(result.snr_db[0])
+    np.testing.assert_allclose(model.channel_bandwidth_hz_channels, np.array([200e9]))
+
+
+def test_legacy_arbitrary_power_spectrum() -> None:
+    """PCFM must not assume a flat per-channel launch power."""
+    grid = SpectrumGrid(8, 50e9, 193.1e12)
+    path = MultiSpanOpticalPath(
+        [SMF_100KM, SMF_100KM],
+        [EDFAConfig(noise_figure_db=5.5), EDFAConfig(noise_figure_db=5.5)],
+    )
+    power = np.array([0.5, 1.0, 2.0, 0.5, 1.5, 3.0, 1.0, 2.0]) * 1e-3
+    model = PCFMModel(
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+    )
+    result = model.evaluate_path(path, power)
+    assert result.snr_db.shape == (8,)
+    assert np.all(np.isfinite(result.snr_db))
+
+    reference = create_model("numerical", grid, SMF_100KM, symbol_rate_hz=50e9).evaluate_path(path, power)
+    delta = np.asarray(result.snr_db) - np.asarray(reference.snr_db)
+    assert float(np.max(np.abs(delta))) < 0.5, f"non-flat power differs by {float(np.max(np.abs(delta))):.3f} dB"
+
+
+def test_flexible_grid_e_band_edge_fix() -> None:
+    """The zero-dispersion edge fix must also work for a flexible E-band comb."""
+    grid, connections = _flex_connections((4, 4, 4, 4, 4, 4, 4, 4), center_hz=219.3e12)
+    path = MultiSpanOpticalPath([SMF_100KM], [EDFAConfig(noise_figure_db=5.5)])
+    power = np.ones(8) * 1e-3
+    fixed = _flex_model(grid, connections).evaluate_path(path, power)
+    old = PCFMModel(
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        connections=connections,
+        slots_per_channel=4,
+        channel_bandwidth_source="occupied",
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+        edge_fix=False,
+    ).evaluate_path(path, power)
+    reference = create_model(
+        "numerical",
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        connections=connections,
+        slots_per_channel=4,
+        channel_bandwidth_source="occupied",
+    ).evaluate_path(path, power)
+    fixed_delta = np.asarray(fixed.snr_db) - np.asarray(reference.snr_db)
+    old_delta = np.asarray(old.snr_db) - np.asarray(reference.snr_db)
+    assert float(np.max(np.abs(fixed_delta))) < 0.15
+    assert float(np.max(np.abs(old_delta))) > 1.0
