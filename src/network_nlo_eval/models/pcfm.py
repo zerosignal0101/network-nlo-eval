@@ -1081,6 +1081,10 @@ PCFM_MODEL_INFO = ModelInfo(
             "cache_spans",
             "Memoises the SPP/kernels of identical spans inside one path. Default True.",
         ),
+        (
+            "spp_steps",
+            "RK4 steps of the SPP power-profile integration, or 'auto' (12 at <=0 dBm/ch, 32 above).",
+        ),
     ),
 )
 
@@ -1941,6 +1945,7 @@ class PCFMModel(RouteModel):
         egn: bool = False,
         edge_fix: bool = True,
         cache_spans: bool = True,
+        spp_steps: int | str = DEFAULT_SPP_STEPS,
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -1951,11 +1956,15 @@ class PCFMModel(RouteModel):
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
+        if spp_steps != "auto" and int(spp_steps) < 1:
+            raise ValueError(f"spp_steps must be >= 1 or 'auto', got {spp_steps!r}.")
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.poly_degree = int(poly_degree)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.cache_spans = bool(cache_spans)
+        self.spp_steps = spp_steps
+        self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
 
@@ -1970,6 +1979,7 @@ class PCFMModel(RouteModel):
             egn=self.egn,
             edge_fix=self.edge_fix,
             cache_spans=self.cache_spans,
+            spp_steps=self._active_spp_steps,
         )
 
     def evaluate_path(self, optical_path, power_in_w):
@@ -1980,6 +1990,12 @@ class PCFMModel(RouteModel):
         SPP integration, while a new path or a new launch power never reuses a
         stale state.
         """
+        if self.spp_steps == "auto":
+            peak_dbm = 10.0 * np.log10(max(float(np.max(power_in_w)), 1e-30) * 1e3)
+            wanted = 12 if peak_dbm <= 0.0 else DEFAULT_SPP_STEPS
+            if wanted != self._active_spp_steps:
+                self._active_spp_steps = wanted
+                self._kernel_cache.clear()
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
         for kernel in self._kernel_cache.values():

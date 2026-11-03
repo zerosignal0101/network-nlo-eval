@@ -621,6 +621,7 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
         "egn",
         "edge_fix",
         "cache_spans",
+        "spp_steps",
     ]
     assert PCFM_MODEL_INFO == info
 
@@ -635,6 +636,31 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
             symbol_rate_hz=64e9,
             poly_degree=-1,
         )
+    with pytest.raises(ValueError, match="spp_steps"):
+        _create(
+            "pcfm",
+            grid_for(case),
+            build_path(case).fiber_configs[0],
+            symbol_rate_hz=64e9,
+            spp_steps=0,
+        )
+
+
+def test_auto_spp_steps_tracks_launch_power() -> None:
+    """``spp_steps='auto'`` uses 12 at <=0 dBm/ch and 32 above it."""
+    case = build_case("scaling_40ch")
+    model = make_model(
+        "pcfm",
+        case,
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+    )
+    path = build_path(case)
+    model.evaluate_path(path, launch_profile(case, 0.0))
+    assert model._active_spp_steps == 12
+    model.evaluate_path(path, launch_profile(case, 6.0))
+    assert model._active_spp_steps == 32
 
 
 # ---------------------------------------------------------------------------
