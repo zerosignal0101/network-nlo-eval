@@ -1,7 +1,7 @@
-"""对照模型注册：未改 PCFM、集总拉曼模型与论文 hybrid 子集。
+"""对照模型注册：未改 PCFM、集总拉曼模型与论文 hybrid 模型。
 
 前两个类不是新的物理模型，而是把已有实现固定成**可复现的对照入口**；第三个
-类在 ``models.hybrid_raman`` 中独立注册，提供论文 coupled-ODE 的可验证子集。
+类在 ``models.hybrid_raman`` 中独立注册，实现论文 Eq. (2)-(10) 的 hybrid 模型。
 
 ``pcfm_original``
     论文 PCFM 的原始配置：``poly_degree=5``、``egn=False``、
@@ -10,14 +10,15 @@
 
 ``raman_lumped``
     PCFM + 本仓的集总等效分布式拉曼放大（``models.raman``）。
-    它仍**不是** hybrid Raman 论文的 coupled-ODE 模型；论文模型的完整复现
-    仍需把泵浦项加入 SPP/NLI 积分，见 ``docs/raman-amplification.md``。
+    它仍**不是** hybrid Raman 论文的 coupled-ODE 模型；论文模型见
+    ``hybrid_raman_paper`` 与 ``docs/raman-amplification.md``。
 
 ``hybrid_raman_paper``
-    独立的论文对照模型（``models.hybrid_raman``）：Eq. (2)/(4) coupled
-    signal/pump/ASE ODE 的可验证子集，NLI 用 PCFM 核 + ODE 剖面近似，
-    **不是** Eq. (6)-(9) 全式。它不替代上面的 lumped 模型，而是用来量化
-    lumped 近似的偏差。
+    独立的论文模型（``models.hybrid_raman``）：Eq. (2)/(4) coupled
+    signal/pump/ASE ODE + Eq. (10) 五参数剖面拟合 + Eq. (6)-(9) 的 SPM/XPM
+    闭式（默认 ``nli_form="paper"``）。它不替代上面的 lumped 模型，而是
+    用来量化 lumped 近似的偏差；``nli_form="pcfm"`` 保留升级前的 PCFM 核
+    近似作回归对照。
 """
 
 from __future__ import annotations

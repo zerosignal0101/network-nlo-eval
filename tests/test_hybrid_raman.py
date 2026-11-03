@@ -1,12 +1,12 @@
-"""论文 hybrid Raman 对照模型（可验证子集）的测试。
+"""论文 hybrid Raman 模型（Eq. (2)/(4) ODE + Eq. (6)-(9) 闭式）的测试。
 
 覆盖任务要求：
 * 注册、构造、形状；
-* 无泵时退化为 PCFM 基线（逐位一致）；
-* 泵浦功率增加时增益/ASE 方向正确；
-* 泵浦耗尽与 FW/BW 差异；
-* 与 lumped 模型不同，且差异有界；
-* 跨间 ASE 传递与一个 hybrid SNR 例子。
+* ``nli_form="paper"`` 与 ``"pcfm"`` 都能跑；
+* 无泵时 ``"paper"`` 退化为无 Raman 的闭式基线；
+* 有泵 1/10 跨，SPM/XPM 正、有限；
+* Eq. (9) 闭式 vs Eq. (6)-(8) 数值积分 <0.1 dB；
+* 泵浦耗尽、FW/BW 差异、跨间 ASE 传递与一个 hybrid SNR 例子。
 """
 
 from __future__ import annotations
@@ -66,13 +66,14 @@ def _solver(pumps: list[RamanPumpConfig], *, n_steps: int = 32) -> RamanPaperSpa
 
 
 def test_paper_model_is_registered_with_an_honest_summary() -> None:
-    """模型必须独立注册，且明确标注是子集/近似。"""
+    """模型必须独立注册，并声明实现的是 Eq. (6)-(9)。"""
     info = get_model_info("hybrid_raman_paper")
     assert info is HYBRID_RAMAN_PAPER_MODEL_INFO
     assert info.family == "gn+raman"
-    assert "approximate" in info.summary.lower()
-    assert "not Eq. 6-9" in info.summary
-    assert "de Moura" in info.reference
+    assert "eq. (8)/(9)" in info.summary.lower()
+    assert "nli_form='pcfm'" in info.summary.lower()
+    assert "buglia" in info.reference.lower()
+    assert "hybrid" in info.reference.lower()
 
 
 def test_paper_model_constructs_and_returns_path_shapes() -> None:
@@ -93,20 +94,134 @@ def test_invalid_fixed_point_iterations_are_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# NLI 口径：paper / integral / pcfm
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_nli_form_is_rejected() -> None:
+    """未知的 NLI 口径必须直接报错。"""
+    with pytest.raises(ValueError, match="nli_form"):
+        make_model("hybrid_raman_paper", CASE, nli_form="eq6")
+
+
+@pytest.mark.parametrize("nli_form", ["paper", "integral", "pcfm"])
+def test_every_nli_form_runs_and_is_finite(nli_form: str) -> None:
+    """三种口径都能构造、评估并给出有限的 SPM/XPM。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    result = make_model("hybrid_raman_paper", CASE, raman_pumps=[_pump()], nli_form=nli_form).evaluate_path(
+        path, power
+    )
+    assert np.all(np.isfinite(result.snr_db))
+    assert np.all(np.asarray(result.spm_noise_w) > 0.0)
+    assert np.all(np.asarray(result.xpm_noise_w) > 0.0)
+
+
+def test_paper_and_pcfm_forms_are_not_aliases() -> None:
+    """Eq. (6)-(9) 与旧 PCFM 核必须给出不同 NLI（不是改名的同一个核）。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    paper = make_model("hybrid_raman_paper", CASE, raman_pumps=[_pump()], nli_form="paper").evaluate_path(
+        path, power
+    )
+    legacy = make_model("hybrid_raman_paper", CASE, raman_pumps=[_pump()], nli_form="pcfm").evaluate_path(
+        path, power
+    )
+    paper_nli = np.mean(paper.spm_noise_w + paper.xpm_noise_w)
+    legacy_nli = np.mean(legacy.spm_noise_w + legacy.xpm_noise_w)
+    assert paper_nli != pytest.approx(legacy_nli, rel=1e-3)
+
+
+# ---------------------------------------------------------------------------
 # 无泵退化
 # ---------------------------------------------------------------------------
 
 
-def test_without_pumps_the_model_is_bit_for_bit_the_pcfm_baseline() -> None:
-    """无泵时走 PCFM 的 ISRS-only 路径，输出逐位一致。"""
+def test_paper_without_pumps_matches_the_closed_form_baseline() -> None:
+    """无泵时 paper 口径退化为无 Raman 的闭式基线（与 PCFM 差 <0.1 dB）。
+
+    单跨 ``scaling_40ch``（100 km、40 信道、64 GBd）上，Eq. (2) 只剩 ISRS，
+    Eq. (10) 拟合、Eq. (8)/(9) 闭式与 PCFM 的 SCI/XCI 核应给出同一量级。
+    多跨/长跨链路的差异见 :func:`test_paper_no_pump_long_link_difference_is_a_kernel_effect`。
+    """
     power = launch_profile(CASE)
     path = build_path(CASE)
     base = make_model("pcfm", CASE).evaluate_path(path, power)
-    paper = make_model("hybrid_raman_paper", CASE).evaluate_path(path, power)
+    paper = make_model("hybrid_raman_paper", CASE, nli_form="paper").evaluate_path(path, power)
+    delta = float(np.mean(paper.snr_db) - np.mean(base.snr_db))
+    assert abs(delta) < 0.1, f"no-pump paper deviates from PCFM by {delta:+.3f} dB"
+
+
+def test_paper_no_pump_long_link_difference_is_a_kernel_effect() -> None:
+    """10 跨 100 km、57 信道的无泵差异来自闭式核本身，不是 Raman 残项。
+
+    同一链路下 ``paper`` 与 ``buglia2024_ra_gn``（同一套 Eq. (8)/(9)）必须一致；
+    与 PCFM 的差值随跨数线性累积，因此这里只要求两条闭式基线吻合。
+    """
+    case = build_case("c_57ch")
+    power = launch_profile(case)
+    path = build_path(case)
+    paper = make_model("hybrid_raman_paper", case, nli_form="paper").evaluate_path(path, power)
+    buglia = make_model("buglia2024_ra_gn", case, nli_form="closed").evaluate_path(path, power)
+    np.testing.assert_allclose(paper.snr_db, buglia.snr_db, rtol=0.0, atol=1e-3)
+    assert np.mean(paper.ase_noise_w) == pytest.approx(np.mean(buglia.ase_noise_w), rel=1e-6)
+
+
+def test_pcfm_legacy_without_pumps_is_bit_for_bit_the_pcfm_baseline() -> None:
+    """旧口径 ``nli_form="pcfm"`` 无泵时仍与 PCFM 基线逐位一致（回归守卫）。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    base = make_model("pcfm", CASE).evaluate_path(path, power)
+    legacy = make_model("hybrid_raman_paper", CASE, nli_form="pcfm").evaluate_path(path, power)
     for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
         np.testing.assert_array_equal(
-            np.asarray(getattr(paper, name)), np.asarray(getattr(base, name))
+            np.asarray(getattr(legacy, name)), np.asarray(getattr(base, name))
         )
+
+
+# ---------------------------------------------------------------------------
+# Eq. (9) 闭式 vs Eq. (6)-(8) 数值积分
+# ---------------------------------------------------------------------------
+
+
+def test_paper_closed_form_matches_integral_baseline() -> None:
+    """Eq. (8)/(9) 闭式与 Eq. (6)-(8) 数值积分的逐信道 SNR 差 <0.1 dB。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    pump = _pump()
+    closed = make_model("hybrid_raman_paper", CASE, raman_pumps=[pump], nli_form="paper").evaluate_path(
+        path, power
+    )
+    integral = make_model("hybrid_raman_paper", CASE, raman_pumps=[pump], nli_form="integral").evaluate_path(
+        path, power
+    )
+    delta = np.asarray(closed.snr_db) - np.asarray(integral.snr_db)
+    assert float(np.max(np.abs(delta))) < 0.1, f"closed/integral differ by {float(np.max(np.abs(delta))):.3f} dB"
+
+
+# ---------------------------------------------------------------------------
+# 有泵 1/10 跨
+# ---------------------------------------------------------------------------
+
+
+def test_paper_pumped_one_and_ten_spans_are_positive_and_finite() -> None:
+    """有泵 1/10 跨时 SPM/XPM 都为正且有限。"""
+    power = launch_profile(CASE)
+    fiber = build_path(CASE).fiber_configs[0]
+    edfa = build_path(CASE).edfa_configs[0]
+    paths = {
+        1: MultiSpanOpticalPath([fiber], [edfa]),
+        10: MultiSpanOpticalPath([fiber] * 10, [edfa] * 10),
+    }
+    for span_count, span_path in paths.items():
+        model = make_model("hybrid_raman_paper", CASE, raman_pumps=[_pump()], nli_form="paper")
+        result = model.evaluate_path(span_path, power)
+        for name in ("spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+            values = np.asarray(getattr(result, name))
+            assert np.all(np.isfinite(values)), f"{name} not finite at {span_count} spans"
+        assert np.all(np.asarray(result.spm_noise_w) > 0.0)
+        assert np.all(np.asarray(result.xpm_noise_w) > 0.0)
+
 
 
 # ---------------------------------------------------------------------------

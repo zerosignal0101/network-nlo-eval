@@ -1,16 +1,15 @@
 # 拉曼放大支持：集总等效与论文 hybrid 对照模型
 
 日期：2026-11-03
-分支：`feat/raman-amp`（基于 `multi-model-dev` d949f7b）
+分支：`feat/hybrid-full`（基于 `70efe1d`）
 
 本文档区分两个层次，避免把近似当成论文模型：
 
 1. **集总等效 DRA**（`models/raman.py`，注册名 `raman_lumped`）：泵浦未耗尽、
    跨末乘增益、跨内 NLI 不变。用于快速链路预算与泵浦初值筛选。
-2. **论文 hybrid 对照模型**（`models/hybrid_raman.py`，注册名
-   `hybrid_raman_paper`）：论文 Eq. (2)/(4) 的 coupled signal/pump/ASE ODE
-   子集，NLI 仍是近似（不是 Eq. (6)-(9) 全式）。用于检验 lumped 近似到底
-   偏了多少。
+2. **论文 hybrid 模型**（`models/hybrid_raman.py`，注册名 `hybrid_raman_paper`）：
+   论文 Eq. (2)/(4) 的 coupled signal/pump/ASE ODE，NLI 用论文 Eq. (6)-(9)
+   的 SPM/XPM 闭式（默认 `nli_form="paper"`）。
 
 ## 1. 现状
 
@@ -20,7 +19,7 @@
 | `FiberSpanConfig.raman_pumps` | **配置有** | 解析 lumped / paper 模型都可读取 |
 | PCFM/H3 解析 | **原无** | 只做信道间 ISRS；`Raman pumping is not modelled` |
 | `raman_lumped` | **有** | 跨末乘 on-off 增益，Raman ASE 在 EDFA 前注入 |
-| `hybrid_raman_paper` | **有（子集）** | Eq. (2)/(4) ODE；NLI 用 PCFM 核 + ODE 剖面近似 |
+| `hybrid_raman_paper` | **有（完整 NLI）** | Eq. (2)/(4) ODE + Eq. (10) 拟合 + Eq. (6)-(9) 闭式；`nli_form="pcfm"` 保留旧近似 |
 | cGN | 部分 | `k_bar` 只是泵浦功率占比上限，不是谱分辨拉曼放大 |
 | D'Amico2022 | 无 | 明确不做 DRA |
 
@@ -57,7 +56,7 @@ model = create_model(
 
 默认关闭；无泵/关闭时逐位保持旧 PCFM 结果。
 
-## 3. 论文 hybrid 对照模型
+## 3. 论文 hybrid 模型（Eq. (2)-(10)）
 
 `src/network_nlo_eval/models/hybrid_raman.py`
 
@@ -72,46 +71,100 @@ model = create_model(
     )],
     include_isrs=True,
     fixed_point_iterations=24,
+    nli_form="paper",              # "paper"（默认）/ "integral" / "pcfm"
+    spm_coherence_exponent=0.0,    # Eq. (6) 的 epsilon
     spp_steps=32,
 )
 ```
 
-### 3.1 已复现（数值可验证）
+### 3.1 公式映射（逐项）
 
-- **论文 Eq. (2)**：信号与泵浦的耦合功率方程。任意数量 FW/BW 泵；耦合矩阵
-  同时包含：
-  - 泵浦-信号；
-  - 泵浦-泵浦；
-  - 信道间 ISRS（可用 `include_isrs=False` 关闭）；
-  - 泵浦耗尽。
-- **论文 Eq. (4)**：信号 ASE 的耦合方程，包含自发拉曼源项
-  `2 h kappa B_i f_i`，并把上一跨 ASE 作为本跨初值。
-- **每跨初值与跨间 ASE**：模型保存跨末 EDFA 后的 ASE，作为下一跨光纤入口的
-  ASE 初值；路由层仍按信号传输因子搬运已累积 ASE。为避免重复计数，交给 EDFA
-  的是本跨**新产生**的拉曼 ASE（已扣除输入 ASE 按信号净增益搬运的部分）。
-- **FW/BW 统一处理**：FW 泵与信号同向积分；BW 泵从 `z=L` 反向积分，与正向
-  信号做不动点迭代。无 BW 泵时只需一次前向积分；`0.2 W`、`c_57ch` 基准在
-  18 次内收敛。
-- **无泵退化**：直接走 PCFM 的 ISRS-only 路径（论文 Eq. (3) 的 LA 情形），
-  与 PCFM 基线逐位一致（`tests/test_hybrid_raman.py`）。
+| 论文 | 内容 | 代码 |
+|---|---|---|
+| Eq. (2) | 信号/泵浦耦合功率方程 | `raman_ode.RamanPaperSpanSolver` |
+| Eq. (3) | LA 极限（无泵） | 同一求解器，`pumps=[]` |
+| Eq. (4) | 信号 ASE 耦合方程 | 同一求解器 |
+| Eq. (6) | `eta_n = sum_j (P_ij/P_i)^2 [SPM_j n^eps + XPM_j]` | `nli_closed_form` |
+| Eq. (7) | `eta_XPM = sum_k eta_XPM^(k)` | `nli_closed_form` 内的干扰信道求和 |
+| Eq. (8) | 单干扰信道 XPM 闭式（含 `Upsilon`、`l1+l2` 和式、纵向积分） | `buglia2024_closed.eta_xpm_closed` |
+| Eq. (9) | SPM 闭式（`asinh` + 两个 `ln` 修正） | `buglia2024_closed.eta_spm_closed` |
+| Eq. (10) | 5 参数剖面 `rho(z, f_i)` | `buglia2024_closed.fit_buglia_profile_5param` |
+| Eq. (6)-(8) | 数值积分基准 | `buglia2024_closed.nli_integral`，`nli_form="integral"` |
 
-### 3.2 仍是近似（明确边界）
+论文 Sec. III-D 明说 Eq. (8)/(9) 的 SPM/XPM 半解析式来自文献 [46]
+（Buglia 2024 JLT, RA-GN 的 Eq. (11)/(12)）。因此本模型与
+`buglia2024_ra_gn` 共用同一套闭式实现；两者在相同参数下逐信道结果相同
+（`tests/test_hybrid_raman.py::test_paper_no_pump_long_link_difference_is_a_kernel_effect`），
+差别只在默认选项与 legacy `pcfm` 口径。
 
-1. **NLI 不是 Eq. (6)-(9)**。当前实现复用 PCFM 的 SCI/XCI 闭式核
-   （`PCFMSpanKernel`），只把核里的归一化功率剖面 `p_i(z)` 换成 Eq. (2)/(4)
-   ODE 解出的剖面。Raman 对 NLI 的作用通过剖面进入核，但没有论文的拟合系数
-   `alpha_i, C_f,i, C_b,i, alpha_f,i, alpha_b,i` 与 Eq. (8)/(9) 的解析形式。
-   因此 `ModelInfo.summary` 明确写 “NLI is approximate, not Eq. 6-9”。
-2. 拉曼增益谱用 `RamanGainModel` 的 Gaussian/CZ 近似，不是论文 Fig. 4 的实测
-   二氧化硅谱。
-3. 泵浦 ASE 没有单独求解；信号 ASE 的耦合是完整的。泵浦 ASE 对信号 ASE 的
-   贡献远小于泵浦-信号自发散射。
-4. 不包含泵浦-信号 XPM、droop 的显式控制、动态增益控制、非均匀跨长拟合。
-5. `physics_nlo_eval.RamanPump` 只作为增益形状对照；它本身也是未耗尽集总块，
+`Upsilon` 按 PDF 原文：`Upsilon_i = T_i (-T_f,i/T_i)^{l1} (T_b,i/T_i)^{l2}`，
+`T_f,i = -P_f C_f,i (f_i - f_hat)/alpha_f,i`，
+`T_i = 1 + T_f,i - T_b,i e^{-alpha_b,i L}`，
+`alpha_l,i = alpha_i + l1 alpha_f,i - l2 alpha_b,i`，
+`kappa_f,i = e^{-(alpha_i + l1 alpha_f,i)L}`，`kappa_b,i = e^{-l2 alpha_b,i L}`。
+代码里用拟合得到的 `c_f = C_f,i P_f`、`c_b = C_b,i P_b`，与原文等价。
+
+### 3.2 已复现（数值可验证）
+
+- **Eq. (2)/(4)**：任意数量 FW/BW 泵；耦合矩阵同时包含泵浦-信号、
+  泵浦-泵浦、信道间 ISRS（`include_isrs=False` 可关）与泵浦耗尽。
+  BW 泵用“正向信号 + 反向泵浦”的不动点迭代；FW 泵与信号同向积分。
+- **Eq. (10)**：逐信道非线性最小二乘拟合 5 个系数
+  `(alpha_i, C_f,i, C_b,i, alpha_f,i, alpha_b,i)`；`f_hat` 取泵浦功率加权
+  平均频率（无泵时取信道平均）。
+- **Eq. (8)/(9)**：逐项实现，含 `l1+l2<=1` 的三项和、`Upsilon`、`atan`/
+  `asinh`/`log` 与跨长项；`nli_form="paper"` 是默认路径。
+- **Eq. (6)/(7)**：跨间按 `[P_ij/P_i]^2 [SPM_j n^eps + XPM_j]` 的功率口径；
+  核内不返回复振幅（`emits_nli_amplitudes=False`），**不使用** PCFM/Zhang 的
+  相干契约。`epsilon` 论文未印出（见下），默认 0。
+- **每跨初值与跨间 ASE**：跨末 EDFA 后的 ASE 作为下一跨光纤入口初值；交给
+  EDFA 的是本跨**新产生**的拉曼 ASE，避免与路由层重复计数。
+- **闭式 vs 积分**：`c_57ch` 1 跨、`scaling_40ch` 1/10 跨上，
+  `nli_form="paper"` 与 `nli_form="integral"` 的平均 SNR 差 **<0.02 dB**
+  （`tests/test_hybrid_raman.py::test_paper_closed_form_matches_integral_baseline`
+  要求逐信道 <0.1 dB）。
+- **无泵退化**：`scaling_40ch` 单跨无泵时 `paper` 与 PCFM 的平均 SNR 差
+  **0.030 dB**（<0.1 dB）。`c_57ch` 10 跨的 0.456 dB 不是 Raman 残项：同一
+  链路下 `paper` 与 `buglia2024_ra_gn` 逐位一致，差异来自 Eq. (8)/(9) 闭式
+  与 PCFM `K_SCI/K_XCI` 核本身（NLI 比 0.864，10 跨累积）。
+
+### 3.3 仍是近似（明确边界）
+
+1. **`epsilon` 未印出**。论文 Eq. (6) 的相干因子处是缺字符（"is the coherent
+   factor [28, Eq. (22)]"），默认 `spm_coherence_exponent=0`（功率相加，
+   与仓库其余模型一致）；`=1` 可复现全相干 SPM。
+2. **Eq. (8)/(9) 印刷版符号**。Eq. (9) 最后一项在 MinerU 提取里漏了加号，
+   按 Appendix D Eq. (56) 补齐；Eq. (8)/(9) 第三项按 Eq. (31)-(33) 推导取
+   负号（印刷版为正号），与 Eq. (6)-(8) 数值积分对照验证。详见
+   `buglia2024_closed.py` 模块文档。
+3. **`T_b,i` 未印出**。Eq. (9) 的系数块只印了 `T_f,i` 与 `T_i`；`T_b,i` 按
+   对称性取 `-P_b C_b,i (f_i - f_hat)/alpha_b,i`，与 Eq. (10) 的
+   `L_tilde_eff` 一致。拟合时直接解 `c_f = C_f,i P_f`、`c_b = C_b,i P_b`。
+4. **拉曼增益谱** 用 `RamanGainModel` 的 Gaussian/CZ 近似，不是论文 Fig. 4 的
+   实测二氧化硅谱（数值在 FigShare 仓库）。
+5. **泵浦 ASE** 没有单独求解；信号 ASE 的耦合是完整的。泵浦 ASE 对信号 ASE
+   的贡献远小于泵浦-信号自发散射。
+6. **泵浦-信号 XPM** 按论文 Eq. (7) 后的说明略去（泵浦远离 WDM 谱）。
+7. 不包含 droop 的显式控制、动态增益控制、非均匀跨长拟合。
+8. `physics_nlo_eval.RamanPump` 只作为增益形状对照；它本身也是未耗尽集总块，
    不能替代论文 coupled ODE。
-6. EDFA ASE 用路由层既有 `NF h f B (G-1)` 口径；它与论文 Eq. (5) 的
+9. EDFA ASE 用路由层既有 `NF h f B (G-1)` 口径；它与论文 Eq. (5) 的
    `2(G-1)n_sp h f B` 在高增益下近似等价，但不是逐项相同。Raman ASE 与
    EDFA ASE 在结果里是分开累积的。
+
+### 3.4 旧口径（回归对照）
+
+`nli_form="pcfm"` 保留升级前的近似：Eq. (2)/(4) 的 ODE 剖面 + PCFM 的
+`K_SCI/K_XCI` 闭式核（`HybridRamanPcfmSpanKernel`）。它不是 Eq. (6)-(9)，
+只用于回答“旧近似偏多少”：
+
+| `c_57ch` 10 跨 | 平均 SNR (dB) | 平均 NLI (W) |
+|---|---:|---:|
+| `nli_form="paper"` | 17.569 | 2.587e-5 |
+| `nli_form="pcfm"` | 16.969 | 3.042e-5 |
+
+旧口径的 NLI 高约 18%，SNR 低 0.60 dB。无泵时它是 PCFM 基线的逐位复制
+（回归守卫测试），因此不能把这条路径当作论文实现。
 
 ## 4. 为什么 lumped 不能替代论文模型
 
@@ -124,18 +177,19 @@ model = create_model(
 3. **ASE 用末端 `G-1` 近似**：不求解 Eq. (4) 的沿跨耦合，也不含跨间 ASE 初值
    对后续跨的影响。
 
-对照基准（`c_57ch`、10×100 km、1450 nm / 0.2 W 后向泵）直接给出差异：
+对照基准（`c_57ch`、10×100 km、1450 nm / 0.2 W 后向泵）：
 
-| 模型 | 平均 SNR (dB) | 平均 ASE (W) | 平均 NLI (W) | 冷启动 (ms) |
-|---|---:|---:|---:|---:|
-| `pcfm`（纯 EDFA） | 16.291 | 1.216e-5 | 2.911e-5 | 56 |
-| `raman_lumped` | 17.221 | 4.194e-6 | 2.911e-5 | 57 |
-| `hybrid_raman_paper` | 16.969 | 4.922e-6 | 3.042e-5 | 477 |
+| 模型 | 平均 SNR (dB) | 平均 ASE (W) | 平均 NLI (W) |
+|---|---:|---:|---:|
+| `pcfm`（纯 EDFA） | 16.291 | 1.216e-5 | 2.911e-5 |
+| `raman_lumped` | 17.221 | 4.194e-6 | 2.911e-5 |
+| `hybrid_raman_paper`（paper） | 17.569 | 4.922e-6 | 2.587e-5 |
 
-- lumped 的 NLI 与纯 EDFA **逐位相同**（2.911e-5），因为它不改跨内剖面；
-  论文 ODE 的 NLI 高约 4.5%。
-- lumped 的平均 SNR 比论文子集高 **0.25 dB**，主要来自增益高估与 NLI 低估。
-- 论文子集的 ASE 比 lumped 高约 17%，因为它求解 Eq. (4) 的沿跨自发散射，
+- lumped 的 NLI 与纯 EDFA **逐位相同**，因为它不改跨内剖面；论文 Eq. (6)-(9)
+  的 NLI 比纯 EDFA 低约 11%（BW 泵把增益放在跨末，跨内功率反而略低）。
+- 论文模型的平均 SNR 比 lumped 高 **0.35 dB**：ASE 略高（4.92e-6 vs 4.19e-6），
+  但 NLI 更低，净收益为正。
+- 论文模型的 ASE 比 lumped 高约 17%，因为它求解 Eq. (4) 的沿跨自发散射，
   而不是末端 `G-1` 近似。
 - 同一泵浦下，论文 ODE 的 on-off 增益平均 **8.53 dB**，lumped 为 **10.25 dB**，
   物理 `RamanPump`（未耗尽）为 **9.60 dB**。泵浦耗尽把增益压低了约 1.7 dB。
@@ -143,91 +197,87 @@ model = create_model(
   （`tests/test_hybrid_raman.py`），说明泵浦-信号耦合的方向与谱形实现正确；
   差异主要来自工作功率下的泵浦耗尽。
 
-其余算例（`results/raman/paper_comparison.json`）：
+其余算例（`results/raman/paper_comparison.json`，平均 SNR dB）：
 
-| 算例 | 纯 EDFA | lumped | 论文子集 |
-|---|---:|---:|---:|
-| `c_57ch` 1 跨 | 26.665 | 27.688 | 27.436 |
-| `scaling_40ch` 1 跨 | 27.837 | 30.827 | 30.437 |
-| `scaling_40ch` 10 跨 | 17.675 | 20.511 | 20.123 |
+| 算例 | 纯 EDFA | lumped | paper | 旧 pcfm 口径 |
+|---|---:|---:|---:|---:|
+| `c_57ch` 1 跨 | 26.665 | 27.688 | 27.569 | 27.436 |
+| `c_57ch` 10 跨 | 16.291 | 17.221 | 17.569 | 16.969 |
+| `scaling_40ch` 1 跨 | 27.837 | 30.827 | 30.527 | 30.437 |
+| `scaling_40ch` 10 跨 | 17.675 | 20.511 | 20.527 | 20.123 |
 
-所有数值均为平均 SNR (dB)，同一泵浦配置。论文子集始终低于 lumped，但仍高于
-纯 EDFA；这与“Raman 降低 ASE、但增加 NLI”的定性结论一致。
+## 5. 三篇 DRA 论文总表
 
-
-## 3.1 三篇 DRA 论文对照（不是一篇）
-
-文献库 `~/Downloads/强化学习融合 QoT 信息/QoT 文献包 2026-10-20` 里，单模分布式拉曼放大的 QoT 模型至少三篇：
+文献库 `~/Downloads/强化学习融合 QoT 信息/QoT 文献包 2026-10-20` 里，单模
+分布式拉曼放大的 QoT 模型三篇：
 
 | 文献 | 注册模型 | 实现程度 |
 |---|---|---|
-| Buglia 2024, JLT, `10.1109/jlt.2023.3315127` | `buglia2024_ra_gn` | Eq. (2) 五参数剖面、Eq. (9)/(10) 链路函数、Eq. (11)/(12) SPM/XPM 闭式已实现；Eq. (6)-(8) 作为积分基准 |
-| Buglia 2024, JLT, `10.1109/jlt.2024.3439999` | `hybrid_raman_paper` | Eq. (2)/(4) coupled ODE；NLI 是 PCFM 核 + ODE 剖面近似 |
+| Buglia 2024, JLT, `10.1109/jlt.2023.3315127` | `buglia2024_ra_gn` | Eq. (2) 五参数剖面、Eq. (9)/(10) 链路函数、Eq. (11)/(12) SPM/XPM 闭式；Eq. (6)-(8) 为积分基准 |
+| Buglia 2024, JLT, `10.1109/JLT.2024.3439999` | `hybrid_raman_paper` | Eq. (2)/(4) coupled ODE + Eq. (10) 拟合 + Eq. (6)-(9) 闭式（默认）；`pcfm` 口径为旧近似 |
 | Zhang 2024, OECC, `10.1109/OECC54135.2024.10975528` | `zhang2024_dra_egn` | Eq. (1)/(2)/(4) 相干 GN；Sec. II-C 标定按本仓数据拟合；论文未印出的 `eta_XPM_corr` 未实现 |
 
 `ecz` / `semrau2019` 是 ISRS 对照，不是 DRA，不能混入上表。
+`buglia2024_ra_gn` 与 `hybrid_raman_paper` 共享同一套 Eq. (8)/(9) 闭式
+（hybrid 论文引用 [46]），相同参数下数值一致；两者的差别是 hybrid 模型多一条
+legacy `pcfm` 口径与不同的默认选项。
 
-`c_57ch` 1 跨、1450nm/0.2W 后向泵的平均 SNR（`results/raman/paper_controls.json`）：
+总表 `results/raman/full_paper_comparison.json`（单泵 1450 nm / 0.2 W 后向；
+C+L 算例用 6 个 E 波段泵）：
 
-| 模型 | 平均 SNR | 说明 |
-|---|---:|---|
-| `pcfm_original` | 26.665 | 无 Raman |
-| `raman_lumped` | 27.688 | 集总近似，NLI 不变 |
-| `hybrid_raman_paper` | 27.436 | ODE 剖面 + PCFM NLI |
-| `buglia2024_ra_gn` | 27.792 | RA-GN 子集 |
-| `zhang2024_dra_egn` | 27.760 | DRA coherent-GN 子集 |
-| `ecz` | 26.759 | 仅 ISRS 对照，不是 DRA |
+| 算例 | 模型 | 平均 SNR (dB) | 平均 ASE (W) | 平均 NLI (W) |
+|---|---|---:|---:|---:|
+| `c_57ch` 1 跨 | `pcfm` | 26.665 | 1.216e-6 | 2.572e-6 |
+| | `raman_lumped` | 27.688 | 4.194e-7 | 2.572e-6 |
+| | `hybrid_raman_paper`（paper） | 27.569 | 4.922e-7 | 2.587e-6 |
+| | `hybrid_raman_paper`（pcfm） | 27.436 | 4.922e-7 | 2.683e-6 |
+| | `buglia2024_ra_gn` | 27.569 | 4.922e-7 | 2.587e-6 |
+| | `zhang2024_dra_egn` | 27.464 | 4.922e-7 | 2.663e-6 |
+| | `ecz` | 26.759 | 1.216e-6 | 2.492e-6 |
+| `c_57ch` 10 跨 | `pcfm` | 16.291 | 1.216e-5 | 2.911e-5 |
+| | `hybrid_raman_paper`（paper） | 17.569 | 4.922e-6 | 2.587e-5 |
+| | `buglia2024_ra_gn` | 17.569 | 4.922e-6 | 2.587e-5 |
+| | `zhang2024_dra_egn` | 17.984 | 4.922e-6 | 2.310e-5 |
+| `scaling_40ch` 10 跨 | `pcfm` | 17.675 | 1.199e-5 | 5.026e-6 |
+| | `hybrid_raman_paper`（paper） | 20.527 | 4.319e-6 | 4.507e-6 |
+| | `zhang2024_dra_egn` | 20.786 | 4.319e-6 | 3.997e-6 |
+| `cl_40ch` 10 跨 | `pcfm` | 15.115 | 1.196e-5 | 6.516e-5 |
+| | `hybrid_raman_paper`（paper） | 14.877 | 2.823e-6 | 7.888e-5 |
+| | `hybrid_raman_paper`（pcfm） | 14.075 | 2.823e-6 | 9.561e-5 |
+| | `zhang2024_dra_egn` | 14.790 | 2.823e-6 | 8.113e-5 |
 
-这两篇现在不再是“只有剖面 + 积分”的子集：
-
-- Buglia：Eq. (9)/(10) 链路函数与 Eq. (11)/(12) SPM/XPM 闭式已接入，`nli_form="closed"` 为默认；
-  `nli_form="integral"` 保留 Eq. (6)-(8) 的双重积分基准。`c_57ch`、`c_57ch` 10 跨下
-  闭式与积分基准的平均 SNR 差 **<0.05 dB**。
-- Zhang：Eq. (1)/(2) 的 `(T,A,D,d)` 剖面拟合、Eq. (4)/(5) 的跨间相干求和、
-  Sec. II-C 的逐项标定都已实现；标定系数由本仓在 Table I 参数范围内生成的数据拟合。
-- 论文没有印出 `eta_XPM^corr` 的表达式和标定系数表，这是 Zhang 仍然**无法完整复现**的两项，
-  已在 `ModelInfo`/本文档标注，不能声称与论文逐位一致。
-- 两篇都不在线调用波形/数值模型。
-
-`c_57ch` 1 跨、1450nm/0.2W 后向泵的完整对照（`results/raman/paper_controls.json`）：
-
-| 模型 | 平均 SNR | 平均 NLI |
-|---|---:|---:|
-| `pcfm_original` | 26.665 | 2.572e-6 |
-| `raman_lumped` | 27.688 | 2.572e-6 |
-| `hybrid_raman_paper` | 27.436 | 2.683e-6 |
-| `buglia2024_ra_gn` | **27.569** | 2.587e-6 |
-| `zhang2024_dra_egn` | **27.464** | 2.663e-6 |
-| `ecz` | 26.759 | 2.492e-6（仅 ISRS） |
+C+L 算例里 6 个泵抬高了跨内功率，NLI 增加足以抵消 ASE 的收益，hybrid 与
+Zhang 的 SNR 都低于纯 EDFA；这是该多泵配置在 40 信道 C+L 上的结果，不是模型
+符号错误（`pcfm` 口径给出更低的 14.075 dB）。
 
 ### 运行
 
 ```bash
-PYTHONPATH=src pytest tests/test_dra_paper_models.py -q
-PYTHONPATH=src python scripts/dra_paper_comparison.py
+PYTHONPATH=src pytest tests/test_hybrid_raman.py tests/test_dra_paper_models.py -q
+PYTHONPATH=src python scripts/full_paper_comparison.py
 ```
 
-## 5. 限制与后续
+## 6. 限制与后续
 
-- 当前 NLI 仍是“PCFM 核 + ODE 剖面”的近似。若要 claim 论文 Eq. (6)-(9)，
-  下一步需要实现 SPM/XPM 的 Raman 归一化闭式，并用 Eq. (10) 拟合
-  `alpha_i, C_f,i, C_b,i, alpha_f,i, alpha_b,i`。
 - 拉曼谱未标定到具体光纤；默认系数与物理 `RamanPump` 的 Gaussian 近似对齐，
   不是实测 G.652.D 参数。
 - BW 泵不动点迭代在高损耗/强耗尽下可能需要更多次数；模型会返回
   `converged=False`，但当前公开接口只暴露路径结果，不暴露该标志。
-- 未实现泵浦 ASE、泵浦-信号 XPM、droop 控制；跨长非均匀时 NLI 相干因子仍
-  沿用 PCFM 的等跨近似。
+- 未实现泵浦 ASE、泵浦-信号 XPM、droop 控制；跨长非均匀时 Eq. (10) 的拟合
+  逐跨进行，但 `epsilon` 口径只按总跨数缩放。
 - 模型内部的跨间 ASE 状态不经过 ROADM/booster；基准路径无 ROADM。带 ROADM 的
   链路仍可用，但 ODE 的 ASE 初值只跟踪跨末 EDFA 输出。
 - 物理波形模型只做了增益形状对照；没有把波形仿真当作在线替代。
 
-## 6. 复现命令
+## 7. 复现命令
 
 ```bash
 PYTHONPATH=src pytest tests/test_raman.py tests/test_hybrid_raman.py tests/test_dra_paper_models.py -q
 PYTHONPATH=src pytest tests/test_pcfm.py -q
 PYTHONPATH=src python scripts/raman_paper_comparison.py
+PYTHONPATH=src python scripts/dra_paper_comparison.py
+PYTHONPATH=src python scripts/full_paper_comparison.py
 ```
 
-结果：`results/raman/pump_sweep.json`、`results/raman/paper_comparison.json`、`results/raman/paper_controls.json`。
+结果：`results/raman/pump_sweep.json`、`results/raman/paper_comparison.json`、
+`results/raman/paper_controls.json`、`results/raman/full_paper_comparison.json`。

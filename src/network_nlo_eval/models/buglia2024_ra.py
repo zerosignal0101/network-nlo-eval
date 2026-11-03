@@ -10,7 +10,7 @@ doi:10.1109/jlt.2023.3315127.
 实现范围（逐条对应论文公式）
 ----------------------------
 * **Eq. (1)**：耦合拉曼方程。复用
-  :class:`~network_nlo_eval.models.hybrid_raman.RamanPaperSpanSolver`，
+  :class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver`，
   支持任意数量的前向/后向泵、泵浦耗尽、泵浦-泵浦与信道-信道 ISRS、
   波长相关的衰减/有效面积/色散。
 * **Eq. (2)**：五参数半解析剖面。五个系数

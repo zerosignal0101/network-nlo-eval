@@ -19,7 +19,7 @@ doi:10.1109/jlt.2023.3315127.
 5. 按 Eq. (4) 跨间累加、按 Eq. (3) 折算 ``SNR_NLI``。
 
 本模块实现第 2–5 步（第 1 步由
-:class:`~network_nlo_eval.models.hybrid_raman.RamanPaperSpanSolver` 完成）。
+:class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver` 完成）。
 
 **公式对象索引**
 
