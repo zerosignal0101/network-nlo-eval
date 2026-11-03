@@ -78,6 +78,7 @@ def apply_amplifier_and_roadm(
     nf_lin: NDArrayFloat,
     f_abs_hz: NDArrayFloat,
     bandwidth_hz: NDArrayFloat,
+    input_ase_w: NDArrayFloat | None = None,
 ) -> ElementOutput:
     """把单跨光纤结果接到放大器（与可选 ROADM），得到出跨功率与 ASE。
 
@@ -94,6 +95,9 @@ def apply_amplifier_and_roadm(
         nf_lin: ``(N,)`` 线性噪声系数。
         f_abs_hz: ``(N,)`` 中心绝对频率 (Hz)。
         bandwidth_hz: ``(N,)`` 每信道带宽 ``B_i`` (Hz)。
+        input_ase_w: ``(N,)`` 进入放大器的已有 ASE (W)，例如分布式拉曼
+            ASE。``None``（默认）表示没有，逐位保持旧行为；有 EDFA 时该
+            ASE 与信号一起被放大，无 EDFA 时原样输出。
 
     Returns
     -------
@@ -107,7 +111,8 @@ def apply_amplifier_and_roadm(
 
     if edfa_config is None:
         power_out = power_out_fiber
-        ase = np.zeros_like(power_in_w)
+        ase = np.zeros_like(power_in_w) if input_ase_w is None else np.array(input_ase_w, dtype=np.float64, copy=True)
+        ase[power_in_w <= 0] = 0
     else:
         if edfa_config.target_gain_db is None:
             gain = np.divide(
@@ -125,6 +130,8 @@ def apply_amplifier_and_roadm(
             gain *= 10 ** (ripple / 10)
         power_out = power_out_fiber * gain
         ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
+        if input_ase_w is not None:
+            ase = ase + np.asarray(input_ase_w, dtype=np.float64) * gain
         ase[power_in_w <= 0] = 0
         # 注意：功率口径的 NLI 在本层**不**乘放大器增益（黄金向量锁定该口径），
         # 因此复振幅也不能乘 sqrt(gain)，否则 |amp|**2 与 *_noise_w 不再相等，

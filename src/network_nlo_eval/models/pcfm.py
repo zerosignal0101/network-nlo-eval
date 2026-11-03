@@ -141,8 +141,9 @@ from network_nlo_eval.models.pcfm_kernels import (
     _solve_spp_jit,
     r_coefficient_matrix,
 )
+from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
-from network_nlo_eval.network.elements import FiberSpanConfig
+from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
     "EGN_A_COEFFICIENTS",
@@ -1085,6 +1086,23 @@ PCFM_MODEL_INFO = ModelInfo(
             "spp_steps",
             "RK4 steps of the SPP power-profile integration, or 'auto' (12 at <=0 dBm/ch, 32 above).",
         ),
+        (
+            "raman_model",
+            "Set to 'lumped' to add a lumped-equivalent distributed Raman amplifier at the span end. "
+            "Default off, so links without pumps are bit-for-bit unchanged.",
+        ),
+        (
+            "raman_pumps",
+            "RamanPumpConfig sequence applied to every span; providing it enables the lumped Raman model.",
+        ),
+        (
+            "raman_gain_model",
+            "'gaussian' (default) or 'linear' CZ approximation of the Raman gain spectrum.",
+        ),
+        (
+            "raman_ase",
+            "Add the distributed Raman ASE before the span EDFA. Default True when Raman is enabled.",
+        ),
     ),
 )
 
@@ -1926,6 +1944,19 @@ class PCFMModel(RouteModel):
             leaves its validity domain, and stabilise the SCI kernel at small
             ``X``.  See :class:`PCFMSpanKernel`.
         cache_spans: Memoise the identical spans of one path.
+        raman_model: ``"lumped"`` enables the lumped-equivalent distributed
+            Raman amplifier of :mod:`network_nlo_eval.models.raman`.  ``None``
+            (default) and ``"off"`` leave the model bit-for-bit unchanged.
+        raman_pumps: Pumps applied to every span.  Providing this argument
+            also enables the lumped model when ``raman_model`` is ``None``.
+            When omitted, the pumps of each :class:`FiberSpanConfig` are used.
+        raman_gain_model: ``"gaussian"`` or ``"linear"`` Raman gain shape.
+        raman_ase: Include the distributed Raman ASE before the span EDFA.
+        raman_temperature_k: Fibre temperature used by the Raman spontaneous
+            emission factor.
+        raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate per
+            watt before division by ``A_eff``.  The default matches the
+            waveform-level ``physics_nlo_eval.RamanPump`` for cross-checking.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
     """
 
@@ -1946,18 +1977,27 @@ class PCFMModel(RouteModel):
         edge_fix: bool = True,
         cache_spans: bool = True,
         spp_steps: int | str = DEFAULT_SPP_STEPS,
+        raman_model: str | None = None,
+        raman_pumps: Sequence[RamanPumpConfig] | None = None,
+        raman_gain_model: str = "gaussian",
+        raman_ase: bool = True,
+        raman_temperature_k: float = 300.0,
+        raman_peak_gain_coefficient_m_per_w: float = 6e-14,
         **route_options,
     ) -> None:
         """Initialize the model.
 
         Raises
         ------
-            ValueError: ``poly_degree`` is negative.
+            ValueError: ``poly_degree`` is negative, ``spp_steps`` is invalid,
+                or the Raman options are inconsistent.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
         if spp_steps != "auto" and int(spp_steps) < 1:
             raise ValueError(f"spp_steps must be >= 1 or 'auto', got {spp_steps!r}.")
+        if raman_model not in (None, "off", "lumped"):
+            raise ValueError(f"raman_model must be None, 'off' or 'lumped', got {raman_model!r}.")
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.poly_degree = int(poly_degree)
         self.egn = bool(egn)
@@ -1967,6 +2007,16 @@ class PCFMModel(RouteModel):
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
+        # 拉曼默认关闭：只有显式 raman_model="lumped" 或显式给出 raman_pumps
+        # 才启用；仅 fiber_config 自带泵浦不会改变既有 PCFM 结果。
+        self._raman_pumps = None if raman_pumps is None else list(raman_pumps)
+        self._raman_enabled = raman_model == "lumped" or (raman_model is None and self._raman_pumps is not None)
+        self._raman_ase = bool(raman_ase)
+        self._raman_gain_model = RamanGainModel(
+            gain_model=raman_gain_model,
+            peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
+            temperature_k=raman_temperature_k,
+        )
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFMSpanKernel:
         """Build the single-span kernel of this fibre."""
@@ -2041,6 +2091,47 @@ class PCFMModel(RouteModel):
             beta2_accum_ps2=self._beta2_accum_ps2,
             span_context=span_context,
         )
+        input_ase_w: NDArrayFloat | None = None
+        if self._raman_enabled:
+            pumps = self._raman_pumps if self._raman_pumps is not None else fiber_config.raman_pumps
+            if pumps and any(float(pump.power_w) > 0 for pump in pumps):
+                a_eff_m2 = _calc_aeff_dynamic(
+                    self.lambdas_m,
+                    fiber_config.effective_area_um2_ref,
+                    fiber_config.aeff_slope_um2_nm,
+                    fiber_config.reference_wavelength_nm,
+                )
+                if fiber_config.use_attenuation_polynomial:
+                    alpha_npm = _calc_fiber_attenuation_npm(
+                        self.lambdas_m,
+                        fiber_config.reference_wavelength_nm,
+                        fiber_config.attenuation_alpha2,
+                        fiber_config.attenuation_alpha1,
+                        fiber_config.attenuation_alpha0,
+                    )
+                else:
+                    alpha_npm = np.full(
+                        self.n_nodes,
+                        fiber_config.attenuation_db_km_ref * np.log(10.0) / 10.0 / 1e3,
+                        dtype=np.float64,
+                    )
+                amplifier = RamanAmplifier(
+                    pumps,
+                    span_length_m,
+                    model=self._raman_gain_model,
+                    a_eff_m2=a_eff_m2,
+                    signal_attenuation_npm=alpha_npm,
+                )
+                # 集总等效：只把末端功率乘以 on-off 增益，跨内 NLI 不变。
+                fiber_output = SpanFiberOutput(
+                    power_out_w=fiber_output.power_out_w * amplifier.gain(self.f_abs_hz),
+                    spm_noise_w=fiber_output.spm_noise_w,
+                    xpm_noise_w=fiber_output.xpm_noise_w,
+                    nli_amplitude_spm=fiber_output.nli_amplitude_spm,
+                    nli_amplitude_xpm=fiber_output.nli_amplitude_xpm,
+                )
+                if self._raman_ase:
+                    input_ase_w = amplifier.ase_w(self.f_abs_hz, self.channel_bandwidth_hz_channels)
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
         element = apply_amplifier_and_roadm(
             power_in_w=power_in_w,
@@ -2050,6 +2141,7 @@ class PCFMModel(RouteModel):
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
+            input_ase_w=input_ase_w,
         )
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)
