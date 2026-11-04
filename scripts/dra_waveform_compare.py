@@ -36,6 +36,9 @@ MODELS = (
     "pcfm",
 )
 
+#: 支持 ``pump_depletion`` 对照口径的模型。
+UNDEPLETED_MODELS = ("hybrid_raman_paper", "pcfm_h3_raman")
+
 
 def _pumps(config_name: str) -> list[RamanPumpConfig]:
     """把参考数据的配置名映射为泵浦列表。"""
@@ -68,7 +71,9 @@ def _grid(n_channels: int) -> tuple[FlexibleGrid, list[ConnectionSpec]]:
     return grid, connections
 
 
-def _analytic(model_name: str, n_channels: int, config_name: str) -> tuple[float, float]:
+def _analytic(
+    model_name: str, n_channels: int, config_name: str, *, pump_depletion: bool = True
+) -> tuple[float, float]:
     """返回中心信道 (SNR_NLI, NLI 功率)。"""
     grid, connections = _grid(n_channels)
     pumps = _pumps(config_name)
@@ -77,6 +82,8 @@ def _analytic(model_name: str, n_channels: int, config_name: str) -> tuple[float
         options["nli_form"] = "paper"
     if model_name == "pcfm" and pumps:
         options["raman_model"] = "lumped"
+    if model_name in UNDEPLETED_MODELS:
+        options["pump_depletion"] = pump_depletion
     model = create_model(
         model_name,
         grid,
@@ -95,6 +102,53 @@ def _analytic(model_name: str, n_channels: int, config_name: str) -> tuple[float
     return float(snr), float(nli[center])
 
 
+def _measure(
+    dataset: str,
+    n_channels: int,
+    center: int,
+    config_name: str,
+    wave_channel: dict,
+    model_name: str,
+    *,
+    pump_depletion: bool,
+) -> dict:
+    """跑一个模型/配置并组装一行结果。"""
+    snr, nli = _analytic(model_name, n_channels, config_name, pump_depletion=pump_depletion)
+    wave_snr = float(wave_channel["snr_nli_db"])
+    return {
+        "dataset": dataset,
+        "config": config_name,
+        "model": model_name,
+        "pump_depletion": pump_depletion,
+        "waveform_snr_nli_db": wave_snr,
+        "analytic_snr_nli_db": snr,
+        "snr_delta_db": snr - wave_snr,
+        "waveform_nli_w": float(wave_channel["nli_power_w"]),
+        "analytic_nli_w": nli,
+        "nli_ratio_db": float(
+            10.0 * np.log10(nli / max(float(wave_channel["nli_power_w"]), 1e-30))
+        ),
+    }
+
+
+def _print_closure_table(rows: list[dict]) -> None:
+    """打印前向泵的 depleted -> undepleted 闭合量。"""
+    forward = [row for row in rows if row["config"].startswith("fwd")]
+    if not forward:
+        return
+    print("\n前向泵闭合量（解析 SNR - 波形；正 closure = 未耗尽口径更接近波形）")
+    print(f"{'dataset':>8} {'config':>12} {'model':>20} {'depleted':>10} {'undepleted':>11} {'closure':>9}")
+    for row in forward:
+        depleted = row["depleted_snr_delta_db"]
+        closure = row["closure_db"]
+        depleted_text = "n/a" if depleted is None else f"{depleted:+.3f}"
+        closure_text = "n/a" if closure is None else f"{closure:+.3f}"
+        print(
+            f"{row['dataset']:>8} {row['config']:>12} {row['model']:>20} "
+            f"{depleted_text:>10} {row['snr_delta_db']:>+11.3f} {closure_text:>9}"
+        )
+
+
 def main() -> None:
     """Run all comparisons and write JSON."""
     reference = json.loads(WAVEFORM_JSON.read_text(encoding="utf-8"))
@@ -104,24 +158,18 @@ def main() -> None:
         center = int(dataset["center_channel_index"])
         for config_name, config in dataset["configs"].items():
             wave_channel = config["per_channel"][center]
-            wave_snr = float(wave_channel["snr_nli_db"])
             for model_name in MODELS:
                 try:
-                    snr, nli = _analytic(model_name, n_channels, config_name)
                     rows.append(
-                        {
-                            "dataset": tag,
-                            "config": config_name,
-                            "model": model_name,
-                            "waveform_snr_nli_db": wave_snr,
-                            "analytic_snr_nli_db": snr,
-                            "snr_delta_db": snr - wave_snr,
-                            "waveform_nli_w": float(wave_channel["nli_power_w"]),
-                            "analytic_nli_w": nli,
-                            "nli_ratio_db": float(
-                                10.0 * np.log10(nli / max(float(wave_channel["nli_power_w"]), 1e-30))
-                            ),
-                        }
+                        _measure(
+                            tag,
+                            n_channels,
+                            center,
+                            config_name,
+                            wave_channel,
+                            model_name,
+                            pump_depletion=True,
+                        )
                     )
                 except Exception as error:  # 记录失败，不让基准整体停掉
                     rows.append(
@@ -129,6 +177,7 @@ def main() -> None:
                             "dataset": tag,
                             "config": config_name,
                             "model": model_name,
+                            "pump_depletion": True,
                             "error": f"{type(error).__name__}: {error}",
                         }
                     )
@@ -146,6 +195,61 @@ def main() -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     print(f"wrote {path}")
+
+    # 未耗尽泵浦对照 pass：只重跑有泵配置上的 hybrid/H3。
+    depleted_delta = {
+        (row["dataset"], row["config"], row["model"]): row["snr_delta_db"]
+        for row in rows
+        if "error" not in row
+    }
+    undepleted_rows: list[dict] = []
+    for tag, dataset in reference["datasets"].items():
+        n_channels = int(dataset["n_channels"])
+        center = int(dataset["center_channel_index"])
+        for config_name, config in dataset["configs"].items():
+            if config_name == "nopump":
+                continue
+            wave_channel = config["per_channel"][center]
+            for model_name in UNDEPLETED_MODELS:
+                try:
+                    row = _measure(
+                        tag,
+                        n_channels,
+                        center,
+                        config_name,
+                        wave_channel,
+                        model_name,
+                        pump_depletion=False,
+                    )
+                    depleted = depleted_delta.get((tag, config_name, model_name))
+                    row["depleted_snr_delta_db"] = depleted
+                    row["closure_db"] = None if depleted is None else depleted - row["snr_delta_db"]
+                    undepleted_rows.append(row)
+                except Exception as error:  # 记录失败，不让基准整体停掉
+                    undepleted_rows.append(
+                        {
+                            "dataset": tag,
+                            "config": config_name,
+                            "model": model_name,
+                            "pump_depletion": False,
+                            "error": f"{type(error).__name__}: {error}",
+                        }
+                    )
+    undepleted_output = {
+        "generated_by": "scripts/dra_waveform_compare.py",
+        "reference": output["reference"],
+        "note": (
+            "Control pass with pump_depletion=False: the pumps follow only their own attenuation "
+            "(undepleted), matching the waveform reference convention. closure_db = "
+            "depleted_snr_delta_db - undepleted snr_delta_db; positive means the undepleted "
+            "convention moves the analytic model towards the waveform."
+        ),
+        "rows": undepleted_rows,
+    }
+    undepleted_path = Path("results/raman/waveform_compare_undepleted.json")
+    undepleted_path.write_text(json.dumps(undepleted_output, indent=2), encoding="utf-8")
+    print(f"wrote {undepleted_path}")
+    _print_closure_table(undepleted_rows)
 
 
 if __name__ == "__main__":

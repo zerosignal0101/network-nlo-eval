@@ -622,6 +622,9 @@ class DRASpanKernelBase:
         n_iterations: Fixed-point iterations for backward pumps.
         include_isrs: Include channel-channel ISRS in the ODE.
         n_quadrature: Gauss-Legendre nodes of the NLI in-band integral.
+        pump_depletion: Let the pumps be depleted by signals/other pumps. ``True``
+            (default) solves the full coupled Eq. (2); ``False`` freezes the pump
+            evolution to its own attenuation (undepleted-pump control convention).
     """
 
     #: Human-readable profile kind, used in diagnostics.
@@ -645,6 +648,7 @@ class DRASpanKernelBase:
         n_iterations: int = 24,
         include_isrs: bool = True,
         n_quadrature: int = DEFAULT_DRA_NLI_QUADRATURE,
+        pump_depletion: bool = True,
     ) -> None:
         if n_steps < 4:
             raise ValueError("n_steps must be >= 4.")
@@ -701,6 +705,7 @@ class DRASpanKernelBase:
         self._n_iterations = int(n_iterations)
         self._include_isrs = bool(include_isrs)
         self._n_quadrature = int(n_quadrature)
+        self._pump_depletion = bool(pump_depletion)
         self._pump_alpha_npm = np.asarray(
             [float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3 for pump in self._pumps],
             dtype=np.float64,
@@ -788,6 +793,7 @@ class DRASpanKernelBase:
                 n_iterations=self._n_iterations,
                 include_isrs=self._include_isrs,
                 include_ase=self._raman_ase_enabled,
+                pump_depletion=self._pump_depletion,
             )
             self._solver_cache[key] = solver
         return solver
