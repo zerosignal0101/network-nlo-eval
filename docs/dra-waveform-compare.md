@@ -379,7 +379,7 @@ WP5a 在 `physical-nlo-eval` 重新生成了 62.5 m 收敛参考，本仓副本�
 
 ### 13.3 耗尽参考（62.5 m）
 
-3/5ch 绝对 `SNR_NLI`（dB）：
+3/5/7ch 绝对 `SNR_NLI`（dB）：
 
 | 数据集 | 配置 | 波形 | hybrid | H3 | hybrid 差 | H3 差 |
 |---|---|---:|---:|---:|---:|---:|
@@ -393,6 +393,11 @@ WP5a 在 `physical-nlo-eval` 重新生成了 62.5 m 收敛参考，本仓副本�
 | 5ch | 前向 0.2W | 22.531 | 23.491 | 23.724 | +0.960 | +1.193 |
 | 5ch | 后向 0.1W | 36.223 | 35.630 | 35.867 | −0.593 | −0.356 |
 | 5ch | 后向 0.2W | 36.043 | 35.545 | 35.724 | −0.499 | −0.320 |
+| 7ch | 无泵 | 36.274 | 35.326 | 35.549 | −0.948 | −0.725 |
+| 7ch | 前向 0.1W | 29.845 | 29.771 | 29.972 | −0.075 | +0.126 |
+| 7ch | 前向 0.2W | 22.384 | 23.387 | 23.583 | +1.003 | +1.199 |
+| 7ch | 后向 0.1W | 36.155 | 35.252 | 35.457 | −0.903 | −0.698 |
+| 7ch | 后向 0.2W | 35.903 | 35.171 | 35.319 | −0.731 | −0.584 |
 
 1ch 与 3ch 发射功率扫描（同一耗尽参考）：
 
@@ -420,16 +425,18 @@ WP5a 在 `physical-nlo-eval` 重新生成了 62.5 m 收敛参考，本仓副本�
 | 7ch | 后向 0.1/0.2W | −0.90/−0.71 dB | −0.69/−0.56 dB | 校准候选 |
 | 3ch | 前向 0.2W（耗尽） | +0.79 dB | +1.09 dB | hybrid 校准域；H3 略超 |
 | 5ch | 前向 0.2W（耗尽） | +0.96 dB | +1.19 dB | hybrid 校准域；H3 略超 |
-| 7ch | 前向 0.2W（未耗尽） | +2.86 dB | +3.03 dB | 仅趋势，待耗尽 7ch |
+| 7ch | 前向 0.1W（耗尽） | −0.08 dB | +0.13 dB | 校准域 |
+| 7ch | 前向 0.2W（耗尽） | +1.00 dB | +1.20 dB | hybrid 校准域；H3 略超 |
 
 结论：
 
 - 3/5/7ch 的无泵与后向泵残差全部在 **±1.0 dB** 内；7ch 从旧 500 m 的
   +3.06 dB 修正到 −0.95 dB（hybrid）；
-- 前向泵在耗尽参考下，3/5ch hybrid 为 +0.79/+0.96 dB，进入 ±1.0 dB；
-  H3 因默认 EGN 为 +1.09/+1.19 dB，略乐观，需要时用 `use_egn=False` 复核；
-- 7ch 前向仍只有未耗尽参考，+2.86 dB（hybrid）只作趋势；WP5a 尚未生成
-  耗尽 7ch 数据，不能给出 7ch 前向的耗尽口径残差；
+- 前向泵在耗尽参考下，3/5/7ch hybrid 为 +0.79/+0.96/+1.00 dB，进入 ±1.0 dB；
+  7ch 前向 0.1W 只有 −0.08 dB。H3 因默认 EGN 为 +1.09/+1.19/+1.20 dB，
+  略乐观，需要时用 `use_egn=False` 复核；
+- 7ch 前向的 +2.86 dB（未耗尽参考）是口径错配造成的旧数字；加入 7ch 耗尽
+  数据后，同口径残差降到 +1.00 dB（hybrid），与 3/5ch 一致；
 - 单次 256-symbol 实现的统计误差约 0.3–0.5 dB（见
   `docs/dra-7ch-audit.md` §4），上述 ±1.0 dB 校准带里有约一半是统计预算。
 
@@ -450,7 +457,8 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_co
 产物：
 
 - `results/raman/waveform_compare_converged.json`（未耗尽，75 行）；
-- `results/raman/waveform_compare_converged_depleted.json`（耗尽，95 行）。
+- `results/raman/waveform_compare_converged_depleted.json`（耗尽，120 行，
+  含 7ch）。
 
 脚本对 `data/dra_waveform_converged/` 强制要求每个数据集
 `step_converged: true` 且 `coarse_step_m <= 62.5`；不满足会直接退出。
