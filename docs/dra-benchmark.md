@@ -59,3 +59,19 @@
 PYTHONPATH=src pytest tests/test_numerical_dra.py -q
 PYTHONPATH=src python scripts/dra_benchmark.py
 ```
+
+## 5. H3 剖面感知模型 vs 独立参考
+
+合并 `pcfm_h3_raman` 后用同一 `numerical_dra` 复测（`c_57ch`，1450nm/0.2W）：
+
+| 场景 | 口径 | 平均误差 | max abs | 热调用 |
+|---|---|---:|---:|---:|
+| 1 跨后向 | 默认 | -0.001 dB | 0.076 dB | 18.5ms |
+| 10 跨后向 | 默认 `pcfm` 相干 | -0.406 dB | 0.418 dB | 15.5ms |
+| 10 跨后向 | `incoherent` | **-0.001 dB** | **0.076 dB** | 19.4ms |
+| 1 跨前向 | 默认 12 步 | +0.200 dB | 0.243 dB | 3.3ms |
+| 1 跨前向 | `raman_steps=24` | +0.067 dB | 0.094 dB | ~4ms |
+
+结论：新模型的剖面/ASE 物理正确；C 波段 10 跨的默认误差主要来自跨间相干口径，
+不是 Raman 剖面。对 DRA 论文对照应显式用 `span_coherence="incoherent"`；对 H3
+自洽的跨间相干结果保留默认 `"pcfm"`。前向泵建议 `raman_steps=24`。
