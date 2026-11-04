@@ -1,0 +1,16 @@
+{
+  "case": "cl_40ch_10span",
+  "pumps": "6 backward E-band (Zhang 2024 Table I)",
+  "numerical_dra": 14.725653705788194,
+  "hybrid_raman_paper": 14.876892278690738,
+  "pcfm_h3_raman_auto": 14.834,
+  "pcfm_h3_raman_pcfm": 14.321,
+  "raman_lumped": 15.565036583987606,
+  "errors_vs_numerical_db": {
+    "hybrid_raman_paper": 0.151238572902544,
+    "pcfm_h3_raman_auto": 0.108346294211806,
+    "pcfm_h3_raman_pcfm": -0.404,
+    "raman_lumped": 0.839382878199412
+  },
+  "note": "H3 auto = incoherent/24 steps for 6 pumps; values are mean SNR over 40 C+L channels."
+}
