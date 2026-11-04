@@ -472,7 +472,18 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_co
 残差的功率依赖、1ch 前向、seed 统计预算和 2× 偏振耗尽驱动负结果见
 `docs/dra-open-issues.md`（产物 `results/raman/launch_power_analysis.json`、
 `one_ch_forward.json`、`seed_ensemble.json`）。57/152ch 全 WDM 波形参考
-到位后，用 `scripts/dra_wideband_compare.py` 读取
-`data/dra_waveform_wide/{c57,cl152}.json`，以 `SpectrumGrid`、
-64 GBd、B = 符号率、`pump_depletion=True` 跑 hybrid/H3/numerical/lumped
-四模型；152ch 可用 `--skip-numerical` 加速。
+已到位：`data/dra_waveform_wide/{c57,c57_seed20261105,cl152}.{json,npz}`，
+用 `scripts/dra_wideband_compare.py` 读取并以 `SpectrumGrid`、64 GBd、
+B = 符号率、`pump_depletion=True` 跑 hybrid/H3/numerical/lumped 四模型；
+152ch 用 `--skip-numerical` 加速。结果：
+
+- `results/raman/wideband_compare_c57.json`（57ch，seed 20261104）
+- `results/raman/wideband_compare_c57_seed20261105.json`（57ch，第二 seed）
+- `results/raman/wideband_compare_cl152.json`（152ch）
+
+要点见 `docs/dra-open-issues.md` §5：57ch nopump 两 seed 均值 −0.52 dB、
+backward +1.48 dB；152ch nopump hybrid/H3 +0.29/+0.35 dB、backward
++0.99/+0.43 dB；forward 因周期记录伪影不可用；全 WDM 单次实现的统计
+预算 2–3 dB，1× 采样率还会高估 NLI 0.4–1.4 dB（2× 已足够）。色散斜率
+必须按波形 β₃ 反解（cl152 的 β₃=1e-4 ps³/km → S≈−0.0219），不能沿用
+默认 S=0.06。

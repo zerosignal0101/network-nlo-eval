@@ -52,6 +52,26 @@ def test_plan_from_wideband_block(wideband: ModuleType) -> None:
     assert plan["launch_power_dbm_per_pol"] == pytest.approx(1.0)
 
 
+def test_datasets_from_top_level_configs(wideband: ModuleType) -> None:
+    """WP7 全 WDM schema：几何在 plan、配置在顶层 configs。"""
+    reference = {
+        "plan": {
+            "name": "c57",
+            "n_channels": 57,
+            "channel_spacing_hz": 75e9,
+            "center_frequency_hz": 193.75e12,
+            "symbol_rate_hz": 64e9,
+            "launch_power_dbm_per_pol": 0.0,
+        },
+        "configs": {"nopump": {"pumps": [], "per_channel": []}},
+    }
+    datasets = wideband._datasets_from_reference(reference)
+    assert list(datasets) == ["c57"]
+    assert datasets["c57"]["n_channels"] == 57
+    assert datasets["c57"]["center_channel_index"] == 28
+    assert datasets["c57"]["configs"]["nopump"]["pumps"] == []
+
+
 def test_plan_from_legacy_3ch_reference(wideband: ModuleType) -> None:
     """3ch 收敛参考没有 plan：从 dataset/signal/频偏回退。"""
     reference = json.loads(CONVERGED.read_text(encoding="utf-8"))
@@ -73,6 +93,33 @@ def test_beta2_to_dispersion_matches_reference(wideband: ModuleType) -> None:
     """β2=-20 ps²/km 在 1550 nm 对应 D≈15.68。"""
     dispersion = wideband._beta2_to_dispersion(-20.0, 1550.0)
     assert dispersion == pytest.approx(15.6808, abs=1e-3)
+
+
+def test_beta3_to_slope_round_trips_network_kernel(wideband: ModuleType) -> None:
+    """β3↔S 换算与 network-nlo-eval 的 ``_calc_beta3_from_s_d`` 互逆。"""
+    from network_nlo_eval.models.numba_kernels import _calc_beta3_from_s_d
+
+    dispersion = 17.0
+    beta3 = _calc_beta3_from_s_d(0.06, dispersion, 1550e-9)
+    slope = wideband._beta3_to_slope(beta3 * 1e39, dispersion, 1550.0)
+    assert slope == pytest.approx(0.06, abs=1e-9)
+
+
+def test_fiber_derives_slope_from_beta3(wideband: ModuleType) -> None:
+    """波形只给 β3=1e-4 ps³/km 时，解析侧斜率必须匹配它而不是默认 0.06。"""
+    reference = {
+        "fiber": {
+            "length_km": 100.0,
+            "alpha_db_per_km": 0.162,
+            "beta2_ps2_per_km": -21.7,
+            "beta3_ps3_per_km": 1e-4,
+            "n2_si": 2.6e-20,
+            "a_eff_um2": 80.0,
+        }
+    }
+    fiber, metadata = wideband.fiber_from_reference(reference)
+    assert metadata["dispersion_slope_source"] == "beta3_ps3_per_km"
+    assert fiber.dispersion_slope_s == pytest.approx(-0.021892, abs=1e-5)
 
 
 def test_fiber_defaults_are_flat_wideband(wideband: ModuleType) -> None:

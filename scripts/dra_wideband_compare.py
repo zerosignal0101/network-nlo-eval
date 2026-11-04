@@ -100,6 +100,62 @@ def _beta2_to_dispersion(beta2_ps2_per_km: float, wavelength_nm: float = 1550.0)
     return float(-(2.0 * np.pi * C_LIGHT_M_S / wavelength_m**2) * beta2_s2_per_m * 1e6)
 
 
+def _beta3_to_slope(
+    beta3_ps3_per_km: float, dispersion_ps_nm_km: float, wavelength_nm: float = 1550.0
+) -> float:
+    """把 ``β3`` (ps³/km) 换算成 ``FiberSpanConfig`` 用的色散斜率 S。
+
+    与 ``models.numba_kernels._calc_beta3_from_s_d`` 互逆::
+
+        β3 = (λ²/(2πc)²) · (λ²·S·1e3 + 2λ·D·1e-6)
+
+    Args:
+        beta3_ps3_per_km: 三阶色散 β3 (ps³/km)。
+        dispersion_ps_nm_km: 色散参数 D (ps/(nm·km))。
+        wavelength_nm: 参考波长 (nm)。
+
+    Returns
+    -------
+        S (ps/(nm²·km))，使解析侧 β3 与波形参考一致。
+    """
+    if wavelength_nm <= 0:
+        raise ValueError("wavelength_nm must be positive.")
+    wavelength_m = float(wavelength_nm) * 1e-9
+    beta3_s3_per_m = float(beta3_ps3_per_km) * 1e-36 / 1e3
+    numerator = (
+        beta3_s3_per_m * (2.0 * np.pi * C_LIGHT_M_S) ** 2 / wavelength_m**2
+        - 2.0 * wavelength_m * float(dispersion_ps_nm_km) * 1e-6
+    )
+    return float(numerator / (wavelength_m**2 * 1e3))
+
+
+def _datasets_from_reference(reference: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """把参考 JSON 归一化成 ``{dataset_tag: dataset}``。
+
+    旧 3/5/7ch 参考用顶层 ``datasets``；WP7 的全 WDM 参考把单计划几何
+    放在 ``plan``，配置直接放在顶层 ``configs``。两种 schema 都接受。
+    """
+    datasets = reference.get("datasets") or {}
+    if datasets:
+        return datasets
+    configs = reference.get("configs") or {}
+    if not configs:
+        return {}
+    plan = dict(reference.get("plan") or {})
+    tag = str(plan.get("name") or reference.get("dataset_family") or "wideband")
+    dataset = {
+        "n_channels": plan.get("n_channels"),
+        "channel_spacing_hz": plan.get("channel_spacing_hz"),
+        "center_frequency_hz": plan.get("center_frequency_hz"),
+        "launch_power_dbm_per_pol": plan.get("launch_power_dbm_per_pol"),
+        "center_channel_index": (
+            int(plan["n_channels"]) // 2 if plan.get("n_channels") is not None else None
+        ),
+        "configs": configs,
+    }
+    return {tag: dataset}
+
+
 def plan_from_reference(reference: dict[str, Any]) -> dict[str, Any]:
     """从参考 JSON 解析统一的全 WDM 计划。
 
@@ -120,7 +176,7 @@ def plan_from_reference(reference: dict[str, Any]) -> dict[str, Any]:
     """
     plan = dict(reference.get("plan") or {})
     signal = dict(reference.get("signal") or {})
-    datasets = reference.get("datasets") or {}
+    datasets = _datasets_from_reference(reference)
     first_dataset = next(iter(datasets.values()), {})
 
     n_channels = _first_value(plan, first_dataset, keys=("n_channels", "num_channels"))
@@ -217,7 +273,18 @@ def fiber_from_reference(reference: dict[str, Any]) -> tuple[FiberSpanConfig, di
         else:
             dispersion = DEFAULT_DISPERSION_PS_NM_KM
             source = "default"
-    slope = float(_first_value(raw, keys=("dispersion_slope_s",)) or DEFAULT_DISPERSION_SLOPE)
+    slope_raw = _first_value(raw, keys=("dispersion_slope_s",))
+    slope_source = "json"
+    if slope_raw is None:
+        beta3 = _first_value(raw, keys=("beta3_ps3_per_km",))
+        if beta3 is not None:
+            slope = _beta3_to_slope(float(beta3), float(dispersion), wavelength_nm)
+            slope_source = "beta3_ps3_per_km"
+        else:
+            slope = DEFAULT_DISPERSION_SLOPE
+            slope_source = "default"
+    else:
+        slope = float(slope_raw)
     effective_area = float(
         _first_value(raw, keys=("a_eff_um2", "effective_area_um2_ref")) or DEFAULT_EFFECTIVE_AREA_UM2
     )
@@ -239,6 +306,7 @@ def fiber_from_reference(reference: dict[str, Any]) -> tuple[FiberSpanConfig, di
         "dispersion_parameter_d": float(dispersion),
         "dispersion_source": source,
         "dispersion_slope_s": slope,
+        "dispersion_slope_source": slope_source,
         "effective_area_um2_ref": effective_area,
         "nonlinear_index_n2": n2,
     }
@@ -556,9 +624,9 @@ def main() -> None:
         _warn(f"{reference_path} has no pump_model; assuming depleted (model default)")
 
     models = MODELS if not args.skip_numerical else tuple(name for name in MODELS if name != "numerical_dra")
-    datasets = reference.get("datasets") or {}
+    datasets = _datasets_from_reference(reference)
     if not datasets:
-        raise SystemExit(f"{reference_path} has no datasets")
+        raise SystemExit(f"{reference_path} has no datasets or configs")
 
     rows: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
