@@ -248,3 +248,9 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python -m pytest \
 产物：`results/raman/waveform_compare_converged.json`、
 `results/raman/waveform_compare_converged_depleted.json`；口径与完整表见
 `docs/dra-waveform-compare.md` §13。
+
+统计与功率依赖：单次 256-symbol 实现的 1σ 统计预算为 0.3–0.6 dB
+（4-seed，见 `docs/dra-open-issues.md` §3），占 ±1.0 dB 带的一半量级；
+前向残差还随发射功率变化（3ch 0.5/1/2 mW：hybrid +1.19/+0.79/+0.17 dB），
+因此 §8 的 +0.79/+0.96/+1.00 dB 只在 1 mW/pol、前向 0.2 W 下成立，
+不能外推到其它功率。

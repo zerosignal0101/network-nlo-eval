@@ -1,0 +1,775 @@
+{
+  "generated_by": "scripts/dra_open_issues.py (seed ensemble)",
+  "reference_path": "data/dra_waveform_converged/dra_reference_depleted.json",
+  "note": "3ch runs at 500 m (its 62.5 m step artifact is only 0.07 dB); 5/7ch run at 62.5 m. reference_snr_nli_db is the single 62.5 m realization from the converged reference, so for 3ch reference_minus_ensemble_mean_db also contains the 500 m step artifact. std uses the sample standard deviation (ddof=1).",
+  "config": {
+    "datasets": [
+      {
+        "tag": "3ch",
+        "n_channels": 3,
+        "offsets_hz": [
+          -100000000000.0,
+          0.0,
+          100000000000.0
+        ],
+        "sample_rate_hz": 500000000000.0,
+        "step_m": 500.0
+      },
+      {
+        "tag": "5ch",
+        "n_channels": 5,
+        "offsets_hz": [
+          -200000000000.0,
+          -100000000000.0,
+          0.0,
+          100000000000.0,
+          200000000000.0
+        ],
+        "sample_rate_hz": 700000000000.0,
+        "step_m": 62.5
+      },
+      {
+        "tag": "7ch",
+        "n_channels": 7,
+        "offsets_hz": [
+          -300000000000.0,
+          -200000000000.0,
+          -100000000000.0,
+          0.0,
+          100000000000.0,
+          200000000000.0,
+          300000000000.0
+        ],
+        "sample_rate_hz": 900000000000.0,
+        "step_m": 62.5
+      }
+    ],
+    "configs": {
+      "nopump": [],
+      "fwd_0p20w": "0.2 W forward, 1450 nm, 0.25 dB/km",
+      "bwd_0p20w": "0.2 W backward, 1450 nm, 0.25 dB/km"
+    },
+    "pump_model": "depleted",
+    "launch_power_w_per_pol": 0.001,
+    "num_symbols": 256,
+    "nli_bandwidth_hz": 50000000000.0,
+    "seeds": [
+      20261104,
+      20261105,
+      20261106,
+      20261107
+    ],
+    "seeds_7ch": [
+      20261104,
+      20261105,
+      20261106,
+      20261107
+    ]
+  },
+  "rows": [
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "nopump",
+      "seed": 20261104,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 36.77821456099246,
+      "waveform_nli_w": 4.119711910197703e-09,
+      "waveform_signal_power_w": 1.9619516620082607e-05,
+      "center_channel_index": 1,
+      "elapsed_s": 0.05176854133605957
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "seed": 20261104,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 23.095233647701935,
+      "waveform_nli_w": 9.050678051813668e-07,
+      "waveform_signal_power_w": 0.00018458843228089667,
+      "center_channel_index": 1,
+      "elapsed_s": 0.4024837017059326
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "bwd_0p20w",
+      "seed": 20261104,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 36.526924533822125,
+      "waveform_nli_w": 5.40976273342127e-08,
+      "waveform_signal_power_w": 0.0002431479829502233,
+      "center_channel_index": 1,
+      "elapsed_s": 1.5014796257019043
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "nopump",
+      "seed": 20261105,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 36.826563001066226,
+      "waveform_nli_w": 4.088803673523194e-09,
+      "waveform_signal_power_w": 1.969031020894246e-05,
+      "center_channel_index": 1,
+      "elapsed_s": 0.050649166107177734
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "seed": 20261105,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 22.829124983689706,
+      "waveform_nli_w": 9.664025086851105e-07,
+      "waveform_signal_power_w": 0.00018538327365602076,
+      "center_channel_index": 1,
+      "elapsed_s": 0.40065717697143555
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "bwd_0p20w",
+      "seed": 20261105,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 36.48390931691184,
+      "waveform_nli_w": 5.482840324759044e-08,
+      "waveform_signal_power_w": 0.00024400376630772936,
+      "center_channel_index": 1,
+      "elapsed_s": 1.5114631652832031
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "nopump",
+      "seed": 20261106,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 37.54753006247369,
+      "waveform_nli_w": 3.4689027743438836e-09,
+      "waveform_signal_power_w": 1.9721735682879348e-05,
+      "center_channel_index": 1,
+      "elapsed_s": 0.05277729034423828
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "seed": 20261106,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 23.576430161412976,
+      "waveform_nli_w": 8.150969988190181e-07,
+      "waveform_signal_power_w": 0.0001857172782096538,
+      "center_channel_index": 1,
+      "elapsed_s": 0.40048789978027344
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "bwd_0p20w",
+      "seed": 20261106,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 37.20639692382994,
+      "waveform_nli_w": 4.65312093521384e-08,
+      "waveform_signal_power_w": 0.0002445592154140715,
+      "center_channel_index": 1,
+      "elapsed_s": 1.5101299285888672
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "nopump",
+      "seed": 20261107,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 37.00631903588962,
+      "waveform_nli_w": 3.914740370442139e-09,
+      "waveform_signal_power_w": 1.9648747336529723e-05,
+      "center_channel_index": 1,
+      "elapsed_s": 0.052201032638549805
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "seed": 20261107,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 23.957434082492853,
+      "waveform_nli_w": 7.437775347816239e-07,
+      "waveform_signal_power_w": 0.0001850062775529181,
+      "center_channel_index": 1,
+      "elapsed_s": 0.40236926078796387
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "bwd_0p20w",
+      "seed": 20261107,
+      "step_m": 500.0,
+      "waveform_snr_nli_db": 36.76116564329262,
+      "waveform_nli_w": 5.1316708285921896e-08,
+      "waveform_signal_power_w": 0.00024343070400536983,
+      "center_channel_index": 1,
+      "elapsed_s": 1.50762939453125
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "nopump",
+      "seed": 20261104,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.33053185065471,
+      "waveform_nli_w": 4.589297054869874e-09,
+      "waveform_signal_power_w": 1.9715116810373152e-05,
+      "center_channel_index": 2,
+      "elapsed_s": 0.5782184600830078
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "fwd_0p20w",
+      "seed": 20261104,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 22.53120201718698,
+      "waveform_nli_w": 8.923099746954147e-07,
+      "waveform_signal_power_w": 0.00015982177493093527,
+      "center_channel_index": 2,
+      "elapsed_s": 1.126333236694336
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "bwd_0p20w",
+      "seed": 20261104,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.043433069279466,
+      "waveform_nli_w": 5.982842491168856e-08,
+      "waveform_signal_power_w": 0.00024057521154577063,
+      "center_channel_index": 2,
+      "elapsed_s": 2.5930562019348145
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "nopump",
+      "seed": 20261105,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.78000355801148,
+      "waveform_nli_w": 5.206504969691653e-09,
+      "waveform_signal_power_w": 1.9703648123176826e-05,
+      "center_channel_index": 2,
+      "elapsed_s": 0.576434850692749
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "fwd_0p20w",
+      "seed": 20261105,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 22.55690548948648,
+      "waveform_nli_w": 8.86507535963891e-07,
+      "waveform_signal_power_w": 0.00015972503086359935,
+      "center_channel_index": 2,
+      "elapsed_s": 1.1162824630737305
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "bwd_0p20w",
+      "seed": 20261105,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.605577023103,
+      "waveform_nli_w": 6.621387132823402e-08,
+      "waveform_signal_power_w": 0.00024071695598350807,
+      "center_channel_index": 2,
+      "elapsed_s": 2.5774178504943848
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "nopump",
+      "seed": 20261106,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.964507230776896,
+      "waveform_nli_w": 3.968074391467326e-09,
+      "waveform_signal_power_w": 1.9725613917202083e-05,
+      "center_channel_index": 2,
+      "elapsed_s": 0.5813758373260498
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "fwd_0p20w",
+      "seed": 20261106,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 22.826951899125305,
+      "waveform_nli_w": 8.341914276120295e-07,
+      "waveform_signal_power_w": 0.00015994140712434317,
+      "center_channel_index": 2,
+      "elapsed_s": 1.1115238666534424
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "bwd_0p20w",
+      "seed": 20261106,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.68294589693329,
+      "waveform_nli_w": 5.1596637813076504e-08,
+      "waveform_signal_power_w": 0.00024038977576470538,
+      "center_channel_index": 2,
+      "elapsed_s": 2.5745627880096436
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "nopump",
+      "seed": 20261107,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.67363526517241,
+      "waveform_nli_w": 4.240071788669449e-09,
+      "waveform_signal_power_w": 1.9712274408836356e-05,
+      "center_channel_index": 2,
+      "elapsed_s": 0.5862245559692383
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "fwd_0p20w",
+      "seed": 20261107,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 23.125395282760948,
+      "waveform_nli_w": 7.780891501308644e-07,
+      "waveform_signal_power_w": 0.0001597970978864799,
+      "center_channel_index": 2,
+      "elapsed_s": 1.1225595474243164
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "bwd_0p20w",
+      "seed": 20261107,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.404747705028456,
+      "waveform_nli_w": 5.499249684411548e-08,
+      "waveform_signal_power_w": 0.0002403135223417429,
+      "center_channel_index": 2,
+      "elapsed_s": 2.5855956077575684
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "nopump",
+      "seed": 20261104,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.27400072922249,
+      "waveform_nli_w": 4.6204333408592615e-09,
+      "waveform_signal_power_w": 1.95921808942036e-05,
+      "center_channel_index": 3,
+      "elapsed_s": 0.8127648830413818
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "fwd_0p20w",
+      "seed": 20261104,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 22.383676751100253,
+      "waveform_nli_w": 8.067973917399551e-07,
+      "waveform_signal_power_w": 0.00013967933561416564,
+      "center_channel_index": 3,
+      "elapsed_s": 1.4049804210662842
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "bwd_0p20w",
+      "seed": 20261104,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.90254614136451,
+      "waveform_nli_w": 6.033026201922224e-08,
+      "waveform_signal_power_w": 0.00023484960043870744,
+      "center_channel_index": 3,
+      "elapsed_s": 2.835496664047241
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "nopump",
+      "seed": 20261105,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.99575260957197,
+      "waveform_nli_w": 4.939052144838079e-09,
+      "waveform_signal_power_w": 1.9643500049005382e-05,
+      "center_channel_index": 3,
+      "elapsed_s": 0.8060307502746582
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "fwd_0p20w",
+      "seed": 20261105,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 23.164774903527313,
+      "waveform_nli_w": 6.764238211699047e-07,
+      "waveform_signal_power_w": 0.000140183333726197,
+      "center_channel_index": 3,
+      "elapsed_s": 1.371626615524292
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "bwd_0p20w",
+      "seed": 20261105,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.79776008009947,
+      "waveform_nli_w": 6.208575471976307e-08,
+      "waveform_signal_power_w": 0.00023592174554097872,
+      "center_channel_index": 3,
+      "elapsed_s": 2.8198161125183105
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "nopump",
+      "seed": 20261106,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.394812688835025,
+      "waveform_nli_w": 5.654940801993101e-09,
+      "waveform_signal_power_w": 1.958435765811519e-05,
+      "center_channel_index": 3,
+      "elapsed_s": 0.8119280338287354
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "fwd_0p20w",
+      "seed": 20261106,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 21.970425104982677,
+      "waveform_nli_w": 8.872399396056657e-07,
+      "waveform_signal_power_w": 0.00013966371634062093,
+      "center_channel_index": 3,
+      "elapsed_s": 1.3853843212127686
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "bwd_0p20w",
+      "seed": 20261106,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 35.18621250846505,
+      "waveform_nli_w": 7.118435314184019e-08,
+      "waveform_signal_power_w": 0.00023496641666717217,
+      "center_channel_index": 3,
+      "elapsed_s": 2.8441097736358643
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "nopump",
+      "seed": 20261107,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.905021389870825,
+      "waveform_nli_w": 4.005899189494048e-09,
+      "waveform_signal_power_w": 1.9642743919960768e-05,
+      "center_channel_index": 3,
+      "elapsed_s": 0.8115494251251221
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "fwd_0p20w",
+      "seed": 20261107,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 22.787488717297148,
+      "waveform_nli_w": 7.376619730834573e-07,
+      "waveform_signal_power_w": 0.00014015424867645543,
+      "center_channel_index": 3,
+      "elapsed_s": 1.362640619277954
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "bwd_0p20w",
+      "seed": 20261107,
+      "step_m": 62.5,
+      "waveform_snr_nli_db": 36.671433914945816,
+      "waveform_nli_w": 5.078137612628902e-08,
+      "waveform_signal_power_w": 0.00023596514509045252,
+      "center_channel_index": 3,
+      "elapsed_s": 2.8304085731506348
+    }
+  ],
+  "summary": [
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "nopump",
+      "step_m": 500.0,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 37.0396566651055,
+        "std": 0.3525184008118252,
+        "sem": 0.1762592004059126,
+        "min": 36.77821456099246,
+        "max": 37.54753006247369
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 3.89803968212673e-09,
+        "std": 2.999815970594927e-10,
+        "sem": 1.4999079852974634e-10,
+        "min": 3.4689027743438836e-09,
+        "max": 4.119711910197703e-09
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 36.708162063902876,
+      "reference_minus_ensemble_mean_db": -0.3314946012026212
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "step_m": 500.0,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 23.364555718824366,
+        "std": 0.5018685032452805,
+        "sem": 0.25093425162264027,
+        "min": 22.829124983689706,
+        "max": 23.957434082492853
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 8.575862118667798e-07,
+        "std": 9.807010479284406e-08,
+        "sem": 4.903505239642203e-08,
+        "min": 7.437775347816239e-07,
+        "max": 9.664025086851105e-07
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 23.012488031307466,
+      "reference_minus_ensemble_mean_db": -0.3520676875169002
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "bwd_0p20w",
+      "step_m": 500.0,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 36.744599104464136,
+        "std": 0.3310956861784891,
+        "sem": 0.16554784308924456,
+        "min": 36.48390931691184,
+        "max": 37.20639692382994
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 5.1693487054965865e-08,
+        "std": 3.759373322731184e-09,
+        "sem": 1.879686661365592e-09,
+        "min": 4.65312093521384e-08,
+        "max": 5.482840324759044e-08
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 36.454261938099066,
+      "reference_minus_ensemble_mean_db": -0.29033716636507023
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "nopump",
+      "step_m": 62.5,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 36.43716947615387,
+        "std": 0.5089989534917351,
+        "sem": 0.25449947674586754,
+        "min": 35.78000355801148,
+        "max": 36.964507230776896
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 4.500987051174575e-09,
+        "std": 5.346733791720286e-10,
+        "sem": 2.673366895860143e-10,
+        "min": 3.968074391467326e-09,
+        "max": 5.206504969691653e-09
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 36.33053185065471,
+      "reference_minus_ensemble_mean_db": -0.106637625499161
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "fwd_0p20w",
+      "step_m": 62.5,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 22.760113672139926,
+        "std": 0.27784414990845147,
+        "sem": 0.13892207495422573,
+        "min": 22.53120201718698,
+        "max": 23.125395282760948
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 8.4777452210055e-07,
+        "std": 5.330479785536734e-08,
+        "sem": 2.665239892768367e-08,
+        "min": 7.780891501308644e-07,
+        "max": 8.923099746954147e-07
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 22.53120201718698,
+      "reference_minus_ensemble_mean_db": -0.2289116549529453
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "bwd_0p20w",
+      "step_m": 62.5,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 36.184175923586054,
+        "std": 0.4661933203296815,
+        "sem": 0.23309666016484076,
+        "min": 35.605577023103,
+        "max": 36.68294589693329
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 5.815785772427864e-08,
+        "std": 6.344532190256098e-09,
+        "sem": 3.172266095128049e-09,
+        "min": 5.1596637813076504e-08,
+        "max": 6.621387132823402e-08
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 36.043433069279466,
+      "reference_minus_ensemble_mean_db": -0.14074285430658762
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "nopump",
+      "step_m": 62.5,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 36.14239685437508,
+        "std": 0.6269775065383258,
+        "sem": 0.3134887532691629,
+        "min": 35.394812688835025,
+        "max": 36.905021389870825
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 4.805081369296123e-09,
+        "std": 6.862934928445113e-10,
+        "sem": 3.4314674642225566e-10,
+        "min": 4.005899189494048e-09,
+        "max": 5.654940801993101e-09
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 36.27400072922249,
+      "reference_minus_ensemble_mean_db": 0.1316038748474142
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "fwd_0p20w",
+      "step_m": 62.5,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 22.57659136922685,
+        "std": 0.5148110175070508,
+        "sem": 0.2574055087535254,
+        "min": 21.970425104982677,
+        "max": 23.164774903527313
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 7.770307813997456e-07,
+        "std": 9.074464751623433e-08,
+        "sem": 4.5372323758117164e-08,
+        "min": 6.764238211699047e-07,
+        "max": 8.872399396056657e-07
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 22.383676751100253,
+      "reference_minus_ensemble_mean_db": -0.19291461812659705
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "bwd_0p20w",
+      "step_m": 62.5,
+      "snr_nli_db": {
+        "n": 4,
+        "mean": 35.889488161218715,
+        "std": 0.6095409084546739,
+        "sem": 0.30477045422733695,
+        "min": 35.18621250846505,
+        "max": 36.671433914945816
+      },
+      "nli_w": {
+        "n": 4,
+        "mean": 6.109543650177864e-08,
+        "std": 8.361265904175498e-09,
+        "sem": 4.180632952087749e-09,
+        "min": 5.078137612628902e-08,
+        "max": 7.118435314184019e-08
+      },
+      "seeds": [
+        20261104,
+        20261105,
+        20261106,
+        20261107
+      ],
+      "reference_snr_nli_db": 35.90254614136451,
+      "reference_minus_ensemble_mean_db": 0.013057980145795511
+    }
+  ]
+}
