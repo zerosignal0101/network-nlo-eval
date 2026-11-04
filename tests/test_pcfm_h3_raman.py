@@ -3,6 +3,7 @@
 覆盖任务要求：
 * 注册与非法选项；
 * 无泵时与 H3 PCFM **逐位一致**；
+* EGN 自动口径：前向泵关闭，无泵/后向保持开启且逐位不变；
 * 泵功率单调（跨内出纤功率与 Raman ASE 随泵功率增加）；
 * FW/BW/混合泵都可用；
 * C 波段 1/10 跨相对 ``hybrid_raman_paper`` 的误差；
@@ -12,8 +13,10 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -90,6 +93,14 @@ def test_invalid_raman_steps_and_coherence_are_rejected() -> None:
         make_model("pcfm_h3_raman", CASE_1, span_coherence="coherent")
 
 
+def test_invalid_egn_is_rejected() -> None:
+    """``egn`` 只接受 ``True``/``False``/``"auto"``。"""
+    with pytest.raises(ValueError, match="egn"):
+        make_model("pcfm_h3_raman", CASE_1, egn="on")
+    with pytest.raises(ValueError, match="egn"):
+        make_model("pcfm_h3_raman", CASE_1, egn=1)
+
+
 # ---------------------------------------------------------------------------
 # 无泵退化：逐位一致
 # ---------------------------------------------------------------------------
@@ -128,6 +139,59 @@ def test_forward_pump_undepleted_has_more_nli_and_lower_snr() -> None:
     nli_undepleted = np.mean(np.asarray(undepleted.spm_noise_w) + np.asarray(undepleted.xpm_noise_w))
     assert nli_undepleted > nli_depleted
     assert float(np.mean(undepleted.snr_db)) < float(np.mean(depleted.snr_db)) - 0.3
+
+
+# ---------------------------------------------------------------------------
+# EGN 自动口径：前向泵关闭，其余保持开启
+# ---------------------------------------------------------------------------
+
+#: 逐位一致比较覆盖的输出数组。
+_ARRAY_FIELDS = ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db")
+
+
+def _assert_bit_identical(left, right) -> None:
+    """两个路径结果的所有输出数组必须逐位相同。"""
+    for name in _ARRAY_FIELDS:
+        assert np.array_equal(np.asarray(getattr(left, name)), np.asarray(getattr(right, name))), name
+
+
+def test_egn_auto_resolution_follows_pump_direction() -> None:
+    """``"auto"`` 只在存在正向活动泵时关闭 EGN；零功率泵不算。"""
+    assert make_model("pcfm_h3_raman", CASE_1).egn is True
+    assert make_model("pcfm_h3_raman", CASE_1, raman_pumps=[_pump()]).egn is True
+    assert make_model("pcfm_h3_raman", CASE_1, raman_pumps=[_pump(0.0, "forward")]).egn is True
+    assert make_model("pcfm_h3_raman", CASE_1, raman_pumps=[_pump(0.2, "forward")]).egn is False
+    assert make_model(
+        "pcfm_h3_raman", CASE_1, raman_pumps=[_pump(0.2, "forward"), _pump()]
+    ).egn is False
+
+
+@pytest.mark.parametrize(
+    "pumps",
+    [None, [_pump()], [_pump(0.2, "backward"), _pump(0.1, "backward")]],
+    ids=["nopump", "backward", "two_backward"],
+)
+def test_egn_auto_keeps_egn_without_forward_pump(pumps) -> None:
+    """无泵与纯后向泵：默认 ``"auto"`` 与显式 ``egn=True`` 逐位一致。"""
+    options = {} if pumps is None else {"raman_pumps": pumps}
+    auto = _path_result(CASE_1, "pcfm_h3_raman", **options)
+    legacy = _path_result(CASE_1, "pcfm_h3_raman", **options, egn=True)
+    _assert_bit_identical(auto, legacy)
+
+
+@pytest.mark.parametrize(
+    "pumps",
+    [[_pump(0.2, "forward")], [_pump(0.2, "forward"), _pump(0.15, "backward")]],
+    ids=["forward", "mixed"],
+)
+def test_egn_auto_disables_egn_with_forward_pump(pumps) -> None:
+    """纯前向或混合泵：默认 ``"auto"`` 与显式 ``egn=False`` 逐位一致。"""
+    auto = _path_result(CASE_1, "pcfm_h3_raman", raman_pumps=pumps)
+    legacy_off = _path_result(CASE_1, "pcfm_h3_raman", raman_pumps=pumps, egn=False)
+    _assert_bit_identical(auto, legacy_off)
+    # 显式 True 仍保留旧的 EGN 行为，说明 auto 确实改变了结果而非空操作。
+    forced_on = _path_result(CASE_1, "pcfm_h3_raman", raman_pumps=pumps, egn=True)
+    assert not np.array_equal(np.asarray(auto.spm_noise_w), np.asarray(forced_on.spm_noise_w))
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +263,8 @@ def test_c_band_one_span_matches_paper_within_015_db() -> None:
     assert abs(delta) < 0.15, f"1-span SNR error {delta:+.3f} dB"
 
 
-def test_forward_pump_one_span_matches_paper_within_015_db() -> None:
-    """前向泵的跨内剖面效应更强，1 跨仍应与 paper 差 <0.15 dB。"""
+def test_forward_pump_one_span_matches_paper_within_020_db() -> None:
+    """前向泵默认关闭 EGN 后，H3 与 paper 的残差只是核公式差，<0.2 dB。"""
     paper = _path_result(
         CASE_1,
         "hybrid_raman_paper",
@@ -209,7 +273,7 @@ def test_forward_pump_one_span_matches_paper_within_015_db() -> None:
     )
     new = _path_result(CASE_1, "pcfm_h3_raman", raman_pumps=[_pump(direction="forward")])
     delta = float(np.mean(new.snr_db) - np.mean(paper.snr_db))
-    assert abs(delta) < 0.15, f"1-span forward-pump SNR error {delta:+.3f} dB"
+    assert abs(delta) < 0.2, f"1-span forward-pump SNR error {delta:+.3f} dB"
 
 
 def test_c_band_ten_span_raman_effect_matches_paper_within_015_db() -> None:
@@ -319,32 +383,81 @@ def _audit_model(model_name: str, n_channels: int, config: str, **options):
     )
 
 
-def _audit_snr(model_name: str, n_channels: int, config: str, **options) -> float:
-    """平均 NLI-limited SNR (dB)，与审计脚本同口径。"""
+def _audit_result(model_name: str, n_channels: int, config: str, **options):
+    """按审计脚本的栅格跑一次单跨路径。"""
     model = _audit_model(model_name, n_channels, config, **options)
     path = MultiSpanOpticalPath([AUDIT_FIBER], [EDFAConfig(noise_figure_db=5.5)])
-    result = model.evaluate_path(path, np.full(n_channels, AUDIT_LAUNCH_POWER_W))
+    return model.evaluate_path(path, np.full(n_channels, AUDIT_LAUNCH_POWER_W))
+
+
+def _audit_snr(model_name: str, n_channels: int, config: str, **options) -> float:
+    """平均 NLI-limited SNR (dB)，与审计脚本同口径。"""
+    result = _audit_result(model_name, n_channels, config, **options)
     signal = np.asarray(result.signal_power_w, dtype=np.float64)
     nli = np.asarray(result.spm_noise_w, dtype=np.float64) + np.asarray(result.xpm_noise_w, dtype=np.float64)
     return float(np.mean(10.0 * np.log10(signal / nli)))
 
 
-def test_forward_three_channel_h3_minus_paper_gap_is_pinned() -> None:
-    """前向 3ch 的 H3−paper NLI-SNR 差固定在审计测得的 0.34 dB 附近。
+def _audit_center_snr(model_name: str, n_channels: int, config: str, **options) -> float:
+    """中心信道 NLI-limited SNR (dB)，与 ``dra_waveform_compare.py`` 同口径。"""
+    result = _audit_result(model_name, n_channels, config, **options)
+    center = n_channels // 2
+    signal = float(np.asarray(result.signal_power_w)[center])
+    nli = float(np.asarray(result.spm_noise_w)[center] + np.asarray(result.xpm_noise_w)[center])
+    return float(10.0 * np.log10(signal / nli))
+
+
+#: 62.5 m 收敛耗尽参考；波形的中心信道值由测试读取，不硬编码。
+CONVERGED_DEPLETED_JSON = (
+    Path(__file__).resolve().parents[1] / "data/dra_waveform_converged/dra_reference_depleted.json"
+)
+
+
+def _waveform_center_snr(dataset: str, config: str) -> float:
+    """从收敛耗尽参考读中心信道的波形 SNR_NLI (dB)。"""
+    reference = json.loads(CONVERGED_DEPLETED_JSON.read_text(encoding="utf-8"))
+    entry = reference["datasets"][dataset]
+    center = int(entry["center_channel_index"])
+    return float(entry["configs"][config]["per_channel"][center]["snr_nli_db"])
+
+
+def test_forward_three_channel_legacy_egn_gap_is_pinned() -> None:
+    """显式 ``egn=True`` 保留旧的 0.34 dB 固定值（历史/兼容性）。
 
     该差在无泵时同样存在（见审计文档），因此它钉住的是 H3 核 + EGN 口径，
     而不是拉曼剖面的拟合路径；拟合路径的任何漂移都会直接改变该差。
+    默认 ``egn="auto"`` 在前向泵下关闭 EGN，见下一个测试。
     """
-    h3 = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w")
+    h3 = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", egn=True)
     paper = _audit_snr("hybrid_raman_paper", 3, "fwd_0p2w", nli_form="paper")
     delta = h3 - paper
     assert abs(delta - 0.34) < 0.05, f"forward 3ch H3-paper gap {delta:+.3f} dB"
 
 
+def test_forward_egn_auto_is_not_optimistic_against_hybrid_or_waveform() -> None:
+    """默认 ``egn="auto"`` 下，前向 3ch 的 H3 不再比 hybrid 乐观。
+
+    关闭前向 EGN 后，H3 只比 hybrid 悲观约 0.19 dB（PCFM 核 vs Buglia 核的
+    已知差），且相对收敛耗尽波形的残差比 hybrid 更小。
+    """
+    wave = _waveform_center_snr("3ch", "fwd_0p20w")
+    h3 = _audit_center_snr("pcfm_h3_raman", 3, "fwd_0p2w")
+    hybrid = _audit_center_snr("hybrid_raman_paper", 3, "fwd_0p2w", nli_form="paper")
+    delta = h3 - hybrid
+    assert -0.35 < delta < 0.0, f"forward 3ch H3-hybrid gap {delta:+.3f} dB"
+    assert h3 - wave <= hybrid - wave + 0.1, (
+        f"H3 residual {h3 - wave:+.3f} dB vs hybrid {hybrid - wave:+.3f} dB"
+    )
+
+
 def test_forward_gap_is_dominated_by_egn_not_by_the_polynomial_fit() -> None:
-    """拟合收敛只移动 <0.05 dB；EGN 贡献 >0.3 dB；前向不额外放大差距。"""
-    default = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w")
-    converged = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", poly_degree=9, spp_steps=96)
+    """拟合收敛只移动 <0.05 dB；EGN 贡献 >0.3 dB；前向不额外放大差距。
+
+    这里全部用显式 ``egn=True``：它钉住的是旧 EGN 口径下的归因预算，与默认
+    ``"auto"`` 的行为无关。
+    """
+    default = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", egn=True)
+    converged = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", egn=True, poly_degree=9, spp_steps=96)
     assert abs(converged - default) < 0.05, f"fit-convergence shift {converged - default:+.3f} dB"
 
     no_egn = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", egn=False)

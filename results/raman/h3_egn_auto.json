@@ -1,0 +1,133 @@
+{
+  "generated_by": "scripts/h3_egn_auto.py",
+  "reference_path": "data/dra_waveform_converged/dra_reference_depleted.json",
+  "reference_pump_model": "depleted",
+  "coarse_step_m": 62.5,
+  "config": {
+    "fiber": {
+      "length_km": 100.0,
+      "attenuation_db_km_ref": 0.2,
+      "dispersion_parameter_d": 15.68076226687911,
+      "effective_area_um2_ref": 80.0
+    },
+    "symbol_rate_hz": 50000000000.0,
+    "launch_power_w_per_pol": 0.001,
+    "grid": "100 GHz spacing, 50 GHz occupied, FlexibleGrid 12.5 GHz",
+    "pump": {
+      "wavelength_nm": 1450.0,
+      "power_w": 0.2,
+      "attenuation_db_per_km": 0.25
+    },
+    "edfa_noise_figure_db": 5.5,
+    "snr_metric": "center-channel NLI-limited SNR_NLI, same convention as dra_waveform_compare.py"
+  },
+  "note": "egn=\"auto\" disables the Zefreh correction when any active pump is forward. Rows are forward-pumped 0.2 W on the 62.5 m converged depleted reference; invariance rows show that no-pump and backward-pump results are unchanged (auto vs explicit egn=True).",
+  "forward_rows": [
+    {
+      "dataset": "1ch",
+      "n_channels": 1,
+      "config": "fwd_0p20w",
+      "waveform_snr_nli_db": 23.703940949469334,
+      "hybrid_snr_nli_db": 24.836188924328845,
+      "h3_auto_snr_nli_db": 24.649728796879028,
+      "h3_egn_true_snr_nli_db": 25.38213833732168,
+      "h3_egn_false_snr_nli_db": 24.649728796879028,
+      "h3_auto_delta_db": 0.9457878474096937,
+      "h3_egn_true_delta_db": 1.6781973878523466,
+      "h3_egn_false_delta_db": 0.9457878474096937,
+      "hybrid_delta_db": 1.13224797485951,
+      "h3_auto_minus_hybrid_db": -0.18646012744981633,
+      "egn_contribution_db": 0.7324095404426529,
+      "auto_equals_explicit_false": true
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "waveform_snr_nli_db": 23.012488031307466,
+      "hybrid_snr_nli_db": 23.80304641283064,
+      "h3_auto_snr_nli_db": 23.614972151050814,
+      "h3_egn_true_snr_nli_db": 24.10538806553909,
+      "h3_egn_false_snr_nli_db": 23.614972151050814,
+      "h3_auto_delta_db": 0.6024841197433481,
+      "h3_egn_true_delta_db": 1.0929000342316222,
+      "h3_egn_false_delta_db": 0.6024841197433481,
+      "hybrid_delta_db": 0.7905583815231729,
+      "h3_auto_minus_hybrid_db": -0.18807426177982478,
+      "egn_contribution_db": 0.49041591448827404,
+      "auto_equals_explicit_false": true
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "fwd_0p20w",
+      "waveform_snr_nli_db": 22.53120201718698,
+      "hybrid_snr_nli_db": 23.491475001451093,
+      "h3_auto_snr_nli_db": 23.312154563842572,
+      "h3_egn_true_snr_nli_db": 23.72427974367629,
+      "h3_egn_false_snr_nli_db": 23.312154563842572,
+      "h3_auto_delta_db": 0.7809525466555911,
+      "h3_egn_true_delta_db": 1.1930777264893102,
+      "h3_egn_false_delta_db": 0.7809525466555911,
+      "hybrid_delta_db": 0.9602729842641118,
+      "h3_auto_minus_hybrid_db": -0.17932043760852068,
+      "egn_contribution_db": 0.4121251798337191,
+      "auto_equals_explicit_false": true
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "fwd_0p20w",
+      "waveform_snr_nli_db": 22.383676751100253,
+      "hybrid_snr_nli_db": 23.386983852262603,
+      "h3_auto_snr_nli_db": 23.213939428866478,
+      "h3_egn_true_snr_nli_db": 23.583092413207286,
+      "h3_egn_false_snr_nli_db": 23.213939428866478,
+      "h3_auto_delta_db": 0.8302626777662248,
+      "h3_egn_true_delta_db": 1.1994156621070324,
+      "h3_egn_false_delta_db": 0.8302626777662248,
+      "hybrid_delta_db": 1.0033071011623491,
+      "h3_auto_minus_hybrid_db": -0.17304442339612436,
+      "egn_contribution_db": 0.3691529843408077,
+      "auto_equals_explicit_false": true
+    }
+  ],
+  "invariance": [
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "nopump",
+      "auto_vs_true_max_abs_diff": 0.0
+    },
+    {
+      "dataset": "3ch",
+      "n_channels": 3,
+      "config": "bwd_0p20w",
+      "auto_vs_true_max_abs_diff": 0.0
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "nopump",
+      "auto_vs_true_max_abs_diff": 0.0
+    },
+    {
+      "dataset": "5ch",
+      "n_channels": 5,
+      "config": "bwd_0p20w",
+      "auto_vs_true_max_abs_diff": 0.0
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "nopump",
+      "auto_vs_true_max_abs_diff": 0.0
+    },
+    {
+      "dataset": "7ch",
+      "n_channels": 7,
+      "config": "bwd_0p20w",
+      "auto_vs_true_max_abs_diff": 0.0
+    }
+  ]
+}

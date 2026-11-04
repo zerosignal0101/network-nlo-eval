@@ -239,6 +239,11 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python -m pytest \
   在强前向增益下仍偏乐观”一致；
 - 7ch 前向耗尽参考 0.2W：hybrid +1.00 dB、H3 +1.20 dB；0.1W hybrid −0.08 dB。
   7ch 进入前向校准候选，但 H3 仍受默认 EGN 影响略超 ±1.1 dB。
+- **WP6（2026-11-04）**：H3 默认改为 `egn="auto"`（前向泵关闭 EGN，无泵/
+  后向保持开启）后，前向 0.2W 的 H3 残差实测降到 3ch +0.60、5ch +0.78、
+  7ch +0.83 dB（1ch +0.95 dB），全部进入 ±1.0 dB；无泵/后向与旧默认逐位
+  一致。三档表与逐位一致检查见 `docs/h3-forward-audit.md` §11 与
+  `results/raman/h3_egn_auto.json`。
 
 产物：`results/raman/waveform_compare_converged.json`、
 `results/raman/waveform_compare_converged_depleted.json`；口径与完整表见
