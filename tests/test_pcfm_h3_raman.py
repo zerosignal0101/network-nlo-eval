@@ -20,9 +20,10 @@ import pytest
 
 from network_nlo_eval.benchmarks.cases import build_case, build_path, launch_profile
 from network_nlo_eval.benchmarks.runner import make_model
-from network_nlo_eval.models.base import get_model_info
+from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model, get_model_info
 from network_nlo_eval.models.pcfm_h3_raman import H3_RAMAN_MODEL_INFO
-from network_nlo_eval.network.elements import RamanPumpConfig
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, RamanPumpConfig
 
 #: H3 最优配置；无泵逐位一致与所有精度对照都用它。
 H3_OPTIONS = {
@@ -235,6 +236,112 @@ def test_c_l_six_pumps_is_not_worse_than_lumped() -> None:
     lumped_error = abs(float(np.mean(lumped.snr_db) - np.mean(paper.snr_db)))
     assert new_error < lumped_error, f"new {new_error:.3f} dB vs lumped {lumped_error:.3f} dB"
     assert new_error < 0.15, f"C+L SNR error {new_error:.3f} dB"
+
+
+# ---------------------------------------------------------------------------
+# 前向泵核审计（scripts/h3_forward_audit.py 的固定场景）
+# ---------------------------------------------------------------------------
+
+#: 审计脚本的光纤：100 km、0.2 dB/km、D=15.68、A_eff=80。
+AUDIT_FIBER = FiberSpanConfig(
+    length_km=100.0,
+    attenuation_db_km_ref=0.2,
+    dispersion_parameter_d=15.68076226687911,
+    dispersion_slope_s=0.04123833468291227,
+    effective_area_um2_ref=80.0,
+    nonlinear_index_n2=2.6e-20,
+)
+AUDIT_SYMBOL_RATE_HZ = 50e9
+AUDIT_LAUNCH_POWER_W = 1e-3
+
+
+def _audit_model(model_name: str, n_channels: int, config: str, **options):
+    """按审计脚本的栅格构造单跨模型。"""
+    grid = FlexibleGrid(slot_width_hz=12.5e9, num_slots=8 * n_channels + 8, band_low_edge_hz=192.95e12)
+    connections = [
+        ConnectionSpec(
+            grid=grid,
+            connection_id=index,
+            first_slot=2 + 8 * index,
+            n_slots=4,
+            bit_rate_bps=100e9,
+            modulation="QPSK",
+            symbol_rate_hz=AUDIT_SYMBOL_RATE_HZ,
+            roll_off=0.0,
+            launch_power_w=AUDIT_LAUNCH_POWER_W,
+        )
+        for index in range(n_channels)
+    ]
+    if config != "nopump":
+        options["raman_pumps"] = [
+            RamanPumpConfig(
+                wavelength_nm=1450.0,
+                power_w=0.2,
+                direction="forward",
+                attenuation_db_per_km=0.25,
+            )
+        ]
+    return create_model(
+        model_name,
+        grid,
+        AUDIT_FIBER,
+        symbol_rate_hz=AUDIT_SYMBOL_RATE_HZ,
+        connections=connections,
+        slots_per_channel=8,
+        channel_bandwidth_source="occupied",
+        **options,
+    )
+
+
+def _audit_snr(model_name: str, n_channels: int, config: str, **options) -> float:
+    """平均 NLI-limited SNR (dB)，与审计脚本同口径。"""
+    model = _audit_model(model_name, n_channels, config, **options)
+    path = MultiSpanOpticalPath([AUDIT_FIBER], [EDFAConfig(noise_figure_db=5.5)])
+    result = model.evaluate_path(path, np.full(n_channels, AUDIT_LAUNCH_POWER_W))
+    signal = np.asarray(result.signal_power_w, dtype=np.float64)
+    nli = np.asarray(result.spm_noise_w, dtype=np.float64) + np.asarray(result.xpm_noise_w, dtype=np.float64)
+    return float(np.mean(10.0 * np.log10(signal / nli)))
+
+
+def test_forward_three_channel_h3_minus_paper_gap_is_pinned() -> None:
+    """前向 3ch 的 H3−paper NLI-SNR 差固定在审计测得的 0.34 dB 附近。
+
+    该差在无泵时同样存在（见审计文档），因此它钉住的是 H3 核 + EGN 口径，
+    而不是拉曼剖面的拟合路径；拟合路径的任何漂移都会直接改变该差。
+    """
+    h3 = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w")
+    paper = _audit_snr("hybrid_raman_paper", 3, "fwd_0p2w", nli_form="paper")
+    delta = h3 - paper
+    assert abs(delta - 0.34) < 0.05, f"forward 3ch H3-paper gap {delta:+.3f} dB"
+
+
+def test_forward_gap_is_dominated_by_egn_not_by_the_polynomial_fit() -> None:
+    """拟合收敛只移动 <0.05 dB；EGN 贡献 >0.3 dB；前向不额外放大差距。"""
+    default = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w")
+    converged = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", poly_degree=9, spp_steps=96)
+    assert abs(converged - default) < 0.05, f"fit-convergence shift {converged - default:+.3f} dB"
+
+    no_egn = _audit_snr("pcfm_h3_raman", 3, "fwd_0p2w", egn=False)
+    assert default - no_egn > 0.3, f"EGN contribution {default - no_egn:+.3f} dB"
+
+    # 同核对照：hybrid 的旧 PCFM 路径与 H3 共用 SCI/XCI 代码和 EGN，
+    # 只差 ODE 步数（24 vs 12），应在 0.05 dB 内。
+    control = _audit_snr(
+        "hybrid_raman_paper",
+        3,
+        "fwd_0p2w",
+        nli_form="pcfm",
+        poly_degree=3,
+        spp_steps=12,
+        egn=True,
+    )
+    assert abs(default - control) < 0.06, f"same-kernel control shift {default - control:+.3f} dB"
+
+    paper = _audit_snr("hybrid_raman_paper", 3, "fwd_0p2w", nli_form="paper")
+    h3_nopump = _audit_snr("pcfm_h3_raman", 3, "nopump")
+    paper_nopump = _audit_snr("hybrid_raman_paper", 3, "nopump", nli_form="paper")
+    pump_specific = (default - paper) - (h3_nopump - paper_nopump)
+    assert abs(pump_specific) < 0.1, f"pump-specific excess {pump_specific:+.3f} dB"
 
 
 # ---------------------------------------------------------------------------
