@@ -10,7 +10,13 @@
 - 未耗尽泵浦，Gaussian 拉曼谱；
 - 3/5/7 信道、100 km、50 GBd DP-QPSK、1 mW/偏振（0 dBm/pol）；
 - 前向/后向 1450 nm、0.1/0.2W；
-- 数据：`data/dra_waveform/dra_reference.{json,npz}`。
+- 数据（旧、500 m）：`data/dra_waveform/dra_reference.{json,npz}`；
+- 数据（收敛、62.5 m）：`data/dra_waveform_converged/`，详见 §13。
+
+> **历史数据提示**：`data/dra_waveform/` 的 5/7ch 参考固定 500 m SSFM
+> 步长，未收敛（5ch 1.53 dB、7ch 4.01 dB 伪影）。本文 §3–§12 中所有
+> 500 m 的 5/7ch 数字只作历史/趋势参考，不能用于校准。收敛后的完整表
+> 见 §13。
 
 统一后的 NLI 定义：
 
@@ -35,9 +41,15 @@ SNR_NLI  = 10 log10(P_signal / P_NLI)
 - `numerical_dra`
 - `pcfm` + lumped
 
-比较中心信道的 `SNR_NLI` 和泵浦引起的 SNR 变化。
+比较中心信道的 `SNR_NLI` 和泵浦引起的 SNR 变化。脚本从参考 JSON 的
+`pump_model` 自动选择解析侧 `pump_depletion`（`undepleted` → `False`，
+`depleted` → `True`），hybrid/H3 会透传该口径；其余模型没有该开关，见 §13。
 
-## 3. 结果
+## 3. 结果（500 m 旧参考，历史/未收敛）
+
+> 本节数字来自 `data/dra_waveform/` 的 500 m 参考。3ch 在 500 m 已收敛
+> （伪影 0.07 dB），5/7ch 未收敛（1.53/4.01 dB）。**5/7ch 仅作历史对照，
+> 不进入校准域。** 收敛参考见 §13。
 
 ### 3.1 绝对 SNR
 
@@ -49,7 +61,7 @@ SNR_NLI  = 10 log10(P_signal / P_NLI)
 | 后向 0.2W | 36.51 | 36.16 | 36.40 | 36.16 | 36.15 |
 | 前向 0.2W | 21.75 | 23.80 | 24.11 | 23.73 | 36.15 |
 
-5 信道中心信道：
+5 信道中心信道（**历史/未收敛，500 m**）：
 
 | 配置 | 波形 SNR_NLI | hybrid | H3 | numerical | lumped |
 |---|---:|---:|---:|---:|---:|
@@ -57,7 +69,7 @@ SNR_NLI  = 10 log10(P_signal / P_NLI)
 | 后向 0.2W | 34.51 | 35.54 | 35.72 | 35.56 | 35.54 |
 | 前向 0.2W | 19.64 | 23.49 | 23.72 | 23.43 | 35.54 |
 
-7 信道（压力测试，不纳入校准）：
+7 信道（**历史/未收敛，500 m**；压力测试，不纳入校准）：
 
 | 配置 | 波形 | hybrid |
 |---|---:|---:|
@@ -65,13 +77,14 @@ SNR_NLI  = 10 log10(P_signal / P_NLI)
 | 后向 0.2W | 31.95 | 35.17 |
 | 前向 0.2W | 17.64 | 23.39 |
 
-3/5 信道在**无泵和后向泵**下只差 0.4–1.1 dB；前向泵差 2.1–3.9 dB；7 信道差 3–6 dB。
+旧 500 m：3/5 信道在**无泵和后向泵**下只差 0.4–1.1 dB；前向泵差
+2.1–3.9 dB；7 信道差 3–6 dB。
 绝对差不是 Raman 方向错误，而是对照口径不同：
 
 - 波形 NLI 是 **50 GHz 理想矩形带内、单复标量公共增益拟合后的残差**；
   `nli_analysis_bandwidth_hz=50e9`、`nli_definition` 已写入 JSON；
 - 解析 NLI 是 GN 功率，信道是 50 GHz 矩形谱；
-- 波形是 3/5 信道、RRC 55 GHz、有限样本；
+- 波形是 3/5/7 信道、RRC 55 GHz、有限样本；
 - 波形未加 ASE，解析只取 NLI，但两者的接收机/带宽归一化仍不同。
 
 因此当前不能把 3–6 dB 当作模型误差直接校准。
@@ -87,28 +100,27 @@ SNR_NLI  = 10 log10(P_signal / P_NLI)
 | 5ch | 后向 0.2W | -0.28 | -0.17 | -0.24 | 0.00 |
 | 5ch | 前向 0.2W | -15.15 | -12.22 | -12.24 | 0.00 |
 
-校准域（当前可用的基准）：
+旧 500 m 校准域（**历史/已废弃**）：
 
 | 数据集 | 泵方向 | 解析 vs 波形 | 状态 |
 |---|---|---:|---|
-| 3ch | 无泵 | -0.45 dB | 已校准 |
-| 3ch | 后向 | -0.36 dB | 已校准 |
+| 3ch | 无泵 | -0.45 dB | 500 m 已收敛 |
+| 3ch | 后向 | -0.36 dB | 500 m 已收敛 |
 | 3ch | 前向 | +2.06 dB | 仅趋势 |
-| 5ch | 无泵 | +0.91 dB | 已校准 |
-| 5ch | 后向 | +1.03 dB | 已校准 |
-| 5ch | 前向 | +3.85 dB | 仅趋势 |
-| 7ch | 无/后向 | +3.2 dB | 未校准 |
-| 7ch | 前向 | +5.75 dB | 未校准 |
+| 5ch | 无泵 | +0.91 dB | 含 1.53 dB 步长伪影 |
+| 5ch | 后向 | +1.03 dB | 含步长伪影 |
+| 5ch | 前向 | +3.85 dB | 含步长伪影，仅趋势 |
+| 7ch | 无/后向 | +3.2 dB | 含 4.01 dB 步长伪影 |
+| 7ch | 前向 | +5.75 dB | 含步长伪影，仅趋势 |
 
-结论：
+这张表只记录历史结论，不再作为校准依据；收敛后的校准域见 §13。
 
-- 3/5 信道无泵和后向泵进入 **±1.1 dB** 校准域；
-- 前向泵仍有 2–4 dB 偏差，不做全局校准；
-- 7 信道偏差 3–6 dB，是压力测试，不进入基准；
+仍成立的趋势结论：
+
 - 波形、hybrid、H3 都显示**前向泵大幅恶化 NLI，后向泵影响很小**；
 - lumped 对前向泵完全无响应，趋势错 15 dB；
 - H3 与 hybrid 的趋势一致，H3 略乐观约 0.1–0.6 dB；
-- 绝对偏差需要在 NLI 提取/带宽口径统一后再校准。
+- 旧 500 m 的绝对偏差需要在步长收敛和 NLI 提取/带宽口径统一后再校准。
 
 ## 4. 这轮新增的参考价值
 
@@ -127,11 +139,41 @@ SNR_NLI  = 10 log10(P_signal / P_NLI)
 
 ## 6. 复现
 
+旧 500 m 参考（保留原行为）：
+
 ```bash
 PYTHONPATH=src python scripts/dra_waveform_compare.py
 ```
 
 结果：`results/raman/waveform_compare.json`。
+
+收敛 62.5 m 参考（`pump_depletion` 由参考 JSON 的 `pump_model` 自动选择）：
+
+```bash
+PYTHONPATH=src python scripts/dra_waveform_compare.py \
+  --data-dir data/dra_waveform_converged \
+  --reference dra_reference.json \
+  --output results/raman/waveform_compare_converged.json
+
+PYTHONPATH=src python scripts/dra_waveform_compare.py \
+  --data-dir data/dra_waveform_converged \
+  --reference dra_reference_depleted.json \
+  --output results/raman/waveform_compare_converged_depleted.json
+```
+
+`--data-dir` 默认 `data/dra_waveform`，`--reference` 默认
+`dra_reference.json`，`--output` 缺省时沿用旧路径（非默认数据目录会写到
+`results/raman/waveform_compare_<dir>.json`，避免覆盖旧结果）。
+
+需要重跑 WP1 的未耗尽对照 pass 时，加 `--control-output`：
+
+```bash
+PYTHONPATH=src python scripts/dra_waveform_compare.py \
+  --control-output results/raman/waveform_compare_undepleted.json
+```
+
+它只对 hybrid/H3 重跑相反的 `pump_depletion` 口径，并写入
+`closure_db = depleted_delta - undepleted_delta`。
 
 ## 7. 前向泵功率与步长证据
 
@@ -222,31 +264,39 @@ PYTHONPATH=src python scripts/dra_waveform_compare.py
 32 步以后收敛到 <0.01 dB，说明偏差不是 ODE 分辨率或 Eq. (10) 拟合采样不足。
 剩余问题是剖面/增益权重本身，需改模型项，不是调步数。
 
-## 11. 校准状态与阻塞
+## 11. 校准状态与阻塞（收敛参考重写）
 
-已接受的校准域：
+以下为 62.5 m 收敛参考下的校准域（表格与口径见 §13）：
 
-- 3/5 信道；
-- 无泵或后向泵；
-- 1 mW/偏振；
-- 50 GHz 分析带；
-- 最大误差约 1.1 dB。
+已接受：
+
+- **3/5/7 信道、无泵**：hybrid −0.38/−0.62/−0.95 dB，
+  H3 −0.06/−0.37/−0.73 dB，均在 ±1.0 dB 内；
+- **3/5/7 信道、后向泵（0.1/0.2 W）**：hybrid −0.36…−0.71 dB，
+  H3 −0.05…−0.69 dB，均在 ±1.0 dB 内；
+- **3/5 信道、前向泵、耗尽参考**：hybrid +0.79/+0.96 dB（0.2 W），
+  H3 +1.09/+1.19 dB；hybrid 在 ±1.0 dB 内，H3 因默认 EGN 略乐观
+  0.2–0.3 dB；
+- 1 mW/偏振、50 GHz 分析带。
 
 未校准：
 
-- 前向泵 1.3–5.8 dB；
-- 7 信道 3–6 dB。
+- **7 信道前向泵**：目前只有未耗尽参考，同口径残差 hybrid +2.86 dB；
+  待 WP5a 后续生成耗尽 7ch 数据后再判断，当前只作趋势；
+- **前向泵 H3**：1.1–1.2 dB，略超 ±1.0 dB；属 EGN 的已知乐观偏差，
+  需要时可用 `use_egn=False` 复核。
 
 前向泵偏差在排除以下项后仍存在：
 
 - 功率口径；
 - NLI 分析带宽与投影；
-- SSFM 步长；
+- SSFM 步长（62.5 m 已收敛）；
 - ODE 步数；
 - Eq. (6)-(9) 的 paper/integral/pcfm 形式。
 
-剩余差异来自解析模型的**前向泵 SPM 增益增强项**。这不是常数校准或
-参数扫描能修复的，需要新增/修改物理模型项；当前基准不能声称覆盖前向 DRA。
+收敛且口径对齐后，前向残差从旧 500 m 的 +2.1/+3.9 dB 降到
+耗尽参考下的 +0.8/+1.0 dB（hybrid，3/5ch）；剩余部分主要来自
+前向泵 SPM 增益增强项，不是常数校准或参数扫描能修复的。
 
 ## 12. 7 信道状态更新（2026-11-04）
 
@@ -257,10 +307,158 @@ PYTHONPATH=src python scripts/dra_waveform_compare.py
 
 因此：
 
-- 本文第 3/11 节的 7ch 数字（32.27、3.2 dB 等）只代表未收敛参考，
-  不可用于校准或模型误差归因；
-- 5ch 也有 1.53 dB 步长偏差，收敛后中心差为 −0.61 dB（仍在 ±1.1 dB 内），
-  重生成时应一并修正；
-- 7ch 前向泵仍有 4.08 dB 残差（步长只解释 1.67 dB），继续只作趋势；
-- 无泵/后向泵的 7ch 在重生成（`coarse_step_size_m ≤ 62.5 m`）后可重新评估；
-  当前数据仍排除出校准域。
+- 本文第 3 节的 500 m 7ch 数字（32.27、3.2 dB 等）只代表未收敛参考，
+  不可用于校准或模型误差归因；5ch 的 500 m 数字同理；
+- WP5a 已生成 62.5 m 收敛参考，§13 给出重算结果：7ch 无泵
+  hybrid/H3 残差 −0.95/−0.73 dB，后向 0.2W −0.71/−0.56 dB；
+- 7ch 无泵/后向因此重新进入**校准候选**（±1.0 dB）；
+- 7ch 前向仍只有未耗尽参考（同口径残差 +2.86 dB），且 WP5a 尚未生成
+  耗尽 7ch 数据，继续只作趋势，不进入校准域。
+
+## 13. 收敛参考（62.5 m）
+
+### 13.1 数据与口径
+
+WP5a 在 `physical-nlo-eval` 重新生成了 62.5 m 收敛参考，本仓副本：
+
+| 文件 | 内容 | `pump_model` |
+|---|---|---|
+| `data/dra_waveform_converged/dra_reference.{json,npz}` | 3/5/7ch、5 配置 | `undepleted` |
+| `data/dra_waveform_converged/dra_reference_depleted.{json,npz}` | 3/5ch + 1ch + 功率扫描 | `depleted` |
+| `data/dra_waveform_converged/step_convergence.json` | 500→31.25 m 步长探针 | — |
+
+旧 `data/dra_waveform/` 保留不动，作为历史/未收敛参考。所有收敛数据集的
+`step_converged` 为 `true`，`coarse_step_m = 62.5 m`。
+
+`scripts/dra_waveform_compare.py` 从参考 JSON 顶层读取 `pump_model`，自动
+选择解析侧口径：
+
+- `undepleted` → `pump_depletion=False`（hybrid/H3）；
+- `depleted` → `pump_depletion=True`（hybrid/H3）。
+
+`numerical_dra`、`buglia2024_ra_gn` 和 lumped `pcfm` 没有该开关，行内
+`pump_depletion_applied=false`；在未耗尽参考下它们的泵浦口径仍是耗尽的，
+表里用 `†` 标注，**不能**与未耗尽波形做同口径残差。
+
+### 13.2 未耗尽参考（62.5 m）
+
+绝对 `SNR_NLI`（中心信道，dB）：
+
+| 数据集 | 配置 | 波形 | hybrid | H3 | numerical† | lumped |
+|---|---|---:|---:|---:|---:|---:|
+| 3ch | 无泵 | 36.708 | 36.328 | 36.650 | 36.426 | 36.166 |
+| 3ch | 前向 0.1W | 29.953 | 30.429 | 30.781 | 30.653 | 36.166 |
+| 3ch | 前向 0.2W | 21.664 | 23.258 | 23.546 | 23.732 | 36.166 |
+| 3ch | 后向 0.1W | 36.604 | 36.245 | 36.547 | 36.319 | 36.166 |
+| 3ch | 后向 0.2W | 36.442 | 36.151 | 36.393 | 36.164 | 36.166 |
+| 5ch | 无泵 | 36.331 | 35.706 | 35.962 | 35.800 | 35.557 |
+| 5ch | 前向 0.1W | 29.229 | 29.821 | 30.098 | 30.133 | 35.557 |
+| 5ch | 前向 0.2W | 20.273 | 22.607 | 22.818 | 23.429 | 35.557 |
+| 5ch | 后向 0.1W | 36.216 | 35.627 | 35.864 | 35.701 | 35.557 |
+| 5ch | 后向 0.2W | 36.021 | 35.537 | 35.716 | 35.558 | 35.557 |
+| 7ch | 无泵 | 36.274 | 35.326 | 35.549 | 35.417 | 35.186 |
+| 7ch | 前向 0.1W | 28.975 | 29.436 | 29.675 | 29.836 | 35.186 |
+| 7ch | 前向 0.2W | 19.321 | 22.185 | 22.354 | 23.334 | 35.186 |
+| 7ch | 后向 0.1W | 36.146 | 35.248 | 35.453 | 35.323 | 35.186 |
+| 7ch | 后向 0.2W | 35.868 | 35.161 | 35.308 | 35.187 | 35.186 |
+
+同口径残差（解析 − 波形，dB）：
+
+| 数据集 | 无泵 | 后向 0.1W | 后向 0.2W | 前向 0.1W | 前向 0.2W |
+|---|---:|---:|---:|---:|---:|
+| 3ch hybrid | −0.380 | −0.359 | −0.290 | +0.476 | +1.594 |
+| 3ch H3 | −0.058 | −0.056 | −0.048 | +0.828 | +1.882 |
+| 5ch hybrid | −0.624 | −0.589 | −0.484 | +0.592 | +2.333 |
+| 5ch H3 | −0.368 | −0.352 | −0.305 | +0.869 | +2.545 |
+| 7ch hybrid | −0.948 | −0.897 | −0.707 | +0.462 | +2.864 |
+| 7ch H3 | −0.725 | −0.693 | −0.560 | +0.701 | +3.034 |
+
+注意：前向列的 +1.59/+2.33/+2.86 dB 是**未耗尽参考 vs 未耗尽解析**的
+同口径残差，不是模型误差被耗尽口径放大后的值。它与耗尽参考下的残差
+（§13.3）要分开看。
+
+### 13.3 耗尽参考（62.5 m）
+
+3/5/7ch 绝对 `SNR_NLI`（dB）：
+
+| 数据集 | 配置 | 波形 | hybrid | H3 | hybrid 差 | H3 差 |
+|---|---|---:|---:|---:|---:|---:|
+| 3ch | 无泵 | 36.708 | 36.328 | 36.650 | −0.380 | −0.058 |
+| 3ch | 前向 0.1W | 30.299 | 30.575 | 30.911 | +0.277 | +0.613 |
+| 3ch | 前向 0.2W | 23.012 | 23.803 | 24.105 | +0.791 | +1.093 |
+| 3ch | 后向 0.1W | 36.608 | 36.247 | 36.549 | −0.361 | −0.059 |
+| 3ch | 后向 0.2W | 36.454 | 36.156 | 36.398 | −0.298 | −0.057 |
+| 5ch | 无泵 | 36.331 | 35.706 | 35.962 | −0.624 | −0.368 |
+| 5ch | 前向 0.1W | 29.846 | 30.061 | 30.313 | +0.216 | +0.467 |
+| 5ch | 前向 0.2W | 22.531 | 23.491 | 23.724 | +0.960 | +1.193 |
+| 5ch | 后向 0.1W | 36.223 | 35.630 | 35.867 | −0.593 | −0.356 |
+| 5ch | 后向 0.2W | 36.043 | 35.545 | 35.724 | −0.499 | −0.320 |
+| 7ch | 无泵 | 36.274 | 35.326 | 35.549 | −0.948 | −0.725 |
+| 7ch | 前向 0.1W | 29.845 | 29.771 | 29.972 | −0.075 | +0.126 |
+| 7ch | 前向 0.2W | 22.384 | 23.387 | 23.583 | +1.003 | +1.199 |
+| 7ch | 后向 0.1W | 36.155 | 35.252 | 35.457 | −0.903 | −0.698 |
+| 7ch | 后向 0.2W | 35.903 | 35.171 | 35.319 | −0.731 | −0.584 |
+
+1ch 与 3ch 发射功率扫描（同一耗尽参考）：
+
+| 数据集 | 配置 | 波形 | hybrid | H3 | hybrid 差 | H3 差 |
+|---|---|---:|---:|---:|---:|---:|
+| 1ch | 无泵 | 38.043 | 37.869 | 38.461 | −0.174 | +0.417 |
+| 1ch | 前向 0.2W | 23.704 | 24.836 | 25.382 | +1.132 | +1.678 |
+| 1ch | 后向 0.2W | 37.774 | 37.664 | 38.158 | −0.110 | +0.384 |
+| 3ch 0.5 mW | 无泵 | 42.721 | 42.349 | 42.671 | −0.372 | −0.050 |
+| 3ch 0.5 mW | 前向 0.2W | 28.374 | 29.561 | 29.857 | +1.187 | +1.484 |
+| 3ch 2.0 mW | 无泵 | 30.704 | 30.308 | 30.591 | −0.397 | −0.113 |
+| 3ch 2.0 mW | 前向 0.2W | 18.089 | 18.256 | 18.624 | +0.167 | +0.536 |
+
+（3ch 1.0 mW 与上表 3ch 同一行，不再重复。）
+
+### 13.4 校准域（收敛参考）
+
+| 数据集 | 泵方向 | hybrid 残差 | H3 残差 | 状态 |
+|---|---|---:|---:|---|
+| 3ch | 无泵 | −0.38 dB | −0.06 dB | 校准域 |
+| 5ch | 无泵 | −0.62 dB | −0.37 dB | 校准域 |
+| 7ch | 无泵 | −0.95 dB | −0.73 dB | 校准候选 |
+| 3ch | 后向 0.1/0.2W | −0.36/−0.29 dB | −0.06/−0.05 dB | 校准域 |
+| 5ch | 后向 0.1/0.2W | −0.59/−0.48 dB | −0.35/−0.31 dB | 校准域 |
+| 7ch | 后向 0.1/0.2W | −0.90/−0.71 dB | −0.69/−0.56 dB | 校准候选 |
+| 3ch | 前向 0.2W（耗尽） | +0.79 dB | +1.09 dB | hybrid 校准域；H3 略超 |
+| 5ch | 前向 0.2W（耗尽） | +0.96 dB | +1.19 dB | hybrid 校准域；H3 略超 |
+| 7ch | 前向 0.1W（耗尽） | −0.08 dB | +0.13 dB | 校准域 |
+| 7ch | 前向 0.2W（耗尽） | +1.00 dB | +1.20 dB | hybrid 校准域；H3 略超 |
+
+结论：
+
+- 3/5/7ch 的无泵与后向泵残差全部在 **±1.0 dB** 内；7ch 从旧 500 m 的
+  +3.06 dB 修正到 −0.95 dB（hybrid）；
+- 前向泵在耗尽参考下，3/5/7ch hybrid 为 +0.79/+0.96/+1.00 dB，进入 ±1.0 dB；
+  7ch 前向 0.1W 只有 −0.08 dB。H3 因默认 EGN 为 +1.09/+1.19/+1.20 dB，
+  略乐观，需要时用 `use_egn=False` 复核；
+- 7ch 前向的 +2.86 dB（未耗尽参考）是口径错配造成的旧数字；加入 7ch 耗尽
+  数据后，同口径残差降到 +1.00 dB（hybrid），与 3/5ch 一致；
+- 单次 256-symbol 实现的统计误差约 0.3–0.5 dB（见
+  `docs/dra-7ch-audit.md` §4），上述 ±1.0 dB 校准带里有约一半是统计预算。
+
+### 13.5 复现与产物
+
+```bash
+PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_compare.py \
+  --data-dir data/dra_waveform_converged \
+  --reference dra_reference.json \
+  --output results/raman/waveform_compare_converged.json
+
+PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_compare.py \
+  --data-dir data/dra_waveform_converged \
+  --reference dra_reference_depleted.json \
+  --output results/raman/waveform_compare_converged_depleted.json
+```
+
+产物：
+
+- `results/raman/waveform_compare_converged.json`（未耗尽，75 行）；
+- `results/raman/waveform_compare_converged_depleted.json`（耗尽，120 行，
+  含 7ch）。
+
+脚本对 `data/dra_waveform_converged/` 强制要求每个数据集
+`step_converged: true` 且 `coarse_step_m <= 62.5`；不满足会直接退出。
