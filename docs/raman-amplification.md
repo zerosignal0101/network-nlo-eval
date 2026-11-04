@@ -19,6 +19,7 @@
 | `FiberSpanConfig.raman_pumps` | **配置有** | 解析 lumped / paper 模型都可读取 |
 | PCFM/H3 解析 | **原无** | 只做信道间 ISRS；`Raman pumping is not modelled` |
 | `raman_lumped` | **有** | 跨末乘 on-off 增益，Raman ASE 在 EDFA 前注入 |
+| `pcfm_h3_raman` | **有（剖面感知）** | H3 PCFM SCI/XCI 核 + 粗 coupled ODE 剖面/ASE；无泵时逐位回到 H3 PCFM |
 | `hybrid_raman_paper` | **有（完整 NLI）** | Eq. (2)/(4) ODE + Eq. (10) 拟合 + Eq. (6)-(9) 闭式；`nli_form="pcfm"` 保留旧近似 |
 | cGN | 部分 | `k_bar` 只是泵浦功率占比上限，不是谱分辨拉曼放大 |
 | D'Amico2022 | 无 | 明确不做 DRA |
@@ -205,6 +206,133 @@ model = create_model(
 | `c_57ch` 10 跨 | 16.291 | 17.221 | 17.569 | 16.969 |
 | `scaling_40ch` 1 跨 | 27.837 | 30.827 | 30.527 | 30.437 |
 | `scaling_40ch` 10 跨 | 17.675 | 20.511 | 20.527 | 20.123 |
+
+## 4.5 剖面感知快速模型 `pcfm_h3_raman`
+
+### 定位
+
+`pcfm_h3_raman` 是 `pcfm` + `raman_lumped` 的升级路径，不是第二份论文实现：
+
+* **保留** H3 PCFM 的 SCI/XCI 闭式核、`edge_fix`、`cache_spans`、EGN 与
+  `spp_steps="auto"`；
+* **替换** 跨内归一化剖面：由泵浦/信号耦合的粗 coupled ODE 给出
+  `p_i(z)=P_i(z)/P_i(0)`，送入同一套多项式拟合 Eq. (23) 与岛核 Eq. (24)/(30)，
+  不再把 Raman 增益只在跨末乘一次；
+* **同时** 用同一份 ODE 给出新产生的 Raman ASE，交给 EDFA 前的路由层；
+* **无泵时** 完全走父类 `PCFMSpanKernel`，与 H3 PCFM 逐位一致。
+
+明确边界：剖面/ASE 的 ODE 用 12 步粗步长（完整 paper 用 32 步），输入 ASE
+初值取零，Raman 谱仍是 Gaussian/CZ 近似，泵浦 ASE 与泵浦-信号 XPM 未建模。
+因此它是**工程近似**，不是 Buglia Eq. (6)-(9) 的完整实现。
+
+```python
+model = create_model(
+    "pcfm_h3_raman", grid, fiber,
+    raman_pumps=[RamanPumpConfig(
+        wavelength_nm=1450.0, power_w=0.2,
+        direction="backward", attenuation_db_per_km=0.25,
+    )],
+    raman_steps=12,          # 粗 ODE 步数
+    raman_iterations=24,     # BW 泵不动点上限（收敛即提前退出）
+    span_coherence="pcfm",   # 默认 H3 相干口径；"incoherent" 为 paper 匹配口径
+)
+```
+
+### 误差来源（先量化，再实现）
+
+`c_57ch`（57 信道、10×100 km、1450 nm / 0.2 W 后向泵，**H3 配置**
+`poly_degree=3, egn=True`）上，lumped 与 paper 的平均 SNR 差为
+**−0.191 dB**；1 跨为 **+0.214 dB**。把误差拆开
+（`results/raman/h3_raman.json` 的 `error_sources`）：
+
+| 量 | 1 跨 | 10 跨 |
+|---|---:|---:|
+| lumped − paper 平均 SNR (dB) | +0.214 | −0.191 |
+| lumped/paper NLI 比 (dB) | −0.134 | +0.333 |
+| lumped/paper ASE 比 (dB) | −0.695 | −0.695 |
+| 只把 NLI 换成 paper 后的平均 SNR (dB) | 27.678 | 17.678 |
+| 只把 ASE 换成 paper 后的平均 SNR (dB) | 27.675 | 17.280 |
+
+结论：
+
+1. **ASE 是 lumped 的系统性偏差**。lumped 的末端 `G−1` 近似比 paper 的
+   Eq. (4) 沿跨 ASE 低 0.70 dB；10 跨累积后，仅 ASE 一项就让 lumped 的 SNR
+   偏高约 0.10 dB。
+2. **NLI 的方向会随跨数翻转**。1 跨时 paper 的 NLI 比 lumped 低 0.13 dB；
+   10 跨时 paper 的 NLI 反而比 lumped 高 0.33 dB。后者不是剖面效应，而是
+   paper 默认 `epsilon=0` 的**功率相加**口径：paper 的 10 跨 NLI 恰好是
+   1 跨的 10 倍，而 PCFM/数值参考的可见度加权相干和是 11.32 倍
+   （无泵 10 跨/1 跨 NLI 比：PCFM 11.32，数值参考 11.32，paper 10.0）。
+3. **只看剖面**：把同一个 PCFM 核的剖面换成 paper ODE 剖面
+   （`hybrid_raman_paper(nli_form="pcfm")`），10 跨 NLI 比 lumped 高
+   0.36 dB；paper 自己的 NLI 相对其无泵基线只高 0.12 dB。两者相差约
+   0.7 dB，主要是 PCFM 闭式核与 Buglia Eq. (8)/(9) 的核间差，加上跨间口径。
+   新模型复现的是**Raman 引起的剖面/ASE 变化**，不是这 0.7 dB 的核间基线。
+
+因此，评估新模型时同时报告两个量：
+
+* **绝对 SNR 误差**（对 paper）：包含 paper 的 `epsilon=0` 口径；
+* **Raman 效应误差**：各自减去自己的无泵基线，隔离剖面/ASE 的贡献。
+
+### 精度分布与耗时
+
+`results/raman/h3_raman.json` 的完整逐信道分布；下表是平均值与 p95/最大
+绝对误差（逐信道，dB）：
+
+| 算例 | 模型/口径 | 平均 SNR (dB) | 平均误差 vs paper | p95 abs | max abs | 热调用 (ms) |
+|---|---|---:|---:|---:|---:|---:|
+| `c_57ch` 1 跨 | `pcfm_h3_raman` | 27.528 | −0.041 | 0.065 | 0.066 | 14.9 |
+| `c_57ch` 10 跨 | `pcfm_h3_raman`（默认相干） | 17.123 | −0.446 | 0.462 | 0.463 | 15.5 |
+| `c_57ch` 10 跨 | `pcfm_h3_raman`（`incoherent`） | 17.528 | −0.041 | 0.065 | 0.066 | 15.7 |
+| `scaling_40ch` 1 跨 | `pcfm_h3_raman` | 30.541 | +0.014 | 0.040 | 0.070 | 12.7 |
+| `scaling_40ch` 10 跨 | `pcfm_h3_raman`（默认相干） | 20.269 | −0.258 | 0.274 | 0.274 | 13.9 |
+| `scaling_40ch` 10 跨 | `pcfm_h3_raman`（`incoherent`） | 20.541 | +0.014 | 0.040 | 0.070 | 13.4 |
+| `cl_40ch` 10 跨（6 泵） | `pcfm_h3_raman`（默认相干） | 14.972 | +0.095 | 1.491 | 1.760 | 19.9 |
+| `cl_40ch` 10 跨（6 泵） | `raman_lumped` | 15.763 | +0.886 | 2.209 | 2.506 | 3.5 |
+
+* **C 波段 1 跨**：默认口径已在 0.15 dB 内；逐信道 p95/max 也只有 0.065 dB。
+* **C 波段 10 跨**：默认相干口径的绝对误差 0.446 dB 来自 paper 的
+  `epsilon=0` 口径，不是 Raman 剖面；把 `span_coherence="incoherent"` 后
+  绝对误差 0.041 dB、p95 0.065 dB，满足 <0.15 dB。
+* **C+L 6 泵**：默认相干口径平均误差 0.095 dB，逐信道 p95 1.49 dB；
+  lumped 是 0.886 dB / p95 2.21 dB。新模型在均值与分布上都优于 lumped，
+  但 paper 的 C+L 逐信道形状本身与新模型差异较大，不能用单一均值掩盖。
+* **速度**：C 波段 10 跨热调用 15.5 ms，C+L 10 跨 19.9 ms，均 <50 ms 目标；
+  首个跨承担粗 ODE 求解，后续透明跨命中缓存。lumped 的 3 ms 仍是更快的
+  预算工具，但它没有跨内剖面。
+
+### 前向泵：剖面感知最直接的证据
+
+1 跨、0.2 W 1450 nm、`c_57ch`：
+
+| 方向 | 无泵 NLI (W) | lumped NLI (W) | 新模型 NLI (W) | paper NLI (W) | lumped SNR (dB) | 新模型 SNR (dB) | paper SNR (dB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 后向 | 2.509e-6 | 2.509e-6 | 2.622e-6 | 2.587e-6 | 27.783 | 27.528 | 27.569 |
+| 前向 | 2.509e-6 | 2.509e-6 | 1.010e-5 | 1.040e-5 | 28.241 | 22.276 | 22.159 |
+
+lumped 在两种方向下 NLI 逐位不变；前向泵把增益放在跨首，真实 NLI 增加
+约 6 dB，lumped 的 SNR 因此高估约 6 dB。新模型跟随 paper，1 跨误差
++0.117 dB。这是“剖面送入 NLI”而不是“跨末乘增益”的核心区别。
+
+### 限制
+
+* 粗 ODE 的 12 步、零输入 ASE 初值是**工程近似**；精度随 `raman_steps`
+  可调，但不要把它当作完整 paper ODE。
+* 默认 `span_coherence="pcfm"` 与 H3/数值参考一致；paper 的 `epsilon=0`
+  未印出，`"incoherent"` 只是 paper 匹配口径，不是物理上更优的选择。
+* 与 lumped 一样，Raman 谱是 Gaussian/CZ 近似，未做具体光纤标定；泵浦 ASE、
+  泵浦-信号 XPM、droop 控制未建模。
+* 不支持跨内集总损耗（模型层没有该入口）；kernel 层的 `lumped_loss` 与
+  Raman 粗 ODE 不应同时使用。
+
+### 复现
+
+```bash
+PYTHONPATH=src pytest tests/test_pcfm_h3_raman.py -q
+PYTHONPATH=src python scripts/h3_raman_comparison.py
+```
+
+结果：`results/raman/h3_raman.json`。
 
 ## 5. 三篇 DRA 论文总表
 
