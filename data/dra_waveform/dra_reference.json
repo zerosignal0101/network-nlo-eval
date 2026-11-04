@@ -748,6 +748,538 @@
           ]
         }
       }
+    },
+    "7ch": {
+      "input_key": "input_7ch",
+      "bits_key": "bits_7ch",
+      "offsets_key": "offsets_7ch",
+      "n_channels": 7,
+      "center_channel_index": 3,
+      "sample_rate_hz": 900000000000.0,
+      "num_samples": 4608,
+      "channel_bandwidth_hz": 55000000000.00001,
+      "nli_analysis_bandwidth_hz": 50000000000.0,
+      "nli_definition": "In-band additive NLI after one complex common-gain projection NL-a*LIN; 50 GHz ideal rectangular analysis band; SNR_NLI=signal/NLI; no ASE.",
+      "configs": {
+        "nopump": {
+          "waveform_nonlinear_key": "nl_7ch_nopump",
+          "waveform_linear_key": "lin_7ch_nopump",
+          "pumps": [],
+          "output_power_per_pol_w": 7.007232488831505e-05,
+          "dra_ase_model": "none",
+          "dra_ase_power_per_pol_w": 0.0,
+          "center_channel_evm_percent": 3.0723412431330037,
+          "center_channel_snr_evm_db": 30.250610982581982,
+          "center_channel_common_gain_db": 0.0011115900016025178,
+          "center_channel_common_phase_deg": 29.47645430311229,
+          "per_channel": [
+            {
+              "channel_id": 0,
+              "freq_offset_hz": -300000000000.0,
+              "signal_power_w": 1.9729130808414597e-05,
+              "nli_power_w": 1.0697778714270857e-08,
+              "nli_power_raw_w": 5.138656620420749e-06,
+              "snr_nli_db": 32.6581434210373,
+              "snr_nli_raw_db": 5.842583544176289,
+              "common_gain_db": 0.003941529357650577,
+              "common_phase_deg": 29.551641819797943,
+              "on_off_gain_db": 0.0
+            },
+            {
+              "channel_id": 1,
+              "freq_offset_hz": -200000000000.0,
+              "signal_power_w": 1.9600775366755927e-05,
+              "nli_power_w": 1.0733721164066575e-08,
+              "nli_power_raw_w": 5.10073142894022e-06,
+              "snr_nli_db": 32.61522942316879,
+              "snr_nli_raw_db": 5.846407944670984,
+              "common_gain_db": -0.0008998304960900535,
+              "common_phase_deg": 29.529670715798467,
+              "on_off_gain_db": 0.0
+            },
+            {
+              "channel_id": 2,
+              "freq_offset_hz": -100000000000.0,
+              "signal_power_w": 1.9672600671681405e-05,
+              "nli_power_w": 1.1798497146045474e-08,
+              "nli_power_raw_w": 5.167483582958219e-06,
+              "snr_nli_db": 32.220350846076016,
+              "snr_nli_raw_db": 5.805826708743283,
+              "common_gain_db": -0.007911986288960188,
+              "common_phase_deg": 29.656901665308848,
+              "on_off_gain_db": 0.0
+            },
+            {
+              "channel_id": 3,
+              "freq_offset_hz": 0.0,
+              "signal_power_w": 1.960488670156945e-05,
+              "nli_power_w": 1.1632684595365591e-08,
+              "nli_power_raw_w": 5.079823573590078e-06,
+              "snr_nli_db": 32.266843838752564,
+              "snr_nli_raw_db": 5.865157076712282,
+              "common_gain_db": 0.001018478217654974,
+              "common_phase_deg": 29.465768319359356,
+              "on_off_gain_db": 0.0
+            },
+            {
+              "channel_id": 4,
+              "freq_offset_hz": 100000000000.0,
+              "signal_power_w": 1.9741011807708778e-05,
+              "nli_power_w": 1.126615496701895e-08,
+              "nli_power_raw_w": 5.131084901794457e-06,
+              "snr_nli_db": 32.43593687573249,
+              "snr_nli_raw_db": 5.851602074813087,
+              "common_gain_db": 0.00047156135034126886,
+              "common_phase_deg": 29.512966917129127,
+              "on_off_gain_db": 0.0
+            },
+            {
+              "channel_id": 5,
+              "freq_offset_hz": 200000000000.0,
+              "signal_power_w": 1.953934897705327e-05,
+              "nli_power_w": 1.0764007869364905e-08,
+              "nli_power_raw_w": 5.108341094701927e-06,
+              "snr_nli_db": 32.58936082961193,
+              "snr_nli_raw_db": 5.826302012400923,
+              "common_gain_db": -0.0192061067808822,
+              "common_phase_deg": 29.567503616481442,
+              "on_off_gain_db": 0.0
+            },
+            {
+              "channel_id": 6,
+              "freq_offset_hz": 300000000000.0,
+              "signal_power_w": 1.9687308331138466e-05,
+              "nli_power_w": 1.1413553691338761e-08,
+              "nli_power_raw_w": 5.133055805098026e-06,
+              "snr_nli_db": 32.36765456854873,
+              "snr_nli_raw_db": 5.838103572021575,
+              "common_gain_db": -0.0022976685036599637,
+              "common_phase_deg": 29.554804535401097,
+              "on_off_gain_db": 0.0
+            }
+          ]
+        },
+        "fwd_0p10w": {
+          "waveform_nonlinear_key": "nl_7ch_fwd_0p10w",
+          "waveform_linear_key": "lin_7ch_fwd_0p10w",
+          "pumps": [
+            {
+              "wavelength_nm": 1450.0,
+              "power_w": 0.1,
+              "direction": "forward",
+              "attenuation_db_per_km": 0.25
+            }
+          ],
+          "output_power_per_pol_w": 0.00024718893109820783,
+          "dra_ase_model": "none",
+          "dra_ase_power_per_pol_w": 0.0,
+          "center_channel_evm_percent": 5.551278845456458,
+          "center_channel_snr_evm_db": 25.112139142782755,
+          "center_channel_common_gain_db": -0.005040792368545349,
+          "center_channel_common_phase_deg": 63.56247796052911,
+          "per_channel": [
+            {
+              "channel_id": 0,
+              "freq_offset_hz": -300000000000.0,
+              "signal_power_w": 6.946771215103093e-05,
+              "nli_power_w": 1.4756574610763006e-07,
+              "nli_power_raw_w": 7.742385937502608e-05,
+              "snr_nli_db": 26.727974380501344,
+              "snr_nli_raw_db": -0.47091819896540127,
+              "common_gain_db": -0.010746045998112588,
+              "common_phase_deg": 63.68518679992607,
+              "on_off_gain_db": 5.466750437736304
+            },
+            {
+              "channel_id": 1,
+              "freq_offset_hz": -200000000000.0,
+              "signal_power_w": 6.910399696995384e-05,
+              "nli_power_w": 1.5420004303782806e-07,
+              "nli_power_raw_w": 7.68019640359152e-05,
+              "snr_nli_db": 26.514186727324184,
+              "snr_nli_raw_db": -0.4586915860854906,
+              "common_gain_db": -0.0104032217412195,
+              "common_phase_deg": 63.586702373206315,
+              "on_off_gain_db": 5.47229916159108
+            },
+            {
+              "channel_id": 2,
+              "freq_offset_hz": -100000000000.0,
+              "signal_power_w": 6.921881531087544e-05,
+              "nli_power_w": 1.7319384057145733e-07,
+              "nli_power_raw_w": 7.778839942181144e-05,
+              "snr_nli_db": 26.016917192142593,
+              "snr_nli_raw_db": -0.5069067350033712,
+              "common_gain_db": -0.027354442449327623,
+              "common_phase_deg": 63.91431077055096,
+              "on_off_gain_db": 5.463623855877817
+            },
+            {
+              "channel_id": 3,
+              "freq_offset_hz": 0.0,
+              "signal_power_w": 6.91920397954706e-05,
+              "nli_power_w": 1.7108822873745066e-07,
+              "nli_power_raw_w": 7.67513479462209e-05,
+              "snr_nli_db": 26.068360037697673,
+              "snr_nli_raw_db": -0.4502987763456763,
+              "common_gain_db": -0.005014668115621403,
+              "common_phase_deg": 63.5408660830228,
+              "on_off_gain_db": 5.476917970662713
+            },
+            {
+              "channel_id": 4,
+              "freq_offset_hz": 100000000000.0,
+              "signal_power_w": 6.970083912600631e-05,
+              "nli_power_w": 1.6315267155777932e-07,
+              "nli_power_raw_w": 7.741533375359849e-05,
+              "snr_nli_db": 26.306438170104883,
+              "snr_nli_raw_db": -0.4558898387764929,
+              "common_gain_db": -0.0038060208936386546,
+              "common_phase_deg": 63.59114800639924,
+              "on_off_gain_db": 5.478685983107963
+            },
+            {
+              "channel_id": 5,
+              "freq_offset_hz": 200000000000.0,
+              "signal_power_w": 6.872870499723753e-05,
+              "nli_power_w": 1.493850674061152e-07,
+              "nli_power_raw_w": 7.676135369467834e-05,
+              "snr_nli_db": 26.628309735145024,
+              "snr_nli_raw_db": -0.48004464055338747,
+              "common_gain_db": -0.039480426331607046,
+              "common_phase_deg": 63.64197978910358,
+              "on_off_gain_db": 5.4622807134764155
+            },
+            {
+              "channel_id": 6,
+              "freq_offset_hz": 300000000000.0,
+              "signal_power_w": 6.94869795402211e-05,
+              "nli_power_w": 1.5594660816065882e-07,
+              "nli_power_raw_w": 7.724665379405211e-05,
+              "snr_nli_db": 26.489275008895458,
+              "snr_nli_raw_db": -0.45976241358208614,
+              "common_gain_db": -0.006560245659645767,
+              "common_phase_deg": 63.611270035317666,
+              "on_off_gain_db": 5.477170911661629
+            }
+          ]
+        },
+        "fwd_0p20w": {
+          "waveform_nonlinear_key": "nl_7ch_fwd_0p20w",
+          "waveform_linear_key": "lin_7ch_fwd_0p20w",
+          "pumps": [
+            {
+              "wavelength_nm": 1450.0,
+              "power_w": 0.2,
+              "direction": "forward",
+              "attenuation_db_per_km": 0.25
+            }
+          ],
+          "output_power_per_pol_w": 0.0008726257365196943,
+          "dra_ase_model": "none",
+          "dra_ase_power_per_pol_w": 0.0,
+          "center_channel_evm_percent": 13.531894961549526,
+          "center_channel_snr_evm_db": 17.372827639786486,
+          "center_channel_common_gain_db": -0.07679626504354517,
+          "center_channel_common_phase_deg": 154.41103399129904,
+          "per_channel": [
+            {
+              "channel_id": 0,
+              "freq_offset_hz": -300000000000.0,
+              "signal_power_w": 0.00024296798995033584,
+              "nli_power_w": 3.406467646306797e-06,
+              "nli_power_raw_w": 0.0009255333822418486,
+              "snr_nli_db": 18.53244792340693,
+              "snr_nli_raw_db": -5.808430267274027,
+              "common_gain_db": -0.10188565703734256,
+              "common_phase_deg": 154.43566639118401,
+              "on_off_gain_db": 10.904411085401788
+            },
+            {
+              "channel_id": 1,
+              "freq_offset_hz": -200000000000.0,
+              "signal_power_w": 0.00024296240162819386,
+              "nli_power_w": 3.6648710786949784e-06,
+              "nli_power_raw_w": 0.0009220369465730243,
+              "snr_nli_db": 18.21480370017956,
+              "snr_nli_raw_db": -5.792092520086575,
+              "common_gain_db": -0.08374443823190565,
+              "common_phase_deg": 154.21507096378164,
+              "on_off_gain_db": 10.93265820332272
+            },
+            {
+              "channel_id": 2,
+              "freq_offset_hz": -100000000000.0,
+              "signal_power_w": 0.00024188451084766253,
+              "nli_power_w": 4.223960779521888e-06,
+              "nli_power_raw_w": 0.0009254132110525473,
+              "snr_nli_db": 17.57888182048467,
+              "snr_nli_raw_db": -5.827276360617974,
+              "common_gain_db": -0.137788537887821,
+              "common_phase_deg": 155.14963381463045,
+              "on_off_gain_db": 10.897462826388507
+            },
+            {
+              "channel_id": 3,
+              "freq_offset_hz": 0.0,
+              "signal_power_w": 0.00024395171520360585,
+              "nli_power_w": 4.204595312418519e-06,
+              "nli_power_raw_w": 0.0009241014865586907,
+              "snr_nli_db": 17.635796741575145,
+              "snr_nli_raw_db": -5.784157929276253,
+              "common_gain_db": -0.07687758241512113,
+              "common_phase_deg": 154.3597686871177,
+              "on_off_gain_db": 10.949395391303005
+            },
+            {
+              "channel_id": 4,
+              "freq_offset_hz": 100000000000.0,
+              "signal_power_w": 0.00024598048670824416,
+              "nli_power_w": 4.049561003996187e-06,
+              "nli_power_raw_w": 0.0009312999516097831,
+              "snr_nli_db": 17.83492710774802,
+              "snr_nli_raw_db": -5.781889238997275,
+              "common_gain_db": -0.068205396978304,
+              "common_phase_deg": 154.33392458432422,
+              "on_off_gain_db": 10.955312482142883
+            },
+            {
+              "channel_id": 5,
+              "freq_offset_hz": 200000000000.0,
+              "signal_power_w": 0.0002399629961348343,
+              "nli_power_w": 3.5520417244959363e-06,
+              "nli_power_raw_w": 0.0009174934718443047,
+              "snr_nli_db": 18.29666217191914,
+              "snr_nli_raw_db": -5.8245870701801135,
+              "common_gain_db": -0.14318146549803537,
+              "common_phase_deg": 154.31790714495298,
+              "on_off_gain_db": 10.89234186264501
+            },
+            {
+              "channel_id": 6,
+              "freq_offset_hz": 300000000000.0,
+              "signal_power_w": 0.00024500947806952106,
+              "nli_power_w": 3.5608372868019236e-06,
+              "nli_power_raw_w": 0.0009279544202753202,
+              "snr_nli_db": 18.376307562037717,
+              "snr_nli_raw_db": -5.783437596963079,
+              "common_gain_db": -0.0639838113300561,
+              "common_phase_deg": 154.18290435935276,
+              "on_off_gain_db": 10.94996542142457
+            }
+          ]
+        },
+        "bwd_0p10w": {
+          "waveform_nonlinear_key": "nl_7ch_bwd_0p10w",
+          "waveform_linear_key": "lin_7ch_bwd_0p10w",
+          "pumps": [
+            {
+              "wavelength_nm": 1450.0,
+              "power_w": 0.1,
+              "direction": "backward",
+              "attenuation_db_per_km": 0.25
+            }
+          ],
+          "output_power_per_pol_w": 0.0002471437328495085,
+          "dra_ase_model": "none",
+          "dra_ase_power_per_pol_w": 0.0,
+          "center_channel_evm_percent": 3.5755759018608475,
+          "center_channel_snr_evm_db": 28.933079967568066,
+          "center_channel_common_gain_db": 0.0011457015300077064,
+          "center_channel_common_phase_deg": 30.60787552673085,
+          "per_channel": [
+            {
+              "channel_id": 0,
+              "freq_offset_hz": -300000000000.0,
+              "signal_power_w": 6.9590061559609e-05,
+              "nli_power_w": 3.827917237867936e-08,
+              "nli_power_raw_w": 1.9497793438476975e-05,
+              "snr_nli_db": 32.59584681204573,
+              "snr_nli_raw_db": 5.525617555529414,
+              "common_gain_db": 0.003819559981229263,
+              "common_phase_deg": 30.67821920973042,
+              "on_off_gain_db": 5.474392683876594
+            },
+            {
+              "channel_id": 1,
+              "freq_offset_hz": -200000000000.0,
+              "signal_power_w": 6.913747489890185e-05,
+              "nli_power_w": 3.861467915156122e-08,
+              "nli_power_raw_w": 1.9352697655440583e-05,
+              "snr_nli_db": 32.52961083155009,
+              "snr_nli_raw_db": 5.529720020588272,
+              "common_gain_db": -0.0010906885385590292,
+              "common_phase_deg": 30.65413641116671,
+              "on_off_gain_db": 5.474402623004697
+            },
+            {
+              "channel_id": 2,
+              "freq_offset_hz": -100000000000.0,
+              "signal_power_w": 6.940066798083154e-05,
+              "nli_power_w": 4.2699617205344145e-08,
+              "nli_power_raw_w": 1.9606308669730863e-05,
+              "snr_nli_db": 32.10939668887783,
+              "snr_nli_raw_db": 5.489678149331936,
+              "common_gain_db": -0.007849502261226602,
+              "common_phase_deg": 30.78496912389997,
+              "on_off_gain_db": 5.475018741288409
+            },
+            {
+              "channel_id": 3,
+              "freq_offset_hz": 0.0,
+              "signal_power_w": 6.911040733610249e-05,
+              "nli_power_w": 4.205781806959716e-08,
+              "nli_power_raw_w": 1.9273050972442213e-05,
+              "snr_nli_db": 32.15696714665664,
+              "snr_nli_raw_db": 5.545929826977374,
+              "common_gain_db": 0.0010453188206435782,
+              "common_phase_deg": 30.597286529929598,
+              "on_off_gain_db": 5.4717911588816985
+            },
+            {
+              "channel_id": 4,
+              "freq_offset_hz": 100000000000.0,
+              "signal_power_w": 6.965560613668243e-05,
+              "nli_power_w": 4.079124060824825e-08,
+              "nli_power_raw_w": 1.9480186913412218e-05,
+              "snr_nli_db": 32.3238916179291,
+              "snr_nli_raw_db": 5.533629561262485,
+              "common_gain_db": 0.000635485751940918,
+              "common_phase_deg": 30.641996996600234,
+              "on_off_gain_db": 5.4758666749207885
+            },
+            {
+              "channel_id": 5,
+              "freq_offset_hz": 200000000000.0,
+              "signal_power_w": 6.890405451894741e-05,
+              "nli_power_w": 3.865463035103414e-08,
+              "nli_power_raw_w": 1.9374284545834555e-05,
+              "snr_nli_db": 32.51043253307565,
+              "snr_nli_raw_db": 5.510191040003204,
+              "common_gain_db": -0.019279965275292344,
+              "common_phase_deg": 30.691655612932756,
+              "on_off_gain_db": 5.473346882774209
+            },
+            {
+              "channel_id": 6,
+              "freq_offset_hz": 300000000000.0,
+              "signal_power_w": 6.943577532093819e-05,
+              "nli_power_w": 4.1183489786776756e-08,
+              "nli_power_raw_w": 1.9476774406714062e-05,
+              "snr_nli_db": 32.26860144325923,
+              "snr_nli_raw_db": 5.520662552120655,
+              "common_gain_db": -0.002560606633712146,
+              "common_phase_deg": 30.6829077540762,
+              "on_off_gain_db": 5.473969461918717
+            }
+          ]
+        },
+        "bwd_0p20w": {
+          "waveform_nonlinear_key": "nl_7ch_bwd_0p20w",
+          "waveform_linear_key": "lin_7ch_bwd_0p20w",
+          "pumps": [
+            {
+              "wavelength_nm": 1450.0,
+              "power_w": 0.2,
+              "direction": "backward",
+              "attenuation_db_per_km": 0.25
+            }
+          ],
+          "output_power_per_pol_w": 0.0008723245118744671,
+          "dra_ase_model": "none",
+          "dra_ase_power_per_pol_w": 0.0,
+          "center_channel_evm_percent": 4.724437058852309,
+          "center_channel_snr_evm_db": 26.512998650180766,
+          "center_channel_common_gain_db": 0.0010965218730397948,
+          "center_channel_common_phase_deg": 32.45742485790873,
+          "per_channel": [
+            {
+              "channel_id": 0,
+              "freq_offset_hz": -300000000000.0,
+              "signal_power_w": 0.0002455813193623239,
+              "nli_power_w": 1.3881222241165645e-07,
+              "nli_power_raw_w": 7.706716027689532e-05,
+              "snr_nli_db": 32.47767620823653,
+              "snr_nli_raw_db": 5.033259715749594,
+              "common_gain_db": 0.003523544311445104,
+              "common_phase_deg": 32.517966987400555,
+              "on_off_gain_db": 10.950873759551294
+            },
+            {
+              "channel_id": 1,
+              "freq_offset_hz": -200000000000.0,
+              "signal_power_w": 0.00024401936546618387,
+              "nli_power_w": 1.4044380611841705e-07,
+              "nli_power_raw_w": 7.648989989217204e-05,
+              "snr_nli_db": 32.399217028600006,
+              "snr_nli_raw_db": 5.038202009452268,
+              "common_gain_db": -0.001513092519790296,
+              "common_phase_deg": 32.48887002880204,
+              "on_off_gain_db": 10.951510419739636
+            },
+            {
+              "channel_id": 2,
+              "freq_offset_hz": -100000000000.0,
+              "signal_power_w": 0.00024505111353306016,
+              "nli_power_w": 1.571936639187115e-07,
+              "nli_power_raw_w": 7.750653655527928e-05,
+              "snr_nli_db": 31.92821643586364,
+              "snr_nli_raw_db": 4.999183498154932,
+              "common_gain_db": -0.007730210615915604,
+              "common_phase_deg": 32.6250565102136,
+              "on_off_gain_db": 10.95394903897343
+            },
+            {
+              "channel_id": 3,
+              "freq_offset_hz": 0.0,
+              "signal_power_w": 0.00024390375855758983,
+              "nli_power_w": 1.556201620746699e-07,
+              "nli_power_raw_w": 7.625227457007451e-05,
+              "snr_nli_db": 31.951526295576326,
+              "snr_nli_raw_db": 5.049656898289301,
+              "common_gain_db": 0.0010136589884062177,
+              "common_phase_deg": 32.44734224132197,
+              "on_off_gain_db": 10.948541560284493
+            },
+            {
+              "channel_id": 4,
+              "freq_offset_hz": 100000000000.0,
+              "signal_power_w": 0.0002460109314334578,
+              "nli_power_w": 1.5108996890592977e-07,
+              "nli_power_raw_w": 7.70898372412586e-05,
+              "snr_nli_db": 32.11718773476103,
+              "snr_nli_raw_db": 5.03957276545553,
+              "common_gain_db": 0.0010212501270202624,
+              "common_phase_deg": 32.48704697043098,
+              "on_off_gain_db": 10.955849970224694
+            },
+            {
+              "channel_id": 5,
+              "freq_offset_hz": 200000000000.0,
+              "signal_power_w": 0.00024313871195455732,
+              "nli_power_w": 1.4122442196430449e-07,
+              "nli_power_raw_w": 7.654433560051632e-05,
+              "snr_nli_db": 32.359443058281634,
+              "snr_nli_raw_db": 5.019410539016111,
+              "common_gain_db": -0.019549755971409274,
+              "common_phase_deg": 32.52613200470467,
+              "on_off_gain_db": 10.949440221025299
+            },
+            {
+              "channel_id": 6,
+              "freq_offset_hz": 300000000000.0,
+              "signal_power_w": 0.00024502219504371817,
+              "nli_power_w": 1.5151212477745823e-07,
+              "nli_power_raw_w": 7.699940701189841e-05,
+              "snr_nli_db": 32.08758037493509,
+              "snr_nli_raw_db": 5.027180455996439,
+              "common_gain_db": -0.0028064540870698113,
+              "common_phase_deg": 32.52728492457105,
+              "on_off_gain_db": 10.950190831822493
+            }
+          ]
+        }
+      }
     }
   }
 }

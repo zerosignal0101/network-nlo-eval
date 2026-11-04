@@ -18,7 +18,8 @@ from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, Raman
 DATA_DIR = Path("data/dra_waveform")
 WAVEFORM_JSON = DATA_DIR / "dra_reference.json"
 SYMBOL_RATE_HZ = 50e9
-LAUNCH_POWER_W = 2e-3
+#: 波形数据的 launch_power_dbm_per_pol=0 dBm，对应 PCFM 的 per-pol 1 mW。
+LAUNCH_POWER_W = 1e-3
 FIBER = FiberSpanConfig(
     length_km=100.0,
     attenuation_db_km_ref=0.2,
