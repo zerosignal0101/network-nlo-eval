@@ -1,6 +1,6 @@
 """把 physical-nlo-eval 的 DRA 波形参考接入 network-nlo-eval。
 
-读取 `data/dra_waveform/dra_reference.json`，在与波形相同的 3/5 信道、
+读取 `data/dra_waveform/dra_reference.json`，在与波形相同的 3/5/7 信道、
 100 km、50 GBd、2 mW/信道条件下运行解析模型，比较中心信道的 NLI SNR。
 """
 
