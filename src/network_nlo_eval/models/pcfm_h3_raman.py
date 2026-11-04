@@ -390,7 +390,7 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
         ("raman_temperature_k", "Fibre temperature of the spontaneous Raman factor. Default 300 K."),
         ("raman_peak_gain_coefficient_m_per_w", "Peak local Raman gain rate before A_eff division. Default 6e-14."),
-        ("raman_steps", "RK4 steps of the coarse coupled profile/ASE solve. Default 12."),
+        ("raman_steps", "RK4 steps of the coarse solve, or 'auto': 12 backward single-pump, 24 forward/multi-pump."),
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
         ("include_isrs", "Include channel-channel ISRS in the coupled solve. Default True."),
         (
@@ -429,11 +429,11 @@ class PCFH3RamanModel(PCFMModel):
         raman_steps: RK4 steps of the coarse coupled profile/ASE solve.
         raman_iterations: Backward-pump fixed-point iteration cap.
         include_isrs: Include channel-channel ISRS in the coupled solve.
-        span_coherence: ``"pcfm"`` (default) keeps the H3 visibility-weighted
-            coherent accumulation; ``"incoherent"`` sums the span NLI powers,
-            which is the paper's ``epsilon=0`` convention and is intended only
-            for a paper-matched comparison.  The no-pump bit-identity claim
-            applies to the default.
+        span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
+            links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
+            visibility-weighted coherent accumulation; ``"incoherent"`` sums
+            the span NLI powers, the paper's ``epsilon=0`` convention.
+            The no-pump bit-identity claim applies to the default.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
@@ -459,19 +459,24 @@ class PCFH3RamanModel(PCFMModel):
         raman_ase: bool = True,
         raman_temperature_k: float = 300.0,
         raman_peak_gain_coefficient_m_per_w: float = 6e-14,
-        raman_steps: int = DEFAULT_H3_RAMAN_STEPS,
+        raman_steps: int | str = "auto",
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
         include_isrs: bool = True,
-        span_coherence: str = "pcfm",
+        span_coherence: str = "auto",
         **route_options: object,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
-        if int(raman_steps) < 4:
+        if isinstance(raman_steps, str):
+            if raman_steps != "auto":
+                raise ValueError(f"raman_steps must be an integer or 'auto', got {raman_steps!r}.")
+        elif int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
-        if span_coherence not in ("pcfm", "incoherent"):
-            raise ValueError(f"span_coherence must be 'pcfm' or 'incoherent', got {span_coherence!r}.")
+        if span_coherence not in ("auto", "pcfm", "incoherent"):
+            raise ValueError(
+                f"span_coherence must be 'auto', 'pcfm' or 'incoherent', got {span_coherence!r}."
+            )
         super().__init__(
             grid,
             ref_fiber_config,
@@ -492,10 +497,14 @@ class PCFH3RamanModel(PCFMModel):
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
         self._h3_raman_ase = bool(raman_ase)
-        self._h3_raman_steps = int(raman_steps)
+        self._h3_raman_steps = raman_steps if isinstance(raman_steps, str) else int(raman_steps)
         self._h3_raman_iterations = int(raman_iterations)
         self._h3_include_isrs = bool(include_isrs)
-        self.span_coherence = str(span_coherence)
+        active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
+        resolved = str(span_coherence)
+        if resolved == "auto":
+            resolved = "incoherent" if any(float(pump.power_w) > 0.0 for pump in active_pumps) else "pcfm"
+        self.span_coherence = resolved
         # The route layer reads this attribute; an instance override selects the
         # power-sum convention without changing the PCFM class default.
         self.supports_span_context = self.span_coherence == "pcfm"
@@ -506,6 +515,12 @@ class PCFH3RamanModel(PCFMModel):
             pumps = self._h3_raman_pumps
         else:
             pumps = fiber_config.raman_pumps or []
+        active = [pump for pump in pumps if float(pump.power_w) > 0.0]
+        if self._h3_raman_steps == "auto":
+            # 前向泵把增益放在跨首，剖面更陡；多泵 C+L 的 ODE 也更难。
+            steps = 24 if any(str(pump.direction) == "forward" for pump in active) or len(active) >= 4 else 12
+        else:
+            steps = int(self._h3_raman_steps)
         return PCFH3RamanSpanKernel(
             self.f_abs_hz,
             self.channel_bandwidth_hz_channels,
@@ -513,7 +528,7 @@ class PCFH3RamanModel(PCFMModel):
             pumps=pumps,
             gain_model=self._raman_gain_model,
             raman_ase=self._h3_raman_ase,
-            raman_steps=self._h3_raman_steps,
+            raman_steps=steps,
             raman_iterations=self._h3_raman_iterations,
             include_isrs=self._h3_include_isrs,
             poly_degree=self.poly_degree,

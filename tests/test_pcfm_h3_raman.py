@@ -195,7 +195,7 @@ def test_c_band_ten_span_raman_effect_matches_paper_within_015_db() -> None:
     base = _path_result(CASE_10, "pcfm", **H3_OPTIONS)
     paper_base = _path_result(CASE_10, "hybrid_raman_paper", nli_form="paper")
     paper = _path_result(CASE_10, "hybrid_raman_paper", raman_pumps=[_pump()], nli_form="paper")
-    new = _path_result(CASE_10, "pcfm_h3_raman", raman_pumps=[_pump()])
+    new = _path_result(CASE_10, "pcfm_h3_raman", raman_pumps=[_pump()], span_coherence="pcfm")
     effect_error = _pump_effect(new, base) - _pump_effect(paper, paper_base)
     assert abs(effect_error) < 0.15, f"Raman-effect error {effect_error:+.3f} dB"
 

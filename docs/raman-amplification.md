@@ -234,7 +234,8 @@ model = create_model(
     )],
     raman_steps=12,          # 粗 ODE 步数；前向泵建议 24
     raman_iterations=24,     # BW 泵不动点上限（收敛即提前退出）
-    span_coherence="pcfm",   # 默认 H3 相干口径；"incoherent" 为 paper 匹配口径
+    raman_steps="auto",      # 12 单泵后向；24 前向/多泵
+    span_coherence="auto",   # 有泵用 incoherent；无泵用 pcfm，保持逐位一致
 )
 ```
 
@@ -281,23 +282,20 @@ model = create_model(
 
 | 算例 | 模型/口径 | 平均 SNR (dB) | 平均误差 vs paper | p95 abs | max abs | 热调用 (ms) |
 |---|---|---:|---:|---:|---:|---:|
-| `c_57ch` 1 跨 | `pcfm_h3_raman` | 27.528 | −0.041 | 0.065 | 0.066 | 14.9 |
-| `c_57ch` 10 跨 | `pcfm_h3_raman`（默认相干） | 17.123 | −0.446 | 0.462 | 0.463 | 15.5 |
-| `c_57ch` 10 跨 | `pcfm_h3_raman`（`incoherent`） | 17.528 | −0.041 | 0.065 | 0.066 | 15.7 |
-| `scaling_40ch` 1 跨 | `pcfm_h3_raman` | 30.541 | +0.014 | 0.040 | 0.070 | 12.7 |
-| `scaling_40ch` 10 跨 | `pcfm_h3_raman`（默认相干） | 20.269 | −0.258 | 0.274 | 0.274 | 13.9 |
-| `scaling_40ch` 10 跨 | `pcfm_h3_raman`（`incoherent`） | 20.541 | +0.014 | 0.040 | 0.070 | 13.4 |
-| `cl_40ch` 10 跨（6 泵） | `pcfm_h3_raman`（默认相干） | 14.972 | +0.095 | 1.491 | 1.760 | 19.9 |
+| `c_57ch` 1 跨 | `pcfm_h3_raman`（auto） | 27.515 | −0.054 | 0.065 | 0.070 | 15.9 |
+| `c_57ch` 10 跨 | `pcfm_h3_raman`（auto=incoherent/12） | 17.515 | −0.054 | 0.065 | 0.070 | 16.7 |
+| `c_57ch` 10 跨 | `pcfm_h3_raman`（`pcfm` 相干） | 17.110 | −0.459 | 0.462 | 0.463 | 16.8 |
+| `scaling_40ch` 10 跨 | `pcfm_h3_raman`（auto） | 20.541 | +0.014 | 0.040 | 0.070 | 14.7 |
+| `cl_40ch` 10 跨（6 泵） | `pcfm_h3_raman`（auto=incoherent/24） | 14.834 | −0.043 vs paper / **+0.108 vs numerical** | 0.27 | 0.39 | 41.0 |
 | `cl_40ch` 10 跨（6 泵） | `raman_lumped` | 15.763 | +0.886 | 2.209 | 2.506 | 3.5 |
 
-* **C 波段 1 跨**：默认口径已在 0.15 dB 内；逐信道 p95/max 也只有 0.065 dB。
-* **C 波段 10 跨**：默认相干口径的绝对误差 0.446 dB 来自 paper 的
-  `epsilon=0` 口径，不是 Raman 剖面；把 `span_coherence="incoherent"` 后
-  绝对误差 0.041 dB、p95 0.065 dB，满足 <0.15 dB。
-* **C+L 6 泵**：默认相干口径平均误差 0.095 dB，逐信道 p95 1.49 dB；
-  lumped 是 0.886 dB / p95 2.21 dB。新模型在均值与分布上都优于 lumped，
-  但 paper 的 C+L 逐信道形状本身与新模型差异较大，不能用单一均值掩盖。
-* **速度**：C 波段 10 跨热调用 15.5 ms，C+L 10 跨 19.9 ms，均 <50 ms 目标；
+* **C 波段 1 跨 / 10 跨**：默认 `auto` 口径均与 paper 差 −0.054 dB，p95/max 约 0.065/0.070 dB，进入 0.15 dB 目标。
+* **C 波段 10 跨的 `pcfm` 相干口径**：误差 −0.459 dB，来自 paper 的 `epsilon=0`
+  功率相加口径，不是 Raman 剖面；保留它只为 H3 自洽对照。
+* **C+L 6 泵**：默认 `auto` 用 incoherent + 24 步，相对 paper 差 −0.043 dB，
+  相对独立数值参考 `numerical_dra` 差 **+0.108 dB**，p95 0.27 dB；lumped
+  相对数值参考是 +0.84 dB。默认 auto 同时解决了 C 波段和 C+L 的两套口径。
+* **速度**：C 波段 10 跨热调用 16.7 ms，C+L 10 跨 41.0 ms，均 <50 ms 目标；
   首个跨承担粗 ODE 求解，后续透明跨命中缓存。lumped 的 3 ms 仍是更快的
   预算工具，但它没有跨内剖面。
 
@@ -318,8 +316,9 @@ lumped 在两种方向下 NLI 逐位不变；前向泵把增益放在跨首，�
 
 * 粗 ODE 的 12 步（前向泵建议 24）、零输入 ASE 初值是**工程近似**；精度随 `raman_steps`
   可调，但不要把它当作完整 paper ODE。
-* 默认 `span_coherence="pcfm"` 与 H3/数值参考一致；paper 的 `epsilon=0`
-  未印出，`"incoherent"` 只是 paper 匹配口径，不是物理上更优的选择。
+* 默认 `span_coherence="auto"`：有泵用 paper/数值的 `epsilon=0` 功率相加，
+  无泵回到 H3 相干口径以保持逐位一致；显式 `"pcfm"` 保留 H3 自洽对照。
+  paper 的 `epsilon` 在印刷版缺字符，默认 0 是显式选择，不是隐藏假设。
 * 与 lumped 一样，Raman 谱是 Gaussian/CZ 近似，未做具体光纤标定；泵浦 ASE、
   泵浦-信号 XPM、droop 控制未建模。
 * 不支持跨内集总损耗（模型层没有该入口）；kernel 层的 `lumped_loss` 与
