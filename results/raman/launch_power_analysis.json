@@ -1,0 +1,216 @@
+{
+  "generated_by": "scripts/dra_open_issues.py (launch sweep)",
+  "reference_path": "data/dra_waveform_converged/dra_reference_depleted.json",
+  "config": {
+    "datasets": [
+      "3ch_0p5mw",
+      "3ch_1p0mw",
+      "3ch_2p0mw"
+    ],
+    "pump": "fwd 0.2 W, 1450 nm, 0.25 dB/km",
+    "pump_depletion": true,
+    "models": [
+      "hybrid_raman_paper",
+      "pcfm_h3_raman",
+      "numerical_dra"
+    ],
+    "reference": "62.5 m converged depleted waveform, center channel, 100 GHz grid, 50 GBd"
+  },
+  "rows": [
+    {
+      "dataset": "3ch_0p5mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "hybrid_raman_paper",
+      "launch_power_w_per_pol": 0.0004999999950079739,
+      "waveform_snr_nli_db": 28.37390770499872,
+      "analytic_snr_nli_db": 29.561397838399465,
+      "snr_delta_db": 1.1874901334007433,
+      "waveform_nli_w": 1.5337550217877083e-07,
+      "analytic_nli_w": 5.531338238420683e-07,
+      "nli_ratio_db": 5.570742184650118,
+      "elapsed_s": 1.5482921600341797
+    },
+    {
+      "dataset": "3ch_0p5mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "pcfm_h3_raman",
+      "launch_power_w_per_pol": 0.0004999999950079739,
+      "waveform_snr_nli_db": 28.37390770499872,
+      "analytic_snr_nli_db": 29.36610540869044,
+      "snr_delta_db": 0.9921977036917191,
+      "waveform_nli_w": 1.5337550217877083e-07,
+      "analytic_nli_w": 5.785747270401291e-07,
+      "nli_ratio_db": 5.766034614359143,
+      "elapsed_s": 0.014519453048706055
+    },
+    {
+      "dataset": "3ch_0p5mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "numerical_dra",
+      "launch_power_w_per_pol": 0.0004999999950079739,
+      "waveform_snr_nli_db": 28.37390770499872,
+      "analytic_snr_nli_db": 29.476555222477977,
+      "snr_delta_db": 1.1026475174792552,
+      "waveform_nli_w": 1.5337550217877083e-07,
+      "analytic_nli_w": 5.640459402985718e-07,
+      "nli_ratio_db": 5.6555848005716065,
+      "elapsed_s": 0.09646177291870117
+    },
+    {
+      "dataset": "3ch_1p0mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "hybrid_raman_paper",
+      "launch_power_w_per_pol": 0.001,
+      "waveform_snr_nli_db": 23.012488031307466,
+      "analytic_snr_nli_db": 23.80304641283064,
+      "snr_delta_db": 0.7905583815231729,
+      "waveform_nli_w": 9.240528365616237e-07,
+      "analytic_nli_w": 4.165770677762137e-06,
+      "nli_ratio_db": 6.539985541947636,
+      "elapsed_s": 1.3310792446136475
+    },
+    {
+      "dataset": "3ch_1p0mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "pcfm_h3_raman",
+      "launch_power_w_per_pol": 0.001,
+      "waveform_snr_nli_db": 23.012488031307466,
+      "analytic_snr_nli_db": 23.614972151050814,
+      "snr_delta_db": 0.6024841197433481,
+      "waveform_nli_w": 9.240528365616237e-07,
+      "analytic_nli_w": 4.350135501276663e-06,
+      "nli_ratio_db": 6.72805980372746,
+      "elapsed_s": 0.0028009414672851562
+    },
+    {
+      "dataset": "3ch_1p0mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "numerical_dra",
+      "launch_power_w_per_pol": 0.001,
+      "waveform_snr_nli_db": 23.012488031307466,
+      "analytic_snr_nli_db": 23.73205919148702,
+      "snr_delta_db": 0.7195711601795551,
+      "waveform_nli_w": 9.240528365616237e-07,
+      "analytic_nli_w": 4.234421448914059e-06,
+      "nli_ratio_db": 6.6109727632912545,
+      "elapsed_s": 0.09665799140930176
+    },
+    {
+      "dataset": "3ch_2p0mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "hybrid_raman_paper",
+      "launch_power_w_per_pol": 0.0020000000199681045,
+      "waveform_snr_nli_db": 18.088866215846547,
+      "analytic_snr_nli_db": 18.256320914579963,
+      "snr_delta_db": 0.16745469873341534,
+      "waveform_nli_w": 4.650725586713266e-06,
+      "analytic_nli_w": 2.9881191344691764e-05,
+      "nli_ratio_db": 8.078771935611432,
+      "elapsed_s": 1.1875824928283691
+    },
+    {
+      "dataset": "3ch_2p0mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "pcfm_h3_raman",
+      "launch_power_w_per_pol": 0.0020000000199681045,
+      "waveform_snr_nli_db": 18.088866215846547,
+      "analytic_snr_nli_db": 18.135267710024113,
+      "snr_delta_db": 0.046401494177565894,
+      "waveform_nli_w": 4.650725586713266e-06,
+      "analytic_nli_w": 3.072580209944547e-05,
+      "nli_ratio_db": 8.199825140167277,
+      "elapsed_s": 0.002862215042114258
+    },
+    {
+      "dataset": "3ch_2p0mw",
+      "n_channels": 3,
+      "config": "fwd_0p20w",
+      "model": "numerical_dra",
+      "launch_power_w_per_pol": 0.0020000000199681045,
+      "waveform_snr_nli_db": 18.088866215846547,
+      "analytic_snr_nli_db": 18.20806921832421,
+      "snr_delta_db": 0.11920300247766136,
+      "waveform_nli_w": 4.650725586713266e-06,
+      "analytic_nli_w": 3.0215033365865993e-05,
+      "nli_ratio_db": 8.127023631867184,
+      "elapsed_s": 0.09890937805175781
+    }
+  ],
+  "exponents": {
+    "definition": "log-log slope of center-channel NLI vs launch power (per pol)",
+    "waveform": 2.461157886731919,
+    "hybrid_raman_paper": 2.8777326053581898,
+    "pcfm_h3_raman": 2.865401737146852,
+    "numerical_dra": 2.8716549852429623,
+    "waveform_minus_analytic": -0.4165747186262707
+  },
+  "pump_drive_2x": {
+    "note": "Negative result: doubling only the pump-depletion drive (the dual-polarization total-power hypothesis) makes hybrid farther from the waveform, not closer. The residual is therefore not a 2x polarization-convention bug.",
+    "rows": [
+      {
+        "dataset": "3ch",
+        "n_channels": 3,
+        "config": "fwd_0p20w",
+        "model": "hybrid_raman_paper",
+        "launch_power_w_per_pol": 0.001,
+        "pump_drive_factor": 1.0,
+        "waveform_snr_nli_db": 23.012488031307466,
+        "analytic_snr_nli_db": 23.80304641283064,
+        "snr_delta_db": 0.7905583815231729,
+        "analytic_nli_w": 4.165770677762137e-06,
+        "delta_vs_nominal_drive_db": 0.0,
+        "nli_vs_nominal_drive_db": 0.0
+      },
+      {
+        "dataset": "3ch",
+        "n_channels": 3,
+        "config": "fwd_0p20w",
+        "model": "hybrid_raman_paper",
+        "launch_power_w_per_pol": 0.001,
+        "pump_drive_factor": 2.0,
+        "waveform_snr_nli_db": 23.012488031307466,
+        "analytic_snr_nli_db": 24.276922482902638,
+        "snr_delta_db": 1.2644344515951715,
+        "analytic_nli_w": 3.735147457375353e-06,
+        "delta_vs_nominal_drive_db": 0.4738760700719986,
+        "nli_vs_nominal_drive_db": -0.47387607007199967
+      },
+      {
+        "dataset": "5ch",
+        "n_channels": 5,
+        "config": "fwd_0p20w",
+        "model": "hybrid_raman_paper",
+        "launch_power_w_per_pol": 0.001,
+        "pump_drive_factor": 1.0,
+        "waveform_snr_nli_db": 22.53120201718698,
+        "analytic_snr_nli_db": 23.491475001451093,
+        "snr_delta_db": 0.9602729842641118,
+        "analytic_nli_w": 4.475612723935633e-06,
+        "delta_vs_nominal_drive_db": 0.0,
+        "nli_vs_nominal_drive_db": 0.0
+      },
+      {
+        "dataset": "5ch",
+        "n_channels": 5,
+        "config": "fwd_0p20w",
+        "model": "hybrid_raman_paper",
+        "launch_power_w_per_pol": 0.001,
+        "pump_drive_factor": 2.0,
+        "waveform_snr_nli_db": 22.53120201718698,
+        "analytic_snr_nli_db": 24.203035053136585,
+        "snr_delta_db": 1.6718330359496036,
+        "analytic_nli_w": 3.7992379499154464e-06,
+        "delta_vs_nominal_drive_db": 0.7115600516854919,
+        "nli_vs_nominal_drive_db": -0.7115600516854957
+      }
+    ]
+  }
+}

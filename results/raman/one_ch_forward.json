@@ -1,0 +1,190 @@
+{
+  "generated_by": "scripts/dra_open_issues.py (1ch forward)",
+  "reference_path": "data/dra_waveform_converged/dra_reference_depleted.json",
+  "config": {
+    "fiber": {
+      "length_m": 100000.0,
+      "alpha_db_per_km": 0.2,
+      "beta2_ps2_per_km": -20.0,
+      "beta3_ps3_per_km": 0.0001,
+      "n2_si": 2.6e-20,
+      "a_eff_um2": 80.0
+    },
+    "length_km": 100.0,
+    "symbol_rate_hz": 50000000000.0,
+    "grid": "1 channel, 100 GHz grid, 100 GHz sample rate",
+    "step_m": 62.5,
+    "pump": "fwd 0.2 W, 1450 nm, 0.25 dB/km, pump_model=depleted",
+    "nli_bandwidth_hz": 50000000000.0,
+    "num_symbols": 256,
+    "seed": 20261104,
+    "launch_powers_w_per_pol": [
+      0.00025,
+      0.0005,
+      0.001,
+      0.002
+    ]
+  },
+  "reproduction_check": {
+    "nopump": {
+      "reference_snr_nli_db": 38.04329198510882,
+      "measured_snr_nli_db": 38.04329198510882,
+      "delta_db": 0.0
+    },
+    "fwd_0p20w": {
+      "reference_snr_nli_db": 23.703940949469334,
+      "measured_snr_nli_db": 23.703940949469334,
+      "delta_db": 0.0
+    }
+  },
+  "rows": [
+    {
+      "dataset": "1ch",
+      "config": "nopump",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.00025,
+      "launch_power_dbm_per_pol": -6.020599913279624,
+      "waveform_snr_nli_db": 50.06127903749912,
+      "waveform_nli_w": 4.861901510320411e-11,
+      "waveform_signal_power_w": 4.9309893058692e-06,
+      "hybrid_snr_nli_db": 49.91011583903373,
+      "h3_snr_nli_db": 50.50181185000984,
+      "hybrid_nli_w": 2.5522806315759527e-09,
+      "h3_nli_w": 2.2271979781134587e-09,
+      "hybrid_delta_db": -0.15116319846539028,
+      "h3_delta_db": 0.4405328125107175,
+      "elapsed_s": 0.10633492469787598
+    },
+    {
+      "dataset": "1ch",
+      "config": "nopump",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.0005,
+      "launch_power_dbm_per_pol": -3.010299956639812,
+      "waveform_snr_nli_db": 44.04839260902491,
+      "waveform_nli_w": 3.882753478990071e-10,
+      "waveform_signal_power_w": 9.86231974000339e-06,
+      "hybrid_snr_nli_db": 43.889515925754104,
+      "h3_snr_nli_db": 44.48121193673021,
+      "hybrid_nli_w": 2.041824505260762e-08,
+      "h3_nli_w": 1.781758382490767e-08,
+      "hybrid_delta_db": -0.15887668327080462,
+      "h3_delta_db": 0.4328193277053032,
+      "elapsed_s": 0.09980416297912598
+    },
+    {
+      "dataset": "1ch",
+      "config": "nopump",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.001,
+      "launch_power_dbm_per_pol": 0.0,
+      "waveform_snr_nli_db": 38.04329198510882,
+      "waveform_nli_w": 3.0953417675733275e-09,
+      "waveform_signal_power_w": 1.972594448262362e-05,
+      "hybrid_snr_nli_db": 37.86891601247448,
+      "h3_snr_nli_db": 38.46061202345059,
+      "hybrid_nli_w": 1.6334596042086097e-07,
+      "h3_nli_w": 1.4254067059926136e-07,
+      "hybrid_delta_db": -0.17437597263434412,
+      "h3_delta_db": 0.4173200383417637,
+      "elapsed_s": 0.09999203681945801
+    },
+    {
+      "dataset": "1ch",
+      "config": "nopump",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.002,
+      "launch_power_dbm_per_pol": 3.010299956639812,
+      "waveform_snr_nli_db": 32.05397870309847,
+      "waveform_nli_w": 2.4587948285016487e-08,
+      "waveform_signal_power_w": 3.9456645628060145e-05,
+      "hybrid_snr_nli_db": 31.84831609919486,
+      "h3_snr_nli_db": 32.40749425247942,
+      "hybrid_nli_w": 1.3067676833668878e-06,
+      "h3_nli_w": 1.1488956111643913e-06,
+      "hybrid_delta_db": -0.2056626039036118,
+      "h3_delta_db": 0.3535155493809441,
+      "elapsed_s": 0.10012650489807129
+    },
+    {
+      "dataset": "1ch",
+      "config": "fwd_0p20w",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.00025,
+      "launch_power_dbm_per_pol": -6.020599913279624,
+      "waveform_snr_nli_db": 35.28806512028535,
+      "waveform_nli_w": 1.795578371611969e-08,
+      "waveform_signal_power_w": 6.067515263996014e-05,
+      "hybrid_snr_nli_db": 36.73764201494806,
+      "h3_snr_nli_db": 36.546778400928616,
+      "hybrid_nli_w": 5.2987790087672466e-08,
+      "h3_nli_w": 5.536842484092078e-08,
+      "hybrid_delta_db": 1.4495768946627052,
+      "h3_delta_db": 1.2587132806432635,
+      "elapsed_s": 0.8894505500793457
+    },
+    {
+      "dataset": "1ch",
+      "config": "fwd_0p20w",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.0005,
+      "launch_power_dbm_per_pol": -3.010299956639812,
+      "waveform_snr_nli_db": 29.42327698425126,
+      "waveform_nli_w": 1.3480536150639503e-07,
+      "waveform_signal_power_w": 0.00011804153919425152,
+      "hybrid_snr_nli_db": 30.764226282529062,
+      "h3_snr_nli_db": 30.574876125124465,
+      "hybrid_nli_w": 4.1932173693407005e-07,
+      "h3_nli_w": 4.380083520575626e-07,
+      "hybrid_delta_db": 1.3409492982778026,
+      "h3_delta_db": 1.1515991408732056,
+      "elapsed_s": 0.9292714595794678
+    },
+    {
+      "dataset": "1ch",
+      "config": "fwd_0p20w",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.001,
+      "launch_power_dbm_per_pol": 0.0,
+      "waveform_snr_nli_db": 23.703940949469334,
+      "waveform_nli_w": 9.545832625519504e-07,
+      "waveform_signal_power_w": 0.00022397931403090904,
+      "hybrid_snr_nli_db": 24.836188924328845,
+      "h3_snr_nli_db": 24.649728796879028,
+      "hybrid_nli_w": 3.283833337937331e-06,
+      "h3_nli_w": 3.427891919752394e-06,
+      "hybrid_delta_db": 1.13224797485951,
+      "h3_delta_db": 0.9457878474096937,
+      "elapsed_s": 0.8835570812225342
+    },
+    {
+      "dataset": "1ch",
+      "config": "fwd_0p20w",
+      "n_channels": 1,
+      "launch_power_w_per_pol": 0.002,
+      "launch_power_dbm_per_pol": 3.010299956639812,
+      "waveform_snr_nli_db": 18.248995728960093,
+      "waveform_nli_w": 6.090439459605484e-06,
+      "waveform_signal_power_w": 0.0004069567004712833,
+      "hybrid_snr_nli_db": 18.99407225481904,
+      "h3_snr_nli_db": 18.85388714683975,
+      "hybrid_nli_w": 2.521289819277805e-05,
+      "h3_nli_w": 2.604001805278803e-05,
+      "hybrid_delta_db": 0.7450765258589485,
+      "h3_delta_db": 0.6048914178796565,
+      "elapsed_s": 0.9508867263793945
+    }
+  ],
+  "exponents": {
+    "nopump": {
+      "waveform": 2.994159161093543,
+      "hybrid_raman_paper": 3.000000000000002,
+      "pcfm_h3_raman": 3.0032406595515346
+    },
+    "fwd_0p20w": {
+      "waveform": 2.8041854853603208,
+      "hybrid_raman_paper": 2.965211025170466,
+      "pcfm_h3_raman": 2.9600645098627956
+    }
+  }
+}

@@ -466,3 +466,13 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_co
 
 脚本对 `data/dra_waveform_converged/` 强制要求每个数据集
 `step_converged: true` 且 `coarse_step_m <= 62.5`；不满足会直接退出。
+
+### 13.6 开放问题与全 WDM 对照
+
+残差的功率依赖、1ch 前向、seed 统计预算和 2× 偏振耗尽驱动负结果见
+`docs/dra-open-issues.md`（产物 `results/raman/launch_power_analysis.json`、
+`one_ch_forward.json`、`seed_ensemble.json`）。57/152ch 全 WDM 波形参考
+到位后，用 `scripts/dra_wideband_compare.py` 读取
+`data/dra_waveform_wide/{c57,cl152}.json`，以 `SpectrumGrid`、
+64 GBd、B = 符号率、`pump_depletion=True` 跑 hybrid/H3/numerical/lumped
+四模型；152ch 可用 `--skip-numerical` 加速。
