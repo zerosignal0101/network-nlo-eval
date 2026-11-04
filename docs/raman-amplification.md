@@ -221,7 +221,7 @@ model = create_model(
 * **同时** 用同一份 ODE 给出新产生的 Raman ASE，交给 EDFA 前的路由层；
 * **无泵时** 完全走父类 `PCFMSpanKernel`，与 H3 PCFM 逐位一致。
 
-明确边界：剖面/ASE 的 ODE 用 12 步粗步长（完整 paper 用 32 步），输入 ASE
+明确边界：剖面/ASE 的 ODE 默认用 12 步粗步长（完整 paper 用 32 步；前向泵建议 24 步），输入 ASE
 初值取零，Raman 谱仍是 Gaussian/CZ 近似，泵浦 ASE 与泵浦-信号 XPM 未建模。
 因此它是**工程近似**，不是 Buglia Eq. (6)-(9) 的完整实现。
 
@@ -232,7 +232,7 @@ model = create_model(
         wavelength_nm=1450.0, power_w=0.2,
         direction="backward", attenuation_db_per_km=0.25,
     )],
-    raman_steps=12,          # 粗 ODE 步数
+    raman_steps=12,          # 粗 ODE 步数；前向泵建议 24
     raman_iterations=24,     # BW 泵不动点上限（收敛即提前退出）
     span_coherence="pcfm",   # 默认 H3 相干口径；"incoherent" 为 paper 匹配口径
 )
@@ -316,7 +316,7 @@ lumped 在两种方向下 NLI 逐位不变；前向泵把增益放在跨首，�
 
 ### 限制
 
-* 粗 ODE 的 12 步、零输入 ASE 初值是**工程近似**；精度随 `raman_steps`
+* 粗 ODE 的 12 步（前向泵建议 24）、零输入 ASE 初值是**工程近似**；精度随 `raman_steps`
   可调，但不要把它当作完整 paper ODE。
 * 默认 `span_coherence="pcfm"` 与 H3/数值参考一致；paper 的 `epsilon=0`
   未印出，`"incoherent"` 只是 paper 匹配口径，不是物理上更优的选择。
