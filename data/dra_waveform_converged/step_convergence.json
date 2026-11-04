@@ -1,0 +1,1501 @@
+{
+  "generated_by": "examples/check_dra_step_convergence.py",
+  "npz": "/home/zsig/Documents/gits/wt/physical-dra-step/examples/dra_reference/dra_reference.npz",
+  "steps_m": [
+    500.0,
+    250.0,
+    125.0,
+    62.5,
+    31.25
+  ],
+  "probes": {
+    "3ch": {
+      "nopump": {
+        "config": "nopump",
+        "steps": [
+          {
+            "step_m": 500.0,
+            "n_steps": 200,
+            "center_snr_db": 36.77821434352272,
+            "mean_snr_db": 37.07811788141576,
+            "min_snr_db": 36.77821434352272,
+            "center_nli_w": 4.119712126155315e-09,
+            "walkoff_per_step_symbols": 0.3141592653589793,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9717565300728623e-05,
+                "nli_power_w": 3.5188530364499633e-09,
+                "nli_power_raw_w": 9.274986516130593e-07,
+                "snr_nli_db": 37.48452158727861
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.961951666611593e-05,
+                "nli_power_w": 4.119712126155315e-09,
+                "nli_power_raw_w": 9.144221006935227e-07,
+                "snr_nli_db": 36.77821434352272
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.971905055785394e-05,
+                "nli_power_w": 3.9602648318442454e-09,
+                "nli_power_raw_w": 9.400213463419472e-07,
+                "snr_nli_db": 36.97161771344596
+              }
+            ]
+          },
+          {
+            "step_m": 250.0,
+            "n_steps": 400,
+            "center_snr_db": 36.74257783983515,
+            "mean_snr_db": 37.03804845974366,
+            "min_snr_db": 36.74257783983515,
+            "center_nli_w": 4.154110914432077e-09,
+            "walkoff_per_step_symbols": 0.15707963267948966,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.971880921229015e-05,
+                "nli_power_w": 3.5538885034665873e-09,
+                "nli_power_raw_w": 9.383760921212618e-07,
+                "snr_nli_db": 37.441768865253245
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.962166568763738e-05,
+                "nli_power_w": 4.154110914432077e-09,
+                "nli_power_raw_w": 9.252038529776391e-07,
+                "snr_nli_db": 36.74257783983515
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.9719732206427595e-05,
+                "nli_power_w": 3.998721387254134e-09,
+                "nli_power_raw_w": 9.510428809008454e-07,
+                "snr_nli_db": 36.92979867414261
+              }
+            ]
+          },
+          {
+            "step_m": 125.0,
+            "n_steps": 800,
+            "center_snr_db": 36.72027200146296,
+            "mean_snr_db": 37.014952455609006,
+            "min_snr_db": 36.72027200146296,
+            "center_nli_w": 4.175533390972999e-09,
+            "walkoff_per_step_symbols": 0.07853981633974483,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9718872851962783e-05,
+                "nli_power_w": 3.5729284167924814e-09,
+                "nli_power_raw_w": 9.434547312268654e-07,
+                "snr_nli_db": 37.41857771411935
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9621814295553e-05,
+                "nli_power_w": 4.175533390972999e-09,
+                "nli_power_raw_w": 9.302590915500508e-07,
+                "snr_nli_db": 36.72027200146296
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.971976930207735e-05,
+                "nli_power_w": 4.0206943976294636e-09,
+                "nli_power_raw_w": 9.561931067218464e-07,
+                "snr_nli_db": 36.9060076512447
+              }
+            ]
+          },
+          {
+            "step_m": 62.5,
+            "n_steps": 1600,
+            "center_snr_db": 36.70816185263697,
+            "mean_snr_db": 37.00282072304066,
+            "min_snr_db": 36.70816185263697,
+            "center_nli_w": 4.1871915554445545e-09,
+            "walkoff_per_step_symbols": 0.039269908169872414,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9718885228386602e-05,
+                "nli_power_w": 3.5829700210998485e-09,
+                "nli_power_raw_w": 9.461221337884741e-07,
+                "snr_nli_db": 37.406391848275305
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9621807678324813e-05,
+                "nli_power_w": 4.1871915554445545e-09,
+                "nli_power_raw_w": 9.3289542910785e-07,
+                "snr_nli_db": 36.70816185263697
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.971977964268126e-05,
+                "nli_power_w": 4.031913542348805e-09,
+                "nli_power_raw_w": 9.588963048315777e-07,
+                "snr_nli_db": 36.893908468209695
+              }
+            ]
+          },
+          {
+            "step_m": 31.25,
+            "n_steps": 3200,
+            "center_snr_db": 36.70201048638886,
+            "mean_snr_db": 36.9966666675142,
+            "min_snr_db": 36.70201048638886,
+            "center_nli_w": 4.1931264766003555e-09,
+            "walkoff_per_step_symbols": 0.019634954084936207,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9718889459791095e-05,
+                "nli_power_w": 3.588060702927122e-09,
+                "nli_power_raw_w": 9.474693171033351e-07,
+                "snr_nli_db": 37.40022670595251
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9621807502189336e-05,
+                "nli_power_w": 4.1931264766003555e-09,
+                "nli_power_raw_w": 9.342253068003617e-07,
+                "snr_nli_db": 36.70201048638886
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.971978326555611e-05,
+                "nli_power_w": 4.037623843692877e-09,
+                "nli_power_raw_w": 9.602616087576807e-07,
+                "snr_nli_db": 36.88776281020122
+              }
+            ]
+          }
+        ],
+        "last_increment_db": -0.006151366248111856,
+        "artifact_500m_db": 0.07620385713386213
+      }
+    },
+    "5ch": {
+      "nopump": {
+        "config": "nopump",
+        "steps": [
+          {
+            "step_m": 500.0,
+            "n_steps": 200,
+            "center_snr_db": 34.794324936801345,
+            "mean_snr_db": 35.06880120131393,
+            "min_snr_db": 34.67370985673337,
+            "center_nli_w": 6.539893574204151e-09,
+            "walkoff_per_step_symbols": 0.6283185307179586,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.9722468221961e-05,
+                "nli_power_w": 5.66646528690231e-09,
+                "nli_power_raw_w": 2.6123944906071175e-06,
+                "snr_nli_db": 35.416490323729036
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9602016472108016e-05,
+                "nli_power_w": 6.314768301913287e-09,
+                "nli_power_raw_w": 2.5884822843233442e-06,
+                "snr_nli_db": 34.919433295248886
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9724371543741624e-05,
+                "nli_power_w": 6.539893574204151e-09,
+                "nli_power_raw_w": 2.636297540053105e-06,
+                "snr_nli_db": 34.794324936801345
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.9591655854860952e-05,
+                "nli_power_w": 6.678826439407692e-09,
+                "nli_power_raw_w": 2.588842497030385e-06,
+                "snr_nli_db": 34.67370985673337
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9725634441549303e-05,
+                "nli_power_w": 5.508409530783033e-09,
+                "nli_power_raw_w": 2.6046615717595216e-06,
+                "snr_nli_db": 35.540047594057036
+              }
+            ]
+          },
+          {
+            "step_m": 250.0,
+            "n_steps": 400,
+            "center_snr_db": 36.12716185241074,
+            "mean_snr_db": 36.365686291284874,
+            "min_snr_db": 36.097594821536575,
+            "center_nli_w": 4.807228534091172e-09,
+            "walkoff_per_step_symbols": 0.3141592653589793,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.9715145612509982e-05,
+                "nli_power_w": 4.387645990228494e-09,
+                "nli_power_raw_w": 2.646828069758906e-06,
+                "snr_nli_db": 36.525684090389625
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.962919525964981e-05,
+                "nli_power_w": 4.705985331717299e-09,
+                "nli_power_raw_w": 2.620948685438901e-06,
+                "snr_nli_db": 36.2025192597325
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9706566086445336e-05,
+                "nli_power_w": 4.807228534091172e-09,
+                "nli_power_raw_w": 2.6699458826289125e-06,
+                "snr_nli_db": 36.12716185241074
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.959534859904437e-05,
+                "nli_power_w": 4.8127523171559305e-09,
+                "nli_power_raw_w": 2.6231150510233967e-06,
+                "snr_nli_db": 36.097594821536575
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9725060418508936e-05,
+                "nli_power_w": 4.050150848730129e-09,
+                "nli_power_raw_w": 2.6322005187608727e-06,
+                "snr_nli_db": 36.87547143235491
+              }
+            ]
+          },
+          {
+            "step_m": 125.0,
+            "n_steps": 800,
+            "center_snr_db": 36.34349159790859,
+            "mean_snr_db": 37.03522849408047,
+            "min_snr_db": 36.34349159790859,
+            "center_nli_w": 4.575315251761646e-09,
+            "walkoff_per_step_symbols": 0.15707963267948966,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.972046230838476e-05,
+                "nli_power_w": 3.489176054201484e-09,
+                "nli_power_raw_w": 2.659965996499756e-06,
+                "snr_nli_db": 37.521942086221586
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.962242713782184e-05,
+                "nli_power_w": 4.048332461402657e-09,
+                "nli_power_raw_w": 2.6336858468922285e-06,
+                "snr_nli_db": 36.85476554248978
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.97137926036373e-05,
+                "nli_power_w": 4.575315251761646e-09,
+                "nli_power_raw_w": 2.6835619312680327e-06,
+                "snr_nli_db": 36.34349159790859
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.9591085298207248e-05,
+                "nli_power_w": 4.310146248609739e-09,
+                "nli_power_raw_w": 2.6362439446611266e-06,
+                "snr_nli_db": 36.575664889518706
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.973017375554887e-05,
+                "nli_power_w": 3.2144233522750407e-09,
+                "nli_power_raw_w": 2.6457164578434807e-06,
+                "snr_nli_db": 37.880278354263716
+              }
+            ]
+          },
+          {
+            "step_m": 62.5,
+            "n_steps": 1600,
+            "center_snr_db": 36.33053170756799,
+            "mean_snr_db": 37.023685593105284,
+            "min_snr_db": 36.33053170756799,
+            "center_nli_w": 4.589297208378959e-09,
+            "walkoff_per_step_symbols": 0.07853981633974483,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.97198524281079e-05,
+                "nli_power_w": 3.498702880299554e-09,
+                "nli_power_raw_w": 2.666968530885701e-06,
+                "snr_nli_db": 37.50996598071809
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9623228473017674e-05,
+                "nli_power_w": 4.058622284995813e-09,
+                "nli_power_raw_w": 2.6407365533165433e-06,
+                "snr_nli_db": 36.84391824712027
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.971511682027868e-05,
+                "nli_power_w": 4.589297208378959e-09,
+                "nli_power_raw_w": 2.6906843203001718e-06,
+                "snr_nli_db": 36.33053170756799
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.9591867684081045e-05,
+                "nli_power_w": 4.3216233802679056e-09,
+                "nli_power_raw_w": 2.6433399763790345e-06,
+                "snr_nli_db": 36.56428922657551
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9729383661758047e-05,
+                "nli_power_w": 3.222116492918047e-09,
+                "nli_power_raw_w": 2.6526434537688817e-06,
+                "snr_nli_db": 37.869722803544555
+              }
+            ]
+          },
+          {
+            "step_m": 31.25,
+            "n_steps": 3200,
+            "center_snr_db": 36.3245787925871,
+            "mean_snr_db": 37.01771506748026,
+            "min_snr_db": 36.3245787925871,
+            "center_nli_w": 4.595596471701265e-09,
+            "walkoff_per_step_symbols": 0.039269908169872414,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.9719869127341808e-05,
+                "nli_power_w": 3.5036251437665385e-09,
+                "nli_power_raw_w": 2.6706856511402643e-06,
+                "snr_nli_db": 37.503863939849005
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.962319544767304e-05,
+                "nli_power_w": 4.064131159533116e-09,
+                "nli_power_raw_w": 2.6443961036993112e-06,
+                "snr_nli_db": 36.8380201420475
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9715135514260217e-05,
+                "nli_power_w": 4.595596471701265e-09,
+                "nli_power_raw_w": 2.6944066383800977e-06,
+                "snr_nli_db": 36.3245787925871
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.9591868681653414e-05,
+                "nli_power_w": 4.327475071348678e-09,
+                "nli_power_raw_w": 2.6470037751658152e-06,
+                "snr_nli_db": 36.55841286404303
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9729391786742162e-05,
+                "nli_power_w": 3.2265896564056408e-09,
+                "nli_power_raw_w": 2.656339888497908e-06,
+                "snr_nli_db": 37.86369959887469
+              }
+            ]
+          }
+        ],
+        "last_increment_db": -0.00595291498089523,
+        "artifact_500m_db": -1.5302538557857517
+      }
+    },
+    "7ch": {
+      "nopump": {
+        "config": "nopump",
+        "steps": [
+          {
+            "step_m": 500.0,
+            "n_steps": 200,
+            "center_snr_db": 32.266843800379725,
+            "mean_snr_db": 32.45050272588001,
+            "min_snr_db": 32.22035053306092,
+            "center_nli_w": 1.1632684706899936e-08,
+            "walkoff_per_step_symbols": 0.9424777960769379,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 1.9729130822621386e-05,
+                "nli_power_w": 1.0697778871903548e-08,
+                "nli_power_raw_w": 5.138656643650122e-06,
+                "snr_nli_db": 32.65814336017095
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.960077537085921e-05,
+                "nli_power_w": 1.0733721535945907e-08,
+                "nli_power_raw_w": 5.100731468563224e-06,
+                "snr_nli_db": 32.61522927361277
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9672600661816883e-05,
+                "nli_power_w": 1.1798497990498784e-08,
+                "nli_power_raw_w": 5.1674835921888645e-06,
+                "snr_nli_db": 32.22035053306092
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9604886716318986e-05,
+                "nli_power_w": 1.1632684706899936e-08,
+                "nli_power_raw_w": 5.079823543910973e-06,
+                "snr_nli_db": 32.266843800379725
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.974101182903971e-05,
+                "nli_power_w": 1.1266156370619425e-08,
+                "nli_power_raw_w": 5.131084898931891e-06,
+                "snr_nli_db": 32.435936339356935
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9539348998719285e-05,
+                "nli_power_w": 1.0764007657590148e-08,
+                "nli_power_raw_w": 5.108341119552155e-06,
+                "snr_nli_db": 32.589360919872135
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 1.9687308320932817e-05,
+                "nli_power_w": 1.1413552933379911e-08,
+                "nli_power_raw_w": 5.133055796819614e-06,
+                "snr_nli_db": 32.36765485470657
+              }
+            ]
+          },
+          {
+            "step_m": 250.0,
+            "n_steps": 400,
+            "center_snr_db": 34.27876843267226,
+            "mean_snr_db": 34.40593705435536,
+            "min_snr_db": 33.773686747836464,
+            "center_nli_w": 7.3209216690810174e-09,
+            "walkoff_per_step_symbols": 0.47123889803846897,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 1.9731069058813516e-05,
+                "nli_power_w": 6.812477216333792e-09,
+                "nli_power_raw_w": 5.188364042167218e-06,
+                "snr_nli_db": 34.61845553782293
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.956492123165311e-05,
+                "nli_power_w": 8.205582739874994e-09,
+                "nli_power_raw_w": 5.129510896589279e-06,
+                "snr_nli_db": 33.773686747836464
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9713076570571135e-05,
+                "nli_power_w": 7.821108329435082e-09,
+                "nli_power_raw_w": 5.224970824765199e-06,
+                "snr_nli_db": 34.01486107521344
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9608420122418116e-05,
+                "nli_power_w": 7.3209216690810174e-09,
+                "nli_power_raw_w": 5.140273416419173e-06,
+                "snr_nli_db": 34.27876843267226
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.972256612056602e-05,
+                "nli_power_w": 6.684833740767752e-09,
+                "nli_power_raw_w": 5.1644565644240576e-06,
+                "snr_nli_db": 34.69872810375006
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9592802720867754e-05,
+                "nli_power_w": 6.6168675613026296e-09,
+                "nli_power_raw_w": 5.1453963201898075e-06,
+                "snr_nli_db": 34.714441234198425
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 1.9672512441993438e-05,
+                "nli_power_w": 6.600821729113199e-09,
+                "nli_power_raw_w": 5.164374986822348e-06,
+                "snr_nli_db": 34.74261824899396
+              }
+            ]
+          },
+          {
+            "step_m": 125.0,
+            "n_steps": 800,
+            "center_snr_db": 35.3338145456016,
+            "mean_snr_db": 35.68673868780736,
+            "min_snr_db": 35.289184747495234,
+            "center_nli_w": 5.734484941743324e-09,
+            "walkoff_per_step_symbols": 0.23561944901923448,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 1.9688474385399105e-05,
+                "nli_power_w": 5.0993264293864454e-09,
+                "nli_power_raw_w": 5.206437635714345e-06,
+                "snr_nli_db": 35.866992510828936
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.9609442783815213e-05,
+                "nli_power_w": 5.4881491179596045e-09,
+                "nli_power_raw_w": 5.164884708110951e-06,
+                "snr_nli_db": 35.53039350026636
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9695458468353834e-05,
+                "nli_power_w": 5.8270349098777e-09,
+                "nli_power_raw_w": 5.236733283735235e-06,
+                "snr_nli_db": 35.289184747495234
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.958284882233449e-05,
+                "nli_power_w": 5.734484941743324e-09,
+                "nli_power_raw_w": 5.162496367939913e-06,
+                "snr_nli_db": 35.3338145456016
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.972995775325322e-05,
+                "nli_power_w": 4.733785715392469e-09,
+                "nli_power_raw_w": 5.202991192394246e-06,
+                "snr_nli_db": 36.19917560521222
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.963352762016549e-05,
+                "nli_power_w": 5.07109141468057e-09,
+                "nli_power_raw_w": 5.1770360462074835e-06,
+                "snr_nli_db": 35.87896898238167
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 1.968076550774774e-05,
+                "nli_power_w": 5.2866175646298845e-09,
+                "nli_power_raw_w": 5.1815601350061406e-06,
+                "snr_nli_db": 35.70864092286551
+              }
+            ]
+          },
+          {
+            "step_m": 62.5,
+            "n_steps": 1600,
+            "center_snr_db": 36.274001631936834,
+            "mean_snr_db": 36.622645005635164,
+            "min_snr_db": 35.886497430535165,
+            "center_nli_w": 4.620432375391658e-09,
+            "walkoff_per_step_symbols": 0.11780972450961724,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 1.9706039137613768e-05,
+                "nli_power_w": 3.917623527814449e-09,
+                "nli_power_raw_w": 5.223181461986095e-06,
+                "snr_nli_db": 37.01576641762848
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.959853080208634e-05,
+                "nli_power_w": 4.529316627003515e-09,
+                "nli_power_raw_w": 5.178393799639135e-06,
+                "snr_nli_db": 36.36190834231369
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9701993517031397e-05,
+                "nli_power_w": 5.079961592510275e-09,
+                "nli_power_raw_w": 5.256501800983903e-06,
+                "snr_nli_db": 35.886497430535165
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9592180872682844e-05,
+                "nli_power_w": 4.620432375391658e-09,
+                "nli_power_raw_w": 5.1763398288409935e-06,
+                "snr_nli_db": 36.274001631936834
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.9730097643721334e-05,
+                "nli_power_w": 3.953708533068513e-09,
+                "nli_power_raw_w": 5.212748236054856e-06,
+                "snr_nli_db": 36.981245845499885
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.961527237088607e-05,
+                "nli_power_w": 3.987771620928201e-09,
+                "nli_power_raw_w": 5.190586103448948e-06,
+                "snr_nli_db": 36.918640645972154
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 1.9685784955579088e-05,
+                "nli_power_w": 4.000435421787341e-09,
+                "nli_power_raw_w": 5.20213739590322e-06,
+                "snr_nli_db": 36.92045472555993
+              }
+            ]
+          },
+          {
+            "step_m": 31.25,
+            "n_steps": 3200,
+            "center_snr_db": 36.27392546438291,
+            "mean_snr_db": 36.61824565932808,
+            "min_snr_db": 35.883085462578286,
+            "center_nli_w": 4.62070058008865e-09,
+            "walkoff_per_step_symbols": 0.05890486225480862,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 1.9705557102778902e-05,
+                "nli_power_w": 3.9214855398730545e-09,
+                "nli_power_raw_w": 5.2300123943816084e-06,
+                "snr_nli_db": 37.01138099541154
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 1.959859307889708e-05,
+                "nli_power_w": 4.536342869535186e-09,
+                "nli_power_raw_w": 5.185066245403442e-06,
+                "snr_nli_db": 36.35519023523989
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 1.9702595139438594e-05,
+                "nli_power_w": 5.08410939875441e-09,
+                "nli_power_raw_w": 5.2632032879489e-06,
+                "snr_nli_db": 35.883085462578286
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 1.9592974521376178e-05,
+                "nli_power_w": 4.62070058008865e-09,
+                "nli_power_raw_w": 5.182859570194896e-06,
+                "snr_nli_db": 36.27392546438291
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 1.973064863370222e-05,
+                "nli_power_w": 3.959183024474485e-09,
+                "nli_power_raw_w": 5.219415403194099e-06,
+                "snr_nli_db": 36.975357839561134
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 1.9615294071383754e-05,
+                "nli_power_w": 3.991480765849546e-09,
+                "nli_power_raw_w": 5.197284987803093e-06,
+                "snr_nli_db": 36.91460782599226
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 1.9685341581904345e-05,
+                "nli_power_w": 4.00613680523686e-09,
+                "nli_power_raw_w": 5.208856769303556e-06,
+                "snr_nli_db": 36.91417179213059
+              }
+            ]
+          }
+        ],
+        "last_increment_db": -7.6167553920925e-05,
+        "artifact_500m_db": -4.007081664003188
+      },
+      "fwd_0p20w": {
+        "config": "fwd_0p20w",
+        "steps": [
+          {
+            "step_m": 500.0,
+            "n_steps": 200,
+            "center_snr_db": 17.635796728421933,
+            "mean_snr_db": 18.067118128978414,
+            "min_snr_db": 17.57888175264501,
+            "center_nli_w": 4.204595310336217e-06,
+            "walkoff_per_step_symbols": 0.9424777960769379,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.00024296799010100194,
+                "nli_power_w": 3.406467542583772e-06,
+                "nli_power_raw_w": 0.0009255333830291509,
+                "snr_nli_db": 18.532448058337703
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024296240142621244,
+                "nli_power_w": 3.664871079500858e-06,
+                "nli_power_raw_w": 0.0009220369473394591,
+                "snr_nli_db": 18.214803695614165
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024188451077293089,
+                "nli_power_w": 4.2239608441979215e-06,
+                "nli_power_raw_w": 0.0009254132115667873,
+                "snr_nli_db": 17.57888175264501
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.00024395171434394842,
+                "nli_power_w": 4.204595310336217e-06,
+                "nli_power_raw_w": 0.0009241014859896279,
+                "snr_nli_db": 17.635796728421933
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.00024598048691329557,
+                "nli_power_w": 4.0495610428368364e-06,
+                "nli_power_raw_w": 0.000931299952986684,
+                "snr_nli_db": 17.83492706971375
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00023996299632077982,
+                "nli_power_w": 3.5520417852350414e-06,
+                "nli_power_raw_w": 0.0009174934727294516,
+                "snr_nli_db": 18.29666210102109
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.00024500947832843304,
+                "nli_power_w": 3.560837343812003e-06,
+                "nli_power_raw_w": 0.0009279544214620282,
+                "snr_nli_db": 18.376307497095233
+              }
+            ]
+          },
+          {
+            "step_m": 250.0,
+            "n_steps": 400,
+            "center_snr_db": 18.440718898644167,
+            "mean_snr_db": 18.935032654879873,
+            "min_snr_db": 18.417350030818838,
+            "center_nli_w": 3.503279166466488e-06,
+            "walkoff_per_step_symbols": 0.47123889803846897,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002452567917802485,
+                "nli_power_w": 2.835480274147513e-06,
+                "nli_power_raw_w": 0.0009334560754491201,
+                "snr_nli_db": 19.369944125948084
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.0002417604083794889,
+                "nli_power_w": 3.106830193319847e-06,
+                "nli_power_raw_w": 0.0009228007594870376,
+                "snr_nli_db": 18.91067663465168
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.0002447436531144031,
+                "nli_power_w": 3.523517518289748e-06,
+                "nli_power_raw_w": 0.0009341097600574424,
+                "snr_nli_db": 18.417350030818838
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.00024465079776943727,
+                "nli_power_w": 3.503279166466488e-06,
+                "nli_power_raw_w": 0.0009288763592112159,
+                "snr_nli_db": 18.440718898644167
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002449679415853827,
+                "nli_power_w": 3.3252352619299666e-06,
+                "nli_power_raw_w": 0.0009322976577578033,
+                "snr_nli_db": 18.67286875660241
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024356983183726534,
+                "nli_power_w": 2.8386065701953903e-06,
+                "nli_power_raw_w": 0.0009273969353515524,
+                "snr_nli_db": 19.335182926397426
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.0002441885413491909,
+                "nli_power_w": 2.8046363566935078e-06,
+                "nli_power_raw_w": 0.0009301039363429575,
+                "snr_nli_db": 19.39848721109652
+              }
+            ]
+          },
+          {
+            "step_m": 125.0,
+            "n_steps": 800,
+            "center_snr_db": 19.083383843378435,
+            "mean_snr_db": 19.581280102868554,
+            "min_snr_db": 19.005559731710242,
+            "center_nli_w": 3.002902012806908e-06,
+            "walkoff_per_step_symbols": 0.23561944901923448,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.00024485070744124427,
+                "nli_power_w": 2.4127442511033278e-06,
+                "nli_power_raw_w": 0.0009345499195568983,
+                "snr_nli_db": 20.06390073660352
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024468707107665996,
+                "nli_power_w": 2.6641017390835828e-06,
+                "nli_power_raw_w": 0.0009307915539826527,
+                "snr_nli_db": 19.6306021640533
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.0002448823606957156,
+                "nli_power_w": 3.0789421573359297e-06,
+                "nli_power_raw_w": 0.0009362075076853206,
+                "snr_nli_db": 19.005559731710242
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.00024315295137644565,
+                "nli_power_w": 3.002902012806908e-06,
+                "nli_power_raw_w": 0.000928414285886451,
+                "snr_nli_db": 19.083383843378435
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.00024504404439962914,
+                "nli_power_w": 2.9031726214765053e-06,
+                "nli_power_raw_w": 0.0009352536706750009,
+                "snr_nli_db": 19.263712922207095
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024469089936128265,
+                "nli_power_w": 2.478691555158126e-06,
+                "nli_power_raw_w": 0.0009313671634413143,
+                "snr_nli_db": 19.94395330059402
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.00024509095516723816,
+                "nli_power_w": 2.4073679935624463e-06,
+                "nli_power_raw_w": 0.0009334744629553162,
+                "snr_nli_db": 20.077848021533242
+              }
+            ]
+          },
+          {
+            "step_m": 62.5,
+            "n_steps": 1600,
+            "center_snr_db": 19.320679416385364,
+            "mean_snr_db": 19.87551213934427,
+            "min_snr_db": 19.188308113523995,
+            "center_nli_w": 2.8534234883189623e-06,
+            "walkoff_per_step_symbols": 0.11780972450961724,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002451805616038401,
+                "nli_power_w": 2.2039763488138e-06,
+                "nli_power_raw_w": 0.0009362054309512013,
+                "snr_nli_db": 20.46279105763862
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024403273337856294,
+                "nli_power_w": 2.476093666038231e-06,
+                "nli_power_raw_w": 0.0009305328010814207,
+                "snr_nli_db": 19.93681015206715
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024516857787372124,
+                "nli_power_w": 2.955520639525652e-06,
+                "nli_power_raw_w": 0.000937654652377275,
+                "snr_nli_db": 19.188308113523995
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.0002440249168771462,
+                "nli_power_w": 2.8534234883189623e-06,
+                "nli_power_raw_w": 0.0009308356743731332,
+                "snr_nli_db": 19.320679416385364
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002457562691573456,
+                "nli_power_w": 2.7942131652538067e-06,
+                "nli_power_raw_w": 0.0009371543395785444,
+                "snr_nli_db": 19.442450707982168
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024446044074951534,
+                "nli_power_w": 2.2649002813750617e-06,
+                "nli_power_raw_w": 0.0009320398750367104,
+                "snr_nli_db": 20.33159504706395
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.00024531784080438027,
+                "nli_power_w": 2.2137780929979586e-06,
+                "nli_power_raw_w": 0.0009350382891968837,
+                "snr_nli_db": 20.44595048074866
+              }
+            ]
+          },
+          {
+            "step_m": 31.25,
+            "n_steps": 3200,
+            "center_snr_db": 19.314473352673723,
+            "mean_snr_db": 19.86964062648776,
+            "min_snr_db": 19.18162640208251,
+            "center_nli_w": 2.8593967375224593e-06,
+            "walkoff_per_step_symbols": 0.05890486225480862,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002450773297517662,
+                "nli_power_w": 2.2056376582185744e-06,
+                "nli_power_raw_w": 0.0009363253677007661,
+                "snr_nli_db": 20.457689716758175
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.0002440446687943628,
+                "nli_power_w": 2.4795279940374527e-06,
+                "nli_power_raw_w": 0.0009308415695083606,
+                "snr_nli_db": 19.931003089758462
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024530354273294495,
+                "nli_power_w": 2.9617007834561496e-06,
+                "nli_power_raw_w": 0.0009381734894916552,
+                "snr_nli_db": 19.18162640208251
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.0002441865576629489,
+                "nli_power_w": 2.8593967375224593e-06,
+                "nli_power_raw_w": 0.0009313899314604587,
+                "snr_nli_db": 19.314473352673723
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002458847654370049,
+                "nli_power_w": 2.8007252249780437e-06,
+                "nli_power_raw_w": 0.0009376699425744583,
+                "snr_nli_db": 19.434611185711614
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024447479389475463,
+                "nli_power_w": 2.2671759628494626e-06,
+                "nli_power_raw_w": 0.000932354510805286,
+                "snr_nli_db": 20.327488602351465
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.00024520417104695,
+                "nli_power_w": 2.2154841628436268e-06,
+                "nli_power_raw_w": 0.0009351373261771751,
+                "snr_nli_db": 20.44059203607839
+              }
+            ]
+          }
+        ],
+        "last_increment_db": -0.006206063711641008,
+        "artifact_500m_db": -1.6786766242517892
+      },
+      "bwd_0p20w": {
+        "config": "bwd_0p20w",
+        "steps": [
+          {
+            "step_m": 500.0,
+            "n_steps": 200,
+            "center_snr_db": 31.95152625771298,
+            "mean_snr_db": 32.18869242014785,
+            "min_snr_db": 31.928216404603887,
+            "center_nli_w": 1.556201633693535e-07,
+            "walkoff_per_step_symbols": 0.9424777960769379,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002455813196187154,
+                "nli_power_w": 1.388122367441621e-07,
+                "nli_power_raw_w": 7.706716040141726e-05,
+                "snr_nli_db": 32.47767576435712
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.0002440193651452435,
+                "nli_power_w": 1.404438127331274e-07,
+                "nli_power_raw_w": 7.648989973369066e-05,
+                "snr_nli_db": 32.39921681834133
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.0002450511136904528,
+                "nli_power_w": 1.5719366515112704e-07,
+                "nli_power_raw_w": 7.750653661291601e-05,
+                "snr_nli_db": 31.928216404603887
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.00024390375846030957,
+                "nli_power_w": 1.556201633693535e-07,
+                "nli_power_raw_w": 7.625227470347862e-05,
+                "snr_nli_db": 31.95152625771298
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002460109318306164,
+                "nli_power_w": 1.5108995239030005e-07,
+                "nli_power_raw_w": 7.708983703470802e-05,
+                "snr_nli_db": 32.11718821649916
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024313871190616073,
+                "nli_power_w": 1.4122442875090443e-07,
+                "nli_power_raw_w": 7.654433553427834e-05,
+                "snr_nli_db": 32.35944284871511
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.000245022195092667,
+                "nli_power_w": 1.5151211588119117e-07,
+                "nli_power_raw_w": 7.699940686138733e-05,
+                "snr_nli_db": 32.08758063080537
+              }
+            ]
+          },
+          {
+            "step_m": 250.0,
+            "n_steps": 400,
+            "center_snr_db": 33.96493550537771,
+            "mean_snr_db": 34.13284381946089,
+            "min_snr_db": 33.53413792992316,
+            "center_nli_w": 9.790578326378276e-08,
+            "walkoff_per_step_symbols": 0.47123889803846897,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.00024562266780992056,
+                "nli_power_w": 8.92482632281172e-08,
+                "nli_power_raw_w": 7.78586908261238e-05,
+                "snr_nli_db": 34.396686706154036
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024364773849329776,
+                "nli_power_w": 1.0798130994243504e-07,
+                "nli_power_raw_w": 7.698852206134695e-05,
+                "snr_nli_db": 33.53413792992316
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024554395006195936,
+                "nli_power_w": 1.0317483104179441e-07,
+                "nli_power_raw_w": 7.836766359686793e-05,
+                "snr_nli_db": 33.7655547169875
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.0002439506034454471,
+                "nli_power_w": 9.790578326378276e-08,
+                "nli_power_raw_w": 7.714241298376042e-05,
+                "snr_nli_db": 33.96493550537771
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002457184210992883,
+                "nli_power_w": 9.09123807072966e-08,
+                "nli_power_raw_w": 7.760890717517848e-05,
+                "snr_nli_db": 34.31814685321212
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024383549046473694,
+                "nli_power_w": 8.706115789146151e-08,
+                "nli_power_raw_w": 7.719947566216523e-05,
+                "snr_nli_db": 34.472724789503914
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.0002448862849060584,
+                "nli_power_w": 8.733582744099278e-08,
+                "nli_power_raw_w": 7.754304176052702e-05,
+                "snr_nli_db": 34.477720235067764
+              }
+            ]
+          },
+          {
+            "step_m": 125.0,
+            "n_steps": 800,
+            "center_snr_db": 34.98795947772085,
+            "mean_snr_db": 35.38705423140069,
+            "min_snr_db": 34.98795947772085,
+            "center_nli_w": 7.72562745268795e-08,
+            "walkoff_per_step_symbols": 0.23561944901923448,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002451322388602748,
+                "nli_power_w": 6.597504012274534e-08,
+                "nli_power_raw_w": 7.811835322957311e-05,
+                "snr_nli_db": 35.70020768759227
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024417953283093125,
+                "nli_power_w": 7.31189668780105e-08,
+                "nli_power_raw_w": 7.752640562626535e-05,
+                "snr_nli_db": 35.23679212019476
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024533724431412214,
+                "nli_power_w": 7.774997091496855e-08,
+                "nli_power_raw_w": 7.85632475418868e-05,
+                "snr_nli_db": 34.99063247630947
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.0002436294077244295,
+                "nli_power_w": 7.72562745268795e-08,
+                "nli_power_raw_w": 7.748202089945244e-05,
+                "snr_nli_db": 34.98795947772085
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.000245839983822358,
+                "nli_power_w": 6.586963716582618e-08,
+                "nli_power_raw_w": 7.818670117315205e-05,
+                "snr_nli_db": 35.719672474748656
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.0002443368472200607,
+                "nli_power_w": 6.601015016315442e-08,
+                "nli_power_raw_w": 7.765480499168342e-05,
+                "snr_nli_db": 35.683782449876226
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.00024498570794311236,
+                "nli_power_w": 7.081209702599735e-08,
+                "nli_power_raw_w": 7.781176026878993e-05,
+                "snr_nli_db": 35.39033293336259
+              }
+            ]
+          },
+          {
+            "step_m": 62.5,
+            "n_steps": 1600,
+            "center_snr_db": 35.867992123632334,
+            "mean_snr_db": 36.27414488585689,
+            "min_snr_db": 35.547789449214825,
+            "center_nli_w": 6.311710506338712e-08,
+            "walkoff_per_step_symbols": 0.11780972450961724,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002453357219602855,
+                "nli_power_w": 5.1140380652609394e-08,
+                "nli_power_raw_w": 7.837689706543385e-05,
+                "snr_nli_db": 36.80996831715918
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024404627233191897,
+                "nli_power_w": 6.061496102899037e-08,
+                "nli_power_raw_w": 7.772262078253559e-05,
+                "snr_nli_db": 36.048923481632
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024542150093737443,
+                "nli_power_w": 6.84122167295504e-08,
+                "nli_power_raw_w": 7.88561146520829e-05,
+                "snr_nli_db": 35.547789449214825
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.00024375093126360222,
+                "nli_power_w": 6.311710506338712e-08,
+                "nli_power_raw_w": 7.769324732388363e-05,
+                "snr_nli_db": 35.867992123632334
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002458498297024451,
+                "nli_power_w": 5.557030856695801e-08,
+                "nli_power_raw_w": 7.833637004041816e-05,
+                "snr_nli_db": 36.45827103482755
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.000244120823829414,
+                "nli_power_w": 5.2632608195647405e-08,
+                "nli_power_raw_w": 7.785919213383903e-05,
+                "snr_nli_db": 36.66349934987247
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.00024504572214982236,
+                "nli_power_w": 5.4574539625203687e-08,
+                "nli_power_raw_w": 7.811166724403239e-05,
+                "snr_nli_db": 36.5225704446599
+              }
+            ]
+          },
+          {
+            "step_m": 31.25,
+            "n_steps": 3200,
+            "center_snr_db": 35.867576510242,
+            "mean_snr_db": 36.26971226250787,
+            "min_snr_db": 35.54448045349541,
+            "center_nli_w": 6.312587940648255e-08,
+            "walkoff_per_step_symbols": 0.05890486225480862,
+            "per_channel": [
+              {
+                "channel": 0,
+                "freq_offset_hz": -300000000000.0,
+                "signal_power_w": 0.0002453296815996543,
+                "nli_power_w": 5.1190525412677505e-08,
+                "nli_power_raw_w": 7.847925120792933e-05,
+                "snr_nli_db": 36.80560508076808
+              },
+              {
+                "channel": 1,
+                "freq_offset_hz": -200000000000.0,
+                "signal_power_w": 0.00024404706736857744,
+                "nli_power_w": 6.070884532271076e-08,
+                "nli_power_raw_w": 7.782283547601228e-05,
+                "snr_nli_db": 36.04221620547502
+              },
+              {
+                "channel": 2,
+                "freq_offset_hz": -100000000000.0,
+                "signal_power_w": 0.00024542940205129473,
+                "nli_power_w": 6.846656567648454e-08,
+                "nli_power_raw_w": 7.89568277489442e-05,
+                "snr_nli_db": 35.54448045349541
+              },
+              {
+                "channel": 3,
+                "freq_offset_hz": 0.0,
+                "signal_power_w": 0.0002437614880280433,
+                "nli_power_w": 6.312587940648255e-08,
+                "nli_power_raw_w": 7.779167912005944e-05,
+                "snr_nli_db": 35.867576510242
+              },
+              {
+                "channel": 4,
+                "freq_offset_hz": 100000000000.0,
+                "signal_power_w": 0.0002458573218244219,
+                "nli_power_w": 5.5648089709972926e-08,
+                "nli_power_raw_w": 7.843683852655148e-05,
+                "snr_nli_db": 36.452328860031564
+              },
+              {
+                "channel": 5,
+                "freq_offset_hz": 200000000000.0,
+                "signal_power_w": 0.00024412138631854527,
+                "nli_power_w": 5.267876631432994e-08,
+                "nli_power_raw_w": 7.795977303758009e-05,
+                "snr_nli_db": 36.65970231913817
+              },
+              {
+                "channel": 6,
+                "freq_offset_hz": 300000000000.0,
+                "signal_power_w": 0.000245040574233001,
+                "nli_power_w": 5.465505814864508e-08,
+                "nli_power_raw_w": 7.821262339919667e-05,
+                "snr_nli_db": 36.51607640840488
+              }
+            ]
+          }
+        ],
+        "last_increment_db": -0.0004156133903308046,
+        "artifact_500m_db": -3.916050252529022
+      }
+    }
+  },
+  "summary": {
+    "max_abs_last_increment_db": 0.006206063711641008,
+    "last_increments_db": {
+      "3ch/nopump": -0.006151366248111856,
+      "5ch/nopump": -0.00595291498089523,
+      "7ch/nopump": -7.6167553920925e-05,
+      "7ch/fwd_0p20w": -0.006206063711641008,
+      "7ch/bwd_0p20w": -0.0004156133903308046
+    },
+    "converged": true,
+    "tolerance_db": 0.01
+  }
+}

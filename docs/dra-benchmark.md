@@ -20,6 +20,10 @@
 - 泵浦 ASE 未单独求解，信号 ASE 完整；
 - 零色散点附近 `tan` 尺度截断到信道半带宽。
 
+本文件只做 `numerical_dra` 与解析模型的互比，不包含 SSFM 波形参考。
+独立波形基准（含 62.5 m 收敛参考、3/5/7ch 校准域）见
+`docs/dra-waveform-compare.md` §13。
+
 ## 2. 结果
 
 `results/raman/dra_benchmark.json`。误差 = 模型 SNR - numerical_dra，逐信道。
