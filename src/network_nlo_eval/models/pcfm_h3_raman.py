@@ -130,6 +130,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_steps: RK4 steps of the coarse signal/pump/ASE solve.
         raman_iterations: Fixed-point iterations cap of the backward-pump solve.
         include_isrs: Include channel-channel ISRS in the coupled solve.
+        pump_depletion: Let the pumps be depleted by the signals.  ``True``
+            (default) solves the full coupled Eq. (2); ``False`` freezes the
+            pump evolution to its own attenuation, the undepleted-pump control
+            convention of the waveform reference.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -145,6 +149,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_steps: int = DEFAULT_H3_RAMAN_STEPS,
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
         include_isrs: bool = True,
+        pump_depletion: bool = True,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -165,6 +170,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.raman_steps = int(raman_steps)
         self.raman_iterations = int(raman_iterations)
         self.include_isrs = bool(include_isrs)
+        self.pump_depletion = bool(pump_depletion)
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
@@ -222,6 +228,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             n_iterations=self.raman_iterations,
             include_isrs=self.include_isrs,
             include_ase=self._raman_ase,
+            pump_depletion=self.pump_depletion,
         )
         self._solver_cache[key] = solver
         return solver
@@ -394,6 +401,11 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
         ("include_isrs", "Include channel-channel ISRS in the coupled solve. Default True."),
         (
+            "pump_depletion",
+            "Deplete the pumps with the signals (default True). False freezes them to their own "
+            "attenuation, the undepleted-pump control convention of the waveform reference.",
+        ),
+        (
             "span_coherence",
             "'pcfm' (default, visibility-weighted coherent NLI accumulation) or 'incoherent' "
             "(power sum, the paper's default epsilon=0; for paper-matched comparison).",
@@ -429,6 +441,9 @@ class PCFH3RamanModel(PCFMModel):
         raman_steps: RK4 steps of the coarse coupled profile/ASE solve.
         raman_iterations: Backward-pump fixed-point iteration cap.
         include_isrs: Include channel-channel ISRS in the coupled solve.
+        pump_depletion: Let the pumps be depleted by the signals. Default
+            ``True``; ``False`` freezes the pumps to their own attenuation
+            (undepleted-pump control convention).
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -462,6 +477,7 @@ class PCFH3RamanModel(PCFMModel):
         raman_steps: int | str = "auto",
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
         include_isrs: bool = True,
+        pump_depletion: bool = True,
         span_coherence: str = "auto",
         **route_options: object,
     ) -> None:
@@ -500,6 +516,7 @@ class PCFH3RamanModel(PCFMModel):
         self._h3_raman_steps = raman_steps if isinstance(raman_steps, str) else int(raman_steps)
         self._h3_raman_iterations = int(raman_iterations)
         self._h3_include_isrs = bool(include_isrs)
+        self._h3_pump_depletion = bool(pump_depletion)
         active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
         resolved = str(span_coherence)
         if resolved == "auto":
@@ -531,6 +548,7 @@ class PCFH3RamanModel(PCFMModel):
             raman_steps=steps,
             raman_iterations=self._h3_raman_iterations,
             include_isrs=self._h3_include_isrs,
+            pump_depletion=self._h3_pump_depletion,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,

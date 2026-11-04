@@ -136,6 +136,8 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             （Eq. (6)-(8) 数值积分，仅作对照）。
         spm_coherence_exponent: Eq. (6) 的 ``epsilon``。
         n_quadrature: ``nli_form="integral"`` 时每个频率方向的 Gauss 节点数。
+        pump_depletion: 泵浦是否被信号耗尽。``True``（默认）解完整 Eq. (2)；
+            ``False`` 是未耗尽泵浦的对照口径，只用于和波形/物理参考对齐。
 
     Raises
     ------
@@ -164,6 +166,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         nli_form: str = "paper",
         spm_coherence_exponent: float = 0.0,
         n_quadrature: int = 24,
+        pump_depletion: bool = True,
     ) -> None:
         """校验口径并缓存 ``gamma`` 与泵浦平均频率 ``f_hat``。"""
         if nli_form not in ("paper", "integral"):
@@ -179,6 +182,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             n_iterations=n_iterations,
             include_isrs=include_isrs,
             n_quadrature=n_quadrature,
+            pump_depletion=pump_depletion,
         )
         self._nli_form = str(nli_form)
         self._spm_exponent = float(spm_coherence_exponent)
@@ -267,6 +271,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         raman_ase: 是否把新产生的拉曼 ASE 暴露给模型层。
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS。
+        pump_depletion: 泵浦是否被信号耗尽；``False`` 是未耗尽对照口径。
         **kwargs: 透传给 :class:`PCFMSpanKernel`。
     """
 
@@ -281,6 +286,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         raman_ase: bool = True,
         n_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
         include_isrs: bool = True,
+        pump_depletion: bool = True,
         **kwargs: object,
     ) -> None:
         """构造核并缓存泵浦参数。"""
@@ -291,6 +297,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         self._raman_ase_enabled = bool(raman_ase)
         self._n_iterations = int(n_iterations)
         self._include_isrs = bool(include_isrs)
+        self._pump_depletion = bool(pump_depletion)
         self._input_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
@@ -365,6 +372,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
                 n_iterations=self._n_iterations,
                 include_isrs=self._include_isrs,
                 include_ase=self._raman_ase_enabled,
+                pump_depletion=self._pump_depletion,
             )
             self._solver_cache[key] = solver
         return solver
@@ -426,6 +434,11 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
         ("egn", "EGN correction; only used by nli_form='pcfm'. Default False."),
         ("edge_fix", "PCFM zero-dispersion edge fix; only used by nli_form='pcfm'. Default True."),
         ("spp_steps", "RK4 steps of the coupled ODE and of the Eq. (10) fit. Default 32."),
+        (
+            "pump_depletion",
+            "Deplete the pumps with the signals (default True). False freezes the pumps to their own "
+            "attenuation, the undepleted-pump control convention of the waveform reference.",
+        ),
     ),
 )
 
@@ -464,6 +477,11 @@ class HybridRamanPaperModel(PCFMModel):
         egn: EGN correction (legacy path only).
         edge_fix: PCFM edge fix (legacy path only).
         spp_steps: RK4 steps of the ODE and of the Eq. (10) fit.
+        pump_depletion: Let the pumps be depleted by the signals.  ``True``
+            (default) solves the full coupled Eq. (2); ``False`` freezes the
+            pump evolution to its own attenuation, matching the undepleted-pump
+            waveform reference.  A control convention, not a more physical
+            default.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
@@ -492,6 +510,7 @@ class HybridRamanPaperModel(PCFMModel):
         egn: bool = False,
         edge_fix: bool = True,
         spp_steps: int = DEFAULT_PAPER_SPP_STEPS,
+        pump_depletion: bool = True,
         **route_options: object,
     ) -> None:
         """Build the paper model."""
@@ -522,6 +541,7 @@ class HybridRamanPaperModel(PCFMModel):
         self._fixed_point_iterations = int(fixed_point_iterations)
         self._nli_form = str(nli_form)
         self._spm_exponent = float(spm_coherence_exponent)
+        self._pump_depletion = bool(pump_depletion)
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
 
     def _build_kernel(self, fiber_config: FiberSpanConfig):
@@ -543,6 +563,7 @@ class HybridRamanPaperModel(PCFMModel):
                 edge_fix=self.edge_fix,
                 cache_spans=False,
                 spp_steps=self._active_spp_steps,
+                pump_depletion=self._pump_depletion,
             )
         return HybridRamanPaperSpanKernel(
             self.f_abs_hz,
@@ -556,6 +577,7 @@ class HybridRamanPaperModel(PCFMModel):
             include_isrs=self._include_isrs,
             nli_form=self._nli_form,
             spm_coherence_exponent=self._spm_exponent,
+            pump_depletion=self._pump_depletion,
         )
 
     def evaluate_path(self, optical_path, power_in_w):

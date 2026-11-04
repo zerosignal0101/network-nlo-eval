@@ -37,7 +37,9 @@ def _pump(power_w: float = 0.2, direction: str = "backward") -> RamanPumpConfig:
     )
 
 
-def _solver(pumps: list[RamanPumpConfig], *, n_steps: int = 32) -> RamanPaperSpanSolver:
+def _solver(
+    pumps: list[RamanPumpConfig], *, n_steps: int = 32, pump_depletion: bool = True
+) -> RamanPaperSpanSolver:
     """在 9 个 C 波段信道上构造一个小规模 ODE 求解器。"""
     frequencies = C_LIGHT / np.linspace(1530e-9, 1565e-9, 9)
     bandwidths = np.full(frequencies.size, 64e9)
@@ -57,6 +59,7 @@ def _solver(pumps: list[RamanPumpConfig], *, n_steps: int = 32) -> RamanPaperSpa
         RamanGainModel(),
         n_steps=n_steps,
         n_iterations=24,
+        pump_depletion=pump_depletion,
     )
 
 
@@ -297,6 +300,64 @@ def test_small_signal_gain_matches_the_physical_raman_pump() -> None:
     )
     physical_gain_db = 10.0 * np.log10(physical._gain(frequencies))
     assert np.max(np.abs(ode_gain_db - physical_gain_db)) < 0.1
+
+
+# ---------------------------------------------------------------------------
+# 泵浦耗尽对照口径
+# ---------------------------------------------------------------------------
+
+_PUMP_ALPHA_NPM = 0.25 * np.log(10.0) / 10.0 / 1e3
+
+
+def test_undepleted_forward_pump_follows_beer_lambert() -> None:
+    """``pump_depletion=False`` 时前向泵严格按 ``P0 exp(-alpha_p L)`` 衰减。"""
+    pump = _pump(direction="forward")
+    expected = pump.power_w * np.exp(-_PUMP_ALPHA_NPM * 100e3)
+
+    undepleted = _solver([pump], pump_depletion=False).solve(np.full(9, 1e-3))
+    depleted = _solver([pump], pump_depletion=True).solve(np.full(9, 1e-3))
+
+    assert undepleted.pump_power_out_w[0] == pytest.approx(expected, rel=1e-4)
+    # 完整耦合 ODE 必须出现可测的泵浦耗尽，否则这个开关没有物理意义。
+    assert depleted.pump_power_out_w[0] < 0.9 * expected
+    # 未耗尽口径泵浦更强，信号增益也应更高。
+    assert np.all(undepleted.power_out_w > depleted.power_out_w)
+
+
+def test_undepleted_backward_pump_profile_is_the_preset_exponential() -> None:
+    """反向泵的未耗尽剖面仍是 ``P0 exp(-alpha_p (L-z))``。"""
+    pump = _pump(direction="backward")
+    solver = _solver([pump], pump_depletion=False)
+    z_m = solver._z_m  # noqa: SLF001 - 直接检查构造出的预设剖面
+    profile = solver._bw_initial_total[:, 0]  # noqa: SLF001
+    np.testing.assert_allclose(
+        profile,
+        pump.power_w * np.exp(-_PUMP_ALPHA_NPM * (100e3 - z_m)),
+        rtol=1e-12,
+    )
+
+    result = solver.solve(np.full(9, 1e-3))
+    assert result.pump_power_out_w[0] == pytest.approx(
+        pump.power_w * np.exp(-_PUMP_ALPHA_NPM * 100e3), rel=1e-4
+    )
+
+
+def test_forward_pump_undepleted_has_more_nli_and_lower_snr() -> None:
+    """前向泵未耗尽口径保留更多泵浦功率，NLI 更大、SNR 更低。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    pump = _pump(direction="forward")
+    depleted = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[pump], pump_depletion=True
+    ).evaluate_path(path, power)
+    undepleted = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[pump], pump_depletion=False
+    ).evaluate_path(path, power)
+
+    nli_depleted = np.mean(np.asarray(depleted.spm_noise_w) + np.asarray(depleted.xpm_noise_w))
+    nli_undepleted = np.mean(np.asarray(undepleted.spm_noise_w) + np.asarray(undepleted.xpm_noise_w))
+    assert nli_undepleted > nli_depleted
+    assert float(np.mean(undepleted.snr_db)) < float(np.mean(depleted.snr_db)) - 0.1
 
 
 # ---------------------------------------------------------------------------

@@ -120,6 +120,11 @@ class RamanPaperSpanSolver:
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS；关闭后只保留泵浦相关耦合。
         include_ase: 是否求解 Eq. (4) 的 ASE 状态。关闭时 ASE 恒为零。
+        pump_depletion: 泵浦是否被信号/其他泵浦耗尽。``True``（默认）解完整
+            耦合 Eq. (2)；``False`` 把泵浦行从耦合矩阵中清零，泵浦只按自身
+            衰减 ``dP_p/dz = -alpha_p P_p`` 演化；信号仍从泵浦获得增益，泵浦-泵浦
+            耦合被关闭。这是一个**对照口径**，用于和采用未耗尽泵浦的波形/物理
+            参考比较，不是更物理的默认（真实 DRA 在高信号功率下会发生泵浦耗尽）。
 
     Raises
     ------
@@ -142,6 +147,7 @@ class RamanPaperSpanSolver:
         n_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
         include_isrs: bool = True,
         include_ase: bool = True,
+        pump_depletion: bool = True,
     ) -> None:
         """校验参数并构建与 z 无关的耦合矩阵。"""
         if length_m <= 0:
@@ -162,6 +168,7 @@ class RamanPaperSpanSolver:
         self.n_iterations = int(n_iterations)
         self.include_isrs = bool(include_isrs)
         self.include_ase = bool(include_ase)
+        self.pump_depletion = bool(pump_depletion)
 
         n_signal = self.signal_frequencies_hz.size
         if self.signal_bandwidths_hz.shape != (n_signal,):
@@ -242,7 +249,12 @@ class RamanPaperSpanSolver:
             )
 
     def _build_coupling_matrix(self) -> NDArrayFloat:
-        """按论文 Eq. (2) 构建 ``(M, M)`` 耦合矩阵 (1/(W·m))。"""
+        """按论文 Eq. (2) 构建 ``(M, M)`` 耦合矩阵 (1/(W·m))。
+
+        ``pump_depletion=False`` 时把泵浦行（含泵浦-泵浦项）清零：泵浦不再
+        从信号或其他泵浦获得/失去功率，只剩自身 ``-alpha_p P_p`` 衰减，而
+        信号/泵浦仍通过信号行从泵浦获得增益。这是未耗尽泵浦的对照口径。
+        """
         delta = np.abs(self._f_hz[:, None] - self._f_hz[None, :])
         shape = self.gain_model.gain_shape(delta)
         coefficient = self.gain_model.peak_gain_coefficient_m_per_w / self._a_eff_m2[:, None]
@@ -255,6 +267,9 @@ class RamanPaperSpanSolver:
         if not self.include_isrs:
             signal_slots = self._signal_slots
             coupling[np.ix_(signal_slots, signal_slots)] = 0.0
+        if not self.pump_depletion:
+            pump_slots = np.flatnonzero(self._is_pump)
+            coupling[pump_slots, :] = 0.0
         return coupling
 
     def _build_source_matrix(self) -> NDArrayFloat:
@@ -442,9 +457,10 @@ class RamanPaperSpanSolver:
         ase_bw = np.zeros_like(power_bw)
         backward_total = self._bw_initial_total.copy()
         iterations = 0
-        converged = self._bw_slots.size == 0
+        # 未耗尽口径下反向泵不依赖信号，预设指数剖面就是解，无需不动点迭代。
+        converged = self._bw_slots.size == 0 or not self.pump_depletion
 
-        if self._bw_slots.size:
+        if self._bw_slots.size and self.pump_depletion:
             peak_pump = max(float(np.max(self._pump_power_w, initial=0.0)), 1.0e-30)
             for iteration in range(self.n_iterations):
                 iterations = iteration + 1

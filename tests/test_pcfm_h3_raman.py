@@ -103,6 +103,32 @@ def test_no_pump_is_bit_identical_to_h3_pcfm(case) -> None:
         assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(new, name))), name
 
 
+def test_no_pump_with_undepleted_option_is_bit_identical_to_h3_pcfm() -> None:
+    """``pump_depletion=False`` 不得改变无泵路径。"""
+    baseline = _path_result(CASE_1, "pcfm", **H3_OPTIONS)
+    new = _path_result(CASE_1, "pcfm_h3_raman", pump_depletion=False)
+    for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(new, name))), name
+
+
+def test_forward_pump_undepleted_has_more_nli_and_lower_snr() -> None:
+    """前向泵未耗尽口径保留更多泵浦功率，NLI 更大、SNR 更低。"""
+    case = CASE_1
+    path = build_path(case)
+    power = launch_profile(case)
+    pump = [_pump(0.2, "forward")]
+    depleted = make_model("pcfm_h3_raman", case, raman_pumps=pump, pump_depletion=True).evaluate_path(
+        path, power
+    )
+    undepleted = make_model("pcfm_h3_raman", case, raman_pumps=pump, pump_depletion=False).evaluate_path(
+        path, power
+    )
+    nli_depleted = np.mean(np.asarray(depleted.spm_noise_w) + np.asarray(depleted.xpm_noise_w))
+    nli_undepleted = np.mean(np.asarray(undepleted.spm_noise_w) + np.asarray(undepleted.xpm_noise_w))
+    assert nli_undepleted > nli_depleted
+    assert float(np.mean(undepleted.snr_db)) < float(np.mean(depleted.snr_db)) - 0.3
+
+
 # ---------------------------------------------------------------------------
 # 泵功率单调与 FW/BW
 # ---------------------------------------------------------------------------
