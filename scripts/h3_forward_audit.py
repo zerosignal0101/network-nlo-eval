@@ -108,6 +108,12 @@ def _model(model_name: str, n_channels: int, config: str, **options: Any):
     pumps = _pumps(config)
     if pumps:
         options.setdefault("raman_pumps", pumps)
+    if model_name == "pcfm_h3_raman":
+        # 本文的表与 JSON 是旧 EGN 口径下的审计结果。WP6 起模型默认
+        # egn="auto"（前向泵关闭 EGN），这里显式钉住 egn=True，保证 §3/§5
+        # 与 results/raman/h3_forward_audit.json 可复现；auto 的三档对照见
+        # scripts/h3_egn_auto.py。
+        options.setdefault("egn", True)
     return create_model(
         model_name,
         grid,

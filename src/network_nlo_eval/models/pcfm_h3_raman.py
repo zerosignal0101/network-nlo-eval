@@ -41,6 +41,23 @@ EDFA, exactly like ``hybrid_raman_paper``.
   and ``span_coherence="incoherent"`` is provided as an explicit paper-matched
   comparison mode.
 
+**The EGN correction is disabled for forward pumps**
+
+The Zefreh et al. 2020 correction was fitted on links without Raman
+amplification or with backward pumping only.  A forward pump deposits its gain
+at the *start* of the span, where the NLI is generated, so applying the
+correction there overestimates the SNR: the forward-pump audit
+(`docs/h3-forward-audit.md`) measures +0.52 dB on 3 channels and up to
++0.73 dB on a single channel.  With the correction off, the H3 kernel is
+0.17–0.19 dB *pessimistic* relative to the paper kernel, which is the known
+PCFM-vs-Buglia kernel difference, not a pump effect.
+
+The default ``egn="auto"`` therefore disables the correction when at least one
+active pump of the link is forward and keeps it otherwise (no pump, backward
+pumps, C+L backward pump sets).  ``egn=True``/``False`` still force the legacy
+behaviour.  The decision is made once per model from the same pump list that
+resolves ``span_coherence``, so every span of a link shares it.
+
 **When there is no active pump the model is bit-for-bit the H3 PCFM**
 
 The Raman branch is entered only when at least one pump has positive power.
@@ -108,6 +125,34 @@ def _active_pumps(pumps: Sequence[RamanPumpConfig] | None) -> list[RamanPumpConf
     if not pumps:
         return []
     return [pump for pump in pumps if float(pump.power_w) > 0.0]
+
+
+def _resolve_egn(egn: bool | str, pumps: Sequence[RamanPumpConfig] | None) -> bool:
+    """Resolve the EGN switch of the model.
+
+    ``"auto"`` turns the correction off as soon as one active pump is forward:
+    the Zefreh 2020 fit does not cover forward-pumped Raman links, and the
+    forward audit shows it makes H3 optimistic by 0.4–0.7 dB.  No pump and
+    backward-only pump sets keep it on, so they stay bit-for-bit unchanged.
+    Explicit ``True``/``False`` are passed through.
+
+    Args:
+        egn: ``"auto"``, ``True`` or ``False``.
+        pumps: Pumps that drive the link; only positive-power pumps count.
+
+    Returns
+    -------
+        ``True`` when the correction is applied.
+
+    Raises
+    ------
+        ValueError: ``egn`` is neither a bool nor ``"auto"``.
+    """
+    if isinstance(egn, bool):
+        return egn
+    if not isinstance(egn, str) or egn != "auto":
+        raise ValueError(f"egn must be True, False or 'auto', got {egn!r}.")
+    return not any(pump.direction == "forward" for pump in _active_pumps(pumps))
 
 
 class PCFH3RamanSpanKernel(PCFMSpanKernel):
@@ -388,7 +433,11 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
     ),
     options=(
         ("poly_degree", "PCFM SPP polynomial degree. Default 3 (H3 configuration)."),
-        ("egn", "Zefreh 2020 EGN correction on top of the PCFM result. Default True (H3 configuration)."),
+        (
+            "egn",
+            "Zefreh 2020 EGN correction on top of the PCFM result. Default 'auto': off when any "
+            "active pump is forward, on otherwise. True/False force the legacy setting.",
+        ),
         ("edge_fix", "PCFM zero-dispersion edge fix. Default True."),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
@@ -428,7 +477,9 @@ class PCFH3RamanModel(PCFMModel):
         symbol_rate_hz: Symbol rate (Hz).
         connections: Optional per-connection grid.
         poly_degree: PCFM SPP polynomial degree. Default 3.
-        egn: EGN correction. Default True.
+        egn: EGN correction. ``"auto"`` (default) disables it when any active
+            pump is forward and enables it otherwise; ``True``/``False`` force
+            the legacy behaviour.  See the module docstring for the rationale.
         edge_fix: PCFM edge fix. Default True.
         cache_spans: Memoise identical spans. Default True.
         spp_steps: PCFM SPP RK4 steps or ``"auto"``. Default ``"auto"``.
@@ -453,7 +504,7 @@ class PCFH3RamanModel(PCFMModel):
 
     Raises
     ------
-        ValueError: A Raman option is outside its valid range.
+        ValueError: A Raman option or ``egn`` is outside its valid range.
     """
 
     info = H3_RAMAN_MODEL_INFO
@@ -465,7 +516,7 @@ class PCFH3RamanModel(PCFMModel):
         symbol_rate_hz: float = 50e9,
         connections=None,
         poly_degree: int = 3,
-        egn: bool = True,
+        egn: bool | str = "auto",
         edge_fix: bool = True,
         cache_spans: bool = True,
         spp_steps: int | str = "auto",
@@ -493,13 +544,19 @@ class PCFH3RamanModel(PCFMModel):
             raise ValueError(
                 f"span_coherence must be 'auto', 'pcfm' or 'incoherent', got {span_coherence!r}."
             )
+        # EGN and span coherence must make the same decision for every span of
+        # the link, so both resolve here from the same pump list.  A per-span
+        # ``FiberSpanConfig.raman_pumps`` is only the fallback when neither the
+        # model nor the reference fibre declares pumps.
+        pump_source = raman_pumps or ref_fiber_config.raman_pumps
+        resolved_egn = _resolve_egn(egn, pump_source)
         super().__init__(
             grid,
             ref_fiber_config,
             symbol_rate_hz=symbol_rate_hz,
             connections=connections,
             poly_degree=poly_degree,
-            egn=egn,
+            egn=resolved_egn,
             edge_fix=edge_fix,
             cache_spans=cache_spans,
             spp_steps=spp_steps,

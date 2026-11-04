@@ -73,7 +73,8 @@ H3 − hybrid_pcfm 只有 **−0.046 dB**（前向，来自 ODE 步数 24 vs 12�
   后取算术平均，与 `dra_waveform_compare.py` 一致。
 - H3 用默认配置：`poly_degree=3, egn=True, edge_fix=True,
   spp_steps="auto"`。1 mW 下 `spp_steps` 解析为 12；前向泵的
-  `raman_steps` 解析为 24，无泵/后向为 12。
+  `raman_steps` 解析为 24，无泵/后向为 12。（WP6 起模型默认是
+  `egn="auto"`，审计脚本显式钉住 `egn=True` 以复现本文的表。）
 - 单跨时 `span_coherence` 的 `auto` 解析结果不影响结果（无跨间求和）。
 
 ## 3. 总表
@@ -224,15 +225,24 @@ H3 − hybrid_pcfm 只有 **−0.046 dB**（前向，来自 ODE 步数 24 vs 12�
 4. 负结果保留：`(3,12)` 在无泵/后向的 +0.04…+0.08 dB 乐观已写进
    JSON 与本文；这是一个已知的、小于其他误差项的数值代价。
 
+**WP6 更新（2026-11-04）**：本节“不改默认”的结论只针对拟合路径。EGN 的
+*选择规则*已改为 `egn="auto"`：前向泵关闭、无泵/后向保持开启。前向 3ch
+残差因此从 +1.09 降到 +0.60 dB。详见 §11。
+
 ## 8. 回归测试
 
-`tests/test_pcfm_h3_raman.py` 新增两个测试（同一审计配置，
+`tests/test_pcfm_h3_raman.py` 的审计测试（同一审计配置，
 3ch、100 km、50 GBd、1 mW/pol、1450 nm 0.2 W 前向）：
 
-- `test_forward_three_channel_h3_minus_paper_gap_is_pinned`
-  断言 `H3 − paper = 0.34 ± 0.05 dB`。任何拟合/核路径漂移超出该带即失败。
+- `test_forward_three_channel_legacy_egn_gap_is_pinned`
+  显式 `egn=True`，断言 `H3 − paper = 0.34 ± 0.05 dB`。任何拟合/核路径
+  漂移超出该带即失败；它保留旧 EGN 口径的历史值。
+- `test_forward_egn_auto_is_not_optimistic_against_hybrid_or_waveform`
+  默认 `egn="auto"`：断言 H3 比 hybrid 悲观或接近（0…−0.35 dB），且
+  H3 相对 62.5 m 收敛耗尽波形的残差 ≤ hybrid 残差 + 0.1 dB。波形值从
+  `data/dra_waveform_converged/dra_reference_depleted.json` 读取，不硬编码。
 - `test_forward_gap_is_dominated_by_egn_not_by_the_polynomial_fit`
-  断言 `|(9,96) − (3,12)| < 0.05 dB`、`EGN 贡献 > 0.3 dB`、
+  显式 `egn=True`，断言 `|(9,96) − (3,12)| < 0.05 dB`、`EGN 贡献 > 0.3 dB`、
   `|前向专属超额| < 0.1 dB`。
 
 原有的无泵逐位一致测试（`test_no_pump_is_bit_identical_to_h3_pcfm`）
@@ -245,8 +255,8 @@ H3 − hybrid_pcfm 只有 **−0.046 dB**（前向，来自 ODE 步数 24 vs 12�
   的 0.3 dB 预算外推。
 - 只覆盖 1 mW/pol。发射功率升高会改变 `spp_steps="auto"`（>0 dBm 用 32）
   和泵浦耗尽程度；交接表的绝对数值来自不同取数细节，本文只对齐差值。
-- `test_forward_gap_is_dominated_by_egn_not_by_the_polynomial_fit`
-  里的 0.34 dB 是本文测得的固定值；若未来有意修改 EGN 或核公式，需要
+- `test_forward_three_channel_legacy_egn_gap_is_pinned` 里的 0.34 dB 是本文
+  测得的固定值（显式 `egn=True`）；若未来有意修改 EGN 或核公式，需要
   同步更新该值与本文预算表。
 - 直接二维积分基准的梯形离散误差约 1e-3（相对 `K_SCI`），不影响
   0.5% 量级的拟合结论。
@@ -261,3 +271,55 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python -m pytest \
 /home/zsig/miniconda3/envs/nlo/bin/python -m ruff check \
   scripts/h3_forward_audit.py tests/test_pcfm_h3_raman.py
 ```
+
+## 11. EGN auto 口径（WP6）
+
+§7 的“不改默认”只针对拟合路径；WP6 改的是 EGN 的**选择规则**。
+Zefreh EGN 的拟合域是无 Raman/LA 链路，而前向泵把增益放在跨首——NLI
+生成最强的位置。§6 实测 EGN 在该处把 SNR 抬高 0.4–0.7 dB：
+3ch 前向 +0.52 dB、1ch 前向 +0.73 dB。关闭后 H3 反而比 paper 悲观
+0.17–0.19 dB（§6.1 的核公式差），说明前向泵下 EGN 没有物理依据。
+无泵/后向时 EGN 仍把 H3 拉向 hybrid（§3 的无泵/后向列），所以保留。
+
+因此 `pcfm_h3_raman` 的 `egn` 默认改为 `"auto"`：
+
+- 解析后的活动泵（`raman_pumps` 或 `fiber_config.raman_pumps`，只算
+  `power_w > 0`）中只要有一个 `direction == "forward"` → `egn=False`；
+- 否则 → `egn=True`（无泵、纯后向、C+L 六泵后向都不变）；
+- 显式 `True`/`False` 覆盖 auto，旧行为完整保留。
+
+解析与 `span_coherence` 在同一处（模型构造时）完成，一条链路的所有 span
+共享同一决策；不会出现逐 span 混用两种 EGN 口径。
+
+用 62.5 m 收敛耗尽参考
+（`data/dra_waveform_converged/dra_reference_depleted.json`）重跑前向
+0.2 W。取数为**中心信道**、`dra_waveform_compare.py` 的同一栅格，故与
+§3 的逐信道均值表有约 0.2 dB 的常数差：
+
+| 场景 | 波形 | hybrid | H3 `egn=True` | H3 `egn=False` | H3 auto | auto−波形 | True−波形 | hybrid−波形 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1ch | 23.704 | 24.836 | 25.382 | 24.650 | 24.650 | +0.946 | +1.678 | +1.132 |
+| 3ch | 23.012 | 23.803 | 24.105 | 23.615 | 23.615 | +0.602 | +1.093 | +0.791 |
+| 5ch | 22.531 | 23.491 | 23.724 | 23.312 | 23.312 | +0.781 | +1.193 | +0.960 |
+| 7ch | 22.384 | 23.387 | 23.583 | 23.214 | 23.214 | +0.830 | +1.199 | +1.003 |
+
+结论：
+
+1. **auto 在前向等价于显式 `egn=False`**（三档表里 auto 与 False 列逐位相同）。
+2. 3/5/7ch 的前向残差从 +1.09/+1.19/+1.20 降到 **+0.60/+0.78/+0.83 dB**，
+   全部进入 ±1.0 dB；1ch 从 +1.68 降到 +0.95 dB。
+3. auto − hybrid = −0.19…−0.17 dB：H3 现在略**悲观**，方向与 §6 的
+   PCFM-vs-Buglia 核公式差一致，不再系统性乐观。
+4. 无泵/后向的 auto 与显式 `egn=True` 在 3/5/7ch 六个对照上的最大绝对差
+   均为 **0**（逐位一致）；C+L 六泵是纯后向，auto 解析为 `True`，结果不变。
+
+复现与产物：
+
+```bash
+PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/h3_egn_auto.py
+```
+
+- `results/raman/h3_egn_auto.json`：三档表、逐项 delta 与无泵/后向的
+  逐位一致检查；
+- 脚本复用 `dra_waveform_compare.py` 的 `FIBER`/`_grid`/`_pumps`，
+  没有修改对照脚本的核心逻辑。
