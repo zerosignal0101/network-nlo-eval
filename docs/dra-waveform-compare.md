@@ -492,8 +492,11 @@ B = 符号率、`pump_depletion=True` 跑 hybrid/H3/numerical/lumped 四模型�
 要点见 `docs/dra-open-issues.md` §5：修正物理侧增益施加后，57ch
 nopump 两 seed 均值 −0.52 dB、backward **−0.50 dB**、forward
 **−3.21 dB**（解析保守；残差随信道数变负）；152ch 数据正在按修正后的
-物理侧重新生成。2× 128-symbol 两 seed 均值 33.874 dB 对解析 32.765 dB
-给出 **−1.11 dB**（alias-free，hybrid）。旧的“forward 因周期记录伪影
+物理侧重新生成。2× 128-symbol nopump 扩到 4 seed 后为
+33.502/34.247/23.178/31.422 dB，均值 **30.587 ± 5.082 dB**（中位数
+32.462）；对解析 32.765 dB 的残差按均值 +2.18、按中位数 +0.30 dB，
+被 5 dB 的 seed 散布主导。旧的 2-seed 33.874 dB / −1.11 dB 不稳健，
+不能引用。旧的“forward 因周期记录伪影
 不可用”结论作废：那是把频变拉曼增益逐样本乘在时域造成的虚假调制
 （详见 `docs/dra-forward-audit.md` 末节）。1× 采样率会高估 NLI
 0.4–1.4 dB（2× 已足够）；64-symbol 记录的 seed 散布可达 5.6 dB
