@@ -482,8 +482,11 @@ B = 符号率、`pump_depletion=True` 跑 hybrid/H3/numerical/lumped 四模型�
 - `results/raman/wideband_compare_cl152.json`（152ch）
 
 要点见 `docs/dra-open-issues.md` §5：57ch nopump 两 seed 均值 −0.52 dB、
-backward +1.48 dB；152ch nopump hybrid/H3 +0.29/+0.35 dB、backward
-+0.99/+0.43 dB；forward 因周期记录伪影不可用；全 WDM 单次实现的统计
-预算 2–3 dB，1× 采样率还会高估 NLI 0.4–1.4 dB（2× 已足够）。色散斜率
-必须按波形 β₃ 反解（cl152 的 β₃=1e-4 ps³/km → S≈−0.0219），不能沿用
-默认 S=0.06。
+backward +1.48 dB；152ch 1× 主数据 nopump hybrid/H3 +0.29/+0.35 dB、
+backward +0.99/+0.43 dB；2× 128-symbol 两 seed 均值 33.874 dB 对解析
+32.765 dB 给出 **−1.11 dB**（alias-free，hybrid）。forward 因周期记录
+伪影不可用（接收机 EVM 也同步下降，确认在传播波形中）。1× 采样率会
+高估 NLI 0.4–1.4 dB（2× 已足够）；64-symbol 记录的 seed 散布可达
+5.6 dB（cl152，4 seeds），绝对 NLI 必须用 128-symbol 多 seed 集成，
+64-symbol 只用于同 seed 的步长趋势。色散斜率必须按波形 β₃ 反解
+（cl152 的 β₃=1e-4 ps³/km → S≈−0.0219），不能沿用默认 S=0.06。
