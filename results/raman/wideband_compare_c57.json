@@ -749,7 +749,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 3.3368849754333496
+      "elapsed_s": 3.1516904830932617
     },
     {
       "dataset": "c57",
@@ -1461,7 +1461,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 0.01953411102294922
+      "elapsed_s": 0.01717209815979004
     },
     {
       "dataset": "c57",
@@ -2173,7 +2173,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 12.445039749145508
+      "elapsed_s": 11.882025480270386
     },
     {
       "dataset": "c57",
@@ -2885,7 +2885,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 0.007357358932495117
+      "elapsed_s": 0.006953001022338867
     },
     {
       "dataset": "c57",
@@ -2898,14 +2898,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 20.130680257707574,
+      "waveform_center_snr_nli_db": 28.731922729197574,
       "analytic_center_snr_nli_db": 24.670120652709763,
-      "center_delta_db": 4.539440395002188,
-      "waveform_center_nli_w": 9.506626401639202e-07,
+      "center_delta_db": -4.061802076487812,
+      "waveform_center_nli_w": 1.502896416725964e-07,
       "analytic_center_nli_w": 3.411834329664912e-06,
-      "delta_mean_db": 3.679945563606754,
-      "delta_min_db": 2.7858449784332002,
-      "delta_max_db": 5.012886880614328,
+      "delta_mean_db": -2.974062560226822,
+      "delta_min_db": -4.876378339892046,
+      "delta_max_db": -1.1157071930064504,
       "analytic_snr_mean_db": 25.89642656051582,
       "analytic_snr_min_db": 24.65881416968886,
       "analytic_snr_max_db": 28.618130384989605,
@@ -2913,344 +2913,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 24.17877888814055,
-          "nli_power_w": 3.7428125046847367e-07
+          "snr_nli_db": 29.680866092617105,
+          "nli_power_w": 9.136986286118128e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 23.38057526800535,
-          "nli_power_w": 4.4775218162512847e-07
+          "snr_nli_db": 28.913121905289906,
+          "nli_power_w": 1.1047487295846631e-07
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 23.492083184724013,
-          "nli_power_w": 4.379843648763148e-07
+          "snr_nli_db": 29.214391103709815,
+          "nli_power_w": 1.0538419783918317e-07
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 23.630467863890985,
-          "nli_power_w": 4.2216144547383597e-07
+          "snr_nli_db": 28.976822216145642,
+          "nli_power_w": 1.1271083047587097e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 23.994966396045363,
-          "nli_power_w": 3.90851330631625e-07
+          "snr_nli_db": 29.479824295782848,
+          "nli_power_w": 1.0291223167845131e-07
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 24.00760881946992,
-          "nli_power_w": 3.8760052322581877e-07
+          "snr_nli_db": 29.382542922711743,
+          "nli_power_w": 1.0654909978757127e-07
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 23.676549205818397,
-          "nli_power_w": 4.195205892266766e-07
+          "snr_nli_db": 29.029985415749696,
+          "nli_power_w": 1.1779875763303545e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 23.590725350362952,
-          "nli_power_w": 4.244098772874091e-07
+          "snr_nli_db": 29.0957899970725,
+          "nli_power_w": 1.1706146671974428e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 23.39974024091264,
-          "nli_power_w": 4.482612543596708e-07
+          "snr_nli_db": 29.485648121397126,
+          "nli_power_w": 1.0984747346467478e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 22.97712187122385,
-          "nli_power_w": 4.885751561417848e-07
+          "snr_nli_db": 28.925090960534195,
+          "nli_power_w": 1.2557287222054887e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 22.70591605649035,
-          "nli_power_w": 5.255200734778317e-07
+          "snr_nli_db": 28.692773764070235,
+          "nli_power_w": 1.3580594378563738e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 22.368733008776434,
-          "nli_power_w": 5.666590410177559e-07
+          "snr_nli_db": 28.547003991177466,
+          "nli_power_w": 1.419728498430988e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 22.23353302748614,
-          "nli_power_w": 5.841416715898883e-07
+          "snr_nli_db": 27.33767538218583,
+          "nli_power_w": 1.9003812176954403e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 22.585676003343398,
-          "nli_power_w": 5.39592494506957e-07
+          "snr_nli_db": 28.70067368301764,
+          "nli_power_w": 1.408278533291246e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 22.5366063113152,
-          "nli_power_w": 5.438686449622252e-07
+          "snr_nli_db": 29.06587615081264,
+          "nli_power_w": 1.3057392206505583e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 22.239015790537007,
-          "nli_power_w": 5.865035302799477e-07
+          "snr_nli_db": 28.483322045422096,
+          "nli_power_w": 1.5196013654282541e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 22.06092988662646,
-          "nli_power_w": 6.093215743902022e-07
+          "snr_nli_db": 28.798068877959206,
+          "nli_power_w": 1.4232727119261503e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 21.94159884354567,
-          "nli_power_w": 6.261567154286192e-07
+          "snr_nli_db": 29.531248004658046,
+          "nli_power_w": 1.2136308857792976e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 21.119177943196675,
-          "nli_power_w": 7.548822077218047e-07
+          "snr_nli_db": 28.31721069469024,
+          "nli_power_w": 1.6139925761037873e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 21.054329925129906,
-          "nli_power_w": 7.691109991089154e-07
+          "snr_nli_db": 29.142149500186374,
+          "nli_power_w": 1.3493741331313675e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 20.882353247287398,
-          "nli_power_w": 8.020204054491231e-07
+          "snr_nli_db": 28.228691974021235,
+          "nli_power_w": 1.6788788324605214e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 20.72683314866874,
-          "nli_power_w": 8.294073636760504e-07
+          "snr_nli_db": 28.61225296059245,
+          "nli_power_w": 1.540649881809708e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 21.087433602694826,
-          "nli_power_w": 7.60961241487192e-07
+          "snr_nli_db": 28.753549841120545,
+          "nli_power_w": 1.492893628204719e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 21.035727213719476,
-          "nli_power_w": 7.777401316514425e-07
+          "snr_nli_db": 29.593469247346604,
+          "nli_power_w": 1.2458869101256562e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 20.42176468049275,
-          "nli_power_w": 8.868702283008771e-07
+          "snr_nli_db": 28.53420849015312,
+          "nli_power_w": 1.577260745072569e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 20.5211152798866,
-          "nli_power_w": 8.733542973455217e-07
+          "snr_nli_db": 28.688944024393574,
+          "nli_power_w": 1.5336083754915357e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 20.31337660636265,
-          "nli_power_w": 9.194194179026579e-07
+          "snr_nli_db": 28.38428490611212,
+          "nli_power_w": 1.6503178564029527e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 20.296089000873174,
-          "nli_power_w": 9.196046360219845e-07
+          "snr_nli_db": 28.509291279705927,
+          "nli_power_w": 1.5934699891040697e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 20.130680257707574,
-          "nli_power_w": 9.506626401639202e-07
+          "snr_nli_db": 28.731922729197574,
+          "nli_power_w": 1.502896416725964e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 20.193280811060554,
-          "nli_power_w": 9.425212761677704e-07
+          "snr_nli_db": 28.762653740426785,
+          "nli_power_w": 1.4965349896407993e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 20.288465224092263,
-          "nli_power_w": 9.211445547725161e-07
+          "snr_nli_db": 28.01014974641867,
+          "nli_power_w": 1.7717654585508256e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 20.198955470168293,
-          "nli_power_w": 9.368732207641082e-07
+          "snr_nli_db": 28.60804992991332,
+          "nli_power_w": 1.5297337007996642e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 20.11118721227344,
-          "nli_power_w": 9.56352221446302e-07
+          "snr_nli_db": 28.433466828863622,
+          "nli_power_w": 1.5826965923703368e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 19.85617108255747,
-          "nli_power_w": 1.0155677704670392e-06
+          "snr_nli_db": 27.472294425618497,
+          "nli_power_w": 1.964032261708733e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 20.510313082933642,
-          "nli_power_w": 8.787597872505388e-07
+          "snr_nli_db": 28.06556923242786,
+          "nli_power_w": 1.709741972117303e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 20.881962973446477,
-          "nli_power_w": 8.007951589136979e-07
+          "snr_nli_db": 28.74374596155493,
+          "nli_power_w": 1.4393515613637446e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 21.551745653885888,
-          "nli_power_w": 6.844746130274144e-07
+          "snr_nli_db": 29.406139565848367,
+          "nli_power_w": 1.2198367883065717e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 21.082017173185733,
-          "nli_power_w": 7.656733673923595e-07
+          "snr_nli_db": 28.666861217777697,
+          "nli_power_w": 1.4355614916321936e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 21.613720256302884,
-          "nli_power_w": 6.774388724507461e-07
+          "snr_nli_db": 29.190925279297865,
+          "nli_power_w": 1.257751709321506e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 22.12901457422111,
-          "nli_power_w": 5.992250616163582e-07
+          "snr_nli_db": 28.235392219553344,
+          "nli_power_w": 1.541552717205177e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 22.24464625807486,
-          "nli_power_w": 5.852728211596476e-07
+          "snr_nli_db": 28.407232969761598,
+          "nli_power_w": 1.4658440354374556e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 22.83960380330779,
-          "nli_power_w": 5.121667648516138e-07
+          "snr_nli_db": 28.74626451109268,
+          "nli_power_w": 1.3418344295457743e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 22.58287452790524,
-          "nli_power_w": 5.402392551623599e-07
+          "snr_nli_db": 29.084465903213204,
+          "nli_power_w": 1.2165535041163915e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 22.683266073650785,
-          "nli_power_w": 5.26197335183245e-07
+          "snr_nli_db": 29.54036246598549,
+          "nli_power_w": 1.0750608417394683e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 22.849358652388084,
-          "nli_power_w": 5.104815688549596e-07
+          "snr_nli_db": 28.951908218224347,
+          "nli_power_w": 1.2202470086376207e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 23.232026551321855,
-          "nli_power_w": 4.652947897578129e-07
+          "snr_nli_db": 29.110682763807596,
+          "nli_power_w": 1.1529319277844359e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 22.84387087681978,
-          "nli_power_w": 5.103108619932643e-07
+          "snr_nli_db": 29.517217120054596,
+          "nli_power_w": 1.0350072308955368e-07
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 23.219768235357297,
-          "nli_power_w": 4.66641241244564e-07
+          "snr_nli_db": 29.178723539992394,
+          "nli_power_w": 1.0963437919446757e-07
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 23.356864470154083,
-          "nli_power_w": 4.5077637923067016e-07
+          "snr_nli_db": 28.731972890851377,
+          "nli_power_w": 1.1905810623917284e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 23.374499073439278,
-          "nli_power_w": 4.49413663846447e-07
+          "snr_nli_db": 28.685540824802935,
+          "nli_power_w": 1.1822950217242658e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 23.504674500835996,
-          "nli_power_w": 4.3477193738838076e-07
+          "snr_nli_db": 28.613375069130367,
+          "nli_power_w": 1.1768618237517792e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 23.721560696039656,
-          "nli_power_w": 4.14853507911349e-07
+          "snr_nli_db": 28.79559796403779,
+          "nli_power_w": 1.112439497020649e-07
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 23.70130885652521,
-          "nli_power_w": 4.176882404397276e-07
+          "snr_nli_db": 29.07720424215793,
+          "nli_power_w": 1.025655277978063e-07
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 23.439517818804525,
-          "nli_power_w": 4.4361116438143866e-07
+          "snr_nli_db": 29.217458982536936,
+          "nli_power_w": 9.747430469701315e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 23.6228387718648,
-          "nli_power_w": 4.213883497200576e-07
+          "snr_nli_db": 29.613167753086955,
+          "nli_power_w": 8.651514099131738e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 23.79129492083766,
-          "nli_power_w": 4.0763453721781897e-07
+          "snr_nli_db": 29.904453822245202,
+          "nli_power_w": 7.982813903141232e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 24.325102299627797,
-          "nli_power_w": 3.614217526183056e-07
+          "snr_nli_db": 30.01030211581485,
+          "nli_power_w": 7.665785836545643e-08
         }
       ],
       "analytic_per_channel": [
@@ -3597,7 +3597,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 9.859287023544312
+      "elapsed_s": 9.404868602752686
     },
     {
       "dataset": "c57",
@@ -3610,14 +3610,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 20.130680257707574,
+      "waveform_center_snr_nli_db": 28.731922729197574,
       "analytic_center_snr_nli_db": 24.47471624629285,
-      "center_delta_db": 4.344035988585276,
-      "waveform_center_nli_w": 9.506626401639202e-07,
+      "center_delta_db": -4.257206482904724,
+      "waveform_center_nli_w": 1.502896416725964e-07,
       "analytic_center_nli_w": 3.568850662162575e-06,
-      "delta_mean_db": 3.4843197401738135,
-      "delta_min_db": 2.578497331678445,
-      "delta_max_db": 4.818841344690483,
+      "delta_mean_db": -3.1696883836597625,
+      "delta_min_db": -5.073275074705705,
+      "delta_max_db": -1.3263145204740354,
       "analytic_snr_mean_db": 25.700800737082883,
       "analytic_snr_min_db": 24.462834362356634,
       "analytic_snr_max_db": 28.460139318439275,
@@ -3625,344 +3625,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 24.17877888814055,
-          "nli_power_w": 3.7428125046847367e-07
+          "snr_nli_db": 29.680866092617105,
+          "nli_power_w": 9.136986286118128e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 23.38057526800535,
-          "nli_power_w": 4.4775218162512847e-07
+          "snr_nli_db": 28.913121905289906,
+          "nli_power_w": 1.1047487295846631e-07
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 23.492083184724013,
-          "nli_power_w": 4.379843648763148e-07
+          "snr_nli_db": 29.214391103709815,
+          "nli_power_w": 1.0538419783918317e-07
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 23.630467863890985,
-          "nli_power_w": 4.2216144547383597e-07
+          "snr_nli_db": 28.976822216145642,
+          "nli_power_w": 1.1271083047587097e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 23.994966396045363,
-          "nli_power_w": 3.90851330631625e-07
+          "snr_nli_db": 29.479824295782848,
+          "nli_power_w": 1.0291223167845131e-07
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 24.00760881946992,
-          "nli_power_w": 3.8760052322581877e-07
+          "snr_nli_db": 29.382542922711743,
+          "nli_power_w": 1.0654909978757127e-07
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 23.676549205818397,
-          "nli_power_w": 4.195205892266766e-07
+          "snr_nli_db": 29.029985415749696,
+          "nli_power_w": 1.1779875763303545e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 23.590725350362952,
-          "nli_power_w": 4.244098772874091e-07
+          "snr_nli_db": 29.0957899970725,
+          "nli_power_w": 1.1706146671974428e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 23.39974024091264,
-          "nli_power_w": 4.482612543596708e-07
+          "snr_nli_db": 29.485648121397126,
+          "nli_power_w": 1.0984747346467478e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 22.97712187122385,
-          "nli_power_w": 4.885751561417848e-07
+          "snr_nli_db": 28.925090960534195,
+          "nli_power_w": 1.2557287222054887e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 22.70591605649035,
-          "nli_power_w": 5.255200734778317e-07
+          "snr_nli_db": 28.692773764070235,
+          "nli_power_w": 1.3580594378563738e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 22.368733008776434,
-          "nli_power_w": 5.666590410177559e-07
+          "snr_nli_db": 28.547003991177466,
+          "nli_power_w": 1.419728498430988e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 22.23353302748614,
-          "nli_power_w": 5.841416715898883e-07
+          "snr_nli_db": 27.33767538218583,
+          "nli_power_w": 1.9003812176954403e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 22.585676003343398,
-          "nli_power_w": 5.39592494506957e-07
+          "snr_nli_db": 28.70067368301764,
+          "nli_power_w": 1.408278533291246e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 22.5366063113152,
-          "nli_power_w": 5.438686449622252e-07
+          "snr_nli_db": 29.06587615081264,
+          "nli_power_w": 1.3057392206505583e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 22.239015790537007,
-          "nli_power_w": 5.865035302799477e-07
+          "snr_nli_db": 28.483322045422096,
+          "nli_power_w": 1.5196013654282541e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 22.06092988662646,
-          "nli_power_w": 6.093215743902022e-07
+          "snr_nli_db": 28.798068877959206,
+          "nli_power_w": 1.4232727119261503e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 21.94159884354567,
-          "nli_power_w": 6.261567154286192e-07
+          "snr_nli_db": 29.531248004658046,
+          "nli_power_w": 1.2136308857792976e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 21.119177943196675,
-          "nli_power_w": 7.548822077218047e-07
+          "snr_nli_db": 28.31721069469024,
+          "nli_power_w": 1.6139925761037873e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 21.054329925129906,
-          "nli_power_w": 7.691109991089154e-07
+          "snr_nli_db": 29.142149500186374,
+          "nli_power_w": 1.3493741331313675e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 20.882353247287398,
-          "nli_power_w": 8.020204054491231e-07
+          "snr_nli_db": 28.228691974021235,
+          "nli_power_w": 1.6788788324605214e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 20.72683314866874,
-          "nli_power_w": 8.294073636760504e-07
+          "snr_nli_db": 28.61225296059245,
+          "nli_power_w": 1.540649881809708e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 21.087433602694826,
-          "nli_power_w": 7.60961241487192e-07
+          "snr_nli_db": 28.753549841120545,
+          "nli_power_w": 1.492893628204719e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 21.035727213719476,
-          "nli_power_w": 7.777401316514425e-07
+          "snr_nli_db": 29.593469247346604,
+          "nli_power_w": 1.2458869101256562e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 20.42176468049275,
-          "nli_power_w": 8.868702283008771e-07
+          "snr_nli_db": 28.53420849015312,
+          "nli_power_w": 1.577260745072569e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 20.5211152798866,
-          "nli_power_w": 8.733542973455217e-07
+          "snr_nli_db": 28.688944024393574,
+          "nli_power_w": 1.5336083754915357e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 20.31337660636265,
-          "nli_power_w": 9.194194179026579e-07
+          "snr_nli_db": 28.38428490611212,
+          "nli_power_w": 1.6503178564029527e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 20.296089000873174,
-          "nli_power_w": 9.196046360219845e-07
+          "snr_nli_db": 28.509291279705927,
+          "nli_power_w": 1.5934699891040697e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 20.130680257707574,
-          "nli_power_w": 9.506626401639202e-07
+          "snr_nli_db": 28.731922729197574,
+          "nli_power_w": 1.502896416725964e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 20.193280811060554,
-          "nli_power_w": 9.425212761677704e-07
+          "snr_nli_db": 28.762653740426785,
+          "nli_power_w": 1.4965349896407993e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 20.288465224092263,
-          "nli_power_w": 9.211445547725161e-07
+          "snr_nli_db": 28.01014974641867,
+          "nli_power_w": 1.7717654585508256e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 20.198955470168293,
-          "nli_power_w": 9.368732207641082e-07
+          "snr_nli_db": 28.60804992991332,
+          "nli_power_w": 1.5297337007996642e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 20.11118721227344,
-          "nli_power_w": 9.56352221446302e-07
+          "snr_nli_db": 28.433466828863622,
+          "nli_power_w": 1.5826965923703368e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 19.85617108255747,
-          "nli_power_w": 1.0155677704670392e-06
+          "snr_nli_db": 27.472294425618497,
+          "nli_power_w": 1.964032261708733e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 20.510313082933642,
-          "nli_power_w": 8.787597872505388e-07
+          "snr_nli_db": 28.06556923242786,
+          "nli_power_w": 1.709741972117303e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 20.881962973446477,
-          "nli_power_w": 8.007951589136979e-07
+          "snr_nli_db": 28.74374596155493,
+          "nli_power_w": 1.4393515613637446e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 21.551745653885888,
-          "nli_power_w": 6.844746130274144e-07
+          "snr_nli_db": 29.406139565848367,
+          "nli_power_w": 1.2198367883065717e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 21.082017173185733,
-          "nli_power_w": 7.656733673923595e-07
+          "snr_nli_db": 28.666861217777697,
+          "nli_power_w": 1.4355614916321936e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 21.613720256302884,
-          "nli_power_w": 6.774388724507461e-07
+          "snr_nli_db": 29.190925279297865,
+          "nli_power_w": 1.257751709321506e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 22.12901457422111,
-          "nli_power_w": 5.992250616163582e-07
+          "snr_nli_db": 28.235392219553344,
+          "nli_power_w": 1.541552717205177e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 22.24464625807486,
-          "nli_power_w": 5.852728211596476e-07
+          "snr_nli_db": 28.407232969761598,
+          "nli_power_w": 1.4658440354374556e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 22.83960380330779,
-          "nli_power_w": 5.121667648516138e-07
+          "snr_nli_db": 28.74626451109268,
+          "nli_power_w": 1.3418344295457743e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 22.58287452790524,
-          "nli_power_w": 5.402392551623599e-07
+          "snr_nli_db": 29.084465903213204,
+          "nli_power_w": 1.2165535041163915e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 22.683266073650785,
-          "nli_power_w": 5.26197335183245e-07
+          "snr_nli_db": 29.54036246598549,
+          "nli_power_w": 1.0750608417394683e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 22.849358652388084,
-          "nli_power_w": 5.104815688549596e-07
+          "snr_nli_db": 28.951908218224347,
+          "nli_power_w": 1.2202470086376207e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 23.232026551321855,
-          "nli_power_w": 4.652947897578129e-07
+          "snr_nli_db": 29.110682763807596,
+          "nli_power_w": 1.1529319277844359e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 22.84387087681978,
-          "nli_power_w": 5.103108619932643e-07
+          "snr_nli_db": 29.517217120054596,
+          "nli_power_w": 1.0350072308955368e-07
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 23.219768235357297,
-          "nli_power_w": 4.66641241244564e-07
+          "snr_nli_db": 29.178723539992394,
+          "nli_power_w": 1.0963437919446757e-07
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 23.356864470154083,
-          "nli_power_w": 4.5077637923067016e-07
+          "snr_nli_db": 28.731972890851377,
+          "nli_power_w": 1.1905810623917284e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 23.374499073439278,
-          "nli_power_w": 4.49413663846447e-07
+          "snr_nli_db": 28.685540824802935,
+          "nli_power_w": 1.1822950217242658e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 23.504674500835996,
-          "nli_power_w": 4.3477193738838076e-07
+          "snr_nli_db": 28.613375069130367,
+          "nli_power_w": 1.1768618237517792e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 23.721560696039656,
-          "nli_power_w": 4.14853507911349e-07
+          "snr_nli_db": 28.79559796403779,
+          "nli_power_w": 1.112439497020649e-07
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 23.70130885652521,
-          "nli_power_w": 4.176882404397276e-07
+          "snr_nli_db": 29.07720424215793,
+          "nli_power_w": 1.025655277978063e-07
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 23.439517818804525,
-          "nli_power_w": 4.4361116438143866e-07
+          "snr_nli_db": 29.217458982536936,
+          "nli_power_w": 9.747430469701315e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 23.6228387718648,
-          "nli_power_w": 4.213883497200576e-07
+          "snr_nli_db": 29.613167753086955,
+          "nli_power_w": 8.651514099131738e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 23.79129492083766,
-          "nli_power_w": 4.0763453721781897e-07
+          "snr_nli_db": 29.904453822245202,
+          "nli_power_w": 7.982813903141232e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 24.325102299627797,
-          "nli_power_w": 3.614217526183056e-07
+          "snr_nli_db": 30.01030211581485,
+          "nli_power_w": 7.665785836545643e-08
         }
       ],
       "analytic_per_channel": [
@@ -4309,7 +4309,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 0.004266500473022461
+      "elapsed_s": 0.004248857498168945
     },
     {
       "dataset": "c57",
@@ -4322,14 +4322,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 20.130680257707574,
+      "waveform_center_snr_nli_db": 28.731922729197574,
       "analytic_center_snr_nli_db": 24.613197632996695,
-      "center_delta_db": 4.48251737528912,
-      "waveform_center_nli_w": 9.506626401639202e-07,
+      "center_delta_db": -4.11872509620088,
+      "waveform_center_nli_w": 1.502896416725964e-07,
       "analytic_center_nli_w": 3.4568476256333807e-06,
-      "delta_mean_db": 3.632475732428926,
-      "delta_min_db": 2.743049942796926,
-      "delta_max_db": 4.958455561313805,
+      "delta_mean_db": -3.0215323914046497,
+      "delta_min_db": -4.933255153226771,
+      "delta_max_db": -1.155519078381026,
       "analytic_snr_mean_db": 25.848956729337996,
       "analytic_snr_min_db": 24.601588416375137,
       "analytic_snr_max_db": 28.59741132021755,
@@ -4337,344 +4337,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 24.17877888814055,
-          "nli_power_w": 3.7428125046847367e-07
+          "snr_nli_db": 29.680866092617105,
+          "nli_power_w": 9.136986286118128e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 23.38057526800535,
-          "nli_power_w": 4.4775218162512847e-07
+          "snr_nli_db": 28.913121905289906,
+          "nli_power_w": 1.1047487295846631e-07
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 23.492083184724013,
-          "nli_power_w": 4.379843648763148e-07
+          "snr_nli_db": 29.214391103709815,
+          "nli_power_w": 1.0538419783918317e-07
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 23.630467863890985,
-          "nli_power_w": 4.2216144547383597e-07
+          "snr_nli_db": 28.976822216145642,
+          "nli_power_w": 1.1271083047587097e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 23.994966396045363,
-          "nli_power_w": 3.90851330631625e-07
+          "snr_nli_db": 29.479824295782848,
+          "nli_power_w": 1.0291223167845131e-07
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 24.00760881946992,
-          "nli_power_w": 3.8760052322581877e-07
+          "snr_nli_db": 29.382542922711743,
+          "nli_power_w": 1.0654909978757127e-07
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 23.676549205818397,
-          "nli_power_w": 4.195205892266766e-07
+          "snr_nli_db": 29.029985415749696,
+          "nli_power_w": 1.1779875763303545e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 23.590725350362952,
-          "nli_power_w": 4.244098772874091e-07
+          "snr_nli_db": 29.0957899970725,
+          "nli_power_w": 1.1706146671974428e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 23.39974024091264,
-          "nli_power_w": 4.482612543596708e-07
+          "snr_nli_db": 29.485648121397126,
+          "nli_power_w": 1.0984747346467478e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 22.97712187122385,
-          "nli_power_w": 4.885751561417848e-07
+          "snr_nli_db": 28.925090960534195,
+          "nli_power_w": 1.2557287222054887e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 22.70591605649035,
-          "nli_power_w": 5.255200734778317e-07
+          "snr_nli_db": 28.692773764070235,
+          "nli_power_w": 1.3580594378563738e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 22.368733008776434,
-          "nli_power_w": 5.666590410177559e-07
+          "snr_nli_db": 28.547003991177466,
+          "nli_power_w": 1.419728498430988e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 22.23353302748614,
-          "nli_power_w": 5.841416715898883e-07
+          "snr_nli_db": 27.33767538218583,
+          "nli_power_w": 1.9003812176954403e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 22.585676003343398,
-          "nli_power_w": 5.39592494506957e-07
+          "snr_nli_db": 28.70067368301764,
+          "nli_power_w": 1.408278533291246e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 22.5366063113152,
-          "nli_power_w": 5.438686449622252e-07
+          "snr_nli_db": 29.06587615081264,
+          "nli_power_w": 1.3057392206505583e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 22.239015790537007,
-          "nli_power_w": 5.865035302799477e-07
+          "snr_nli_db": 28.483322045422096,
+          "nli_power_w": 1.5196013654282541e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 22.06092988662646,
-          "nli_power_w": 6.093215743902022e-07
+          "snr_nli_db": 28.798068877959206,
+          "nli_power_w": 1.4232727119261503e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 21.94159884354567,
-          "nli_power_w": 6.261567154286192e-07
+          "snr_nli_db": 29.531248004658046,
+          "nli_power_w": 1.2136308857792976e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 21.119177943196675,
-          "nli_power_w": 7.548822077218047e-07
+          "snr_nli_db": 28.31721069469024,
+          "nli_power_w": 1.6139925761037873e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 21.054329925129906,
-          "nli_power_w": 7.691109991089154e-07
+          "snr_nli_db": 29.142149500186374,
+          "nli_power_w": 1.3493741331313675e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 20.882353247287398,
-          "nli_power_w": 8.020204054491231e-07
+          "snr_nli_db": 28.228691974021235,
+          "nli_power_w": 1.6788788324605214e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 20.72683314866874,
-          "nli_power_w": 8.294073636760504e-07
+          "snr_nli_db": 28.61225296059245,
+          "nli_power_w": 1.540649881809708e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 21.087433602694826,
-          "nli_power_w": 7.60961241487192e-07
+          "snr_nli_db": 28.753549841120545,
+          "nli_power_w": 1.492893628204719e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 21.035727213719476,
-          "nli_power_w": 7.777401316514425e-07
+          "snr_nli_db": 29.593469247346604,
+          "nli_power_w": 1.2458869101256562e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 20.42176468049275,
-          "nli_power_w": 8.868702283008771e-07
+          "snr_nli_db": 28.53420849015312,
+          "nli_power_w": 1.577260745072569e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 20.5211152798866,
-          "nli_power_w": 8.733542973455217e-07
+          "snr_nli_db": 28.688944024393574,
+          "nli_power_w": 1.5336083754915357e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 20.31337660636265,
-          "nli_power_w": 9.194194179026579e-07
+          "snr_nli_db": 28.38428490611212,
+          "nli_power_w": 1.6503178564029527e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 20.296089000873174,
-          "nli_power_w": 9.196046360219845e-07
+          "snr_nli_db": 28.509291279705927,
+          "nli_power_w": 1.5934699891040697e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 20.130680257707574,
-          "nli_power_w": 9.506626401639202e-07
+          "snr_nli_db": 28.731922729197574,
+          "nli_power_w": 1.502896416725964e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 20.193280811060554,
-          "nli_power_w": 9.425212761677704e-07
+          "snr_nli_db": 28.762653740426785,
+          "nli_power_w": 1.4965349896407993e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 20.288465224092263,
-          "nli_power_w": 9.211445547725161e-07
+          "snr_nli_db": 28.01014974641867,
+          "nli_power_w": 1.7717654585508256e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 20.198955470168293,
-          "nli_power_w": 9.368732207641082e-07
+          "snr_nli_db": 28.60804992991332,
+          "nli_power_w": 1.5297337007996642e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 20.11118721227344,
-          "nli_power_w": 9.56352221446302e-07
+          "snr_nli_db": 28.433466828863622,
+          "nli_power_w": 1.5826965923703368e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 19.85617108255747,
-          "nli_power_w": 1.0155677704670392e-06
+          "snr_nli_db": 27.472294425618497,
+          "nli_power_w": 1.964032261708733e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 20.510313082933642,
-          "nli_power_w": 8.787597872505388e-07
+          "snr_nli_db": 28.06556923242786,
+          "nli_power_w": 1.709741972117303e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 20.881962973446477,
-          "nli_power_w": 8.007951589136979e-07
+          "snr_nli_db": 28.74374596155493,
+          "nli_power_w": 1.4393515613637446e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 21.551745653885888,
-          "nli_power_w": 6.844746130274144e-07
+          "snr_nli_db": 29.406139565848367,
+          "nli_power_w": 1.2198367883065717e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 21.082017173185733,
-          "nli_power_w": 7.656733673923595e-07
+          "snr_nli_db": 28.666861217777697,
+          "nli_power_w": 1.4355614916321936e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 21.613720256302884,
-          "nli_power_w": 6.774388724507461e-07
+          "snr_nli_db": 29.190925279297865,
+          "nli_power_w": 1.257751709321506e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 22.12901457422111,
-          "nli_power_w": 5.992250616163582e-07
+          "snr_nli_db": 28.235392219553344,
+          "nli_power_w": 1.541552717205177e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 22.24464625807486,
-          "nli_power_w": 5.852728211596476e-07
+          "snr_nli_db": 28.407232969761598,
+          "nli_power_w": 1.4658440354374556e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 22.83960380330779,
-          "nli_power_w": 5.121667648516138e-07
+          "snr_nli_db": 28.74626451109268,
+          "nli_power_w": 1.3418344295457743e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 22.58287452790524,
-          "nli_power_w": 5.402392551623599e-07
+          "snr_nli_db": 29.084465903213204,
+          "nli_power_w": 1.2165535041163915e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 22.683266073650785,
-          "nli_power_w": 5.26197335183245e-07
+          "snr_nli_db": 29.54036246598549,
+          "nli_power_w": 1.0750608417394683e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 22.849358652388084,
-          "nli_power_w": 5.104815688549596e-07
+          "snr_nli_db": 28.951908218224347,
+          "nli_power_w": 1.2202470086376207e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 23.232026551321855,
-          "nli_power_w": 4.652947897578129e-07
+          "snr_nli_db": 29.110682763807596,
+          "nli_power_w": 1.1529319277844359e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 22.84387087681978,
-          "nli_power_w": 5.103108619932643e-07
+          "snr_nli_db": 29.517217120054596,
+          "nli_power_w": 1.0350072308955368e-07
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 23.219768235357297,
-          "nli_power_w": 4.66641241244564e-07
+          "snr_nli_db": 29.178723539992394,
+          "nli_power_w": 1.0963437919446757e-07
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 23.356864470154083,
-          "nli_power_w": 4.5077637923067016e-07
+          "snr_nli_db": 28.731972890851377,
+          "nli_power_w": 1.1905810623917284e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 23.374499073439278,
-          "nli_power_w": 4.49413663846447e-07
+          "snr_nli_db": 28.685540824802935,
+          "nli_power_w": 1.1822950217242658e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 23.504674500835996,
-          "nli_power_w": 4.3477193738838076e-07
+          "snr_nli_db": 28.613375069130367,
+          "nli_power_w": 1.1768618237517792e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 23.721560696039656,
-          "nli_power_w": 4.14853507911349e-07
+          "snr_nli_db": 28.79559796403779,
+          "nli_power_w": 1.112439497020649e-07
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 23.70130885652521,
-          "nli_power_w": 4.176882404397276e-07
+          "snr_nli_db": 29.07720424215793,
+          "nli_power_w": 1.025655277978063e-07
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 23.439517818804525,
-          "nli_power_w": 4.4361116438143866e-07
+          "snr_nli_db": 29.217458982536936,
+          "nli_power_w": 9.747430469701315e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 23.6228387718648,
-          "nli_power_w": 4.213883497200576e-07
+          "snr_nli_db": 29.613167753086955,
+          "nli_power_w": 8.651514099131738e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 23.79129492083766,
-          "nli_power_w": 4.0763453721781897e-07
+          "snr_nli_db": 29.904453822245202,
+          "nli_power_w": 7.982813903141232e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 24.325102299627797,
-          "nli_power_w": 3.614217526183056e-07
+          "snr_nli_db": 30.01030211581485,
+          "nli_power_w": 7.665785836545643e-08
         }
       ],
       "analytic_per_channel": [
@@ -5021,7 +5021,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 12.322913885116577
+      "elapsed_s": 11.879264116287231
     },
     {
       "dataset": "c57",
@@ -5034,14 +5034,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 20.130680257707574,
+      "waveform_center_snr_nli_db": 28.731922729197574,
       "analytic_center_snr_nli_db": 33.03439417963902,
-      "center_delta_db": 12.903713921931448,
-      "waveform_center_nli_w": 9.506626401639202e-07,
+      "center_delta_db": 4.302471450441448,
+      "waveform_center_nli_w": 1.502896416725964e-07,
       "analytic_center_nli_w": 4.972337306527054e-07,
-      "delta_mean_db": 11.056411183357442,
-      "delta_min_db": 9.390760236109447,
-      "delta_max_db": 13.199256502957926,
+      "delta_mean_db": 4.402403059523865,
+      "delta_min_db": 3.4428491280620506,
+      "delta_max_db": 5.80787482871704,
       "analytic_snr_mean_db": 33.27289218026651,
       "analytic_snr_min_db": 33.032378992831084,
       "analytic_snr_max_db": 34.52321300698362,
@@ -5049,344 +5049,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 24.17877888814055,
-          "nli_power_w": 3.7428125046847367e-07
+          "snr_nli_db": 29.680866092617105,
+          "nli_power_w": 9.136986286118128e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 23.38057526800535,
-          "nli_power_w": 4.4775218162512847e-07
+          "snr_nli_db": 28.913121905289906,
+          "nli_power_w": 1.1047487295846631e-07
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 23.492083184724013,
-          "nli_power_w": 4.379843648763148e-07
+          "snr_nli_db": 29.214391103709815,
+          "nli_power_w": 1.0538419783918317e-07
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 23.630467863890985,
-          "nli_power_w": 4.2216144547383597e-07
+          "snr_nli_db": 28.976822216145642,
+          "nli_power_w": 1.1271083047587097e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 23.994966396045363,
-          "nli_power_w": 3.90851330631625e-07
+          "snr_nli_db": 29.479824295782848,
+          "nli_power_w": 1.0291223167845131e-07
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 24.00760881946992,
-          "nli_power_w": 3.8760052322581877e-07
+          "snr_nli_db": 29.382542922711743,
+          "nli_power_w": 1.0654909978757127e-07
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 23.676549205818397,
-          "nli_power_w": 4.195205892266766e-07
+          "snr_nli_db": 29.029985415749696,
+          "nli_power_w": 1.1779875763303545e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 23.590725350362952,
-          "nli_power_w": 4.244098772874091e-07
+          "snr_nli_db": 29.0957899970725,
+          "nli_power_w": 1.1706146671974428e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 23.39974024091264,
-          "nli_power_w": 4.482612543596708e-07
+          "snr_nli_db": 29.485648121397126,
+          "nli_power_w": 1.0984747346467478e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 22.97712187122385,
-          "nli_power_w": 4.885751561417848e-07
+          "snr_nli_db": 28.925090960534195,
+          "nli_power_w": 1.2557287222054887e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 22.70591605649035,
-          "nli_power_w": 5.255200734778317e-07
+          "snr_nli_db": 28.692773764070235,
+          "nli_power_w": 1.3580594378563738e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 22.368733008776434,
-          "nli_power_w": 5.666590410177559e-07
+          "snr_nli_db": 28.547003991177466,
+          "nli_power_w": 1.419728498430988e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 22.23353302748614,
-          "nli_power_w": 5.841416715898883e-07
+          "snr_nli_db": 27.33767538218583,
+          "nli_power_w": 1.9003812176954403e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 22.585676003343398,
-          "nli_power_w": 5.39592494506957e-07
+          "snr_nli_db": 28.70067368301764,
+          "nli_power_w": 1.408278533291246e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 22.5366063113152,
-          "nli_power_w": 5.438686449622252e-07
+          "snr_nli_db": 29.06587615081264,
+          "nli_power_w": 1.3057392206505583e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 22.239015790537007,
-          "nli_power_w": 5.865035302799477e-07
+          "snr_nli_db": 28.483322045422096,
+          "nli_power_w": 1.5196013654282541e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 22.06092988662646,
-          "nli_power_w": 6.093215743902022e-07
+          "snr_nli_db": 28.798068877959206,
+          "nli_power_w": 1.4232727119261503e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 21.94159884354567,
-          "nli_power_w": 6.261567154286192e-07
+          "snr_nli_db": 29.531248004658046,
+          "nli_power_w": 1.2136308857792976e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 21.119177943196675,
-          "nli_power_w": 7.548822077218047e-07
+          "snr_nli_db": 28.31721069469024,
+          "nli_power_w": 1.6139925761037873e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 21.054329925129906,
-          "nli_power_w": 7.691109991089154e-07
+          "snr_nli_db": 29.142149500186374,
+          "nli_power_w": 1.3493741331313675e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 20.882353247287398,
-          "nli_power_w": 8.020204054491231e-07
+          "snr_nli_db": 28.228691974021235,
+          "nli_power_w": 1.6788788324605214e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 20.72683314866874,
-          "nli_power_w": 8.294073636760504e-07
+          "snr_nli_db": 28.61225296059245,
+          "nli_power_w": 1.540649881809708e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 21.087433602694826,
-          "nli_power_w": 7.60961241487192e-07
+          "snr_nli_db": 28.753549841120545,
+          "nli_power_w": 1.492893628204719e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 21.035727213719476,
-          "nli_power_w": 7.777401316514425e-07
+          "snr_nli_db": 29.593469247346604,
+          "nli_power_w": 1.2458869101256562e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 20.42176468049275,
-          "nli_power_w": 8.868702283008771e-07
+          "snr_nli_db": 28.53420849015312,
+          "nli_power_w": 1.577260745072569e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 20.5211152798866,
-          "nli_power_w": 8.733542973455217e-07
+          "snr_nli_db": 28.688944024393574,
+          "nli_power_w": 1.5336083754915357e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 20.31337660636265,
-          "nli_power_w": 9.194194179026579e-07
+          "snr_nli_db": 28.38428490611212,
+          "nli_power_w": 1.6503178564029527e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 20.296089000873174,
-          "nli_power_w": 9.196046360219845e-07
+          "snr_nli_db": 28.509291279705927,
+          "nli_power_w": 1.5934699891040697e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 20.130680257707574,
-          "nli_power_w": 9.506626401639202e-07
+          "snr_nli_db": 28.731922729197574,
+          "nli_power_w": 1.502896416725964e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 20.193280811060554,
-          "nli_power_w": 9.425212761677704e-07
+          "snr_nli_db": 28.762653740426785,
+          "nli_power_w": 1.4965349896407993e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 20.288465224092263,
-          "nli_power_w": 9.211445547725161e-07
+          "snr_nli_db": 28.01014974641867,
+          "nli_power_w": 1.7717654585508256e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 20.198955470168293,
-          "nli_power_w": 9.368732207641082e-07
+          "snr_nli_db": 28.60804992991332,
+          "nli_power_w": 1.5297337007996642e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 20.11118721227344,
-          "nli_power_w": 9.56352221446302e-07
+          "snr_nli_db": 28.433466828863622,
+          "nli_power_w": 1.5826965923703368e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 19.85617108255747,
-          "nli_power_w": 1.0155677704670392e-06
+          "snr_nli_db": 27.472294425618497,
+          "nli_power_w": 1.964032261708733e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 20.510313082933642,
-          "nli_power_w": 8.787597872505388e-07
+          "snr_nli_db": 28.06556923242786,
+          "nli_power_w": 1.709741972117303e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 20.881962973446477,
-          "nli_power_w": 8.007951589136979e-07
+          "snr_nli_db": 28.74374596155493,
+          "nli_power_w": 1.4393515613637446e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 21.551745653885888,
-          "nli_power_w": 6.844746130274144e-07
+          "snr_nli_db": 29.406139565848367,
+          "nli_power_w": 1.2198367883065717e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 21.082017173185733,
-          "nli_power_w": 7.656733673923595e-07
+          "snr_nli_db": 28.666861217777697,
+          "nli_power_w": 1.4355614916321936e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 21.613720256302884,
-          "nli_power_w": 6.774388724507461e-07
+          "snr_nli_db": 29.190925279297865,
+          "nli_power_w": 1.257751709321506e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 22.12901457422111,
-          "nli_power_w": 5.992250616163582e-07
+          "snr_nli_db": 28.235392219553344,
+          "nli_power_w": 1.541552717205177e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 22.24464625807486,
-          "nli_power_w": 5.852728211596476e-07
+          "snr_nli_db": 28.407232969761598,
+          "nli_power_w": 1.4658440354374556e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 22.83960380330779,
-          "nli_power_w": 5.121667648516138e-07
+          "snr_nli_db": 28.74626451109268,
+          "nli_power_w": 1.3418344295457743e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 22.58287452790524,
-          "nli_power_w": 5.402392551623599e-07
+          "snr_nli_db": 29.084465903213204,
+          "nli_power_w": 1.2165535041163915e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 22.683266073650785,
-          "nli_power_w": 5.26197335183245e-07
+          "snr_nli_db": 29.54036246598549,
+          "nli_power_w": 1.0750608417394683e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 22.849358652388084,
-          "nli_power_w": 5.104815688549596e-07
+          "snr_nli_db": 28.951908218224347,
+          "nli_power_w": 1.2202470086376207e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 23.232026551321855,
-          "nli_power_w": 4.652947897578129e-07
+          "snr_nli_db": 29.110682763807596,
+          "nli_power_w": 1.1529319277844359e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 22.84387087681978,
-          "nli_power_w": 5.103108619932643e-07
+          "snr_nli_db": 29.517217120054596,
+          "nli_power_w": 1.0350072308955368e-07
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 23.219768235357297,
-          "nli_power_w": 4.66641241244564e-07
+          "snr_nli_db": 29.178723539992394,
+          "nli_power_w": 1.0963437919446757e-07
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 23.356864470154083,
-          "nli_power_w": 4.5077637923067016e-07
+          "snr_nli_db": 28.731972890851377,
+          "nli_power_w": 1.1905810623917284e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 23.374499073439278,
-          "nli_power_w": 4.49413663846447e-07
+          "snr_nli_db": 28.685540824802935,
+          "nli_power_w": 1.1822950217242658e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 23.504674500835996,
-          "nli_power_w": 4.3477193738838076e-07
+          "snr_nli_db": 28.613375069130367,
+          "nli_power_w": 1.1768618237517792e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 23.721560696039656,
-          "nli_power_w": 4.14853507911349e-07
+          "snr_nli_db": 28.79559796403779,
+          "nli_power_w": 1.112439497020649e-07
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 23.70130885652521,
-          "nli_power_w": 4.176882404397276e-07
+          "snr_nli_db": 29.07720424215793,
+          "nli_power_w": 1.025655277978063e-07
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 23.439517818804525,
-          "nli_power_w": 4.4361116438143866e-07
+          "snr_nli_db": 29.217458982536936,
+          "nli_power_w": 9.747430469701315e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 23.6228387718648,
-          "nli_power_w": 4.213883497200576e-07
+          "snr_nli_db": 29.613167753086955,
+          "nli_power_w": 8.651514099131738e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 23.79129492083766,
-          "nli_power_w": 4.0763453721781897e-07
+          "snr_nli_db": 29.904453822245202,
+          "nli_power_w": 7.982813903141232e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 24.325102299627797,
-          "nli_power_w": 3.614217526183056e-07
+          "snr_nli_db": 30.01030211581485,
+          "nli_power_w": 7.665785836545643e-08
         }
       ],
       "analytic_per_channel": [
@@ -5733,7 +5733,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 0.0034151077270507812
+      "elapsed_s": 0.003573894500732422
     },
     {
       "dataset": "c57",
@@ -5746,14 +5746,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 32.22056834942598,
+      "waveform_center_snr_nli_db": 34.37298578768254,
       "analytic_center_snr_nli_db": 32.929896967872025,
-      "center_delta_db": 0.7093286184460439,
-      "waveform_center_nli_w": 1.7974479434536833e-07,
+      "center_delta_db": -1.4430888198105123,
+      "waveform_center_nli_w": 1.4902553912481398e-07,
       "analytic_center_nli_w": 5.093429545784391e-07,
-      "delta_mean_db": 0.030697225202877234,
-      "delta_min_db": -1.4049541328472515,
-      "delta_max_db": 2.091221098816085,
+      "delta_mean_db": -0.7125056942293457,
+      "delta_min_db": -2.065908073769478,
+      "delta_max_db": 0.8441924580660825,
       "analytic_snr_mean_db": 33.21059011333439,
       "analytic_snr_min_db": 32.91823060020968,
       "analytic_snr_max_db": 34.62041585175962,
@@ -5761,344 +5761,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 33.93225058031868,
-          "nli_power_w": 1.1631325383362964e-07
+          "snr_nli_db": 34.15932932017416,
+          "nli_power_w": 7.74291031897352e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 32.991094669823944,
-          "nli_power_w": 1.437663286739698e-07
+          "snr_nli_db": 33.28706498783602,
+          "nli_power_w": 9.861976630342448e-08
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 33.59753222267449,
-          "nli_power_w": 1.254659495543343e-07
+          "snr_nli_db": 33.80906834395991,
+          "nli_power_w": 9.18757279775023e-08
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 33.3723074349006,
-          "nli_power_w": 1.3132607292359598e-07
+          "snr_nli_db": 33.42400247857266,
+          "nli_power_w": 1.0432230206385147e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 33.92426075288066,
-          "nli_power_w": 1.1659741255950581e-07
+          "snr_nli_db": 34.151755562577726,
+          "nli_power_w": 9.29218292873317e-08
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 33.54078641868255,
-          "nli_power_w": 1.2701265104634144e-07
+          "snr_nli_db": 34.00421416253918,
+          "nli_power_w": 9.992315166432231e-08
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 33.44000691006811,
-          "nli_power_w": 1.3004602295716023e-07
+          "snr_nli_db": 33.69316143628733,
+          "nli_power_w": 1.1217411817362966e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 33.92690391351078,
-          "nli_power_w": 1.1531260207387334e-07
+          "snr_nli_db": 33.87101407191749,
+          "nli_power_w": 1.113512830080978e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 34.26609425142934,
-          "nli_power_w": 1.0779412336819587e-07
+          "snr_nli_db": 34.349457896335565,
+          "nli_power_w": 1.0480227096876773e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 33.749126837782946,
-          "nli_power_w": 1.200395609441022e-07
+          "snr_nli_db": 33.99993307914656,
+          "nli_power_w": 1.1665697492388864e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 33.07344335121111,
-          "nli_power_w": 1.417637698931384e-07
+          "snr_nli_db": 33.66555897248775,
+          "nli_power_w": 1.3214440352407686e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 33.096140538583484,
-          "nli_power_w": 1.4077992266943788e-07
+          "snr_nli_db": 33.57187302825943,
+          "nli_power_w": 1.3938559498041415e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 32.60988379302562,
-          "nli_power_w": 1.5710645736668797e-07
+          "snr_nli_db": 32.80725985533478,
+          "nli_power_w": 1.718418655279638e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 33.36480663811007,
-          "nli_power_w": 1.3258811292745492e-07
+          "snr_nli_db": 33.94865064645094,
+          "nli_power_w": 1.3661958522980617e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 33.47707129984064,
-          "nli_power_w": 1.2852188751982328e-07
+          "snr_nli_db": 34.1858721412151,
+          "nli_power_w": 1.326411823890668e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 33.83599091281039,
-          "nli_power_w": 1.19493626308184e-07
+          "snr_nli_db": 33.95086727008627,
+          "nli_power_w": 1.4493131900164852e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 33.7813849120743,
-          "nli_power_w": 1.205873201445643e-07
+          "snr_nli_db": 34.1568292567897,
+          "nli_power_w": 1.4124596107470673e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 33.958875549196684,
-          "nli_power_w": 1.1607095613132426e-07
+          "snr_nli_db": 34.94782129167207,
+          "nli_power_w": 1.2049520140758183e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 33.255193113502905,
-          "nli_power_w": 1.360347983015119e-07
+          "snr_nli_db": 33.919555819200525,
+          "nli_power_w": 1.554591579666112e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 33.617182452093196,
-          "nli_power_w": 1.2582414084870246e-07
+          "snr_nli_db": 34.48772208010844,
+          "nli_power_w": 1.3937974351995963e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 32.70758573597924,
-          "nli_power_w": 1.5590473923543177e-07
+          "snr_nli_db": 33.68455313666121,
+          "nli_power_w": 1.707205715240201e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 32.96359171945007,
-          "nli_power_w": 1.4685794169258756e-07
+          "snr_nli_db": 34.04288133236414,
+          "nli_power_w": 1.5873931146379302e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 32.821802382226515,
-          "nli_power_w": 1.508412967147576e-07
+          "snr_nli_db": 34.20969996830972,
+          "nli_power_w": 1.5389497453779287e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 34.37991478133286,
-          "nli_power_w": 1.0711123462249988e-07
+          "snr_nli_db": 35.040868722255084,
+          "nli_power_w": 1.2928013823362768e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 32.982678221373156,
-          "nli_power_w": 1.470155371892433e-07
+          "snr_nli_db": 34.12994188902519,
+          "nli_power_w": 1.5865614398344782e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 31.690064682179727,
-          "nli_power_w": 1.9949576681227836e-07
+          "snr_nli_db": 33.87927535874428,
+          "nli_power_w": 1.6956489093836975e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 30.85255427290101,
-          "nli_power_w": 2.4626182783783575e-07
+          "snr_nli_db": 33.72097396663618,
+          "nli_power_w": 1.7632992600440781e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 31.168701380052717,
-          "nli_power_w": 2.3168192462651717e-07
+          "snr_nli_db": 34.18385136930165,
+          "nli_power_w": 1.5722043574114884e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 32.22056834942598,
-          "nli_power_w": 1.7974479434536833e-07
+          "snr_nli_db": 34.37298578768254,
+          "nli_power_w": 1.4902553912481398e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 32.656656525015045,
-          "nli_power_w": 1.619047560409032e-07
+          "snr_nli_db": 34.21081799186411,
+          "nli_power_w": 1.5431292753050117e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 31.123963363335136,
-          "nli_power_w": 2.300141783171832e-07
+          "snr_nli_db": 33.51703091699416,
+          "nli_power_w": 1.7911492286907225e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 31.95142081066546,
-          "nli_power_w": 1.8964478733614756e-07
+          "snr_nli_db": 33.998065909135974,
+          "nli_power_w": 1.5755755516808915e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 32.54382284848418,
-          "nli_power_w": 1.6340558159502544e-07
+          "snr_nli_db": 33.949521511916295,
+          "nli_power_w": 1.56755537542989e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 31.93381327968732,
-          "nli_power_w": 1.8692925741041795e-07
+          "snr_nli_db": 33.170081142721386,
+          "nli_power_w": 1.844883162764532e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 32.17937358416517,
-          "nli_power_w": 1.7818414358005993e-07
+          "snr_nli_db": 33.588211724317965,
+          "nli_power_w": 1.6506959471155235e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 32.75014217115186,
-          "nli_power_w": 1.5445019690304978e-07
+          "snr_nli_db": 34.016411306233174,
+          "nli_power_w": 1.4515952983521686e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 33.80263406071271,
-          "nli_power_w": 1.2051343965155375e-07
+          "snr_nli_db": 34.65713503540011,
+          "nli_power_w": 1.2177154936305843e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 33.408763419388634,
-          "nli_power_w": 1.3217194832998656e-07
+          "snr_nli_db": 34.18233505857283,
+          "nli_power_w": 1.326284567886999e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 33.66352099389927,
-          "nli_power_w": 1.249313834095176e-07
+          "snr_nli_db": 34.479739016628976,
+          "nli_power_w": 1.202058816574471e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 32.45054414668682,
-          "nli_power_w": 1.6438914802902862e-07
+          "snr_nli_db": 33.43861004237413,
+          "nli_power_w": 1.4747588331828482e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 33.22952546660726,
-          "nli_power_w": 1.3722649166774087e-07
+          "snr_nli_db": 33.52664243073389,
+          "nli_power_w": 1.400666504132991e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 33.8039865336519,
-          "nli_power_w": 1.2039785785278528e-07
+          "snr_nli_db": 33.5478154383674,
+          "nli_power_w": 1.3498646798516627e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 33.806500093219626,
-          "nli_power_w": 1.199940356572033e-07
+          "snr_nli_db": 33.93155078231956,
+          "nli_power_w": 1.1862579570692846e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 33.76349710333959,
-          "nli_power_w": 1.2030333389185002e-07
+          "snr_nli_db": 34.41190042323876,
+          "nli_power_w": 1.0181088294931564e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 33.35930173025853,
-          "nli_power_w": 1.3348058684678364e-07
+          "snr_nli_db": 33.78440355434235,
+          "nli_power_w": 1.1371242473798955e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 33.74420833971105,
-          "nli_power_w": 1.215476075507837e-07
+          "snr_nli_db": 33.70688213950808,
+          "nli_power_w": 1.1084548535446227e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 33.78932633972944,
-          "nli_power_w": 1.204311410877697e-07
+          "snr_nli_db": 34.23875901093349,
+          "nli_power_w": 9.41336287188748e-08
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 33.493816779382975,
-          "nli_power_w": 1.2851689790846886e-07
+          "snr_nli_db": 33.98181643087249,
+          "nli_power_w": 9.54502728049195e-08
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 33.15915611887296,
-          "nli_power_w": 1.3878249847870833e-07
+          "snr_nli_db": 33.43282680148809,
+          "nli_power_w": 1.0328024433889134e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 33.30877814948063,
-          "nli_power_w": 1.3410114418606668e-07
+          "snr_nli_db": 33.31599689485965,
+          "nli_power_w": 1.016187583077512e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 32.91974574063342,
-          "nli_power_w": 1.4591965551388866e-07
+          "snr_nli_db": 33.15453082068472,
+          "nli_power_w": 1.0041488945516583e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 32.90133236703692,
-          "nli_power_w": 1.4715355000720704e-07
+          "snr_nli_db": 33.34489354202117,
+          "nli_power_w": 9.213453335451709e-08
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 33.23451574425644,
-          "nli_power_w": 1.3636290481625803e-07
+          "snr_nli_db": 33.59591194533778,
+          "nli_power_w": 8.316493407850083e-08
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 33.56629024817278,
-          "nli_power_w": 1.266596095216154e-07
+          "snr_nli_db": 33.73649198921761,
+          "nli_power_w": 7.69072536116327e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 33.799525196965206,
-          "nli_power_w": 1.1899433218990398e-07
+          "snr_nli_db": 34.06622541364572,
+          "nli_power_w": 6.75243028142308e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 34.161005902922774,
-          "nli_power_w": 1.0991864724119678e-07
+          "snr_nli_db": 34.487370783773486,
+          "nli_power_w": 5.8719708911663644e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 34.15092948862131,
-          "nli_power_w": 1.1052470873552376e-07
+          "snr_nli_db": 34.48843974169792,
+          "nli_power_w": 5.6225897815805635e-08
         }
       ],
       "analytic_per_channel": [
@@ -6445,7 +6445,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 2.5915660858154297
+      "elapsed_s": 2.488802433013916
     },
     {
       "dataset": "c57",
@@ -6458,14 +6458,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 32.22056834942598,
+      "waveform_center_snr_nli_db": 34.37298578768254,
       "analytic_center_snr_nli_db": 32.88332989713468,
-      "center_delta_db": 0.6627615477086977,
-      "waveform_center_nli_w": 1.7974479434536833e-07,
+      "center_delta_db": -1.4896558905478585,
+      "waveform_center_nli_w": 1.4902553912481398e-07,
       "analytic_center_nli_w": 5.148337510481475e-07,
-      "delta_mean_db": 0.009948753394239406,
-      "delta_min_db": -1.4525077125454757,
-      "delta_max_db": 2.043699429022361,
+      "delta_mean_db": -0.7332541660379835,
+      "delta_min_db": -2.113461653467702,
+      "delta_max_db": 0.8627502536490965,
       "analytic_snr_mean_db": 33.18984164152575,
       "analytic_snr_min_db": 32.87536698004398,
       "analytic_snr_max_db": 34.70685439509889,
@@ -6473,344 +6473,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 33.93225058031868,
-          "nli_power_w": 1.1631325383362964e-07
+          "snr_nli_db": 34.15932932017416,
+          "nli_power_w": 7.74291031897352e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 32.991094669823944,
-          "nli_power_w": 1.437663286739698e-07
+          "snr_nli_db": 33.28706498783602,
+          "nli_power_w": 9.861976630342448e-08
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 33.59753222267449,
-          "nli_power_w": 1.254659495543343e-07
+          "snr_nli_db": 33.80906834395991,
+          "nli_power_w": 9.18757279775023e-08
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 33.3723074349006,
-          "nli_power_w": 1.3132607292359598e-07
+          "snr_nli_db": 33.42400247857266,
+          "nli_power_w": 1.0432230206385147e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 33.92426075288066,
-          "nli_power_w": 1.1659741255950581e-07
+          "snr_nli_db": 34.151755562577726,
+          "nli_power_w": 9.29218292873317e-08
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 33.54078641868255,
-          "nli_power_w": 1.2701265104634144e-07
+          "snr_nli_db": 34.00421416253918,
+          "nli_power_w": 9.992315166432231e-08
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 33.44000691006811,
-          "nli_power_w": 1.3004602295716023e-07
+          "snr_nli_db": 33.69316143628733,
+          "nli_power_w": 1.1217411817362966e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 33.92690391351078,
-          "nli_power_w": 1.1531260207387334e-07
+          "snr_nli_db": 33.87101407191749,
+          "nli_power_w": 1.113512830080978e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 34.26609425142934,
-          "nli_power_w": 1.0779412336819587e-07
+          "snr_nli_db": 34.349457896335565,
+          "nli_power_w": 1.0480227096876773e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 33.749126837782946,
-          "nli_power_w": 1.200395609441022e-07
+          "snr_nli_db": 33.99993307914656,
+          "nli_power_w": 1.1665697492388864e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 33.07344335121111,
-          "nli_power_w": 1.417637698931384e-07
+          "snr_nli_db": 33.66555897248775,
+          "nli_power_w": 1.3214440352407686e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 33.096140538583484,
-          "nli_power_w": 1.4077992266943788e-07
+          "snr_nli_db": 33.57187302825943,
+          "nli_power_w": 1.3938559498041415e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 32.60988379302562,
-          "nli_power_w": 1.5710645736668797e-07
+          "snr_nli_db": 32.80725985533478,
+          "nli_power_w": 1.718418655279638e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 33.36480663811007,
-          "nli_power_w": 1.3258811292745492e-07
+          "snr_nli_db": 33.94865064645094,
+          "nli_power_w": 1.3661958522980617e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 33.47707129984064,
-          "nli_power_w": 1.2852188751982328e-07
+          "snr_nli_db": 34.1858721412151,
+          "nli_power_w": 1.326411823890668e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 33.83599091281039,
-          "nli_power_w": 1.19493626308184e-07
+          "snr_nli_db": 33.95086727008627,
+          "nli_power_w": 1.4493131900164852e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 33.7813849120743,
-          "nli_power_w": 1.205873201445643e-07
+          "snr_nli_db": 34.1568292567897,
+          "nli_power_w": 1.4124596107470673e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 33.958875549196684,
-          "nli_power_w": 1.1607095613132426e-07
+          "snr_nli_db": 34.94782129167207,
+          "nli_power_w": 1.2049520140758183e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 33.255193113502905,
-          "nli_power_w": 1.360347983015119e-07
+          "snr_nli_db": 33.919555819200525,
+          "nli_power_w": 1.554591579666112e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 33.617182452093196,
-          "nli_power_w": 1.2582414084870246e-07
+          "snr_nli_db": 34.48772208010844,
+          "nli_power_w": 1.3937974351995963e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 32.70758573597924,
-          "nli_power_w": 1.5590473923543177e-07
+          "snr_nli_db": 33.68455313666121,
+          "nli_power_w": 1.707205715240201e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 32.96359171945007,
-          "nli_power_w": 1.4685794169258756e-07
+          "snr_nli_db": 34.04288133236414,
+          "nli_power_w": 1.5873931146379302e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 32.821802382226515,
-          "nli_power_w": 1.508412967147576e-07
+          "snr_nli_db": 34.20969996830972,
+          "nli_power_w": 1.5389497453779287e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 34.37991478133286,
-          "nli_power_w": 1.0711123462249988e-07
+          "snr_nli_db": 35.040868722255084,
+          "nli_power_w": 1.2928013823362768e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 32.982678221373156,
-          "nli_power_w": 1.470155371892433e-07
+          "snr_nli_db": 34.12994188902519,
+          "nli_power_w": 1.5865614398344782e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 31.690064682179727,
-          "nli_power_w": 1.9949576681227836e-07
+          "snr_nli_db": 33.87927535874428,
+          "nli_power_w": 1.6956489093836975e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 30.85255427290101,
-          "nli_power_w": 2.4626182783783575e-07
+          "snr_nli_db": 33.72097396663618,
+          "nli_power_w": 1.7632992600440781e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 31.168701380052717,
-          "nli_power_w": 2.3168192462651717e-07
+          "snr_nli_db": 34.18385136930165,
+          "nli_power_w": 1.5722043574114884e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 32.22056834942598,
-          "nli_power_w": 1.7974479434536833e-07
+          "snr_nli_db": 34.37298578768254,
+          "nli_power_w": 1.4902553912481398e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 32.656656525015045,
-          "nli_power_w": 1.619047560409032e-07
+          "snr_nli_db": 34.21081799186411,
+          "nli_power_w": 1.5431292753050117e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 31.123963363335136,
-          "nli_power_w": 2.300141783171832e-07
+          "snr_nli_db": 33.51703091699416,
+          "nli_power_w": 1.7911492286907225e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 31.95142081066546,
-          "nli_power_w": 1.8964478733614756e-07
+          "snr_nli_db": 33.998065909135974,
+          "nli_power_w": 1.5755755516808915e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 32.54382284848418,
-          "nli_power_w": 1.6340558159502544e-07
+          "snr_nli_db": 33.949521511916295,
+          "nli_power_w": 1.56755537542989e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 31.93381327968732,
-          "nli_power_w": 1.8692925741041795e-07
+          "snr_nli_db": 33.170081142721386,
+          "nli_power_w": 1.844883162764532e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 32.17937358416517,
-          "nli_power_w": 1.7818414358005993e-07
+          "snr_nli_db": 33.588211724317965,
+          "nli_power_w": 1.6506959471155235e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 32.75014217115186,
-          "nli_power_w": 1.5445019690304978e-07
+          "snr_nli_db": 34.016411306233174,
+          "nli_power_w": 1.4515952983521686e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 33.80263406071271,
-          "nli_power_w": 1.2051343965155375e-07
+          "snr_nli_db": 34.65713503540011,
+          "nli_power_w": 1.2177154936305843e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 33.408763419388634,
-          "nli_power_w": 1.3217194832998656e-07
+          "snr_nli_db": 34.18233505857283,
+          "nli_power_w": 1.326284567886999e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 33.66352099389927,
-          "nli_power_w": 1.249313834095176e-07
+          "snr_nli_db": 34.479739016628976,
+          "nli_power_w": 1.202058816574471e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 32.45054414668682,
-          "nli_power_w": 1.6438914802902862e-07
+          "snr_nli_db": 33.43861004237413,
+          "nli_power_w": 1.4747588331828482e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 33.22952546660726,
-          "nli_power_w": 1.3722649166774087e-07
+          "snr_nli_db": 33.52664243073389,
+          "nli_power_w": 1.400666504132991e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 33.8039865336519,
-          "nli_power_w": 1.2039785785278528e-07
+          "snr_nli_db": 33.5478154383674,
+          "nli_power_w": 1.3498646798516627e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 33.806500093219626,
-          "nli_power_w": 1.199940356572033e-07
+          "snr_nli_db": 33.93155078231956,
+          "nli_power_w": 1.1862579570692846e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 33.76349710333959,
-          "nli_power_w": 1.2030333389185002e-07
+          "snr_nli_db": 34.41190042323876,
+          "nli_power_w": 1.0181088294931564e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 33.35930173025853,
-          "nli_power_w": 1.3348058684678364e-07
+          "snr_nli_db": 33.78440355434235,
+          "nli_power_w": 1.1371242473798955e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 33.74420833971105,
-          "nli_power_w": 1.215476075507837e-07
+          "snr_nli_db": 33.70688213950808,
+          "nli_power_w": 1.1084548535446227e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 33.78932633972944,
-          "nli_power_w": 1.204311410877697e-07
+          "snr_nli_db": 34.23875901093349,
+          "nli_power_w": 9.41336287188748e-08
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 33.493816779382975,
-          "nli_power_w": 1.2851689790846886e-07
+          "snr_nli_db": 33.98181643087249,
+          "nli_power_w": 9.54502728049195e-08
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 33.15915611887296,
-          "nli_power_w": 1.3878249847870833e-07
+          "snr_nli_db": 33.43282680148809,
+          "nli_power_w": 1.0328024433889134e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 33.30877814948063,
-          "nli_power_w": 1.3410114418606668e-07
+          "snr_nli_db": 33.31599689485965,
+          "nli_power_w": 1.016187583077512e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 32.91974574063342,
-          "nli_power_w": 1.4591965551388866e-07
+          "snr_nli_db": 33.15453082068472,
+          "nli_power_w": 1.0041488945516583e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 32.90133236703692,
-          "nli_power_w": 1.4715355000720704e-07
+          "snr_nli_db": 33.34489354202117,
+          "nli_power_w": 9.213453335451709e-08
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 33.23451574425644,
-          "nli_power_w": 1.3636290481625803e-07
+          "snr_nli_db": 33.59591194533778,
+          "nli_power_w": 8.316493407850083e-08
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 33.56629024817278,
-          "nli_power_w": 1.266596095216154e-07
+          "snr_nli_db": 33.73649198921761,
+          "nli_power_w": 7.69072536116327e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 33.799525196965206,
-          "nli_power_w": 1.1899433218990398e-07
+          "snr_nli_db": 34.06622541364572,
+          "nli_power_w": 6.75243028142308e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 34.161005902922774,
-          "nli_power_w": 1.0991864724119678e-07
+          "snr_nli_db": 34.487370783773486,
+          "nli_power_w": 5.8719708911663644e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 34.15092948862131,
-          "nli_power_w": 1.1052470873552376e-07
+          "snr_nli_db": 34.48843974169792,
+          "nli_power_w": 5.6225897815805635e-08
         }
       ],
       "analytic_per_channel": [
@@ -7157,7 +7157,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 0.01891613006591797
+      "elapsed_s": 0.018513917922973633
     },
     {
       "dataset": "c57",
@@ -7170,14 +7170,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 32.22056834942598,
+      "waveform_center_snr_nli_db": 34.37298578768254,
       "analytic_center_snr_nli_db": 32.84710898904454,
-      "center_delta_db": 0.6265406396185611,
-      "waveform_center_nli_w": 1.7974479434536833e-07,
+      "center_delta_db": -1.525876798637995,
+      "waveform_center_nli_w": 1.4902553912481398e-07,
       "analytic_center_nli_w": 5.191455086463345e-07,
-      "delta_mean_db": -0.03765950741684969,
-      "delta_min_db": -1.4878158911407056,
-      "delta_max_db": 2.0079896075757304,
+      "delta_mean_db": -0.7808624268490727,
+      "delta_min_db": -2.148769832062932,
+      "delta_max_db": 0.7907896410175255,
       "analytic_snr_mean_db": 33.142233380714664,
       "analytic_snr_min_db": 32.83792880448371,
       "analytic_snr_max_db": 34.58293866709439,
@@ -7185,344 +7185,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 33.93225058031868,
-          "nli_power_w": 1.1631325383362964e-07
+          "snr_nli_db": 34.15932932017416,
+          "nli_power_w": 7.74291031897352e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 32.991094669823944,
-          "nli_power_w": 1.437663286739698e-07
+          "snr_nli_db": 33.28706498783602,
+          "nli_power_w": 9.861976630342448e-08
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 33.59753222267449,
-          "nli_power_w": 1.254659495543343e-07
+          "snr_nli_db": 33.80906834395991,
+          "nli_power_w": 9.18757279775023e-08
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 33.3723074349006,
-          "nli_power_w": 1.3132607292359598e-07
+          "snr_nli_db": 33.42400247857266,
+          "nli_power_w": 1.0432230206385147e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 33.92426075288066,
-          "nli_power_w": 1.1659741255950581e-07
+          "snr_nli_db": 34.151755562577726,
+          "nli_power_w": 9.29218292873317e-08
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 33.54078641868255,
-          "nli_power_w": 1.2701265104634144e-07
+          "snr_nli_db": 34.00421416253918,
+          "nli_power_w": 9.992315166432231e-08
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 33.44000691006811,
-          "nli_power_w": 1.3004602295716023e-07
+          "snr_nli_db": 33.69316143628733,
+          "nli_power_w": 1.1217411817362966e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 33.92690391351078,
-          "nli_power_w": 1.1531260207387334e-07
+          "snr_nli_db": 33.87101407191749,
+          "nli_power_w": 1.113512830080978e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 34.26609425142934,
-          "nli_power_w": 1.0779412336819587e-07
+          "snr_nli_db": 34.349457896335565,
+          "nli_power_w": 1.0480227096876773e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 33.749126837782946,
-          "nli_power_w": 1.200395609441022e-07
+          "snr_nli_db": 33.99993307914656,
+          "nli_power_w": 1.1665697492388864e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 33.07344335121111,
-          "nli_power_w": 1.417637698931384e-07
+          "snr_nli_db": 33.66555897248775,
+          "nli_power_w": 1.3214440352407686e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 33.096140538583484,
-          "nli_power_w": 1.4077992266943788e-07
+          "snr_nli_db": 33.57187302825943,
+          "nli_power_w": 1.3938559498041415e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 32.60988379302562,
-          "nli_power_w": 1.5710645736668797e-07
+          "snr_nli_db": 32.80725985533478,
+          "nli_power_w": 1.718418655279638e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 33.36480663811007,
-          "nli_power_w": 1.3258811292745492e-07
+          "snr_nli_db": 33.94865064645094,
+          "nli_power_w": 1.3661958522980617e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 33.47707129984064,
-          "nli_power_w": 1.2852188751982328e-07
+          "snr_nli_db": 34.1858721412151,
+          "nli_power_w": 1.326411823890668e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 33.83599091281039,
-          "nli_power_w": 1.19493626308184e-07
+          "snr_nli_db": 33.95086727008627,
+          "nli_power_w": 1.4493131900164852e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 33.7813849120743,
-          "nli_power_w": 1.205873201445643e-07
+          "snr_nli_db": 34.1568292567897,
+          "nli_power_w": 1.4124596107470673e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 33.958875549196684,
-          "nli_power_w": 1.1607095613132426e-07
+          "snr_nli_db": 34.94782129167207,
+          "nli_power_w": 1.2049520140758183e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 33.255193113502905,
-          "nli_power_w": 1.360347983015119e-07
+          "snr_nli_db": 33.919555819200525,
+          "nli_power_w": 1.554591579666112e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 33.617182452093196,
-          "nli_power_w": 1.2582414084870246e-07
+          "snr_nli_db": 34.48772208010844,
+          "nli_power_w": 1.3937974351995963e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 32.70758573597924,
-          "nli_power_w": 1.5590473923543177e-07
+          "snr_nli_db": 33.68455313666121,
+          "nli_power_w": 1.707205715240201e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 32.96359171945007,
-          "nli_power_w": 1.4685794169258756e-07
+          "snr_nli_db": 34.04288133236414,
+          "nli_power_w": 1.5873931146379302e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 32.821802382226515,
-          "nli_power_w": 1.508412967147576e-07
+          "snr_nli_db": 34.20969996830972,
+          "nli_power_w": 1.5389497453779287e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 34.37991478133286,
-          "nli_power_w": 1.0711123462249988e-07
+          "snr_nli_db": 35.040868722255084,
+          "nli_power_w": 1.2928013823362768e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 32.982678221373156,
-          "nli_power_w": 1.470155371892433e-07
+          "snr_nli_db": 34.12994188902519,
+          "nli_power_w": 1.5865614398344782e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 31.690064682179727,
-          "nli_power_w": 1.9949576681227836e-07
+          "snr_nli_db": 33.87927535874428,
+          "nli_power_w": 1.6956489093836975e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 30.85255427290101,
-          "nli_power_w": 2.4626182783783575e-07
+          "snr_nli_db": 33.72097396663618,
+          "nli_power_w": 1.7632992600440781e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 31.168701380052717,
-          "nli_power_w": 2.3168192462651717e-07
+          "snr_nli_db": 34.18385136930165,
+          "nli_power_w": 1.5722043574114884e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 32.22056834942598,
-          "nli_power_w": 1.7974479434536833e-07
+          "snr_nli_db": 34.37298578768254,
+          "nli_power_w": 1.4902553912481398e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 32.656656525015045,
-          "nli_power_w": 1.619047560409032e-07
+          "snr_nli_db": 34.21081799186411,
+          "nli_power_w": 1.5431292753050117e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 31.123963363335136,
-          "nli_power_w": 2.300141783171832e-07
+          "snr_nli_db": 33.51703091699416,
+          "nli_power_w": 1.7911492286907225e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 31.95142081066546,
-          "nli_power_w": 1.8964478733614756e-07
+          "snr_nli_db": 33.998065909135974,
+          "nli_power_w": 1.5755755516808915e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 32.54382284848418,
-          "nli_power_w": 1.6340558159502544e-07
+          "snr_nli_db": 33.949521511916295,
+          "nli_power_w": 1.56755537542989e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 31.93381327968732,
-          "nli_power_w": 1.8692925741041795e-07
+          "snr_nli_db": 33.170081142721386,
+          "nli_power_w": 1.844883162764532e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 32.17937358416517,
-          "nli_power_w": 1.7818414358005993e-07
+          "snr_nli_db": 33.588211724317965,
+          "nli_power_w": 1.6506959471155235e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 32.75014217115186,
-          "nli_power_w": 1.5445019690304978e-07
+          "snr_nli_db": 34.016411306233174,
+          "nli_power_w": 1.4515952983521686e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 33.80263406071271,
-          "nli_power_w": 1.2051343965155375e-07
+          "snr_nli_db": 34.65713503540011,
+          "nli_power_w": 1.2177154936305843e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 33.408763419388634,
-          "nli_power_w": 1.3217194832998656e-07
+          "snr_nli_db": 34.18233505857283,
+          "nli_power_w": 1.326284567886999e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 33.66352099389927,
-          "nli_power_w": 1.249313834095176e-07
+          "snr_nli_db": 34.479739016628976,
+          "nli_power_w": 1.202058816574471e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 32.45054414668682,
-          "nli_power_w": 1.6438914802902862e-07
+          "snr_nli_db": 33.43861004237413,
+          "nli_power_w": 1.4747588331828482e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 33.22952546660726,
-          "nli_power_w": 1.3722649166774087e-07
+          "snr_nli_db": 33.52664243073389,
+          "nli_power_w": 1.400666504132991e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 33.8039865336519,
-          "nli_power_w": 1.2039785785278528e-07
+          "snr_nli_db": 33.5478154383674,
+          "nli_power_w": 1.3498646798516627e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 33.806500093219626,
-          "nli_power_w": 1.199940356572033e-07
+          "snr_nli_db": 33.93155078231956,
+          "nli_power_w": 1.1862579570692846e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 33.76349710333959,
-          "nli_power_w": 1.2030333389185002e-07
+          "snr_nli_db": 34.41190042323876,
+          "nli_power_w": 1.0181088294931564e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 33.35930173025853,
-          "nli_power_w": 1.3348058684678364e-07
+          "snr_nli_db": 33.78440355434235,
+          "nli_power_w": 1.1371242473798955e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 33.74420833971105,
-          "nli_power_w": 1.215476075507837e-07
+          "snr_nli_db": 33.70688213950808,
+          "nli_power_w": 1.1084548535446227e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 33.78932633972944,
-          "nli_power_w": 1.204311410877697e-07
+          "snr_nli_db": 34.23875901093349,
+          "nli_power_w": 9.41336287188748e-08
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 33.493816779382975,
-          "nli_power_w": 1.2851689790846886e-07
+          "snr_nli_db": 33.98181643087249,
+          "nli_power_w": 9.54502728049195e-08
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 33.15915611887296,
-          "nli_power_w": 1.3878249847870833e-07
+          "snr_nli_db": 33.43282680148809,
+          "nli_power_w": 1.0328024433889134e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 33.30877814948063,
-          "nli_power_w": 1.3410114418606668e-07
+          "snr_nli_db": 33.31599689485965,
+          "nli_power_w": 1.016187583077512e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 32.91974574063342,
-          "nli_power_w": 1.4591965551388866e-07
+          "snr_nli_db": 33.15453082068472,
+          "nli_power_w": 1.0041488945516583e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 32.90133236703692,
-          "nli_power_w": 1.4715355000720704e-07
+          "snr_nli_db": 33.34489354202117,
+          "nli_power_w": 9.213453335451709e-08
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 33.23451574425644,
-          "nli_power_w": 1.3636290481625803e-07
+          "snr_nli_db": 33.59591194533778,
+          "nli_power_w": 8.316493407850083e-08
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 33.56629024817278,
-          "nli_power_w": 1.266596095216154e-07
+          "snr_nli_db": 33.73649198921761,
+          "nli_power_w": 7.69072536116327e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 33.799525196965206,
-          "nli_power_w": 1.1899433218990398e-07
+          "snr_nli_db": 34.06622541364572,
+          "nli_power_w": 6.75243028142308e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 34.161005902922774,
-          "nli_power_w": 1.0991864724119678e-07
+          "snr_nli_db": 34.487370783773486,
+          "nli_power_w": 5.8719708911663644e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 34.15092948862131,
-          "nli_power_w": 1.1052470873552376e-07
+          "snr_nli_db": 34.48843974169792,
+          "nli_power_w": 5.6225897815805635e-08
         }
       ],
       "analytic_per_channel": [
@@ -7869,7 +7869,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 15.590117454528809
+      "elapsed_s": 15.061249494552612
     },
     {
       "dataset": "c57",
@@ -7882,14 +7882,14 @@
       "n_pumps": 1,
       "launch_power_w_per_pol": 0.001,
       "center_channel_index": 28,
-      "waveform_center_snr_nli_db": 32.22056834942598,
+      "waveform_center_snr_nli_db": 34.37298578768254,
       "analytic_center_snr_nli_db": 33.03439417963902,
-      "center_delta_db": 0.813825830213041,
-      "waveform_center_nli_w": 1.7974479434536833e-07,
+      "center_delta_db": -1.3385916080435152,
+      "waveform_center_nli_w": 1.4902553912481398e-07,
       "analytic_center_nli_w": 4.972337306527054e-07,
-      "delta_mean_db": 0.09299929213499725,
-      "delta_min_db": -1.3435964059242025,
-      "delta_max_db": 2.1798247199300747,
+      "delta_mean_db": -0.6502036272972257,
+      "delta_min_db": -2.004550346846429,
+      "delta_max_db": 0.6328436191201661,
       "analytic_snr_mean_db": 33.27289218026651,
       "analytic_snr_min_db": 33.032378992831084,
       "analytic_snr_max_db": 34.52321300698362,
@@ -7897,344 +7897,344 @@
         {
           "channel": 0,
           "freq_offset_hz": -2100000000000.0,
-          "snr_nli_db": 33.93225058031868,
-          "nli_power_w": 1.1631325383362964e-07
+          "snr_nli_db": 34.15932932017416,
+          "nli_power_w": 7.74291031897352e-08
         },
         {
           "channel": 1,
           "freq_offset_hz": -2025000000000.0,
-          "snr_nli_db": 32.991094669823944,
-          "nli_power_w": 1.437663286739698e-07
+          "snr_nli_db": 33.28706498783602,
+          "nli_power_w": 9.861976630342448e-08
         },
         {
           "channel": 2,
           "freq_offset_hz": -1950000000000.0,
-          "snr_nli_db": 33.59753222267449,
-          "nli_power_w": 1.254659495543343e-07
+          "snr_nli_db": 33.80906834395991,
+          "nli_power_w": 9.18757279775023e-08
         },
         {
           "channel": 3,
           "freq_offset_hz": -1875000000000.0,
-          "snr_nli_db": 33.3723074349006,
-          "nli_power_w": 1.3132607292359598e-07
+          "snr_nli_db": 33.42400247857266,
+          "nli_power_w": 1.0432230206385147e-07
         },
         {
           "channel": 4,
           "freq_offset_hz": -1800000000000.0,
-          "snr_nli_db": 33.92426075288066,
-          "nli_power_w": 1.1659741255950581e-07
+          "snr_nli_db": 34.151755562577726,
+          "nli_power_w": 9.29218292873317e-08
         },
         {
           "channel": 5,
           "freq_offset_hz": -1725000000000.0,
-          "snr_nli_db": 33.54078641868255,
-          "nli_power_w": 1.2701265104634144e-07
+          "snr_nli_db": 34.00421416253918,
+          "nli_power_w": 9.992315166432231e-08
         },
         {
           "channel": 6,
           "freq_offset_hz": -1650000000000.0,
-          "snr_nli_db": 33.44000691006811,
-          "nli_power_w": 1.3004602295716023e-07
+          "snr_nli_db": 33.69316143628733,
+          "nli_power_w": 1.1217411817362966e-07
         },
         {
           "channel": 7,
           "freq_offset_hz": -1575000000000.0,
-          "snr_nli_db": 33.92690391351078,
-          "nli_power_w": 1.1531260207387334e-07
+          "snr_nli_db": 33.87101407191749,
+          "nli_power_w": 1.113512830080978e-07
         },
         {
           "channel": 8,
           "freq_offset_hz": -1500000000000.0,
-          "snr_nli_db": 34.26609425142934,
-          "nli_power_w": 1.0779412336819587e-07
+          "snr_nli_db": 34.349457896335565,
+          "nli_power_w": 1.0480227096876773e-07
         },
         {
           "channel": 9,
           "freq_offset_hz": -1425000000000.0,
-          "snr_nli_db": 33.749126837782946,
-          "nli_power_w": 1.200395609441022e-07
+          "snr_nli_db": 33.99993307914656,
+          "nli_power_w": 1.1665697492388864e-07
         },
         {
           "channel": 10,
           "freq_offset_hz": -1350000000000.0,
-          "snr_nli_db": 33.07344335121111,
-          "nli_power_w": 1.417637698931384e-07
+          "snr_nli_db": 33.66555897248775,
+          "nli_power_w": 1.3214440352407686e-07
         },
         {
           "channel": 11,
           "freq_offset_hz": -1275000000000.0,
-          "snr_nli_db": 33.096140538583484,
-          "nli_power_w": 1.4077992266943788e-07
+          "snr_nli_db": 33.57187302825943,
+          "nli_power_w": 1.3938559498041415e-07
         },
         {
           "channel": 12,
           "freq_offset_hz": -1200000000000.0,
-          "snr_nli_db": 32.60988379302562,
-          "nli_power_w": 1.5710645736668797e-07
+          "snr_nli_db": 32.80725985533478,
+          "nli_power_w": 1.718418655279638e-07
         },
         {
           "channel": 13,
           "freq_offset_hz": -1125000000000.0,
-          "snr_nli_db": 33.36480663811007,
-          "nli_power_w": 1.3258811292745492e-07
+          "snr_nli_db": 33.94865064645094,
+          "nli_power_w": 1.3661958522980617e-07
         },
         {
           "channel": 14,
           "freq_offset_hz": -1050000000000.0,
-          "snr_nli_db": 33.47707129984064,
-          "nli_power_w": 1.2852188751982328e-07
+          "snr_nli_db": 34.1858721412151,
+          "nli_power_w": 1.326411823890668e-07
         },
         {
           "channel": 15,
           "freq_offset_hz": -975000000000.0,
-          "snr_nli_db": 33.83599091281039,
-          "nli_power_w": 1.19493626308184e-07
+          "snr_nli_db": 33.95086727008627,
+          "nli_power_w": 1.4493131900164852e-07
         },
         {
           "channel": 16,
           "freq_offset_hz": -900000000000.0,
-          "snr_nli_db": 33.7813849120743,
-          "nli_power_w": 1.205873201445643e-07
+          "snr_nli_db": 34.1568292567897,
+          "nli_power_w": 1.4124596107470673e-07
         },
         {
           "channel": 17,
           "freq_offset_hz": -825000000000.0,
-          "snr_nli_db": 33.958875549196684,
-          "nli_power_w": 1.1607095613132426e-07
+          "snr_nli_db": 34.94782129167207,
+          "nli_power_w": 1.2049520140758183e-07
         },
         {
           "channel": 18,
           "freq_offset_hz": -750000000000.0,
-          "snr_nli_db": 33.255193113502905,
-          "nli_power_w": 1.360347983015119e-07
+          "snr_nli_db": 33.919555819200525,
+          "nli_power_w": 1.554591579666112e-07
         },
         {
           "channel": 19,
           "freq_offset_hz": -675000000000.0,
-          "snr_nli_db": 33.617182452093196,
-          "nli_power_w": 1.2582414084870246e-07
+          "snr_nli_db": 34.48772208010844,
+          "nli_power_w": 1.3937974351995963e-07
         },
         {
           "channel": 20,
           "freq_offset_hz": -600000000000.0,
-          "snr_nli_db": 32.70758573597924,
-          "nli_power_w": 1.5590473923543177e-07
+          "snr_nli_db": 33.68455313666121,
+          "nli_power_w": 1.707205715240201e-07
         },
         {
           "channel": 21,
           "freq_offset_hz": -525000000000.0,
-          "snr_nli_db": 32.96359171945007,
-          "nli_power_w": 1.4685794169258756e-07
+          "snr_nli_db": 34.04288133236414,
+          "nli_power_w": 1.5873931146379302e-07
         },
         {
           "channel": 22,
           "freq_offset_hz": -450000000000.0,
-          "snr_nli_db": 32.821802382226515,
-          "nli_power_w": 1.508412967147576e-07
+          "snr_nli_db": 34.20969996830972,
+          "nli_power_w": 1.5389497453779287e-07
         },
         {
           "channel": 23,
           "freq_offset_hz": -375000000000.0,
-          "snr_nli_db": 34.37991478133286,
-          "nli_power_w": 1.0711123462249988e-07
+          "snr_nli_db": 35.040868722255084,
+          "nli_power_w": 1.2928013823362768e-07
         },
         {
           "channel": 24,
           "freq_offset_hz": -300000000000.0,
-          "snr_nli_db": 32.982678221373156,
-          "nli_power_w": 1.470155371892433e-07
+          "snr_nli_db": 34.12994188902519,
+          "nli_power_w": 1.5865614398344782e-07
         },
         {
           "channel": 25,
           "freq_offset_hz": -225000000000.0,
-          "snr_nli_db": 31.690064682179727,
-          "nli_power_w": 1.9949576681227836e-07
+          "snr_nli_db": 33.87927535874428,
+          "nli_power_w": 1.6956489093836975e-07
         },
         {
           "channel": 26,
           "freq_offset_hz": -150000000000.0,
-          "snr_nli_db": 30.85255427290101,
-          "nli_power_w": 2.4626182783783575e-07
+          "snr_nli_db": 33.72097396663618,
+          "nli_power_w": 1.7632992600440781e-07
         },
         {
           "channel": 27,
           "freq_offset_hz": -75000000000.0,
-          "snr_nli_db": 31.168701380052717,
-          "nli_power_w": 2.3168192462651717e-07
+          "snr_nli_db": 34.18385136930165,
+          "nli_power_w": 1.5722043574114884e-07
         },
         {
           "channel": 28,
           "freq_offset_hz": 0.0,
-          "snr_nli_db": 32.22056834942598,
-          "nli_power_w": 1.7974479434536833e-07
+          "snr_nli_db": 34.37298578768254,
+          "nli_power_w": 1.4902553912481398e-07
         },
         {
           "channel": 29,
           "freq_offset_hz": 75000000000.0,
-          "snr_nli_db": 32.656656525015045,
-          "nli_power_w": 1.619047560409032e-07
+          "snr_nli_db": 34.21081799186411,
+          "nli_power_w": 1.5431292753050117e-07
         },
         {
           "channel": 30,
           "freq_offset_hz": 150000000000.0,
-          "snr_nli_db": 31.123963363335136,
-          "nli_power_w": 2.300141783171832e-07
+          "snr_nli_db": 33.51703091699416,
+          "nli_power_w": 1.7911492286907225e-07
         },
         {
           "channel": 31,
           "freq_offset_hz": 225000000000.0,
-          "snr_nli_db": 31.95142081066546,
-          "nli_power_w": 1.8964478733614756e-07
+          "snr_nli_db": 33.998065909135974,
+          "nli_power_w": 1.5755755516808915e-07
         },
         {
           "channel": 32,
           "freq_offset_hz": 300000000000.0,
-          "snr_nli_db": 32.54382284848418,
-          "nli_power_w": 1.6340558159502544e-07
+          "snr_nli_db": 33.949521511916295,
+          "nli_power_w": 1.56755537542989e-07
         },
         {
           "channel": 33,
           "freq_offset_hz": 375000000000.0,
-          "snr_nli_db": 31.93381327968732,
-          "nli_power_w": 1.8692925741041795e-07
+          "snr_nli_db": 33.170081142721386,
+          "nli_power_w": 1.844883162764532e-07
         },
         {
           "channel": 34,
           "freq_offset_hz": 450000000000.0,
-          "snr_nli_db": 32.17937358416517,
-          "nli_power_w": 1.7818414358005993e-07
+          "snr_nli_db": 33.588211724317965,
+          "nli_power_w": 1.6506959471155235e-07
         },
         {
           "channel": 35,
           "freq_offset_hz": 525000000000.0,
-          "snr_nli_db": 32.75014217115186,
-          "nli_power_w": 1.5445019690304978e-07
+          "snr_nli_db": 34.016411306233174,
+          "nli_power_w": 1.4515952983521686e-07
         },
         {
           "channel": 36,
           "freq_offset_hz": 600000000000.0,
-          "snr_nli_db": 33.80263406071271,
-          "nli_power_w": 1.2051343965155375e-07
+          "snr_nli_db": 34.65713503540011,
+          "nli_power_w": 1.2177154936305843e-07
         },
         {
           "channel": 37,
           "freq_offset_hz": 675000000000.0,
-          "snr_nli_db": 33.408763419388634,
-          "nli_power_w": 1.3217194832998656e-07
+          "snr_nli_db": 34.18233505857283,
+          "nli_power_w": 1.326284567886999e-07
         },
         {
           "channel": 38,
           "freq_offset_hz": 750000000000.0,
-          "snr_nli_db": 33.66352099389927,
-          "nli_power_w": 1.249313834095176e-07
+          "snr_nli_db": 34.479739016628976,
+          "nli_power_w": 1.202058816574471e-07
         },
         {
           "channel": 39,
           "freq_offset_hz": 825000000000.0,
-          "snr_nli_db": 32.45054414668682,
-          "nli_power_w": 1.6438914802902862e-07
+          "snr_nli_db": 33.43861004237413,
+          "nli_power_w": 1.4747588331828482e-07
         },
         {
           "channel": 40,
           "freq_offset_hz": 900000000000.0,
-          "snr_nli_db": 33.22952546660726,
-          "nli_power_w": 1.3722649166774087e-07
+          "snr_nli_db": 33.52664243073389,
+          "nli_power_w": 1.400666504132991e-07
         },
         {
           "channel": 41,
           "freq_offset_hz": 975000000000.0,
-          "snr_nli_db": 33.8039865336519,
-          "nli_power_w": 1.2039785785278528e-07
+          "snr_nli_db": 33.5478154383674,
+          "nli_power_w": 1.3498646798516627e-07
         },
         {
           "channel": 42,
           "freq_offset_hz": 1050000000000.0,
-          "snr_nli_db": 33.806500093219626,
-          "nli_power_w": 1.199940356572033e-07
+          "snr_nli_db": 33.93155078231956,
+          "nli_power_w": 1.1862579570692846e-07
         },
         {
           "channel": 43,
           "freq_offset_hz": 1125000000000.0,
-          "snr_nli_db": 33.76349710333959,
-          "nli_power_w": 1.2030333389185002e-07
+          "snr_nli_db": 34.41190042323876,
+          "nli_power_w": 1.0181088294931564e-07
         },
         {
           "channel": 44,
           "freq_offset_hz": 1200000000000.0,
-          "snr_nli_db": 33.35930173025853,
-          "nli_power_w": 1.3348058684678364e-07
+          "snr_nli_db": 33.78440355434235,
+          "nli_power_w": 1.1371242473798955e-07
         },
         {
           "channel": 45,
           "freq_offset_hz": 1275000000000.0,
-          "snr_nli_db": 33.74420833971105,
-          "nli_power_w": 1.215476075507837e-07
+          "snr_nli_db": 33.70688213950808,
+          "nli_power_w": 1.1084548535446227e-07
         },
         {
           "channel": 46,
           "freq_offset_hz": 1350000000000.0,
-          "snr_nli_db": 33.78932633972944,
-          "nli_power_w": 1.204311410877697e-07
+          "snr_nli_db": 34.23875901093349,
+          "nli_power_w": 9.41336287188748e-08
         },
         {
           "channel": 47,
           "freq_offset_hz": 1425000000000.0,
-          "snr_nli_db": 33.493816779382975,
-          "nli_power_w": 1.2851689790846886e-07
+          "snr_nli_db": 33.98181643087249,
+          "nli_power_w": 9.54502728049195e-08
         },
         {
           "channel": 48,
           "freq_offset_hz": 1500000000000.0,
-          "snr_nli_db": 33.15915611887296,
-          "nli_power_w": 1.3878249847870833e-07
+          "snr_nli_db": 33.43282680148809,
+          "nli_power_w": 1.0328024433889134e-07
         },
         {
           "channel": 49,
           "freq_offset_hz": 1575000000000.0,
-          "snr_nli_db": 33.30877814948063,
-          "nli_power_w": 1.3410114418606668e-07
+          "snr_nli_db": 33.31599689485965,
+          "nli_power_w": 1.016187583077512e-07
         },
         {
           "channel": 50,
           "freq_offset_hz": 1650000000000.0,
-          "snr_nli_db": 32.91974574063342,
-          "nli_power_w": 1.4591965551388866e-07
+          "snr_nli_db": 33.15453082068472,
+          "nli_power_w": 1.0041488945516583e-07
         },
         {
           "channel": 51,
           "freq_offset_hz": 1725000000000.0,
-          "snr_nli_db": 32.90133236703692,
-          "nli_power_w": 1.4715355000720704e-07
+          "snr_nli_db": 33.34489354202117,
+          "nli_power_w": 9.213453335451709e-08
         },
         {
           "channel": 52,
           "freq_offset_hz": 1800000000000.0,
-          "snr_nli_db": 33.23451574425644,
-          "nli_power_w": 1.3636290481625803e-07
+          "snr_nli_db": 33.59591194533778,
+          "nli_power_w": 8.316493407850083e-08
         },
         {
           "channel": 53,
           "freq_offset_hz": 1875000000000.0,
-          "snr_nli_db": 33.56629024817278,
-          "nli_power_w": 1.266596095216154e-07
+          "snr_nli_db": 33.73649198921761,
+          "nli_power_w": 7.69072536116327e-08
         },
         {
           "channel": 54,
           "freq_offset_hz": 1950000000000.0,
-          "snr_nli_db": 33.799525196965206,
-          "nli_power_w": 1.1899433218990398e-07
+          "snr_nli_db": 34.06622541364572,
+          "nli_power_w": 6.75243028142308e-08
         },
         {
           "channel": 55,
           "freq_offset_hz": 2025000000000.0,
-          "snr_nli_db": 34.161005902922774,
-          "nli_power_w": 1.0991864724119678e-07
+          "snr_nli_db": 34.487370783773486,
+          "nli_power_w": 5.8719708911663644e-08
         },
         {
           "channel": 56,
           "freq_offset_hz": 2100000000000.0,
-          "snr_nli_db": 34.15092948862131,
-          "nli_power_w": 1.1052470873552376e-07
+          "snr_nli_db": 34.48843974169792,
+          "nli_power_w": 5.6225897815805635e-08
         }
       ],
       "analytic_per_channel": [
@@ -8581,7 +8581,7 @@
           "signal_power_w": 0.001
         }
       ],
-      "elapsed_s": 0.0036661624908447266
+      "elapsed_s": 0.0034422874450683594
     }
   ]
 }

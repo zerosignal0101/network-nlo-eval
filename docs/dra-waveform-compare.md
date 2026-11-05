@@ -2,6 +2,13 @@
 
 日期：2026-11-04
 
+> **2026-11-05 修正**：物理侧 `DistributedRamanFiber` 曾把频变拉曼增益
+> 逐样本乘在时域（而非频谱），给前向泵波形引入随记录长度变化的虚假
+> 调制。本文所有**前向泵**的旧数值（3/5/7ch 的 +0.79/+0.96/+1.00 dB、
+> 全 WDM 的 +4.8/+13.8 dB）都基于该实现，已被修正后的数据取代；
+> nopump 逐位不变，backward 仅在全 WDM 宽带下有小幅修正。修正后的
+> 全 WDM 结果见 §13.6 与 `docs/dra-open-issues.md` §5。
+
 ## 1. 数据来源
 
 `physical-nlo-eval` 的 `DistributedRamanFiber`：
@@ -481,12 +488,14 @@ B = 符号率、`pump_depletion=True` 跑 hybrid/H3/numerical/lumped 四模型�
 - `results/raman/wideband_compare_c57_seed20261105.json`（57ch，第二 seed）
 - `results/raman/wideband_compare_cl152.json`（152ch）
 
-要点见 `docs/dra-open-issues.md` §5：57ch nopump 两 seed 均值 −0.52 dB、
-backward +1.48 dB；152ch 1× 主数据 nopump hybrid/H3 +0.29/+0.35 dB、
-backward +0.99/+0.43 dB；2× 128-symbol 两 seed 均值 33.874 dB 对解析
-32.765 dB 给出 **−1.11 dB**（alias-free，hybrid）。forward 因周期记录
-伪影不可用（接收机 EVM 也同步下降，确认在传播波形中）。1× 采样率会
-高估 NLI 0.4–1.4 dB（2× 已足够）；64-symbol 记录的 seed 散布可达
-5.6 dB（cl152，4 seeds），绝对 NLI 必须用 128-symbol 多 seed 集成，
+要点见 `docs/dra-open-issues.md` §5：修正物理侧增益施加后，57ch
+nopump 两 seed 均值 −0.52 dB、backward **−0.50 dB**、forward
+**−3.21 dB**（解析保守；残差随信道数变负）；152ch 数据正在按修正后的
+物理侧重新生成。2× 128-symbol 两 seed 均值 33.874 dB 对解析 32.765 dB
+给出 **−1.11 dB**（alias-free，hybrid）。旧的“forward 因周期记录伪影
+不可用”结论作废：那是把频变拉曼增益逐样本乘在时域造成的虚假调制
+（详见 `docs/dra-forward-audit.md` 末节）。1× 采样率会高估 NLI
+0.4–1.4 dB（2× 已足够）；64-symbol 记录的 seed 散布可达 5.6 dB
+（cl152，4 seeds），绝对 NLI 必须用 128-symbol 多 seed 集成，
 64-symbol 只用于同 seed 的步长趋势。色散斜率必须按波形 β₃ 反解
 （cl152 的 β₃=1e-4 ps³/km → S≈−0.0219），不能沿用默认 S=0.06。
