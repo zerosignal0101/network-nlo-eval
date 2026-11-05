@@ -261,7 +261,11 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python -m pytest \
 未饱和；cl152 128-symbol 中心 16.15 dB，解析 29.9 dB）。接收机 EVM
 也同步下降（c57 22.44→13.65 dB），说明发散在传播后的波形中，不是
 纯频谱估计器伪影；频谱残差只在短记录额外悲观（64 symbols 4.35 dB，
-512 symbols 0.50 dB）。c57 前向的 +4.8 dB、cl152 的 +13.8 dB 残差是
-记录长度伪影，不是模型偏差。全 WDM 前向波形的绝对值在改用非周期
-长记录或信道化传播器之前不要引用；无泵/后向不受这个单调发散影响。
-详见 `docs/dra-open-issues.md` §5。
+512 symbols 0.50 dB）。延长到 1024/2048 symbols（0.977 m）后 EVM 继续
+降到 8.32/4.14 dB，`EVM(2048)−EVM(1024)=−4.18 dB`；0.488/0.977 m 在
+1024 symbols 一致到 0.0001 dB，nopump 同长度控制无发散。c57 前向的
++4.8 dB、cl152 的 +13.8 dB 残差是记录长度伪影，不是模型偏差。2048
+symbols 仅约 1.1× c57 跨信道走离（≈1832），尚不能排除“N≫走离后
+收敛”；需要 4096/8192 symbols 与 2× 采样率、多 seed 的确认实验。
+在此之前全 WDM 前向波形的绝对值只能用于趋势/相对比较；无泵/后向
+不受这个单调发散影响。详见 `docs/dra-open-issues.md` §5。
