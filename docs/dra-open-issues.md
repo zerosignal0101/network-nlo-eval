@@ -265,13 +265,21 @@ fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
 | 配置 | 波形中心 | hybrid | 残差 | H3 auto | 残差 | pcfm | 残差 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `nopump` | 32.473 | 32.765 | **+0.292** | 32.821 | **+0.348** | 32.737 | +0.272 |
-| `bwd_sixpumps` | 29.720 | 30.708 | **+0.988** | 30.146 | **+0.426** | 33.746 | +3.025 |
-| `fwd_0p20w` | 16.146 | 29.900 | **+13.753** | 29.726 | **+13.580** | 32.745 | +16.599 |
+| `bwd_sixpumps` | 32.010 | 30.708 | **−1.302** | 30.146 | **−1.864** | 33.746 | +0.735 |
+| `fwd_0p20w` | 28.376 | 29.900 | **+1.523** | 29.726 | **+1.350** | 32.745 | +4.369 |
 
-- `nopump` 与 `bwd_sixpumps` 的 hybrid/H3 残差都在 **±1 dB** 内；
-  pcfm 的 backward +3.0 dB 是 lumped Raman 口径的离群值。
-- `fwd_0p20w` 的 +13.8 dB 与 c57 同源：周期记录下 NLI 随记录长度
-  持续增长，不能当物理解释。
+> **2026-11-05 增益修正后重生成**：旧值 bwd 29.720 dB / fwd 16.146 dB
+> （残差 +0.99/+0.43 和 +13.75/+13.58）作废。修正后 nopump 不变，
+> bwd 抬高 2.29 dB、fwd 抬高 12.23 dB。1× 主数据仍含约 1.4 dB 的
+> 混叠偏差（波形的 alias-free SNR 更高），因此 alias-free 残差大致为
+> nopump −1.11、bwd ≈−2.7、fwd ≈+0.1 dB。bwd/fwd 的 2× 数据尚未生成，
+> 上述外推只用于方向判断。
+
+- `nopump` 与 `fwd_0p20w` 的 hybrid/H3 残差在 **±1.5 dB** 内（1×）；
+  修正后的前向从 +13.75 dB 回到 +1.52 dB，已恢复可用。
+- `bwd_sixpumps` 的 hybrid 残差 −1.30 dB、H3 −1.86 dB，H3 已超出
+  ±1.5 dB；叠加 ~1.4 dB 混叠修正后更负。这是新的开放问题（六泵后向
+  的增益/耗尽剖面），pcfm 的 +0.74 dB 仍是 lumped Raman 口径的离群值。
 
 步长与混叠（nopump，64 symbols，中心信道，**单 seed 20261104**）：
 
@@ -305,21 +313,24 @@ fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
 1. **57ch**：修正增益施加后，nopump 两 seed 均值 −0.52 dB、
    backward −0.50 dB，都在 ±1 dB；forward 均值 **−3.21 dB**（解析保守），
    seed 散布 1.70 dB，且残差随信道数变负（3ch +0.54 → 57ch −3.21 dB）。
-2. **152ch**：1× 主数据 nopump +0.29/+0.35 dB（hybrid/H3）、backward
-   +0.99/+0.43 dB；2× 128-symbol 两 seed 均值 33.874 dB 对解析
-   32.765 dB 给出 **−1.11 dB**（hybrid，alias-free）。都在 ±1.5 dB 内。
-   绝对残差引 128-symbol 多 seed 值；64-symbol 单次值不可用。
-   （cl152 的 forward/backward 数据正在按修正后的物理侧重新生成，见 §5.3。）
+2. **152ch**：修正后 1× 主数据 nopump +0.29/+0.35 dB（hybrid/H3）、
+   backward **−1.30/−1.86 dB**、forward **+1.52/+1.35 dB**；
+   2× 128-symbol nopump 两 seed 均值 33.874 dB 对解析 32.765 dB 给出
+   **−1.11 dB**（hybrid，alias-free）。1× 数据含约 1.4 dB 混叠偏差，
+   alias-free 的 backward/forward 残差约为 −2.7/+0.1 dB（外推，待 2×
+   数据确认）。绝对残差引 128-symbol 多 seed 值；64-symbol 单次值不可用。
 3. **混叠**：1× 采样率系统性高估 NLI（c57 +0.4…0.9 dB，cl152
    +1.1…1.4 dB）；2× 在固定输入下已足够（3× 与 2× 差 0.003 dB）。
    后续全 WDM 参考应默认 2×。
 4. **前向泵全 WDM 已恢复可用**：旧的记录长度发散是物理侧时域增益
    施加 bug，不是周期记录伪影。修正后 c57 forward 64→1024 symbols
    的频谱 SNR 为 26.93/26.91/28.73/27.95/27.41 dB，无单调下降
-   （EVM 同步）；256-symbol 主参考 28.732/27.028 dB。旧
-   `c57_forward_record_evm` 与 `c57_forward_long_record_*` 已标记
-   superseded。前向的新问题是解析残差为负（57ch −3.21 dB），
-   需要把双偏振总功率耗尽与强前向增益 GN 偏差分开，见 §1.1。
+   （EVM 同步）；256-symbol 主参考 28.732/27.028 dB。cl152 forward
+   从 16.15 dB 修正到 28.376 dB（1×，128 symbols），hybrid 残差
+   +1.52 dB。旧 `c57_forward_record_evm` 与 `c57_forward_long_record_*`
+   已标记 superseded。前向的新问题是解析残差随信道数变负
+   （57ch −3.21 dB），需要把双偏振总功率耗尽与强前向增益 GN 偏差
+   分开，见 §1.1。
 5. **统计预算**：c57 nopump 5 次测量标准差 0.90 dB；cl152 64-symbol
    4-seed 标准差 **5.56 dB**、128-symbol 2-seed 标准差 **0.53 dB**。
    绝对 NLI 必须用 128-symbol（或更长）多 seed 集成；64-symbol 只能
