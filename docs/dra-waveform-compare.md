@@ -476,7 +476,8 @@ PYTHONPATH=src /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_co
 
 ### 13.6 开放问题与全 WDM 对照
 
-残差的功率依赖、1ch 前向、seed 统计预算和 2× 偏振耗尽驱动负结果见
+残差的功率依赖、1ch 前向、seed 统计预算和偏振耗尽驱动的
+factor=1/2 复核见
 `docs/dra-open-issues.md`（产物 `results/raman/launch_power_analysis.json`、
 `one_ch_forward.json`、`seed_ensemble.json`）。57/152ch 全 WDM 波形参考
 已到位：`data/dra_waveform_wide/{c57,c57_seed20261105,cl152}.{json,npz}`，
@@ -499,3 +500,41 @@ nopump 两 seed 均值 −0.52 dB、backward **−0.50 dB**、forward
 （cl152，4 seeds），绝对 NLI 必须用 128-symbol 多 seed 集成，
 64-symbol 只用于同 seed 的步长趋势。色散斜率必须按波形 β₃ 反解
 （cl152 的 β₃=1e-4 ps³/km → S≈−0.0219），不能沿用默认 S=0.06。
+
+### 13.7 偏振驱动开关：drive/state 分离（2026-11-05）
+
+物理 `DistributedRamanFiber` 用双偏振总功率驱动泵浦耗尽。解析
+`RamanPaperSpanSolver` 新增 `signal_polarizations`（默认 1）：state 仍是
+每偏振功率，耦合项的信号驱动 `drive_i = signal_polarizations * P_s,i`，
+接收波自己的功率只乘一次。`1` 是历史每偏振口径且逐位保持旧结果，
+`2` 是物理总功率口径。该开关通过 `DRASpanKernelBase` 暴露到
+`hybrid_raman_paper` / `pcfm_h3_raman`，两个对照脚本新增
+`--signal-polarizations {1,2}`（默认 1）；`numerical_dra` 使用独立
+`solve_ivp` 求解器，本次未接入。
+
+62.5 m 收敛耗尽参考、前向/后向 0.2 W（残差 = 解析 − 波形，hybrid）：
+
+| 数据集 | 配置 | 波形 | 1× | 2× |
+|---|---|---:|---:|---:|
+| 3ch | fwd | 23.265 | +0.538 | +1.012 |
+| 5ch | fwd | 23.239 | +0.252 | +0.964 |
+| 7ch | fwd | 24.399 | −1.012 | −0.111 |
+| 3ch | bwd | 36.452 | −0.296 | −0.292 |
+| 5ch | bwd | 36.046 | −0.501 | −0.494 |
+| 7ch | bwd | 35.992 | −0.821 | −0.811 |
+
+无泵配置在中心信道逐位不变；关闭 `include_isrs` 时严格逐位不变。
+全 WDM 的 c57/cl152 factor=2 结果与完整表见 `docs/dra-open-issues.md`
+§1.1：57ch 前向 −3.21 → −1.24 dB，后向 −0.50 → −0.43 dB；
+cl152 六泵后向 −1.30 → −0.13 dB，前向 +1.52 → +2.30 dB（1× 混叠
+约 1.4 dB 未处理）。factor=2 不是通用修正，默认仍为 1。
+
+产物：`results/raman/waveform_compare_converged_depleted_pol2.json`、
+`wideband_compare_c57_pol2.json`、`wideband_compare_c57_seed20261105_pol2.json`、
+`wideband_compare_cl152_pol2.json`。
+
+> 注：仓库里的 `results/raman/waveform_compare_converged_depleted.json`
+> 仍是 3/5/7ch 数据重生成前的数值（例如 3ch fwd 波形 23.012 dB）。
+> §13.7 的 1×/2× 数字是对重生成后的 `data/dra_waveform_converged`
+> 实测的（3ch fwd 波形 23.265 dB）。两者口径相同，只是数据版本不同；
+> 本次没有覆盖旧文件。

@@ -138,6 +138,9 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         n_quadrature: ``nli_form="integral"`` 时每个频率方向的 Gauss 节点数。
         pump_depletion: 泵浦是否被信号耗尽。``True``（默认）解完整 Eq. (2)；
             ``False`` 是未耗尽泵浦的对照口径，只用于和波形/物理参考对齐。
+        signal_polarizations: ODE 信号状态代表的偏振数，只放大耦合项的驱动
+            功率。默认 ``1``（历史每偏振口径，逐位不变）；``2`` 用双偏振
+            总功率驱动泵浦耗尽，与物理波形一致。
 
     Raises
     ------
@@ -167,6 +170,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         spm_coherence_exponent: float = 0.0,
         n_quadrature: int = 24,
         pump_depletion: bool = True,
+        signal_polarizations: int = 1,
     ) -> None:
         """校验口径并缓存 ``gamma`` 与泵浦平均频率 ``f_hat``。"""
         if nli_form not in ("paper", "integral"):
@@ -183,6 +187,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             include_isrs=include_isrs,
             n_quadrature=n_quadrature,
             pump_depletion=pump_depletion,
+            signal_polarizations=signal_polarizations,
         )
         self._nli_form = str(nli_form)
         self._spm_exponent = float(spm_coherence_exponent)
@@ -272,6 +277,8 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS。
         pump_depletion: 泵浦是否被信号耗尽；``False`` 是未耗尽对照口径。
+        signal_polarizations: ODE 信号状态代表的偏振数（见
+            :class:`RamanPaperSpanSolver`）；默认 1 保持旧结果逐位不变。
         **kwargs: 透传给 :class:`PCFMSpanKernel`。
     """
 
@@ -287,6 +294,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         n_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
         include_isrs: bool = True,
         pump_depletion: bool = True,
+        signal_polarizations: int = 1,
         **kwargs: object,
     ) -> None:
         """构造核并缓存泵浦参数。"""
@@ -298,6 +306,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         self._n_iterations = int(n_iterations)
         self._include_isrs = bool(include_isrs)
         self._pump_depletion = bool(pump_depletion)
+        self._signal_polarizations = int(signal_polarizations)
         self._input_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
@@ -373,6 +382,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
                 include_isrs=self._include_isrs,
                 include_ase=self._raman_ase_enabled,
                 pump_depletion=self._pump_depletion,
+                signal_polarizations=self._signal_polarizations,
             )
             self._solver_cache[key] = solver
         return solver
@@ -439,6 +449,12 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
             "Deplete the pumps with the signals (default True). False freezes the pumps to their own "
             "attenuation, the undepleted-pump control convention of the waveform reference.",
         ),
+        (
+            "signal_polarizations",
+            "Polarizations represented by each ODE signal state. Default 1 (historical per-polarization "
+            "drive, bit-for-bit unchanged). 2 drives the coupling with the dual-polarization total signal "
+            "power, matching the physical waveform pump-depletion drive.",
+        ),
     ),
 )
 
@@ -482,6 +498,11 @@ class HybridRamanPaperModel(PCFMModel):
             pump evolution to its own attenuation, matching the undepleted-pump
             waveform reference.  A control convention, not a more physical
             default.
+        signal_polarizations: Polarizations represented by each ODE signal
+            state.  ``1`` (default) is the historical per-polarization drive
+            and keeps the old results bit-for-bit; ``2`` uses the
+            dual-polarization total signal power as the coupling drive, which
+            is the physical waveform convention.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
@@ -511,6 +532,7 @@ class HybridRamanPaperModel(PCFMModel):
         edge_fix: bool = True,
         spp_steps: int = DEFAULT_PAPER_SPP_STEPS,
         pump_depletion: bool = True,
+        signal_polarizations: int = 1,
         **route_options: object,
     ) -> None:
         """Build the paper model."""
@@ -518,6 +540,8 @@ class HybridRamanPaperModel(PCFMModel):
             raise ValueError("fixed_point_iterations must be >= 1.")
         if nli_form not in NLI_FORMS:
             raise ValueError(f"nli_form must be one of {NLI_FORMS}, got {nli_form!r}.")
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
         super().__init__(
             grid,
             ref_fiber_config,
@@ -542,6 +566,7 @@ class HybridRamanPaperModel(PCFMModel):
         self._nli_form = str(nli_form)
         self._spm_exponent = float(spm_coherence_exponent)
         self._pump_depletion = bool(pump_depletion)
+        self._signal_polarizations = int(signal_polarizations)
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
 
     def _build_kernel(self, fiber_config: FiberSpanConfig):
@@ -564,6 +589,7 @@ class HybridRamanPaperModel(PCFMModel):
                 cache_spans=False,
                 spp_steps=self._active_spp_steps,
                 pump_depletion=self._pump_depletion,
+                signal_polarizations=self._signal_polarizations,
             )
         return HybridRamanPaperSpanKernel(
             self.f_abs_hz,
@@ -578,6 +604,7 @@ class HybridRamanPaperModel(PCFMModel):
             nli_form=self._nli_form,
             spm_coherence_exponent=self._spm_exponent,
             pump_depletion=self._pump_depletion,
+            signal_polarizations=self._signal_polarizations,
         )
 
     def evaluate_path(self, optical_path, power_in_w):

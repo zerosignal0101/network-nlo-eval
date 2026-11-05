@@ -1103,6 +1103,9 @@ class NumericalDRAModel(DRARamanModelBase):
         n_xpm_x / n_xpm_y: XPM 双重积分节点数。
         n_spm_x / n_spm_y: SPM 双重积分节点数。
         xpm_phase_limit: XPM 相干峰的相位截断 ``|phi L|``。
+        signal_polarizations: 该模型使用独立的 ``solve_ivp`` 求解器，
+            目前只支持 ``1``（历史每偏振口径）；其它值会显式报错，
+            避免被静默忽略。
         **route_options: 透传给 :class:`~network_nlo_eval.models.route.RouteModel`。
     """
 
@@ -1131,10 +1134,16 @@ class NumericalDRAModel(DRARamanModelBase):
         n_spm_x: int = DEFAULT_SPM_QUADRATURE_X,
         n_spm_y: int = DEFAULT_SPM_QUADRATURE_Y,
         xpm_phase_limit: float = DEFAULT_XPM_PHASE_LIMIT,
+        signal_polarizations: int = 1,
         **route_options: object,
     ) -> None:
         if n_profile < 5 or n_profile % 2 == 0:
             raise ValueError("n_profile must be an odd integer >= 5.")
+        if int(signal_polarizations) != 1:
+            raise ValueError(
+                "numerical_dra uses an independent solve_ivp solver and does not implement "
+                "signal_polarizations != 1; use hybrid_raman_paper or pcfm_h3_raman."
+            )
         self._rtol = float(rtol)
         self._atol = float(atol)
         self._n_profile = int(n_profile)

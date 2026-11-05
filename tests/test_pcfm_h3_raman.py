@@ -141,6 +141,33 @@ def test_forward_pump_undepleted_has_more_nli_and_lower_snr() -> None:
     assert float(np.mean(undepleted.snr_db)) < float(np.mean(depleted.snr_db)) - 0.3
 
 
+def test_signal_polarizations_no_pump_is_bit_identical_to_h3_pcfm() -> None:
+    """无泵时 ``signal_polarizations=2`` 不得改变 H3 路径（仍逐位等于 PCFM）。"""
+    baseline = _path_result(CASE_1, "pcfm", **H3_OPTIONS)
+    new = _path_result(CASE_1, "pcfm_h3_raman", signal_polarizations=2)
+    for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(new, name))), name
+
+
+def test_signal_polarizations_option_propagates_to_the_coupled_ode() -> None:
+    """有泵时因子 2 必须改变 H3 的剖面/NLI（不是被静默忽略）。"""
+    case = CASE_1
+    path = build_path(case)
+    power = launch_profile(case)
+    pump = [_pump(0.2, "forward")]
+    one = make_model(
+        "pcfm_h3_raman", case, raman_pumps=pump, signal_polarizations=1
+    ).evaluate_path(path, power)
+    two = make_model(
+        "pcfm_h3_raman", case, raman_pumps=pump, signal_polarizations=2
+    ).evaluate_path(path, power)
+    nli_one = np.asarray(one.spm_noise_w) + np.asarray(one.xpm_noise_w)
+    nli_two = np.asarray(two.spm_noise_w) + np.asarray(two.xpm_noise_w)
+    assert not np.allclose(nli_one, nli_two, rtol=1e-6)
+    # 更强的泵浦耗尽降低 NLI，SNR 因而更高，与前向 hybrid 的预期一致。
+    assert float(np.mean(two.snr_db)) > float(np.mean(one.snr_db))
+
+
 # ---------------------------------------------------------------------------
 # EGN 自动口径：前向泵关闭，其余保持开启
 # ---------------------------------------------------------------------------

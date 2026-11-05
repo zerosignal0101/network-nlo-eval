@@ -38,7 +38,12 @@ def _pump(power_w: float = 0.2, direction: str = "backward") -> RamanPumpConfig:
 
 
 def _solver(
-    pumps: list[RamanPumpConfig], *, n_steps: int = 32, pump_depletion: bool = True
+    pumps: list[RamanPumpConfig],
+    *,
+    n_steps: int = 32,
+    pump_depletion: bool = True,
+    include_isrs: bool = True,
+    signal_polarizations: int = 1,
 ) -> RamanPaperSpanSolver:
     """在 9 个 C 波段信道上构造一个小规模 ODE 求解器。"""
     frequencies = C_LIGHT / np.linspace(1530e-9, 1565e-9, 9)
@@ -60,6 +65,8 @@ def _solver(
         n_steps=n_steps,
         n_iterations=24,
         pump_depletion=pump_depletion,
+        include_isrs=include_isrs,
+        signal_polarizations=signal_polarizations,
     )
 
 
@@ -358,6 +365,139 @@ def test_forward_pump_undepleted_has_more_nli_and_lower_snr() -> None:
     nli_undepleted = np.mean(np.asarray(undepleted.spm_noise_w) + np.asarray(undepleted.xpm_noise_w))
     assert nli_undepleted > nli_depleted
     assert float(np.mean(undepleted.snr_db)) < float(np.mean(depleted.snr_db)) - 0.1
+
+
+# ---------------------------------------------------------------------------
+# 偏振驱动口径：signal_polarizations
+# ---------------------------------------------------------------------------
+
+
+def test_signal_polarizations_one_is_bit_identical_to_the_default() -> None:
+    """``signal_polarizations=1`` 与默认路径逐位一致（向后兼容守卫）。"""
+    power_in = np.full(9, 1e-3)
+    default = _solver([_pump(direction="forward")]).solve(power_in)
+    explicit = _solver([_pump(direction="forward")], signal_polarizations=1).solve(power_in)
+    for field in (
+        "profile_norm",
+        "power_out_w",
+        "raman_ase_w",
+        "pump_power_out_w",
+    ):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(default, field)), np.asarray(getattr(explicit, field))
+        )
+
+
+def test_model_signal_polarizations_one_is_bit_identical_to_the_default() -> None:
+    """模型层 ``signal_polarizations=1`` 也与旧默认逐位一致。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    pump = _pump(direction="forward")
+    base = make_model("hybrid_raman_paper", CASE, raman_pumps=[pump]).evaluate_path(path, power)
+    explicit = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[pump], signal_polarizations=1
+    ).evaluate_path(path, power)
+    for field in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(base, field)), np.asarray(getattr(explicit, field))
+        )
+
+
+def test_signal_polarizations_two_depletes_the_forward_pump_more() -> None:
+    """双偏振总功率驱动让前向泵耗尽更多、信号增益更低。
+
+    状态仍是每偏振功率，驱动才是 ``2 * P_s``；因此泵浦残余严格更低，
+    接收波自己的功率只乘一次，信号输出也应更低。
+    """
+    power_in = np.full(9, 1e-3)
+    one = _solver([_pump(direction="forward")], signal_polarizations=1).solve(power_in)
+    two = _solver([_pump(direction="forward")], signal_polarizations=2).solve(power_in)
+    assert two.pump_power_out_w[0] < one.pump_power_out_w[0]
+    assert np.all(two.power_out_w < one.power_out_w)
+    assert np.mean(two.raman_ase_w) < np.mean(one.raman_ase_w)
+
+
+def test_signal_polarizations_two_raises_the_forward_pump_snr() -> None:
+    """更强的泵浦耗尽降低增益与 NLI，前向泵的 SNR_NLI 因而更高。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    pump = _pump(direction="forward")
+    one = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[pump], signal_polarizations=1
+    ).evaluate_path(path, power)
+    two = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[pump], signal_polarizations=2
+    ).evaluate_path(path, power)
+    nli_one = np.asarray(one.spm_noise_w) + np.asarray(one.xpm_noise_w)
+    nli_two = np.asarray(two.spm_noise_w) + np.asarray(two.xpm_noise_w)
+    assert np.mean(nli_two) < np.mean(nli_one)
+    assert float(np.mean(two.snr_db)) > float(np.mean(one.snr_db))
+
+
+def test_signal_polarizations_two_backward_effect_is_much_smaller_than_forward() -> None:
+    """后向泵的因子 2 效应远小于前向（物理预期）。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+
+    def mean_snr(direction: str, factor: int) -> float:
+        pump = _pump(direction=direction)
+        result = make_model(
+            "hybrid_raman_paper", CASE, raman_pumps=[pump], signal_polarizations=factor
+        ).evaluate_path(path, power)
+        return float(np.mean(result.snr_db))
+
+    forward_change = abs(mean_snr("forward", 2) - mean_snr("forward", 1))
+    backward_change = abs(mean_snr("backward", 2) - mean_snr("backward", 1))
+    assert backward_change < 0.2 * forward_change
+    assert forward_change > 0.1
+
+
+def test_signal_polarizations_two_without_pumps_or_isrs_is_bit_identical() -> None:
+    """无泵且关闭 ISRS 时 ODE 只剩衰减，因子 2 必须完全不改变结果。"""
+    power_in = np.full(9, 1e-3)
+    one = _solver([], include_isrs=False, signal_polarizations=1).solve(power_in)
+    two = _solver([], include_isrs=False, signal_polarizations=2).solve(power_in)
+    for field in ("profile_norm", "power_out_w", "raman_ase_w", "pump_power_out_w"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(one, field)), np.asarray(getattr(two, field))
+        )
+
+
+def test_signal_polarizations_two_no_pump_model_without_isrs_is_bit_identical() -> None:
+    """模型层无泵 + ``include_isrs=False`` 也必须逐位不变。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    one = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[], include_isrs=False, signal_polarizations=1
+    ).evaluate_path(path, power)
+    two = make_model(
+        "hybrid_raman_paper", CASE, raman_pumps=[], include_isrs=False, signal_polarizations=2
+    ).evaluate_path(path, power)
+    for field in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(one, field)), np.asarray(getattr(two, field))
+        )
+
+
+def test_signal_polarizations_two_no_pump_isrs_change_is_only_a_drive_rescale() -> None:
+    """无泵但开启 ISRS 时，因子 2 只把信道-信道耦合的源功率加倍。
+
+    这是任务约定的“信号-信号源功率也用总功率”；它必须是小量，且关闭
+    ``include_isrs`` 后严格消失（见上一条测试）。
+    """
+    power_in = np.full(9, 1e-3)
+    one = _solver([], include_isrs=True, signal_polarizations=1).solve(power_in)
+    two = _solver([], include_isrs=True, signal_polarizations=2).solve(power_in)
+    relative = np.abs(two.power_out_w - one.power_out_w) / one.power_out_w
+    assert float(np.max(relative)) < 1.0e-4
+
+
+def test_invalid_signal_polarizations_is_rejected() -> None:
+    """非正偏振数必须直接报错。"""
+    with pytest.raises(ValueError, match="signal_polarizations"):
+        _solver([], signal_polarizations=0)
+    with pytest.raises(ValueError, match="signal_polarizations"):
+        make_model("hybrid_raman_paper", CASE, signal_polarizations=0)
 
 
 # ---------------------------------------------------------------------------

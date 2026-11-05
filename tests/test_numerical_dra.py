@@ -72,3 +72,9 @@ def test_invalid_profile_is_rejected() -> None:
     """An even/too-small longitudinal grid must be rejected."""
     with pytest.raises(ValueError, match="n_profile"):
         make_model("numerical_dra", CASE, n_profile=4)
+
+
+def test_signal_polarizations_other_than_one_is_rejected() -> None:
+    """独立 solve_ivp 求解器未实现该开关，必须显式报错而不是静默忽略。"""
+    with pytest.raises(ValueError, match="signal_polarizations"):
+        make_model("numerical_dra", CASE, signal_polarizations=2)
