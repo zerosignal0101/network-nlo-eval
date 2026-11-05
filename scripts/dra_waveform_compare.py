@@ -146,6 +146,7 @@ def _analytic(
     *,
     pump_depletion: bool,
     launch_power_w: float,
+    signal_polarizations: int = 1,
 ) -> tuple[float, float]:
     """返回中心信道 (SNR_NLI, NLI 功率)。"""
     grid, connections = _grid(n_channels, launch_power_w)
@@ -157,6 +158,7 @@ def _analytic(
         options["raman_model"] = "lumped"
     if model_name in DEPLETION_AWARE_MODELS:
         options["pump_depletion"] = pump_depletion
+        options["signal_polarizations"] = int(signal_polarizations)
     model = create_model(
         model_name,
         grid,
@@ -186,6 +188,7 @@ def _measure(
     pump_model: str,
     pump_depletion: bool,
     launch_power_w: float,
+    signal_polarizations: int = 1,
 ) -> dict:
     """跑一个模型/配置并组装一行结果。"""
     applied = model_name in DEPLETION_AWARE_MODELS
@@ -195,6 +198,7 @@ def _measure(
         config_name,
         pump_depletion=pump_depletion,
         launch_power_w=launch_power_w,
+        signal_polarizations=signal_polarizations,
     )
     wave_snr = float(wave_channel["snr_nli_db"])
     row = {
@@ -253,6 +257,7 @@ def _write_control_pass(
     pump_model: str,
     pump_depletion: bool,
     control_output: Path,
+    signal_polarizations: int = 1,
 ) -> None:
     """用相反的 ``pump_depletion`` 口径重跑 hybrid/H3，并写闭合量。"""
     control_depletion = not pump_depletion
@@ -282,6 +287,7 @@ def _write_control_pass(
                     pump_model=control_model,
                     pump_depletion=control_depletion,
                     launch_power_w=launch_power_w,
+                    signal_polarizations=signal_polarizations,
                 )
                 reference_delta = main_delta.get((tag, config_name, model_name))
                 if reference_delta is None:
@@ -352,6 +358,13 @@ def main() -> None:
         default=None,
         help="可选：用相反的 pump_depletion 口径重跑 hybrid/H3，另存闭合量 JSON",
     )
+    parser.add_argument(
+        "--signal-polarizations",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="ODE 信号状态代表的偏振数：1=历史每偏振驱动（默认），2=双偏振总功率驱动",
+    )
     args = parser.parse_args()
 
     data_dir: Path = args.data_dir
@@ -385,6 +398,7 @@ def main() -> None:
                             pump_model=pump_model,
                             pump_depletion=pump_depletion,
                             launch_power_w=launch_power_w,
+                            signal_polarizations=args.signal_polarizations,
                         )
                     )
                 except Exception as error:  # 记录失败，不让基准整体停掉
@@ -425,6 +439,8 @@ def main() -> None:
         ),
         "rows": rows,
     }
+    if int(args.signal_polarizations) != 1:
+        output["signal_polarizations"] = int(args.signal_polarizations)
     path = _resolve_output_path(data_dir, args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(output, indent=2), encoding="utf-8")
@@ -439,6 +455,7 @@ def main() -> None:
             pump_model=pump_model,
             pump_depletion=pump_depletion,
             control_output=args.control_output,
+            signal_polarizations=args.signal_polarizations,
         )
 
 

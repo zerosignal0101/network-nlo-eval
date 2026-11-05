@@ -370,6 +370,7 @@ def evaluate_analytic(
     *,
     symbol_rate_hz: float,
     launch_power_w: float,
+    signal_polarizations: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """跑一个解析模型，返回逐信道 ``(signal_power_w, nli_power_w)``。
 
@@ -380,6 +381,9 @@ def evaluate_analytic(
         pumps: 泵浦列表。
         symbol_rate_hz: 符号率 (Hz)。
         launch_power_w: 每信道入纤功率 (W, 每偏振)。
+        signal_polarizations: ODE 信号状态代表的偏振数；仅
+            ``hybrid_raman_paper`` / ``pcfm_h3_raman`` 使用。1（默认）是历史
+            每偏振驱动，2 用双偏振总功率驱动泵浦耗尽。
 
     Returns
     -------
@@ -392,6 +396,7 @@ def evaluate_analytic(
         options["raman_model"] = "lumped"
     if model_name in DEPLETION_AWARE_MODELS:
         options["pump_depletion"] = True
+        options["signal_polarizations"] = int(signal_polarizations)
     model = create_model(
         model_name,
         grid,
@@ -451,6 +456,7 @@ def _row(
     *,
     pump_model: str,
     launch_power_dbm: float,
+    signal_polarizations: int = 1,
 ) -> dict[str, Any]:
     """跑一个数据集/配置/模型并组装逐信道结果。"""
     n_channels = int(dataset.get("n_channels", plan["n_channels"]))
@@ -469,6 +475,7 @@ def _row(
         pumps,
         symbol_rate_hz=float(plan["symbol_rate_hz"]),
         launch_power_w=launch_power_w,
+        signal_polarizations=signal_polarizations,
     )
     analytic_snr = _snr_db(signal, nli)
 
@@ -601,6 +608,13 @@ def main() -> None:
         action="store_true",
         help="参考 pump_model=undepleted 时也跑带泵配置（默认跳过，避免口径错配）",
     )
+    parser.add_argument(
+        "--signal-polarizations",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="ODE 信号状态代表的偏振数：1=历史每偏振驱动（默认），2=双偏振总功率驱动",
+    )
     args = parser.parse_args()
 
     reference_path = _resolve_reference(args.data_dir, args.reference)
@@ -657,6 +671,7 @@ def main() -> None:
                         reference,
                         pump_model=pump_model,
                         launch_power_dbm=plan["launch_power_dbm_per_pol"],
+                        signal_polarizations=args.signal_polarizations,
                     )
                 except Exception as error:  # 记录失败，不让基准整体停掉
                     row = _error_row(
@@ -691,6 +706,8 @@ def main() -> None:
         "skipped": skipped,
         "rows": rows,
     }
+    if int(args.signal_polarizations) != 1:
+        output["signal_polarizations"] = int(args.signal_polarizations)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(output, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     print(f"\nwrote {args.output}")

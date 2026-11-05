@@ -120,6 +120,13 @@ class RamanPaperSpanSolver:
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS；关闭后只保留泵浦相关耦合。
         include_ase: 是否求解 Eq. (4) 的 ASE 状态。关闭时 ASE 恒为零。
+        signal_polarizations: 信号状态 ``P_s,i`` 代表的偏振数，只用于耦合项的
+            **驱动功率** ``signal_polarizations * P_s,i``。默认 ``1`` 是历史的
+            每偏振口径，逐位保持旧行为；``2`` 表示状态仍是每偏振功率，但
+            信号-信号、泵浦-信号、泵浦-泵浦耦合的源功率取双偏振总功率，与
+            物理波形 ``DistributedRamanFiber`` 的泵浦耗尽驱动一致。接收波
+            自己的功率仍然只乘一次，因此不会像 ``solve(2 * power)`` 那样把
+            信号状态本身也放大。
         pump_depletion: 泵浦是否被信号/其他泵浦耗尽。``True``（默认）解完整
             耦合 Eq. (2)；``False`` 把泵浦行从耦合矩阵中清零，泵浦只按自身
             衰减 ``dP_p/dz = -alpha_p P_p`` 演化；信号仍从泵浦获得增益，泵浦-泵浦
@@ -148,6 +155,7 @@ class RamanPaperSpanSolver:
         include_isrs: bool = True,
         include_ase: bool = True,
         pump_depletion: bool = True,
+        signal_polarizations: int = 1,
     ) -> None:
         """校验参数并构建与 z 无关的耦合矩阵。"""
         if length_m <= 0:
@@ -156,6 +164,8 @@ class RamanPaperSpanSolver:
             raise ValueError("n_steps must be >= 1.")
         if n_iterations < 1:
             raise ValueError("n_iterations must be >= 1.")
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
 
         self.signal_frequencies_hz = np.asarray(signal_frequencies_hz, dtype=np.float64)
         self.signal_bandwidths_hz = np.asarray(signal_bandwidths_hz, dtype=np.float64)
@@ -169,6 +179,7 @@ class RamanPaperSpanSolver:
         self.include_isrs = bool(include_isrs)
         self.include_ase = bool(include_ase)
         self.pump_depletion = bool(pump_depletion)
+        self.signal_polarizations = int(signal_polarizations)
 
         n_signal = self.signal_frequencies_hz.size
         if self.signal_bandwidths_hz.shape != (n_signal,):
@@ -220,6 +231,14 @@ class RamanPaperSpanSolver:
         self._direction = np.ascontiguousarray(direction_concat[order])
         self._p0_w = np.ascontiguousarray(p0_concat[order])
         self._n_waves = self._f_hz.size
+
+        # 驱动功率 = 状态功率 * 该波的偏振数。信号状态是每偏振功率，泵浦是
+        # 单偏振泵浦功率；``signal_polarizations=1`` 时该因子恒为 1，逐位不变。
+        self._drive_scale = np.where(
+            self._is_pump,
+            1.0,
+            float(self.signal_polarizations),
+        ).astype(np.float64)
 
         self._signal_slots = np.flatnonzero(~self._is_pump)
         self._fwd_slots = np.flatnonzero(self._direction > 0)
@@ -296,7 +315,9 @@ class RamanPaperSpanSolver:
         total = np.empty(self._n_waves, dtype=np.float64)
         total[self._fwd_slots] = power + ase
         total[self._bw_slots] = backward_total
-        gain_rate = self._coupling @ total
+        # 耦合的源功率用总功率（信号槽乘偏振数），接收功率 ``power`` 仍只乘一次。
+        drive = total * self._drive_scale
+        gain_rate = self._coupling @ drive
         gain_fwd = gain_rate[self._fwd_slots]
         d_power = power * gain_fwd - self._alpha_fwd * power
         if not self.include_ase:
@@ -314,7 +335,8 @@ class RamanPaperSpanSolver:
         """反向泵浦的右端项（以 ``s = L - z`` 为积分变量）。"""
         total = forward_total.copy()
         total[self._bw_slots] = power + ase
-        gain_rate = self._coupling @ total
+        drive = total * self._drive_scale
+        gain_rate = self._coupling @ drive
         gain_bw = gain_rate[self._bw_slots]
         d_power = power * gain_bw - self._alpha_bw * power
         if not self.include_ase:

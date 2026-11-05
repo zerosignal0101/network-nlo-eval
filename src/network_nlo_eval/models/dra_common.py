@@ -625,6 +625,11 @@ class DRASpanKernelBase:
         pump_depletion: Let the pumps be depleted by signals/other pumps. ``True``
             (default) solves the full coupled Eq. (2); ``False`` freezes the pump
             evolution to its own attenuation (undepleted-pump control convention).
+        signal_polarizations: Number of signal polarizations represented by each
+            per-polarization ODE state. ``1`` (default) is the historical
+            per-polarization drive and keeps the old results bit-for-bit;
+            ``2`` drives the coupling with the dual-polarization total signal
+            power while the receiver's own power is still multiplied once.
     """
 
     #: Human-readable profile kind, used in diagnostics.
@@ -649,6 +654,7 @@ class DRASpanKernelBase:
         include_isrs: bool = True,
         n_quadrature: int = DEFAULT_DRA_NLI_QUADRATURE,
         pump_depletion: bool = True,
+        signal_polarizations: int = 1,
     ) -> None:
         if n_steps < 4:
             raise ValueError("n_steps must be >= 4.")
@@ -656,6 +662,8 @@ class DRASpanKernelBase:
             raise ValueError("n_iterations must be >= 1.")
         if n_quadrature < 8:
             raise ValueError("n_quadrature must be >= 8.")
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
 
         f_abs = np.asarray(f_abs_hz, dtype=np.float64)
         bandwidths = np.asarray(b_hz, dtype=np.float64)
@@ -706,6 +714,7 @@ class DRASpanKernelBase:
         self._include_isrs = bool(include_isrs)
         self._n_quadrature = int(n_quadrature)
         self._pump_depletion = bool(pump_depletion)
+        self._signal_polarizations = int(signal_polarizations)
         self._pump_alpha_npm = np.asarray(
             [float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3 for pump in self._pumps],
             dtype=np.float64,
@@ -794,6 +803,7 @@ class DRASpanKernelBase:
                 include_isrs=self._include_isrs,
                 include_ase=self._raman_ase_enabled,
                 pump_depletion=self._pump_depletion,
+                signal_polarizations=self._signal_polarizations,
             )
             self._solver_cache[key] = solver
         return solver
@@ -974,6 +984,9 @@ class DRARamanModelBase(RouteModel):
         fixed_point_iterations: Maximum backward-pump fixed-point iterations.
         n_steps: RK4 steps of the coupled ODE.
         n_quadrature: Gauss-Legendre nodes of the NLI in-band integral.
+        signal_polarizations: Polarizations represented by each ODE signal state.
+            ``1`` (default) is the historical per-polarization drive; ``2``
+            drives the coupling with the dual-polarization total signal power.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
     """
 
@@ -995,6 +1008,7 @@ class DRARamanModelBase(RouteModel):
         fixed_point_iterations: int = 24,
         n_steps: int = DEFAULT_DRA_STEPS,
         n_quadrature: int = DEFAULT_DRA_NLI_QUADRATURE,
+        signal_polarizations: int = 1,
         **route_options: object,
     ) -> None:
         if fixed_point_iterations < 1:
@@ -1003,6 +1017,8 @@ class DRARamanModelBase(RouteModel):
             raise ValueError("n_steps must be >= 4.")
         if n_quadrature < 8:
             raise ValueError("n_quadrature must be >= 8.")
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
         super().__init__(
             grid,
             ref_fiber_config,
@@ -1021,6 +1037,7 @@ class DRARamanModelBase(RouteModel):
         self._fixed_point_iterations = int(fixed_point_iterations)
         self._n_steps = int(n_steps)
         self._n_quadrature = int(n_quadrature)
+        self._signal_polarizations = int(signal_polarizations)
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
 
     def _resolved_pumps(self, fiber_config: FiberSpanConfig) -> list[RamanPumpConfig]:
@@ -1039,6 +1056,7 @@ class DRARamanModelBase(RouteModel):
             n_iterations=self._fixed_point_iterations,
             include_isrs=self._include_isrs,
             n_quadrature=self._n_quadrature,
+            signal_polarizations=self._signal_polarizations,
         )
 
     def evaluate_path(self, optical_path, power_in_w):

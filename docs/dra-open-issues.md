@@ -4,8 +4,14 @@
 工作树：`feat/dra-wideband-compare`（从 `multi-model-dev` `c871d11`）
 脚本：`scripts/dra_open_issues.py`、`scripts/dra_wideband_compare.py`
 
+> **2026-11-05 更新**：偏振驱动的正确实现（drive/state 分离）与 factor=2
+> 对照在 `feat/dra-poldrive`（从 `multi-model-dev` `cc0ab23`）完成；
+> §1.1、§5、§6 已加入新数字。旧的 `_paper_span_center(drive_factor=2)`
+> 只保留为历史只读探针。
+
 本文收口 HANDOFF v2 §6 的三个开放问题：发射功率依赖、1ch 前向、
-单次实现的统计预算；同时给出 2× 偏振耗尽驱动负结果与 152ch 解析一致性。
+单次实现的统计预算；同时给出偏振耗尽驱动（drive/state 分离，factor=1/2）
+与 152ch 解析一致性。
 所有数字都由本仓脚本在当前工作树生成，产物在 `results/raman/`。
 
 口径统一为：
@@ -15,7 +21,10 @@
   （`data/dra_waveform_converged/dra_reference_depleted.json`）；
 - hybrid = `hybrid_raman_paper(nli_form="paper")`，H3 =
   `pcfm_h3_raman(egn="auto")`，数值 = `numerical_dra`；
-- 有泵配置统一 `pump_depletion=True`；波形与解析都按每偏振功率驱动。
+- 有泵配置统一 `pump_depletion=True`；偏振驱动有两套口径：factor=1
+  （`signal_polarizations=1`，历史每偏振功率驱动，所有旧结果默认口径）
+  与 factor=2（`signal_polarizations=2`，双偏振总功率驱动泵浦耗尽）。
+  本文 §1.1 给出两套数字，不要混用。
 
 ## 1. 发射功率扫描（3ch，前向 0.2 W）
 
@@ -50,11 +59,13 @@ NLI 的 log-log 拟合指数（中心信道 NLI 对每偏振发射功率）：
 SNR 用接收功率，后者还含随功率变化的净增益。实测残差漂移约
 −1.6…−1.7 dB/decade（hybrid/H3/numerical 一致），应以这个实测值为准。
 
-### 1.1 2× 偏振耗尽驱动：负结果
+### 1.1 偏振耗尽驱动：整体乘 2 的旧负结果与 drive/state 分离复核
 
-假设"解析泵浦耗尽只用了单偏振信号功率，应该乘 2"：只把耦合 ODE 的
-信号驱动乘 2，NLI 仍按标称入纤功率计算（`_paper_span_center` 的
-`drive_factor=2`），结果如下。
+**历史探针（只读，口径已被下面的新实现取代）**：假设“解析泵浦耗尽只用了
+单偏振信号功率，应该乘 2”，`scripts/dra_open_issues.py::_paper_span_center`
+把 `solver.solve(drive_factor * power)` 整体乘 2。这个探针同时放大了状态
+功率和驱动功率，不是严格的驱动口径；旧表如下（使用含时域增益 bug 的
+波形，仅作历史记录）：
 
 | 数据集 | 驱动 | 波形 | 解析 | 残差 | 相对 1× 变化 |
 |---|---|---:|---:|---:|---:|
@@ -63,19 +74,90 @@ SNR 用接收功率，后者还含随功率变化的净增益。实测残差漂�
 | 5ch | 1× | 22.531 | 23.491 | +0.960 | — |
 | 5ch | 2× | 22.531 | 24.203 | +1.672 | +0.712 |
 
-如果 2× 偏振口径是 bug，加倍驱动应该让残差靠近 0；实际残差反而增大
-0.47/0.71 dB。方向相反，**这不是 2× 偏振口径的 bug**，负结果保留。
-加倍驱动后 NLI 下降 0.47/0.71 dB，与"泵浦被更强耗尽、增益下降"一致，
-也再次说明前向残差主要来自耗尽/增益剖面的功率响应，而不是驱动系数漏乘。
+当时的结论“2× 让残差增大，所以不是偏振口径 bug”只在 3/5ch、且波形含
+时域增益 bug 的条件下成立。物理侧修正增益施加后，1× 残差变为 3ch
+**+0.538**、5ch **+0.252** dB，7ch **−1.012** dB、57ch **−3.21** dB；
+残差随信道数由正变负，“固定 2×”不是全信道数通用的修正。
 
-> **2026-11-05 复核**：上表使用的波形含时域增益施加 bug。物理侧修正后
-> 用同一 62.5 m 数据重跑，1× 残差变为 3ch **+0.538**、5ch **+0.252** dB；
-> 2× 驱动为 3ch **+1.012**、5ch **+0.964** dB。3/5ch 的 1× 残差已明显
-> 缩小，但 2× 仍把它们推得更正。与此同时 7ch 修正后为 **−1.01 dB**、
-> 57ch 为 **−3.21 dB**：残差随信道数变负，说明高负载下解析模型确实
-> 保守。固定的 2× 驱动不是全信道数通用的修正；需要把“双偏振总功率
-> 耗尽”与“强前向增益 GN 偏差”分开。旧“负结果”只对 3/5ch、且只对
-> 含 bug 的波形成立，现已重开。
+**新实现（本分支 `feat/dra-poldrive`）**：`RamanPaperSpanSolver` 增加
+`signal_polarizations`（默认 1）：
+
+* 状态仍是每偏振功率 `P_s,i`，泵浦功率不变；
+* 耦合项用驱动功率 `C @ drive`，信号槽 `drive_i = signal_polarizations *
+  P_s,i`，泵浦槽不变；
+* 信号行 `dP_s,i/dz = P_s,i (C @ drive)_i`，泵浦行
+  `dP_p/dz = P_p (C @ drive)_p`。接收波自己的每偏振功率只乘一次，
+  因此不会像 `solve(2 * P)` 那样把状态本身也放大；
+* `signal_polarizations=1` 与旧路径逐位一致（测试
+  `test_signal_polarizations_one_is_bit_identical_to_the_default`）。
+  该开关已打通到 `hybrid_raman_paper`、`pcfm_h3_raman` 与
+  `DRASpanKernelBase`；`numerical_dra` 使用独立的 `solve_ivp` 求解器，
+  本次未接入，其 factor=2 行仍是 factor=1 数值。
+
+`dra_waveform_compare.py` / `dra_wideband_compare.py` 新增
+`--signal-polarizations {1,2}`（默认 1）。factor=2 产物：
+`results/raman/waveform_compare_converged_depleted_pol2.json`、
+`wideband_compare_c57_pol2.json`、`wideband_compare_c57_seed20261105_pol2.json`、
+`wideband_compare_cl152_pol2.json`。
+
+**62.5 m 收敛耗尽参考（中心信道，残差 = 解析 − 波形）**：
+
+| 数据集 | 配置 | 波形 | hybrid 1× | hybrid 2× | H3 1× | H3 2× |
+|---|---|---:|---:|---:|---:|---:|
+| 3ch | fwd 0.2W | 23.265 | +0.538 | **+1.012** | +0.350 | +0.833 |
+| 5ch | fwd 0.2W | 23.239 | +0.252 | **+0.964** | +0.073 | +0.793 |
+| 7ch | fwd 0.2W | 24.399 | −1.012 | **−0.111** | −1.186 | −0.279 |
+| 3ch | bwd 0.2W | 36.452 | −0.296 | −0.292 | −0.055 | −0.050 |
+| 5ch | bwd 0.2W | 36.046 | −0.501 | −0.494 | −0.322 | −0.314 |
+| 7ch | bwd 0.2W | 35.992 | −0.821 | −0.811 | −0.673 | −0.663 |
+
+上表的波形/解析值来自重生成后的 `data/dra_waveform_converged`；仓库里的
+`results/raman/waveform_compare_converged_depleted.json` 仍是重生成前的
+3/5/7ch 数值（3ch fwd 波形 23.012 dB），本次没有覆盖它。
+
+无泵配置的 1× 与 2× 在中心信道逐位相同（变化 0.000 dB）；关闭
+`include_isrs` 时 ODE 只剩衰减，两口径严格逐位一致。开启 ISRS 时，2×
+只把信道-信道耦合的源功率加倍（任务约定的“信号-信号源功率也用总功率”），
+在 9ch 探针上相对功率变化 <1e-4，属于小量。
+
+**c57（256 symbols，两个 seed 的残差均值）**：
+
+| 配置 | hybrid 1× | hybrid 2× | H3 1× | H3 2× |
+|---|---:|---:|---:|---:|
+| nopump | −0.515 | −0.515 | −0.497 | −0.497 |
+| bwd 0.2W | −0.496 | −0.429 | −0.542 | −0.472 |
+| fwd 0.2W | −3.210 | **−1.243** | −3.405 | **−1.499** |
+
+逐 seed 的 fwd hybrid 残差：seed 20261104 从 −4.062 到 −2.095，seed
+20261105 从 −2.358 到 −0.391。方向与预期一致（57ch 向 0 靠拢，实测
+−3.21 → −1.24，接近预期的约 −1.4 dB）。
+
+**cl152（128 symbols，1× 采样）**：
+
+| 配置 | hybrid 1× | hybrid 2× | H3 1× | H3 2× |
+|---|---:|---:|---:|---:|
+| nopump | +0.292 | +0.290 | +0.348 | +0.348 |
+| bwd_sixpumps | −1.302 | **−0.130** | −1.864 | −0.370 |
+| fwd 0.2W | +1.523 | **+2.299** | +1.350 | +2.120 |
+
+结论：
+
+1. **3/5ch 前向**按预期从 +0.54/+0.25 移到 +1.01/+0.96；**7ch** 从
+   −1.01 移到 −0.11，基本回到 0。**57ch** 从 −3.21 移到 −1.24，是本次
+   修正最明显的改善。
+2. **后向单泵**（3/5/7ch、c57）变化只有 0.003–0.07 dB，符合物理预期；
+   但 **cl152 六泵后向**不是小量：−1.302 → −0.130（+1.17 dB）。该配置
+   的六台泵总功率 1.756 W、152ch 信号总功率更大，泵浦被信号显著耗尽，
+   所以“双偏振总功率”驱动会明显改变泵浦剖面。这是数据集依赖，不是
+   实现错误；它说明后向 DRA 的耗尽口径必须和泵浦数量/总功率一起看。
+3. **cl152 前向**从 +1.523 移到 +2.299，方向与 3/5ch 相同（更乐观）。
+   该数据是 1× 采样，按 §5.3 的约 1.4 dB 混叠偏差外推，alias-free 残差
+   约 +0.9 dB。本次**没有**处理 1× 混叠；混叠与外推结论仍需 2× 数据
+   确认。
+4. 因此不能把 factor=2 设为默认：它修正了物理总功率口径，但固定 2× 在
+   3/5ch 和 cl152 前向会把残差推得更正；剩余项仍包含 GN 适用域、
+   信号-信号 ISRS、采样混叠和统计预算。默认保持 1 以保持所有既有结果
+   逐位不变，factor=2 作为显式对照开关。
 
 ## 2. 1ch 前向
 
@@ -241,6 +323,19 @@ WP7 数据复制到 `data/dra_waveform_wide/`：
 H3 auto 与 hybrid 趋势一致（均值残差：nopump −0.50、bwd −0.54、
 fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
 
+**factor=2（双偏振总功率驱动）对照**（同样的两 seed 波形，残差均值）：
+
+| 配置 | hybrid 1× | hybrid 2× | H3 1× | H3 2× |
+|---|---:|---:|---:|---:|
+| `nopump` | −0.515 | −0.515 | −0.497 | −0.497 |
+| `bwd_0p20w` | −0.496 | −0.429 | −0.542 | −0.472 |
+| `fwd_0p20w` | −3.210 | **−1.243** | −3.405 | **−1.499** |
+
+逐 seed 的前向 hybrid 残差：seed 20261104 从 −4.062 到 −2.095，seed
+20261105 从 −2.358 到 −0.391；后向只变化 +0.07 dB，无泵不变。也就是说，
+57ch 前向的 −3.21 dB 里约 2.0 dB 可以由“信号驱动少乘了一个偏振”
+解释，剩余约 −1.2 dB 仍留给 GN 适用域/统计项。详见 §1.1。
+
 - **nopump**：两 seed 均值与解析差 **−0.52 dB**，落在 ±1 dB；但两个
   256-symbol seed 相差 1.88 dB，单次实现不能用于 0.1 dB 级比较。
 - **backward**：均值 **−0.50 dB**，落在 ±1 dB；修正前为 +1.48 dB。
@@ -283,6 +378,22 @@ fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
   ±1.5 dB；叠加 ~1.4 dB 混叠修正后更负。这是新的开放问题（六泵后向
   的增益/耗尽剖面），pcfm 的 +0.74 dB 仍是 lumped Raman 口径的离群值。
 
+**factor=2（双偏振总功率驱动）对照**（同一 1× 主数据）：
+
+| 配置 | 波形中心 | hybrid 1× | hybrid 2× | H3 1× | H3 2× |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `nopump` | 32.473 | +0.292 | +0.290 | +0.348 | +0.348 |
+| `bwd_sixpumps` | 32.010 | −1.302 | **−0.130** | −1.864 | **−0.370** |
+| `fwd_0p20w` | 28.376 | +1.523 | **+2.299** | +1.350 | +2.120 |
+
+- 六泵后向是本次最反直觉的一项：factor=2 把 hybrid 残差从 −1.30 拉到
+  −0.13 dB（H3 从 −1.86 到 −0.37）。该配置六台泵总功率 1.756 W，
+  152ch 信号总功率更大，泵浦被信号显著耗尽，所以“信号驱动是否含双偏振”
+  会明显改变泵浦剖面；这不是后向泵都应该不敏感的例外，而是功率/泵数
+  依赖。
+- 前向残差从 +1.52 移到 +2.30 dB，方向与 3/5ch 一致。1× 混叠（约
+  1.4 dB，本次未处理）按 §5.3 外推后 alias-free 约 +0.9 dB。
+
 步长与混叠（nopump，64 symbols，中心信道，**单 seed 20261104**）：
 
 | 采样率 | 0.977 m | 0.488 m | 0.244 m | 0.122 m |
@@ -315,12 +426,16 @@ fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
 1. **57ch**：修正增益施加后，nopump 两 seed 均值 −0.52 dB、
    backward −0.50 dB，都在 ±1 dB；forward 均值 **−3.21 dB**（解析保守），
    seed 散布 1.70 dB，且残差随信道数变负（3ch +0.54 → 57ch −3.21 dB）。
+   factor=2（双偏振总功率驱动）把 forward 均值拉到 **−1.24 dB**
+   （H3 −1.50 dB），backward 只变 +0.07 dB，nopump 不变。
 2. **152ch**：修正后 1× 主数据 nopump +0.29/+0.35 dB（hybrid/H3）、
    backward **−1.30/−1.86 dB**、forward **+1.52/+1.35 dB**；
-   2× 128-symbol nopump 两 seed 均值 33.874 dB 对解析 32.765 dB 给出
-   **−1.11 dB**（hybrid，alias-free）。1× 数据含约 1.4 dB 混叠偏差，
-   alias-free 的 backward/forward 残差约为 −2.7/+0.1 dB（外推，待 2×
-   数据确认）。绝对残差引 128-symbol 多 seed 值；64-symbol 单次值不可用。
+   factor=2 下 backward 变为 **−0.13/−0.37 dB**、forward 变为
+   **+2.30/+2.12 dB**，nopump 不变。2× 128-symbol nopump 两 seed 均值
+   33.874 dB 对解析 32.765 dB 给出 **−1.11 dB**（hybrid，alias-free）。
+   1× 数据含约 1.4 dB 混叠偏差（本次未处理），alias-free 的
+   backward/forward 残差约为 −1.5/+0.9 dB（factor=2 外推，待 2× 数据
+   确认）。绝对残差引 128-symbol 多 seed 值；64-symbol 单次值不可用。
 3. **混叠**：1× 采样率系统性高估 NLI（c57 +0.4…0.9 dB，cl152
    +1.1…1.4 dB）；2× 在固定输入下已足够（3× 与 2× 差 0.003 dB）。
    后续全 WDM 参考应默认 2×。
@@ -330,9 +445,9 @@ fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
    （EVM 同步）；256-symbol 主参考 28.732/27.028 dB。cl152 forward
    从 16.15 dB 修正到 28.376 dB（1×，128 symbols），hybrid 残差
    +1.52 dB。旧 `c57_forward_record_evm` 与 `c57_forward_long_record_*`
-   已标记 superseded。前向的新问题是解析残差随信道数变负
-   （57ch −3.21 dB），需要把双偏振总功率耗尽与强前向增益 GN 偏差
-   分开，见 §1.1。
+   已标记 superseded。前向残差随信道数变负的问题现在大部分由
+   双偏振总功率驱动解释（57ch −3.21 → −1.24 dB），见 §1.1；剩余
+   −1.2 dB 仍未归因。
 5. **统计预算**：c57 nopump 5 次测量标准差 0.90 dB；cl152 64-symbol
    4-seed 标准差 **5.56 dB**、128-symbol 2-seed 标准差 **0.53 dB**。
    绝对 NLI 必须用 128-symbol（或更长）多 seed 集成；64-symbol 只能
@@ -343,14 +458,17 @@ fwd −3.41 dB）；numerical 也一致（−0.52、−0.58、−3.27）。
 1. 前向泵的 +0.8…+1.2 dB 残差应表述为"1 mW/pol、0.2 W 前向"下的值，
    并注明随发射功率变化（0.5 mW 更差、2 mW 更好）。不要把它外推成
    任意功率下的固定偏差；
-2. 2× 偏振驱动负结果支持现有每偏振功率口径，不需要改驱动系数；
+2. 偏振驱动有两套口径，不能混用：factor=1（`signal_polarizations=1`，
+   历史每偏振驱动）保持所有旧结果；factor=2（双偏振总功率驱动）是物理
+   波形口径，57ch 前向改善约 2.0 dB、3/5ch 与 cl152 前向反而更乐观、
+   7ch 回到约 0。固定 factor=2 不是通用修正，**默认仍为 1**；
 3. 单次实现 0.3–0.6 dB 的统计预算意味着 ±1.0 dB 校准带里约一半是统计量，
    0.1–0.2 dB 级的模型排序需要多 seed 或更长符号记录；
 4. 1ch 前向是 GN 适用域边界，不是新的实现 bug；
 5. 57/152ch 的波形残差已由 `scripts/dra_wideband_compare.py` 跑出：
    nopump/backward 在 ±1.5 dB 内（cl152 hybrid/H3 在 ±1 dB 内），
-   forward 因周期记录伪影不可用；全 WDM 单次实现的统计预算是 2–3 dB。
-   详见 §5。
+   forward 在修正物理侧增益 bug 后可用；全 WDM 单次实现的统计预算是
+   2–3 dB。详见 §5。
 
 ## 7. 复现
 
@@ -379,6 +497,26 @@ PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_wid
   --reference data/dra_waveform_wide/c57.json \
   --output results/raman/wideband_compare_c57.json
 ```
+
+偏振驱动 factor=2（新产物，不覆盖 factor=1）：
+
+```bash
+PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_waveform_compare.py \
+  --data-dir data/dra_waveform_converged --reference dra_reference_depleted.json \
+  --signal-polarizations 2 \
+  --output results/raman/waveform_compare_converged_depleted_pol2.json
+
+for ref in c57 c57_seed20261105 cl152; do
+  extra=""
+  [ "$ref" = "cl152" ] && extra="--skip-numerical"
+  PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python scripts/dra_wideband_compare.py \
+    --reference "$ref.json" --signal-polarizations 2 $extra \
+    --output "results/raman/wideband_compare_${ref}_pol2.json"
+done
+```
+
+注：`numerical_dra` 使用独立的 `solve_ivp` 求解器，本次没有接入
+`signal_polarizations`；上述 wideband 文件里它的行仍是 factor=1 数值。
 
 限制：本文的统计量都基于 256-symbol、单/四个 seed；耗尽模型仍用中心
 频率的带内总功率驱动泵浦，未建模泵浦-泵浦拉曼转移；1ch 的 TX 复用了
