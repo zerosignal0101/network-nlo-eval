@@ -81,7 +81,11 @@ def test_band_nli_metrics_projects_common_gain(issues: ModuleType) -> None:
 
 
 def test_doubled_pump_drive_moves_hybrid_away(issues: ModuleType) -> None:
-    """2× 耗尽驱动让 hybrid 更偏离 3ch 前向波形（负结果回归）。"""
+    """2× 耗尽驱动让 hybrid 更偏离 3ch 前向波形（负结果回归）。
+
+    0.47 dB 是光子因子修正前的旧值（论文印刷式的 ``f_source/f_receiver``）；
+    修正为光子数守恒的 ``f_receiver/f_source`` 后同一探针为 0.528 dB。
+    """
     from dra_waveform_compare import _pumps
 
     pumps = _pumps("fwd_0p20w")
@@ -89,4 +93,4 @@ def test_doubled_pump_drive_moves_hybrid_away(issues: ModuleType) -> None:
     doubled, _ = issues._paper_span_center(3, pumps, drive_factor=2.0, launch_power_w=1e-3)
     assert np.isfinite(nominal) and np.isfinite(doubled)
     assert doubled > nominal
-    assert doubled - nominal == pytest.approx(0.47, abs=0.05)
+    assert doubled - nominal == pytest.approx(0.53, abs=0.05)

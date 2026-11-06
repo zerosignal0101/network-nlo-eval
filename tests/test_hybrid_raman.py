@@ -239,6 +239,74 @@ def test_paper_pumped_one_and_ten_spans_are_positive_and_finite() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_coupling_matrix_conserves_photon_number() -> None:
+    r"""对任意 (j,k)，``C[j,k]/f_j + C[k,j]/f_k`` 必须为零。
+
+    使用随机频率和统一的 ``A_eff``，把频率因子从 ``A_eff`` 归一化中隔离
+    出来。判据等价于 ``d/dz Σ_j P_j/f_j = 0``。
+    """
+    rng = np.random.default_rng(20261106)
+    frequencies = np.sort(rng.uniform(180e12, 210e12, 24))[::-1]
+    solver = RamanPaperSpanSolver(
+        frequencies,
+        np.full(frequencies.size, 64e9),
+        [],
+        100e3,
+        np.full(frequencies.size, 0.2 * np.log(10.0) / 10.0 / 1e3),
+        np.full(frequencies.size, 80e-12),
+        np.zeros(0),
+        np.zeros(0),
+        RamanGainModel(),
+        n_steps=8,
+    )
+    coupling = solver._coupling  # noqa: SLF001 - 直接审计构造出的矩阵
+    f_hz = solver._f_hz  # noqa: SLF001
+    off_diagonal = ~np.eye(f_hz.size, dtype=bool)
+    violation = (coupling / f_hz[:, None] + coupling.T / f_hz[None, :])[off_diagonal]
+    scale = np.abs(coupling / f_hz[:, None])[off_diagonal]
+    relative = np.abs(violation) / np.maximum(scale, np.finfo(np.float64).tiny)
+    assert float(np.max(relative)) < 1e-12
+
+
+def test_two_wave_power_transfer_matches_the_frequency_ratio() -> None:
+    r"""两波耦合的功率变化比应为 ``ΔP_p/ΔP_s ≈ -f_p/f_s``。
+
+    取极短跨长与零衰减，把 ODE 线性化到耦合项；泵浦行必须使用
+    ``f_p/f_s``（接收/源），而不是旧口径的 ``f_s/f_p``。
+    """
+    f_pump = C_LIGHT / (1450.0e-9)
+    f_signal = C_LIGHT / (1550.0e-9)
+    pump_power = 0.2
+    signal_power = 1e-6
+    solver = RamanPaperSpanSolver(
+        np.array([f_signal]),
+        np.array([64e9]),
+        [
+            RamanPumpConfig(
+                wavelength_nm=1450.0,
+                power_w=pump_power,
+                direction="forward",
+                attenuation_db_per_km=0.0,
+            )
+        ],
+        0.1,
+        np.array([0.0]),
+        np.array([80e-12]),
+        np.array([0.0]),
+        np.array([80e-12]),
+        RamanGainModel(),
+        n_steps=1,
+        include_isrs=False,
+        include_ase=False,
+    )
+    result = solver.solve(np.array([signal_power]))
+    delta_signal = result.power_out_w[0] - signal_power
+    delta_pump = result.pump_power_out_w[0] - pump_power
+    assert delta_signal > 0.0
+    assert delta_pump < 0.0
+    assert delta_pump / delta_signal == pytest.approx(-f_pump / f_signal, rel=1e-4)
+
+
 def test_single_pump_is_depleted_and_amplifies_the_signal() -> None:
     """泵浦应向信号转移功率：泵浦输出下降，信号输出高于纯损耗。"""
     solver = _solver([_pump(power_w=0.2)])
