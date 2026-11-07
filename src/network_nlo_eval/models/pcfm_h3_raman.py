@@ -69,17 +69,25 @@ no Raman ASE, so the results are identical to ``pcfm`` with the same options.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 import numpy as np
 
 from network_nlo_eval.core.types import NDArrayFloat
-from network_nlo_eval.models.base import ModelInfo, SpanContext, SpanFiberOutput, register_model
+from network_nlo_eval.models.base import (
+    ModelInfo,
+    PathQoTResult,
+    SpanContext,
+    SpanFiberOutput,
+    register_model,
+)
 from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import (
     SPAN_CACHE_MAX_ENTRIES,
     SPAN_CACHE_RTOL,
     PCFMModel,
     PCFMSpanKernel,
+    SpanValidityReport,
 )
 from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel
 from network_nlo_eval.models.raman_ode import (
@@ -88,6 +96,11 @@ from network_nlo_eval.models.raman_ode import (
     RamanPaperSpanSolver,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
+from network_nlo_eval.models.uncertainty import (
+    H3ErrorBudget,
+    H3UncertaintyConfig,
+    estimate_h3_error_budget,
+)
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
@@ -227,7 +240,14 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raise ValueError("signal_polarizations must be >= 1.")
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
+        # 泵浦自身衰减系数：耗尽度要相对“无信号时”的泵浦出射功率定义，
+        # 否则把 25 dB 的本征损耗误当成耗尽。
+        self._pump_alpha_npm: NDArrayFloat | None = None
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
+        # Net fibre gain of the last evaluated span (model order).  It is a side
+        # output for the uncertainty layer: the route EDFA compensates per
+        # channel, so the path result has no gain tilt left to measure.
+        self._last_span_gain = np.ones(self.n_nodes, dtype=np.float64)
         self.last_raman_iterations = 0
         self.last_raman_converged = True
         self.last_pump_power_out_w: NDArrayFloat | None = None
@@ -236,6 +256,16 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
     def active(self) -> bool:
         """Whether at least one pump carries positive power."""
         return bool(self._raman_pumps)
+
+    @property
+    def active_pumps(self) -> tuple[RamanPumpConfig, ...]:
+        """Active (positive-power) pumps of the span, in configuration order."""
+        return tuple(self._raman_pumps)
+
+    @property
+    def last_span_gain(self) -> NDArrayFloat:
+        """Net fibre gain of the last evaluated span, model order."""
+        return np.ascontiguousarray(self._last_span_gain)
 
     @property
     def last_raman_ase_w(self) -> NDArrayFloat:
@@ -268,6 +298,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             [float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3 for pump in self._raman_pumps],
             dtype=np.float64,
         )
+        self._pump_alpha_npm = pump_alpha
         solver = RamanPaperSpanSolver(
             self.f_abs_hz,
             self.b_hz,
@@ -317,6 +348,72 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             )
         )
         return result
+
+    def _validity_tilt_db(self, power_tilt_db: float, gain_tilt_db: float) -> float:
+        """Include the pump-induced gain tilt in the validity flag.
+
+        With active pumps the span gain is no longer the ISRS-only profile of
+        the base PCFM: the pump deposits gain over the comb and its tilt is
+        the quantity the strong-tilt audit identifies as the limit of the
+        polynomial profile.  Without pumps the parent criterion is kept, so
+        the no-pump report is identical to :class:`PCFMSpanKernel`.
+
+        Args:
+            power_tilt_db: Launch-power tilt ``10 log10(max/min)`` (dB).
+            gain_tilt_db: Span-gain tilt ``10 log10(max/min)`` (dB).
+
+        Returns
+        -------
+            The larger of the two tilts when pumps are active, otherwise the
+            launch-power tilt.
+        """
+        if self.active:
+            return max(power_tilt_db, gain_tilt_db)
+        return power_tilt_db
+
+    def validity_report(
+        self,
+        span_length_m: float,
+        power_in_w: NDArrayFloat,
+        *,
+        power_out_w: NDArrayFloat | None = None,
+    ) -> SpanValidityReport:
+        """Add the pump direction and depletion to the PCFM validity report.
+
+        The coupled solve already returns the pump power at each pump's exit
+        face, so the depletion is read from the same state that produced the
+        NLI profile.  With no active pump the parent report is returned
+        unchanged (empty pump arrays), which keeps the no-pump diagnostics
+        bit-for-bit identical to :class:`PCFMSpanKernel`.
+
+        Args:
+            span_length_m: Span length (m).
+            power_in_w: ``(N,)`` launch power per channel (W), model order.
+            power_out_w: Optional ``(N,)`` span-end signal power, model order.
+
+        Returns
+        -------
+            The :class:`SpanValidityReport`, with ``pump_active`` set when the
+            kernel carries positive-power pumps.
+        """
+        report = super().validity_report(span_length_m, power_in_w, power_out_w=power_out_w)
+        if not self.active:
+            return report
+        power = np.asarray(power_in_w, dtype=np.float64)[self.order]
+        result = self._raman_result(np.ascontiguousarray(power), float(span_length_m))
+        if self._pump_alpha_npm is None:
+            self._solver_for(float(span_length_m))
+        pump_in = np.asarray([float(pump.power_w) for pump in self._raman_pumps], dtype=np.float64)
+        pump_passive = pump_in * np.exp(-self._pump_alpha_npm * float(span_length_m))
+        depletion = np.clip(1.0 - result.pump_power_out_w / pump_passive, 0.0, 1.0)
+        directions = tuple(str(pump.direction) for pump in self._raman_pumps)
+        return replace(
+            report,
+            pump_active=True,
+            pump_directions=directions,
+            pump_depletion=np.ascontiguousarray(depletion),
+            pump_depletion_max=float(np.max(depletion)) if depletion.size else 0.0,
+        )
 
     def _resample_profile(self, profile: NDArrayFloat, span_length_m: float) -> NDArrayFloat:
         """Linearly resample the coarse profile onto the PCFM fit grid.
@@ -401,7 +498,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             self.last_raman_iterations = 0
             self.last_raman_converged = True
             self.last_pump_power_out_w = None
-            return super().evaluate(
+            output = super().evaluate(
                 power_in_w,
                 span_length_m,
                 n_effective_spans,
@@ -409,6 +506,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 beta2_accum_ps2=beta2_accum_ps2,
                 span_context=span_context,
             )
+            self._record_span_gain(power_in_w, output)
+            return output
         power = np.ascontiguousarray(np.asarray(power_in_w, dtype=np.float64)[self.order])
         result = self._raman_result(power, span_length_m)
         if self._raman_ase:
@@ -418,13 +517,36 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.last_raman_iterations = int(result.iterations)
         self.last_raman_converged = bool(result.converged)
         self.last_pump_power_out_w = np.ascontiguousarray(result.pump_power_out_w)
-        return super().evaluate(
+        output = super().evaluate(
             power_in_w,
             span_length_m,
             n_effective_spans,
             span_index=span_index,
             beta2_accum_ps2=beta2_accum_ps2,
             span_context=span_context,
+        )
+        self._record_span_gain(power_in_w, output)
+        return output
+
+    def _record_span_gain(self, power_in_w: NDArrayFloat, output: SpanFiberOutput) -> None:
+        """Store the net fibre gain of one evaluated span.
+
+        The route EDFA compensates every channel independently, so the path
+        result carries no gain tilt.  The uncertainty layer needs the tilt that
+        the Raman/ISRS profile actually produced, hence this side output.
+
+        Args:
+            power_in_w: ``(N,)`` span input power, model order.
+            output: Span output of the same evaluation.
+        """
+        power_in = np.asarray(power_in_w, dtype=np.float64)
+        self._last_span_gain = np.ascontiguousarray(
+            np.divide(
+                np.asarray(output.power_out_w, dtype=np.float64),
+                power_in,
+                out=np.ones_like(power_in),
+                where=power_in > 0.0,
+            )
         )
 
 
@@ -475,6 +597,11 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "'pcfm' (default, visibility-weighted coherent NLI accumulation) or 'incoherent' "
             "(power sum, the paper's default epsilon=0; for paper-matched comparison).",
         ),
+        (
+            "validity_mode",
+            "'warn' (default) records the per-channel applicability report without touching any "
+            "number; 'strict' additionally replaces the SNR of invalid channels with NaN.",
+        ),
     ),
 )
 
@@ -520,6 +647,10 @@ class PCFH3RamanModel(PCFMModel):
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
             the span NLI powers, the paper's ``epsilon=0`` convention.
             The no-pump bit-identity claim applies to the default.
+        validity_mode: ``"warn"`` (default) records the per-channel
+            applicability report of every span without changing any value;
+            ``"strict"`` additionally sets the SNR of invalid channels to
+            ``NaN``.  See :meth:`PCFH3RamanSpanKernel.validity_report`.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
@@ -551,6 +682,7 @@ class PCFH3RamanModel(PCFMModel):
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         span_coherence: str = "auto",
+        validity_mode: str = "warn",
         **route_options: object,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
@@ -589,6 +721,7 @@ class PCFH3RamanModel(PCFMModel):
             raman_ase=raman_ase,
             raman_temperature_k=raman_temperature_k,
             raman_peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
+            validity_mode=validity_mode,
             **route_options,
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
@@ -674,6 +807,7 @@ class PCFH3RamanModel(PCFMModel):
             beta2_accum_ps2=self._beta2_accum_ps2,
             span_context=span_context,
         )
+        self._record_span_validity(kernel, power_in_w, fiber_output.power_out_w, span_length_m)
         input_ase_w = kernel.last_raman_ase_w if (self._h3_raman_ase and kernel.active) else None
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
         element = apply_amplifier_and_roadm(
@@ -689,6 +823,35 @@ class PCFH3RamanModel(PCFMModel):
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)
         return element
+
+    def evaluate_path_with_uncertainty(
+        self,
+        optical_path,
+        power_in_w: NDArrayFloat,
+        *,
+        config: H3UncertaintyConfig | None = None,
+    ) -> tuple[PathQoTResult, H3ErrorBudget]:
+        """Evaluate a path and return the point result together with its budget.
+
+        This is the opt-in proxy interface.  It calls :meth:`evaluate_path`
+        unchanged and then builds the budget from the cached kernels, so the
+        point result is bit-for-bit the default result and the default path
+        never pays for the budget.
+
+        Args:
+            optical_path: Ordered path to evaluate.
+            power_in_w: ``(N,)`` launch power (W).
+            config: Optional budget configuration.
+
+        Returns
+        -------
+            ``(result, budget)`` where ``result`` is the same
+            :class:`~network_nlo_eval.models.base.PathQoTResult` that
+            :meth:`evaluate_path` returns.
+        """
+        result = self.evaluate_path(optical_path, power_in_w)
+        budget = estimate_h3_error_budget(self, optical_path, power_in_w, result, config=config)
+        return result, budget
 
 
 register_model(H3_RAMAN_MODEL_INFO, PCFH3RamanModel)
