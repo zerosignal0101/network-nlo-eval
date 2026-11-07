@@ -1,0 +1,790 @@
+"""H3 error budget and validity propagation (task D prototype).
+
+The fast models answer "what is the SNR"; they do not answer "how much should I
+trust it".  This module adds that second answer as a *separate* object so the
+existing :class:`~network_nlo_eval.models.base.PathQoTResult` contract stays
+untouched:
+
+* :class:`H3ErrorBudget` carries a signed model bias, the residual and
+  waveform/statistical 1-sigma spreads, a per-channel recommended QoT margin and
+  the validity report of the same evaluation;
+* :func:`estimate_h3_error_budget` derives the budget from an already computed
+  path result (it never re-evaluates the physics in the default path);
+* :class:`H3UncertaintyConfig` keeps every coefficient explicit and lets a
+  caller scale a term for sensitivity studies.
+
+**Why the coefficients are constants and not a fitted model**
+
+The repository has waveform references for a handful of operating points, not
+a calibration set over launch power, span count, pump set and comb width.
+Fitting a smooth residual surface to those points would hide the sample size.
+The tables below therefore quote the published residual of the matching
+reference explicitly, mark entries that are *provisional* (the reference itself
+is not step/statistics converged), and inflate the spread instead of pretending
+to know the bias.
+
+**What is deliberately not done here**
+
+* No field is added to :class:`PathQoTResult`; callers opt in through
+  :meth:`PCFH3RamanModel.evaluate_path_with_uncertainty`.
+* :mod:`network_nlo_eval.rwa.qot_checker` is not modified.  The design for
+  propagating per-link validity into ``rwa.link_noise`` and the two-tier
+  "H3 field + numerical fallback" orchestrator is in ``docs/h3-uq-design.md``.
+* The numerical model is never imported or called at runtime.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+
+from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
+from network_nlo_eval.models.base import MultiSpanOpticalPath, PathQoTResult, QoTModel
+from network_nlo_eval.models.pcfm import SCI_X_SERIES_SWITCH, PCFMSpanKernel
+
+__all__ = [
+    "H3_RESIDUAL_TABLE",
+    "H3_STATISTICAL_TABLE",
+    "H3_STRONG_TILT_RESIDUAL",
+    "H3ErrorBudget",
+    "H3UncertaintyConfig",
+    "ResidualEntry",
+    "UncertaintyTerm",
+    "ValidityReport",
+    "classify_bandwidth",
+    "classify_pump_mode",
+    "estimate_h3_error_budget",
+    "select_residual_entry",
+    "span_validity",
+]
+
+#: 1-sigma multiplier of the recommended margin.  Two sigma is the repository
+#: convention for "worst channel of a link" screening; it is not a confidence
+#: statement about a distribution we have not measured.
+DEFAULT_K_SIGMA: float = 2.0
+
+#: Additive margin at zero confidence.  The default makes a fully flagged
+#: channel cost 3 dB, i.e. one order of margin step in RWA screening.
+DEFAULT_VALIDITY_PENALTY_DB: float = 3.0
+
+#: Power tilt above which the strong-tilt residual row applies.  Below it the
+#: C-band residual rows are used; above it the §9 reference (16.5 dB tilt) is
+#: the closest measured point and the budget says so.
+DEFAULT_STRONG_TILT_DB: float = 6.0
+
+#: Occupied bandwidth above which the wideband statistical spread is used.
+#: 6 THz separates the C-band cases (4.3 THz) from C+L / S+C+L (11.4 THz+).
+WIDEBAND_THRESHOLD_HZ: float = 6.0e12
+
+#: Deep-breakdown threshold of the XCI validity parameter.  The materiality
+#: gate of the kernel (``XCI_EDGE_MATERIALITY``) is the authoritative flag;
+#: ``s`` below one is reported as a second, independent warning because there
+#: the asymptotic closed form is qualitatively wrong even if a row happens to
+#: stay below the materiality gate.
+XCI_DEEP_BREAKDOWN_S: float = 1.0
+
+
+@dataclass(frozen=True)
+class ResidualEntry:
+    """A calibration row of the error budget.
+
+    Attributes
+    ----------
+        bias_db: Signed expected residual (model minus reference) in dB.
+            Positive means the model is optimistic.
+        sigma_db: 1-sigma spread of the residual in dB.
+        calibrated: Whether the reference behind the row is converged enough to
+            call the row a calibration rather than a placeholder.
+        source: Where the number comes from.  Kept as text so a reader can
+            re-derive it without leaving the repository.
+    """
+
+    bias_db: float
+    sigma_db: float
+    calibrated: bool
+    source: str
+
+
+#: Residual rows keyed by ``(pump_mode, band_class)``.
+#:
+#: Sources (``docs/dra-open-issues.md`` of the development line, photon-factor
+#: corrected values):
+#:   * c57 nopump H3 1x: -0.497 dB (§1.1 / §2.3);
+#:   * c57 backward 0.2 W H3 1x: -0.542 dB (§1.1);
+#:   * c57 forward 0.2 W H3 1x: -2.849 dB (§2.3, still step/statistics limited);
+#:   * cl152 backward six pumps H3 1x: -1.041 dB (§2.3, mixed with the physical
+#:     pump-pump convention, hence provisional).
+#: Rows without a direct measurement are marked ``calibrated=False`` and use a
+#: widened spread; they are placeholders that must be replaced when the
+#: corresponding reference is regenerated.
+H3_RESIDUAL_TABLE: dict[tuple[str, str], ResidualEntry] = {
+    ("none", "narrow"): ResidualEntry(
+        bias_db=-0.50,
+        sigma_db=0.50,
+        calibrated=True,
+        source="dra-open-issues §1.1 c57 nopump H3 1x: -0.497 dB",
+    ),
+    ("none", "wide"): ResidualEntry(
+        bias_db=-0.50,
+        sigma_db=1.00,
+        calibrated=False,
+        source="no published wideband nopump H3 residual above 4-seed spread; spread widened to 1.0 dB",
+    ),
+    ("backward", "narrow"): ResidualEntry(
+        bias_db=-0.54,
+        sigma_db=0.50,
+        calibrated=True,
+        source="dra-open-issues §1.1 c57 backward H3 1x: -0.542 dB",
+    ),
+    ("backward", "wide"): ResidualEntry(
+        bias_db=-1.04,
+        sigma_db=1.50,
+        calibrated=False,
+        source="dra-open-issues §2.3 cl152 six-pump backward H3 1x: -1.041 dB (physical pp convention unresolved)",
+    ),
+    ("forward", "narrow"): ResidualEntry(
+        bias_db=-2.85,
+        sigma_db=1.00,
+        calibrated=False,
+        source="dra-open-issues §2.3 c57 forward H3 1x: -2.849 dB (step/statistics limited)",
+    ),
+    ("forward", "wide"): ResidualEntry(
+        bias_db=-2.00,
+        sigma_db=2.00,
+        calibrated=False,
+        source="no converged wideband forward reference; placeholder between c57 and cl152 behaviour",
+    ),
+    ("mixed", "narrow"): ResidualEntry(
+        bias_db=-1.50,
+        sigma_db=1.00,
+        calibrated=False,
+        source="no direct mixed-pump H3 residual; placeholder spanning forward and backward rows",
+    ),
+    ("mixed", "wide"): ResidualEntry(
+        bias_db=-1.50,
+        sigma_db=2.00,
+        calibrated=False,
+        source="no direct wideband mixed-pump H3 residual; placeholder",
+    ),
+}
+
+#: Row used when the measured power tilt exceeds
+#: :data:`DEFAULT_STRONG_TILT_DB`.  The values are the H3 f=1 mean and rms of
+#: §9.2 (16.5 dB on-off tilt, 152 channels, 0.488 m SSFM).  The same section
+#: states that the 0.488 m waveform is not step-converged, so the row is
+#: explicitly provisional and the wideband statistical term dominates anyway.
+H3_STRONG_TILT_RESIDUAL: ResidualEntry = ResidualEntry(
+    bias_db=2.40,
+    sigma_db=2.70,
+    calibrated=False,
+    source="dra-open-issues §9.2 H3 f1 mean +2.399 dB, rms 2.696 dB (reference not step-converged)",
+)
+
+#: Waveform/statistical 1-sigma spread keyed by band class.
+#:
+#: The narrow row is an engineering floor: the c57 reference has two seeds and
+#: no published per-seed spread, so 0.5 dB is stated as an assumption rather
+#: than derived.  The wide row is the published cl152 2x, 128-symbol, 4-seed
+#: nopump result (30.587 +/- 5.082 dB, §2.4).  A caller that only wants model
+#: error can set ``include_statistical=False``; the reference uncertainty is
+#: then reported separately by the terms list.
+H3_STATISTICAL_TABLE: dict[str, ResidualEntry] = {
+    "narrow": ResidualEntry(
+        bias_db=0.0,
+        sigma_db=0.50,
+        calibrated=False,
+        source="c57 256-symbol two-seed reference; 0.5 dB engineering floor (per-seed spread not published)",
+    ),
+    "wide": ResidualEntry(
+        bias_db=0.0,
+        sigma_db=5.082,
+        calibrated=True,
+        source="dra-open-issues §2.4 cl152 2x 128-symbol 4-seed nopump: 30.587 +/- 5.082 dB",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class H3UncertaintyConfig:
+    """Knobs of the error-budget estimate.
+
+    The scales are sensitivity-study knobs, not calibration parameters: a value
+    other than one means "what if the spread were larger", and the ``terms``
+    list of the budget records the scaled value.
+
+    Args:
+        k_sigma: Margin multiplier of the combined 1-sigma spread.
+        include_statistical: Add the waveform/statistical spread to the margin.
+        residual_scale: Multiplier of the residual bias and spread.
+        statistical_scale: Multiplier of the statistical spread.
+        validity_penalty_db: Additive margin at zero confidence, scaled by
+            ``1 - confidence``.
+        strong_tilt_db: Tilt above which the strong-tilt residual row applies.
+    """
+
+    k_sigma: float = DEFAULT_K_SIGMA
+    include_statistical: bool = True
+    residual_scale: float = 1.0
+    statistical_scale: float = 1.0
+    validity_penalty_db: float = DEFAULT_VALIDITY_PENALTY_DB
+    strong_tilt_db: float = DEFAULT_STRONG_TILT_DB
+
+    def __post_init__(self) -> None:
+        """Reject negative scales; a negative margin has no safety meaning."""
+        if self.k_sigma < 0.0:
+            raise ValueError(f"k_sigma must be >= 0, got {self.k_sigma}.")
+        if self.residual_scale < 0.0:
+            raise ValueError(f"residual_scale must be >= 0, got {self.residual_scale}.")
+        if self.statistical_scale < 0.0:
+            raise ValueError(f"statistical_scale must be >= 0, got {self.statistical_scale}.")
+        if self.validity_penalty_db < 0.0:
+            raise ValueError(f"validity_penalty_db must be >= 0, got {self.validity_penalty_db}.")
+        if self.strong_tilt_db < 0.0:
+            raise ValueError(f"strong_tilt_db must be >= 0, got {self.strong_tilt_db}.")
+
+
+@dataclass(frozen=True)
+class UncertaintyTerm:
+    """One auditable term of the budget.
+
+    Attributes
+    ----------
+        name: Term name.
+        kind: ``"bias"`` (signed, enters as ``max(bias, 0)``), ``"spread"``
+            (1-sigma, enters through the RSS) or ``"penalty"`` (additive).
+        value_db: ``(N,)`` per-channel value in dB.
+        source: Provenance of the coefficient.
+        calibrated: Whether the term comes from a converged reference.
+    """
+
+    name: str
+    kind: str
+    value_db: NDArrayFloat
+    source: str
+    calibrated: bool
+
+
+@dataclass(frozen=True)
+class ValidityReport:
+    """Per-channel validity of the closed-form kernel on one path.
+
+    All arrays are in model order.  ``active`` marks launched channels;
+    ``valid`` additionally requires finite noise/SNR and a converged pump solve.
+    A channel can be valid while ``flagged`` is true: the flag says the
+    coefficient budget is being stretched, not that the answer is unusable.
+
+    Attributes
+    ----------
+        valid: Channel can be used for a hard QoT decision.
+        active: Channel carries positive launch power and positive received
+            power.
+        confidence: ``[0, 1]`` score reduced by every flag; feeds the margin.
+        flagged: OR of all warning flags below.
+        xci_edge_gated: Kernel replaced the closed-form XCI row with the exact
+            island integral (relative change above the materiality threshold).
+        sci_small_x: SCI kernel used the small-``X`` Taylor branch.
+        xci_low_s: XCI validity parameter fell below the deep-breakdown limit.
+        pump_not_converged: Backward-pump fixed point stopped at its iteration
+            cap.
+        strong_tilt: Measured power tilt exceeded the configured threshold.
+        min_abs_x_sci: Smallest ``|X|`` over the spans of the path.
+        min_s_xci: Smallest XCI validity parameter over the spans and pairs.
+        xci_correction_fraction: Largest relative XCI row change before gating.
+        tilt_db: Power tilt of the path result (max/min over active channels).
+        pump_mode: ``"none"``, ``"backward"``, ``"forward"`` or ``"mixed"``.
+        band_class: ``"narrow"`` or ``"wide"``.
+        span_count: Number of physical spans inspected.
+    """
+
+    valid: NDArrayBool
+    active: NDArrayBool
+    confidence: NDArrayFloat
+    flagged: NDArrayBool
+    xci_edge_gated: NDArrayBool
+    sci_small_x: NDArrayBool
+    xci_low_s: NDArrayBool
+    pump_not_converged: NDArrayBool
+    strong_tilt: NDArrayBool
+    min_abs_x_sci: NDArrayFloat
+    min_s_xci: NDArrayFloat
+    xci_correction_fraction: NDArrayFloat
+    tilt_db: float
+    pump_mode: str
+    band_class: str
+    span_count: int
+
+
+@dataclass(frozen=True)
+class H3ErrorBudget:
+    """Error budget of one H3 path evaluation.
+
+    The recommended margin is::
+
+        margin = max(bias, 0) + k_sigma * sqrt(sigma_residual**2
+                                                + sigma_statistical**2)
+                 + validity_penalty_db * (1 - confidence)
+
+    ``max(bias, 0)`` makes an optimistic model pay for its bias and keeps a
+    pessimistic model conservative instead of letting it buy a smaller margin.
+    Invalid channels get ``margin = inf`` so a caller can never accept them.
+
+    Attributes
+    ----------
+        model: Model name.
+        bias_db: ``(N,)`` signed residual (model minus reference).
+        residual_sigma_db: ``(N,)`` 1-sigma residual spread.
+        statistical_sigma_db: ``(N,)`` waveform/statistical 1-sigma spread.
+        sigma_db: ``(N,)`` combined 1-sigma spread.
+        margin_db: ``(N,)`` recommended additive QoT margin; ``inf`` when the
+            channel is invalid, zero when it is not launched.
+        k_sigma: Margin multiplier used.
+        validity: Per-channel validity report.
+        terms: Auditable terms.
+        notes: Human-readable provenance and provisional warnings.
+    """
+
+    model: str
+    bias_db: NDArrayFloat
+    residual_sigma_db: NDArrayFloat
+    statistical_sigma_db: NDArrayFloat
+    sigma_db: NDArrayFloat
+    margin_db: NDArrayFloat
+    k_sigma: float
+    validity: ValidityReport
+    terms: tuple[UncertaintyTerm, ...]
+    notes: tuple[str, ...] = ()
+
+    def adjusted_snr_db(self, snr_db: NDArrayFloat) -> NDArrayFloat:
+        """Return ``snr - margin`` with invalid channels forced to ``-inf``.
+
+        Args:
+            snr_db: ``(N,)`` point-value SNR in dB.
+
+        Returns
+        -------
+            ``(N,)`` SNR that can be compared directly with a requirement.
+
+        Raises
+        ------
+            ValueError: ``snr_db`` shape differs from the budget.
+        """
+        values = np.asarray(snr_db, dtype=np.float64)
+        if values.shape != self.margin_db.shape:
+            raise ValueError(f"snr_db shape {values.shape} does not match the budget {self.margin_db.shape}.")
+        adjusted = values - self.margin_db
+        return np.where(self.validity.valid, adjusted, -np.inf)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable representation (non-finite values as ``None``)."""
+        return {
+            "model": self.model,
+            "k_sigma": float(self.k_sigma),
+            "bias_db": _json_values(self.bias_db),
+            "residual_sigma_db": _json_values(self.residual_sigma_db),
+            "statistical_sigma_db": _json_values(self.statistical_sigma_db),
+            "sigma_db": _json_values(self.sigma_db),
+            "margin_db": _json_values(self.margin_db),
+            "validity": {
+                "valid": [bool(value) for value in self.validity.valid],
+                "active": [bool(value) for value in self.validity.active],
+                "confidence": _json_values(self.validity.confidence),
+                "flagged": [bool(value) for value in self.validity.flagged],
+                "xci_edge_gated": [bool(value) for value in self.validity.xci_edge_gated],
+                "sci_small_x": [bool(value) for value in self.validity.sci_small_x],
+                "xci_low_s": [bool(value) for value in self.validity.xci_low_s],
+                "pump_not_converged": [bool(value) for value in self.validity.pump_not_converged],
+                "strong_tilt": [bool(value) for value in self.validity.strong_tilt],
+                "min_abs_x_sci": _json_values(self.validity.min_abs_x_sci),
+                "min_s_xci": _json_values(self.validity.min_s_xci),
+                "xci_correction_fraction": _json_values(self.validity.xci_correction_fraction),
+                "tilt_db": float(self.validity.tilt_db),
+                "pump_mode": self.validity.pump_mode,
+                "band_class": self.validity.band_class,
+                "span_count": int(self.validity.span_count),
+            },
+            "terms": [
+                {
+                    "name": term.name,
+                    "kind": term.kind,
+                    "value_db": _json_values(term.value_db),
+                    "source": term.source,
+                    "calibrated": bool(term.calibrated),
+                }
+                for term in self.terms
+            ],
+            "notes": list(self.notes),
+        }
+
+
+def _json_values(values: NDArrayFloat) -> list[float | None]:
+    """Convert an array to a JSON-safe list, mapping non-finite entries to ``None``."""
+    return [float(value) if np.isfinite(value) else None for value in np.asarray(values, dtype=np.float64)]
+
+
+def classify_pump_mode(directions: Sequence[str]) -> str:
+    """Classify the active pump directions of a link.
+
+    Args:
+        directions: Directions of the active pumps (``"forward"``/``"backward"``).
+
+    Returns
+    -------
+        ``"none"``, ``"backward"``, ``"forward"`` or ``"mixed"``.
+
+    Raises
+    ------
+        ValueError: A direction is neither forward nor backward.
+    """
+    normalized = {str(direction).lower() for direction in directions}
+    if not normalized:
+        return "none"
+    unknown = normalized - {"forward", "backward"}
+    if unknown:
+        raise ValueError(f"unknown pump directions {sorted(unknown)}; expected 'forward' or 'backward'.")
+    if normalized == {"forward", "backward"}:
+        return "mixed"
+    return "forward" if "forward" in normalized else "backward"
+
+
+def classify_bandwidth(occupied_hz: float) -> str:
+    """Classify the comb width.
+
+    Args:
+        occupied_hz: Occupied bandwidth of the comb in Hz.
+
+    Returns
+    -------
+        ``"wide"`` above :data:`WIDEBAND_THRESHOLD_HZ`, else ``"narrow"``.
+    """
+    return "wide" if float(occupied_hz) > WIDEBAND_THRESHOLD_HZ else "narrow"
+
+
+def select_residual_entry(
+    pump_mode: str,
+    band_class: str,
+    tilt_class: str,
+) -> tuple[ResidualEntry, tuple[str, ...]]:
+    """Pick the residual calibration row for an operating point.
+
+    Args:
+        pump_mode: Output of :func:`classify_pump_mode`.
+        band_class: Output of :func:`classify_bandwidth`.
+        tilt_class: ``"strong"`` above the configured tilt threshold, else
+            ``"normal"``.
+
+    Returns
+    -------
+        The row and any provenance notes that the caller should surface.
+
+    Raises
+    ------
+        KeyError: The operating point has no row.  The table is deliberately
+            explicit: silently falling back to another pump mode would hide a
+            missing calibration.
+    """
+    if tilt_class == "strong":
+        return H3_STRONG_TILT_RESIDUAL, (
+            "strong tilt: using the §9.2 strong-tilt residual row; the reference waveform is not step-converged",
+        )
+    key = (pump_mode, band_class)
+    try:
+        return H3_RESIDUAL_TABLE[key], ()
+    except KeyError:
+        raise KeyError(
+            f"no H3 residual row for pump_mode={pump_mode!r}, band_class={band_class!r}; "
+            f"available keys: {sorted(H3_RESIDUAL_TABLE)}."
+        ) from None
+
+
+def _span_metrics(
+    kernel: PCFMSpanKernel,
+    span_length_m: float,
+) -> tuple[NDArrayBool, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    """Compute the closed-form validity metrics of one span state.
+
+    Args:
+        kernel: Span kernel of the fibre.
+        span_length_m: Span length (m).
+
+    Returns
+    -------
+        ``(gated, correction_fraction, min_abs_x, min_s, confidence)`` in model
+        order.
+    """
+    gated_internal, fraction_internal = kernel.xci_edge_audit(span_length_m)
+
+    bandwidth = kernel.b_hz
+    # SCI argument X = pi**2 beta2_eff B**2 L of the closed form.
+    x_internal = np.abs(kernel.beta2_eff_sci) * np.pi**2 * bandwidth**2 * float(span_length_m)
+
+    # XCI validity parameter s = 2 pi**2 |beta2_eff| y B_CUT / (2 alpha) of the
+    # stretched-island closed form.  The smallest value over the interfering
+    # channels is the one that decides whether the row is trustworthy.
+    delta = np.abs(kernel.f_abs_hz[:, None] - kernel.f_abs_hz[None, :])
+    y_upper = delta + 0.5 * bandwidth[None, :]
+    s_matrix = (
+        2.0
+        * np.pi**2
+        * np.abs(kernel.beta2_eff_xci)
+        * y_upper
+        * (0.5 * bandwidth[:, None])
+        / kernel.alpha_visibility_npm
+    )
+    # 只统计闭式核真正处理的非重叠信道对；重叠对的 log 项已被核置零。
+    eligible = (kernel.log_xci != 0.0) & ((delta - 0.5 * bandwidth[None, :]) > 0.0)
+    s_masked = np.where(eligible, s_matrix, np.inf)
+    min_s_internal = np.min(s_masked, axis=1) if kernel.n_nodes > 1 else np.full(kernel.n_nodes, np.inf)
+
+    inverse = kernel.inverse_order
+    gated = np.ascontiguousarray(gated_internal[inverse])
+    fraction = np.ascontiguousarray(fraction_internal[inverse])
+    min_abs_x = np.ascontiguousarray(x_internal[inverse])
+    min_s = np.ascontiguousarray(min_s_internal[inverse])
+
+    # 置信度只做"证据强度"的粗粒度扣分：每一项都对应核里一个已知的近似分支。
+    confidence = np.ones(kernel.n_nodes, dtype=np.float64)
+    confidence -= 0.25 * gated
+    confidence -= 0.25 * (min_abs_x < SCI_X_SERIES_SWITCH)
+    confidence -= 0.25 * (min_s < XCI_DEEP_BREAKDOWN_S)
+    confidence = np.clip(confidence, 0.05, 1.0)
+    return gated, fraction, min_abs_x, min_s, confidence
+
+
+def span_validity(
+    kernel: PCFMSpanKernel,
+    span_length_m: float,
+) -> tuple[NDArrayBool, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    """Return the per-channel validity metrics of one span.
+
+    This is the small public hook that a future ``validity_report`` on the
+    kernel (task B) can share instead of duplicating the thresholds.
+
+    Args:
+        kernel: Span kernel of the fibre.
+        span_length_m: Span length (m).
+
+    Returns
+    -------
+        ``(flagged, confidence, min_abs_x, min_s)`` in model order.  The flags
+        here are the two kernel-level warnings (material XCI edge gate and SCI
+        small-``X`` branch); path-level flags are added by
+        :func:`estimate_h3_error_budget`.
+    """
+    gated, fraction, min_abs_x, min_s, confidence = _span_metrics(kernel, span_length_m)
+    flagged = gated | (min_abs_x < SCI_X_SERIES_SWITCH) | (min_s < XCI_DEEP_BREAKDOWN_S)
+    return flagged, confidence, min_abs_x, min_s
+
+
+def _iter_span_states(model: QoTModel, optical_path: MultiSpanOpticalPath) -> list[tuple[PCFMSpanKernel, float]]:
+    """List the distinct ``(kernel, span length)`` states of a path.
+
+    The split mirrors :func:`network_nlo_eval.models.route.accumulate_route`
+    exactly, so the validity report describes the spans that were evaluated.
+    Identical spans share a kernel and are collapsed to one entry: the metrics
+    are pure functions of the kernel and the span length.
+
+    Raises
+    ------
+        ValueError: A fibre has a non-positive maximum span length.
+        TypeError: The model returned a kernel without the H3 validity metrics.
+    """
+    states: dict[tuple[int, int], tuple[PCFMSpanKernel, float]] = {}
+    for fiber in optical_path.fiber_configs:
+        kernel = model.kernel_for(fiber)
+        if not isinstance(kernel, PCFMSpanKernel):
+            raise TypeError(
+                "the H3 error budget requires PCFMSpanKernel; "
+                f"model {type(model).__name__} returned {type(kernel).__name__}."
+            )
+        remaining_km = float(fiber.length_km)
+        while remaining_km > 1e-12:
+            span_km = min(remaining_km, float(fiber.max_span_length_km))
+            if span_km <= 0.0:
+                raise ValueError("max_span_length_km must be positive for a non-empty fibre.")
+            key = (id(kernel), int(round(span_km * 1e3)))
+            states.setdefault(key, (kernel, span_km * 1e3))
+            remaining_km -= span_km
+    return list(states.values())
+
+
+def _path_tilt_db(states: Sequence[tuple[PCFMSpanKernel, float]]) -> float:
+    """Gain tilt of the evaluated span states.
+
+    The route EDFA compensates each channel independently, so the path result
+    is flat by construction; the tilt has to be read from the span kernel's net
+    gain side output.  The worst span wins.
+    """
+    tilt = 0.0
+    for kernel, _span_length_m in states:
+        gain = np.asarray(kernel.last_span_gain, dtype=np.float64)
+        gain = gain[gain > 0.0]
+        if gain.size < 2:
+            continue
+        tilt = max(tilt, float(10.0 * np.log10(float(np.max(gain)) / float(np.min(gain)))))
+    return tilt
+
+
+def estimate_h3_error_budget(
+    model: QoTModel,
+    optical_path: MultiSpanOpticalPath,
+    power_in_w: NDArrayFloat,
+    result: PathQoTResult,
+    *,
+    config: H3UncertaintyConfig | None = None,
+) -> H3ErrorBudget:
+    """Build the error budget of an already evaluated H3 path.
+
+    The function is a post-processing step: it reads the cached kernels of the
+    model and the path result, and never calls the Raman ODE again (the kernel
+    caches are populated by ``evaluate_path``).
+
+    Args:
+        model: H3 model that produced ``result`` (must expose ``kernel_for``).
+        optical_path: Path that was evaluated.
+        power_in_w: ``(N,)`` launch power used for the evaluation.
+        result: Result returned by ``model.evaluate_path``.
+        config: Optional budget configuration.
+
+    Returns
+    -------
+        The budget in model channel order.
+
+    Raises
+    ------
+        ValueError: The power vector has the wrong shape or a negative entry.
+    """
+    cfg = config or H3UncertaintyConfig()
+    power = np.asarray(power_in_w, dtype=np.float64)
+    if power.shape != (model.n_nodes,) or np.any(power < 0.0):
+        raise ValueError("power_in_w must be a non-negative vector with one value per channel.")
+
+    states = _iter_span_states(model, optical_path)
+    n_nodes = int(model.n_nodes)
+
+    gated = np.zeros(n_nodes, dtype=bool)
+    small_x = np.zeros(n_nodes, dtype=bool)
+    low_s = np.zeros(n_nodes, dtype=bool)
+    not_converged = np.zeros(n_nodes, dtype=bool)
+    fraction = np.zeros(n_nodes, dtype=np.float64)
+    min_abs_x = np.full(n_nodes, np.inf, dtype=np.float64)
+    min_s = np.full(n_nodes, np.inf, dtype=np.float64)
+    confidence = np.ones(n_nodes, dtype=np.float64)
+    directions: list[str] = []
+
+    for kernel, span_length_m in states:
+        span_gated, span_fraction, span_min_x, span_min_s, span_confidence = _span_metrics(kernel, span_length_m)
+        gated |= span_gated
+        small_x |= span_min_x < SCI_X_SERIES_SWITCH
+        low_s |= span_min_s < XCI_DEEP_BREAKDOWN_S
+        fraction = np.maximum(fraction, span_fraction)
+        min_abs_x = np.minimum(min_abs_x, span_min_x)
+        min_s = np.minimum(min_s, span_min_s)
+        # 最差跨决定整个链路的可信度：链路预算里任何一跨的近似失效都不能被别的跨平均掉。
+        confidence = np.minimum(confidence, span_confidence)
+        if kernel.active:
+            directions.extend(str(pump.direction) for pump in kernel.active_pumps)
+            if not bool(kernel.last_raman_converged):
+                not_converged[:] = True
+
+    pump_mode = classify_pump_mode(directions)
+    bandwidth = np.asarray(model.channel_bandwidth_hz_channels, dtype=np.float64)
+    occupied_hz = float(np.ptp(np.asarray(model.f_abs_hz, dtype=np.float64)) + np.max(bandwidth))
+    band_class = classify_bandwidth(occupied_hz)
+    active = (power > 0.0) & (np.asarray(result.signal_power_w, dtype=np.float64) > 0.0)
+    tilt_db = _path_tilt_db(states)
+    tilt_class = "strong" if tilt_db >= cfg.strong_tilt_db else "normal"
+    strong_tilt = active & (tilt_class == "strong")
+
+    # 泵不收敛是硬失效：点的 NLI 不是解出来的，给任何有限 margin 都会误导。
+    # ``+inf`` SNR（零噪声）仍是有限模型能给出的理想结果，只排除 NaN 与 -inf。
+    snr_values = np.asarray(result.snr_db, dtype=np.float64)
+    snr_ok = ~np.isnan(snr_values) & ~np.isneginf(snr_values)
+    valid = active & snr_ok & ~not_converged
+    confidence = np.where(strong_tilt, confidence - 0.30, confidence)
+    confidence = np.where(not_converged, confidence - 0.40, confidence)
+    confidence = np.clip(confidence, 0.05, 1.0)
+    confidence = np.where(active, confidence, 0.0)
+
+    entry, entry_notes = select_residual_entry(pump_mode, band_class, tilt_class)
+    statistical = H3_STATISTICAL_TABLE[band_class]
+    residual_bias = np.full(n_nodes, entry.bias_db * cfg.residual_scale, dtype=np.float64)
+    residual_sigma = np.full(n_nodes, entry.sigma_db * cfg.residual_scale, dtype=np.float64)
+    statistical_sigma = np.full(
+        n_nodes,
+        statistical.sigma_db * cfg.statistical_scale if cfg.include_statistical else 0.0,
+        dtype=np.float64,
+    )
+    sigma = np.hypot(residual_sigma, statistical_sigma)
+    penalty = cfg.validity_penalty_db * (1.0 - confidence)
+    margin = np.maximum(residual_bias, 0.0) + cfg.k_sigma * sigma + penalty
+    margin = np.where(valid, margin, np.inf)
+    margin = np.where(active, margin, 0.0)
+
+    flagged = gated | small_x | low_s | strong_tilt | not_converged
+    validity = ValidityReport(
+        valid=valid,
+        active=active,
+        confidence=confidence,
+        flagged=flagged,
+        xci_edge_gated=gated,
+        sci_small_x=small_x,
+        xci_low_s=low_s,
+        pump_not_converged=not_converged,
+        strong_tilt=strong_tilt,
+        min_abs_x_sci=min_abs_x,
+        min_s_xci=min_s,
+        xci_correction_fraction=fraction,
+        tilt_db=tilt_db,
+        pump_mode=pump_mode,
+        band_class=band_class,
+        span_count=len(states),
+    )
+
+    terms = (
+        UncertaintyTerm("model_residual_bias", "bias", residual_bias, entry.source, entry.calibrated),
+        UncertaintyTerm("model_residual_spread", "spread", residual_sigma, entry.source, entry.calibrated),
+        UncertaintyTerm(
+            "waveform_statistical_spread",
+            "spread",
+            statistical_sigma,
+            statistical.source,
+            statistical.calibrated,
+        ),
+        UncertaintyTerm(
+            "validity_penalty",
+            "penalty",
+            penalty,
+            f"confidence-based penalty at {cfg.validity_penalty_db:.2f} dB full scale",
+            False,
+        ),
+    )
+    notes = [
+        f"operating point: pump_mode={pump_mode}, band_class={band_class}, tilt={tilt_db:.2f} dB",
+        f"residual row: {entry.source}",
+        f"statistical row: {statistical.source}",
+        *entry_notes,
+    ]
+    if not entry.calibrated:
+        notes.append("residual row is provisional: the reference behind it is not a converged calibration")
+    if bool(np.any(not_converged)):
+        notes.append("pump fixed point did not converge; all channels are marked invalid")
+    if bool(np.any(gated)):
+        notes.append("XCI edge gate corrected at least one channel; confidence reduced")
+    if bool(np.any(strong_tilt)):
+        notes.append(f"power tilt {tilt_db:.2f} dB exceeds the strong-tilt threshold {cfg.strong_tilt_db:.2f} dB")
+
+    return H3ErrorBudget(
+        model=str(getattr(model.info, "name", type(model).__name__)),
+        bias_db=residual_bias,
+        residual_sigma_db=residual_sigma,
+        statistical_sigma_db=statistical_sigma,
+        sigma_db=sigma,
+        margin_db=margin,
+        k_sigma=cfg.k_sigma,
+        validity=validity,
+        terms=terms,
+        notes=tuple(notes),
+    )

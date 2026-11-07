@@ -73,7 +73,13 @@ from collections.abc import Sequence
 import numpy as np
 
 from network_nlo_eval.core.types import NDArrayFloat
-from network_nlo_eval.models.base import ModelInfo, SpanContext, SpanFiberOutput, register_model
+from network_nlo_eval.models.base import (
+    ModelInfo,
+    PathQoTResult,
+    SpanContext,
+    SpanFiberOutput,
+    register_model,
+)
 from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import (
     SPAN_CACHE_MAX_ENTRIES,
@@ -88,6 +94,11 @@ from network_nlo_eval.models.raman_ode import (
     RamanPaperSpanSolver,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
+from network_nlo_eval.models.uncertainty import (
+    H3ErrorBudget,
+    H3UncertaintyConfig,
+    estimate_h3_error_budget,
+)
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
@@ -228,6 +239,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
+        # Net fibre gain of the last evaluated span (model order).  It is a side
+        # output for the uncertainty layer: the route EDFA compensates per
+        # channel, so the path result has no gain tilt left to measure.
+        self._last_span_gain = np.ones(self.n_nodes, dtype=np.float64)
         self.last_raman_iterations = 0
         self.last_raman_converged = True
         self.last_pump_power_out_w: NDArrayFloat | None = None
@@ -236,6 +251,16 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
     def active(self) -> bool:
         """Whether at least one pump carries positive power."""
         return bool(self._raman_pumps)
+
+    @property
+    def active_pumps(self) -> tuple[RamanPumpConfig, ...]:
+        """Active (positive-power) pumps of the span, in configuration order."""
+        return tuple(self._raman_pumps)
+
+    @property
+    def last_span_gain(self) -> NDArrayFloat:
+        """Net fibre gain of the last evaluated span, model order."""
+        return np.ascontiguousarray(self._last_span_gain)
 
     @property
     def last_raman_ase_w(self) -> NDArrayFloat:
@@ -401,7 +426,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             self.last_raman_iterations = 0
             self.last_raman_converged = True
             self.last_pump_power_out_w = None
-            return super().evaluate(
+            output = super().evaluate(
                 power_in_w,
                 span_length_m,
                 n_effective_spans,
@@ -409,6 +434,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 beta2_accum_ps2=beta2_accum_ps2,
                 span_context=span_context,
             )
+            self._record_span_gain(power_in_w, output)
+            return output
         power = np.ascontiguousarray(np.asarray(power_in_w, dtype=np.float64)[self.order])
         result = self._raman_result(power, span_length_m)
         if self._raman_ase:
@@ -418,13 +445,36 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.last_raman_iterations = int(result.iterations)
         self.last_raman_converged = bool(result.converged)
         self.last_pump_power_out_w = np.ascontiguousarray(result.pump_power_out_w)
-        return super().evaluate(
+        output = super().evaluate(
             power_in_w,
             span_length_m,
             n_effective_spans,
             span_index=span_index,
             beta2_accum_ps2=beta2_accum_ps2,
             span_context=span_context,
+        )
+        self._record_span_gain(power_in_w, output)
+        return output
+
+    def _record_span_gain(self, power_in_w: NDArrayFloat, output: SpanFiberOutput) -> None:
+        """Store the net fibre gain of one evaluated span.
+
+        The route EDFA compensates every channel independently, so the path
+        result carries no gain tilt.  The uncertainty layer needs the tilt that
+        the Raman/ISRS profile actually produced, hence this side output.
+
+        Args:
+            power_in_w: ``(N,)`` span input power, model order.
+            output: Span output of the same evaluation.
+        """
+        power_in = np.asarray(power_in_w, dtype=np.float64)
+        self._last_span_gain = np.ascontiguousarray(
+            np.divide(
+                np.asarray(output.power_out_w, dtype=np.float64),
+                power_in,
+                out=np.ones_like(power_in),
+                where=power_in > 0.0,
+            )
         )
 
 
@@ -689,6 +739,35 @@ class PCFH3RamanModel(PCFMModel):
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)
         return element
+
+    def evaluate_path_with_uncertainty(
+        self,
+        optical_path,
+        power_in_w: NDArrayFloat,
+        *,
+        config: H3UncertaintyConfig | None = None,
+    ) -> tuple[PathQoTResult, H3ErrorBudget]:
+        """Evaluate a path and return the point result together with its budget.
+
+        This is the opt-in proxy interface.  It calls :meth:`evaluate_path`
+        unchanged and then builds the budget from the cached kernels, so the
+        point result is bit-for-bit the default result and the default path
+        never pays for the budget.
+
+        Args:
+            optical_path: Ordered path to evaluate.
+            power_in_w: ``(N,)`` launch power (W).
+            config: Optional budget configuration.
+
+        Returns
+        -------
+            ``(result, budget)`` where ``result`` is the same
+            :class:`~network_nlo_eval.models.base.PathQoTResult` that
+            :meth:`evaluate_path` returns.
+        """
+        result = self.evaluate_path(optical_path, power_in_w)
+        budget = estimate_h3_error_budget(self, optical_path, power_in_w, result, config=config)
+        return result, budget
 
 
 register_model(H3_RAMAN_MODEL_INFO, PCFH3RamanModel)
