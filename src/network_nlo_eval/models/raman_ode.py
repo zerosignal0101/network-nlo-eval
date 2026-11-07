@@ -97,10 +97,21 @@ class RamanPaperSpanSolver:
     r"""单跨信号/泵浦/ASE coupled ODE 求解器。
 
     状态向量按“信号在前、泵浦在后”拼接后按频率降序排列，耦合矩阵
-    ``C`` 的第 ``(j, k)`` 项遵循论文 Eq. (2)：
+    ``C`` 的第 ``(j, k)`` 项（j 为接收波、k 为源波）满足光子数守恒：
 
     * ``f_k > f_j``（源频率更高）：``C[j,k] = +g(|f_j-f_k|)``，j 获得功率；
-    * ``f_k < f_j``（源频率更低）：``C[j,k] = -(f_k/f_j) g(|f_j-f_k|)``，j 失去功率。
+    * ``f_k < f_j``（源频率更低）：``C[j,k] = -(f_j/f_k) g(|f_j-f_k|)``，j 失去功率。
+
+    负耦合的频率因子取**接收波/源波**（``f_j/f_k``），因此对任意一对
+    ``(j,k)`` 有 ``C[j,k]/f_j + C[k,j]/f_k = 0``（在 ``A_eff`` 与频率无关
+    时严格成立），即 ``d/dz Σ_j P_j/f_j = 0``。
+
+    .. note::
+       论文 Eq. (2)/(2.39) 印刷的负耦合因子是 ``f_source/f_receiver``
+       （``f_k/f_j``），与这里互为倒数。按印刷式实现的旧代码不满足上述
+       光子数守恒判据：泵浦-信号对会少耗尽 ``(f_s/f_p)^2`` 的泵浦功率。
+       本实现采用标准的接收/源频率因子；旧口径（论文印刷式）的数值可在
+       ``e1ee4af`` 及其之前的结果中复现。详见 ``docs/dra-open-issues.md``。
 
     ``g`` 用 :class:`RamanGainModel` 的峰值系数与归一化谱形，并按接收波的
     ``A_eff`` 归一。信道-信道、泵浦-信道、泵浦-泵浦共用这一矩阵。
@@ -268,7 +279,12 @@ class RamanPaperSpanSolver:
             )
 
     def _build_coupling_matrix(self) -> NDArrayFloat:
-        """按论文 Eq. (2) 构建 ``(M, M)`` 耦合矩阵 (1/(W·m))。
+        """构建 ``(M, M)`` 拉曼耦合矩阵 (1/(W·m))。
+
+        负耦合（接收波频率高于源波）按光子数守恒取 ``-(f_receiver/f_source)``，
+        使 ``C[j,k]/f_j + C[k,j]/f_k = 0``。``A_eff`` 仍按接收波归一，因此
+        逐波 ``A_eff`` 不同时会残留一个与频率因子无关的 ``O(ΔA_eff/A_eff)``
+        项；本函数只修正 Eq. (2) 的频率因子，不改 ``A_eff`` 口径。
 
         ``pump_depletion=False`` 时把泵浦行（含泵浦-泵浦项）清零：泵浦不再
         从信号或其他泵浦获得/失去功率，只剩自身 ``-alpha_p P_p`` 衰减，而
@@ -279,9 +295,9 @@ class RamanPaperSpanSolver:
         coefficient = self.gain_model.peak_gain_coefficient_m_per_w / self._a_eff_m2[:, None]
         gain = coefficient * shape
         # 源频率更高 -> 接收波获得功率；源频率更低 -> 接收波把功率交给源，
-        # 并按 Eq. (2) 乘 f_source/f_receiver。
+        # 并按光子数守恒乘 f_receiver/f_source。
         source_higher = self._f_hz[None, :] > self._f_hz[:, None]
-        coupling = np.where(source_higher, gain, -(self._f_hz[None, :] / self._f_hz[:, None]) * gain)
+        coupling = np.where(source_higher, gain, -(self._f_hz[:, None] / self._f_hz[None, :]) * gain)
         np.fill_diagonal(coupling, 0.0)
         if not self.include_isrs:
             signal_slots = self._signal_slots
