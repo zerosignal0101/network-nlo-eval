@@ -677,3 +677,210 @@ C[j,k]/f_j + C[k,j]/f_k = 0    ⇔    d/dz Σ_j P_j/f_j = 0 .
   `data/dra_waveform_wide/*.json` 与 physical 仓
   `examples/dra_reference_wide/diagnostics/*_2x_spectral.json`。未重生成
   physical npz。
+
+## 9. 强增益倾斜下的 NLI 复核（2026-11-07）
+
+### 9.1 口径与产物
+
+physical 侧只读调用 `physical-nlo-eval` 的 `DistributedRamanFiber`，参数与
+`examples/dra_reference_wide/diagnostics/profile_snr_spectral_pump_pump.json`
+一致：cl152 `bwd_sixpumps`、100 km、`pump_model="depleted"`、
+`depletion_model="spectral"`、`spectral_bins=256`、`pump_pump_raman=True`、
+`depleted_max_iterations=32`、`coarse_step_size_m=0.48828125`。输入波形取
+`examples/dra_reference_wide/cl152.npz::input_cl152`（2×23040）。非线性只跑
+一次 SSFM；线性参考复用
+`examples/diagnose_dra_profile.py::_linear_forward` 的频域精确解，泵浦剖面
+与 SSFM 同源；逐信道 NLI 复用
+`examples/generate_dra_reference.py::band_nli_metrics`（64 GHz 符号率带内，
+单个复标量拟合公共增益/相位后取残差）。`nli_power_raw_w` 含公共增益/相位，
+不作为 NLI 口径。
+
+解析侧用同一 `SpectrumGrid(152, 75e9, 190.15e12)`、64 GBd、
+`channel_bandwidth_source="symbol_rate"`、同一泵浦、`pump_depletion=True`、
+`raman_ase=False`；逐信道取 `spm_noise_w + xpm_noise_w`。`numerical_dra`
+不支持 `signal_polarizations=2`，只有 f=1。`hybrid_raman_paper` 与
+`pcfm_h3_raman` 的 ODE 在 `pump_depletion=True` 时耦合矩阵包含泵浦-泵浦项
+（`include_isrs=False` 只关信号-信号，不影响泵浦行），因此解析剖面
+**已经包含泵浦-泵浦转移**；这与 physical 的 `pump_pump_raman=True` 是本次
+可比的前提。
+
+驱动/总功率口径已对齐：输入总功率 0.304191 W；SSFM 总输出 0.445825 W，
+线性参考 0.445871 W，相对差 **1.03e-4**。泵浦-泵浦净转移 −0.07217 W，
+信号拉曼增益 0.54843 W；中心/低端/高端开关增益分别为
+**9.83 / 9.70 / 25.24 dB**。因此本节讨论的是 NLI 口径差，不是泵浦耗尽
+驱动功率错配。
+
+产物：
+
+- `results/raman/strong_tilt_nli.json`：152ch 逐信道物理/解析结果；
+- `results/raman/strong_tilt_nli_step.json`：步长收敛探针汇总；
+- `results/raman/strong_tilt_nli_8ch.json`：8ch 强功率倾斜 + 带边消融。
+
+### 9.2 逐信道残差（128 symbols，0.488 m）
+
+残差 = 解析 − 波形；正值表示解析更乐观。代表信道（完整 152 行在 JSON）：
+
+| ch | 频偏 GHz | 波形 SNR | hybrid f1 | H3 f1 | numerical f1 | hybrid 残差 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | −5662.5 | 22.217 | 32.767 | 32.575 | 31.568 | **+10.550** |
+| 17 | −4387.5 | 28.953 | 31.091 | 30.850 | 29.617 | +2.138 |
+| 34 | −3112.5 | 28.798 | 31.121 | 30.862 | 29.771 | +2.322 |
+| 50 | −1912.5 | 28.971 | 31.509 | 31.236 | 30.400 | +2.538 |
+| 67 | −637.5 | 28.231 | 31.557 | 31.242 | 30.431 | +3.325 |
+| 75 | −37.5 | 28.583 | 31.469 | 31.127 | 30.279 | +2.886 |
+| 76 | +37.5 | 28.191 | 31.454 | 31.107 | 30.254 | +3.263 |
+| 77 | +112.5 | 28.425 | 31.437 | 31.087 | 30.228 | +3.012 |
+| 84 | +637.5 | 27.708 | 31.296 | 30.915 | 30.005 | +3.588 |
+| 101 | +1912.5 | 27.836 | 30.640 | 30.138 | 29.052 | +2.803 |
+| 117 | +3112.5 | 27.559 | 28.912 | 28.092 | 26.748 | +1.353 |
+| 134 | +4387.5 | 23.381 | 25.585 | 24.042 | 22.073 | +2.204 |
+| 151 | +5662.5 | 21.895 | 26.870 | 25.273 | 22.616 | +4.975 |
+
+全带统计：
+
+| 模型 | 中心残差 | 均值 | rms | min | max (ch) | 低端 ch0 | 高端 ch151 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| hybrid f1 | +3.263 | +2.991 | 3.196 | +1.207 | +10.550 (0) | +10.550 | +4.975 |
+| hybrid f2 | +4.013 | +4.413 | 4.665 | +2.664 | +10.705 (0) | +10.705 | +8.888 |
+| H3 f1 | +2.917 | +2.399 | 2.696 | +0.232 | +10.359 (0) | +10.359 | +3.379 |
+| H3 f2 | +3.867 | +4.068 | 4.264 | +2.368 | +10.679 (0) | +10.679 | +7.826 |
+| numerical f1 | +2.064 | +1.160 | 1.846 | −1.550 | +9.351 (0) | +9.351 | +0.722 |
+
+三点观察：
+
+1. **残差不是单纯随增益倾斜单调增加。** 中心附近约 +2.9~+3.3 dB，高端
+   （净增益 +9 dB）反而在 +1.4~+3.6 dB，最大残差集中在低端 ch0。
+2. **低端 ch0 是记录边缘伪影，不是增益效应。** ch0 的开关增益 9.70 dB，
+   与中心 9.83 dB 几乎相同，但波形 NLI 是中心的 3.8 倍；残差从 ch0 的
+   +10.55 dB 单调衰减到 ch11 的 +2.30 dB、ch17 的 +2.14 dB。记录采样率
+   11.52 THz 对 11.325 THz 占用带宽只有 **97.5 GHz** 保护带；pp 把高端
+   抬到 25.24 dB 后，高端产生的带外 FWM/展宽最可能折叠/泄漏到低端
+   （需 2× 采样率对照确认）。这个残差在同一 seed、同一线性参考下对所有
+   模型都在 +9~+10.5 dB，不能用 GN 核差异解释。
+3. **模型排序稳定：numerical < H3 < hybrid。** 高端 ch151 的残差分别为
+   +0.72 / +3.38 / +4.98 dB；中心为 +2.06 / +2.92 / +3.26 dB。数值 GN
+   用 `solve_ivp` 的精确剖面，H3 用 PCFM 多项式剖面，hybrid 用 5 参数
+   Buglia 拟合；在 15 dB 增益倾斜下，**剖面表示**比 GN XPM 公式本身更
+   决定残差。f=2 在所有模型上都让残差增大 0.75~1.5 dB，双偏振驱动不是
+   修正方向。
+
+### 9.3 步长收敛：0.488 m 的 pp 波形不是收敛的 NLI 参考
+
+同一输入波形、只改步长（96 symbols，17280 samples）：
+
+| 步长 m | 波形中心 SNR | hybrid f1 中心残差 | hybrid f1 均值 | H3 f1 中心残差 | H3 f1 均值 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.48828125 | 28.487 | +2.967 | +3.058 | +2.621 | +2.466 |
+| 0.244140625 | 29.581 | **+1.873** | **+2.153** | **+1.527** | **+1.561** |
+
+48 symbols 的 pp/no-pp 对照（同一输入，只改步长）：
+
+| 配置 | 步长 m | 波形中心 SNR | hybrid f1 中心残差 | hybrid f1 均值 |
+| --- | ---: | ---: | ---: | ---: |
+| pp on | 0.48828125 | 24.764 | +6.689 | +5.663 |
+| pp on | 0.244140625 | 25.996 | +5.458 | +5.191 |
+| pp off | 0.48828125 | 29.708 | +1.746 | +0.905 |
+| pp off | 0.244140625 | 30.443 | +1.011 | +0.235 |
+
+结论：
+
+- 步长减半，pp 的中心残差下降约 **1.0~1.1 dB**（96sym）/ **1.2 dB**
+  （48sym）；no-pp 只下降 0.74 dB。pp 把高端功率抬高 ~15 dB，非线性相位
+  更大，因此对步长更敏感。`cl152.json` 自身的 `step_converged=false` 和
+  0.976→0.488 m 仍变化 3.1 dB 的 nopump 记录也指向同一问题。
+- 0.244 m 仍未收敛；按每减半步长 ~0.5~1 dB 的单调趋势外推，0.488→收敛
+  的中心残差大约还要再收 1~2 dB。**这不是实测到 0.061 m 的定量修正**，
+  但足以说明当前 3.26 dB 中约一半是 SSFM 步长误差，而不是 GN 核误差。
+
+### 9.4 8ch 受控强倾斜与带边消融
+
+为隔离“强倾斜下 GN 的 XPM 项是否失效”，构造 8ch、75 GHz 间隔、64 GBd、
+128 symbols 的受控算例：光纤/六泵与 cl152 相同，步长 0.122 m（比全带更细），
+发射功率为 `[0,0,0,0,+6,+9,+12,+15] dBm/pol`。`edge_off` 把后四个强信道
+降到 −60 dBm。ch3 为弱侧探针（−37.5 GHz）。
+
+| case | 物理 ch3 SNR | hybrid f1 | H3 f1 | numerical f1 | hybrid 均值 | numerical 均值 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| edge_on | 20.330 | 17.390 (−2.938) | 17.070 (−3.265) | 16.850 (−3.478) | −1.934 | −2.419 |
+| edge_off | 32.527 | 35.070 (+2.547) | 35.080 (+2.557) | 33.490 (+0.959) | +2.119 | +0.922 |
+
+括号内为解析 − 波形。**残差符号随负载翻转**：强干扰存在时 GN 反而更悲观
+（−2.9~−3.5 dB），只有 4 个弱信道时 GN 更乐观（+2.5 dB hybrid/H3，
++1.0 dB numerical）。因此不能用“GN 在强倾斜下低估 XPM”解释 152ch 的
+正残差；152ch 的正残差更像**密集多信道 FWM + 记录边缘 + 步长**的组合。
+
+限制：`edge_off` 的输入功率从 0.1268 W 降到 0.0080 W，泵浦耗尽变弱
+（净增益 −2.4 → +0.6 dB），所以这是“信号内容消融”，不是冻结泵浦剖面的
+严格隔离；用它判断符号方向是可靠的，不能用它量化 FWM 的精确占比。
+
+### 9.5 主因判断
+
+按证据强度排序：
+
+1. **physical 波形侧：0.488 m SSFM 未收敛（主因之一）。** pp 使高端增益
+   达 25.24 dB，非线性相位远超 nopump；0.488→0.244 已实测收掉约 1.0 dB
+   中心残差，继续减半预计还有 1~2 dB。当前 3.26 dB 不能作为 GN 模型误差
+   的校准值。
+2. **physical 波形侧：低端记录边缘伪影。** ch0 残差 +10.55 dB，ch0 的
+   开关增益与中心相同；残差在 11 个信道内衰减到 +2.3 dB。最可能的原因是
+   97.5 GHz 保护带不足，pp 的高端带外产物折叠/泄漏到低端。这是
+   `band_nli_metrics` 在边缘信道上的口径问题，不是 NLI 物理；要定量确认
+   需做 2× 采样率（23.04 THz）的同 seed 对照，本次未做，因此这是
+   高置信度推断而不是已隔离的定论。
+3. **解析侧：强倾斜下 hybrid 的 5 参数剖面拟合最弱。** 同一 GN 核下，
+   numerical（精确剖面）在高端比 hybrid 低 4.3 dB 残差、在中心低 1.2 dB；
+   H3 居中。若必须在强倾斜/pp 口径下出解析数，优先 H3 或 numerical，
+   或改进 hybrid 的剖面拟合，而不是改 XPM 系数。
+4. **剩余 ~1~2 dB 中心残差：密集 FWM 候选。** 三种解析模型都只含 SPM+XPM；
+   152ch、75 GHz 密集梳状谱在 15 dB 倾斜下会产生大量非简并 FWM。8ch 对照
+   的符号翻转说明这不是通用 XPM 失效，但还没有做“只保留 FWM 项”的专门
+   消融，因此列为候选而非定论。
+5. **统计：** 128 symbols、单 seed；cl152 已知 4-seed QPSK 散布 5.08 dB。
+   0.1 dB 级的模型排序没有统计意义。
+
+### 9.6 对 `pump_pump_raman` 的结论
+
+- pp 的物理效应是真实且能量守恒的：信号拉曼增益 0.54843 W，
+  泵浦-泵浦净转移 −0.07217 W，总输出与线性参考对齐到 1e-4；pp 使中心
+  SNR 从 31.45 dB 降到 28.19 dB（−3.26 dB），不能忽略。
+- 但**当前 0.488 m / 128 symbols / 单 seed 的 pp 波形不能作为 NLI 验证
+  参考**：它同时有步长未收敛、低端边缘伪影和统计散布三个问题。用它去
+  调解析模型会把数值伪影拟合进 GN。
+- 建议：**生产/参考生成暂不启用 `pump_pump_raman=True`**，直到：
+  1. 步长 ≤0.122 m，并在 0.061 m 做一次收敛确认；
+  2. 采样率 ≥2×（23.04 THz）或至少 ≥500 GHz 保护带，消除低端折叠；
+  3. ≥4 seeds 或更长记录，把 5 dB 级散布压到 <0.5 dB；
+  4. 用收敛后的波形重跑本节逐信道对照；按当前每减半步长的收敛量粗估，
+     中心残差可能落在 ~1.2~1.5 dB，但这不是实测值；届时再决定是否需要
+     给解析侧补 FWM。
+- 如果业务必须先看 pp 的影响，解析侧用 `pcfm_h3_raman` 或
+  `numerical_dra`，并在报告中标注 +1~+3 dB 的强倾斜不确定度；不要用
+  hybrid 的 31.45 dB 去对 pp 波形的 28.19 dB 下“模型高估 3.2 dB”的结论。
+
+### 9.7 复现与测试
+
+```bash
+# 152ch 主对照（首次约 6 min SSFM；缓存后重跑只跑解析）
+PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python \
+  scripts/dra_strong_tilt_nli.py --output results/raman/strong_tilt_nli.json
+
+# 8ch 强倾斜 + 带边消融
+PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python \
+  scripts/dra_strong_tilt_nli.py --ablation-only --ablation-step-m 0.1220703125 \
+  --ablation-output results/raman/strong_tilt_nli_8ch.json
+
+# 步长探针（同一符号数、只改步长）
+PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python \
+  scripts/dra_strong_tilt_nli.py --probe-symbols 96 --step-m 0.48828125 \
+  --models hybrid_raman_paper,pcfm_h3_raman --output /tmp/step96_0p488.json
+PYTHONPATH=src:scripts /home/zsig/miniconda3/envs/nlo/bin/python \
+  scripts/dra_strong_tilt_nli.py --probe-symbols 96 --step-m 0.244140625 \
+  --models hybrid_raman_paper,pcfm_h3_raman --output /tmp/step96_0p244.json
+```
+
+- 新增 `tests/test_dra_strong_tilt_nli.py`（残差统计、代表信道、4ch 解析
+  自检、CLI 默认值），7 passed。
+- 改动文件 `scripts/dra_strong_tilt_nli.py`、`tests/test_dra_strong_tilt_nli.py`
+  通过 `ruff check` 与 `ruff format --check`。
+- 未修改 physical 仓、未重生成 physical npz、未改 `data/` 参考数据；
+  physical 只读路径通过 `sys.path` 注入。
