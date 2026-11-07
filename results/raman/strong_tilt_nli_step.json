@@ -1,0 +1,208 @@
+{
+ "generated_by": "scripts/dra_strong_tilt_nli.py --probe-symbols N --step-m S (summary)",
+ "plan": "cl152",
+ "config": "bwd_sixpumps",
+ "note": "SSFM step convergence probe. Each pair uses the same symbol count and same input waveform; only the step changes. Residual = analytic - waveform, positive means analytic is optimistic. The 48-symbol pairs also show the pp on/off contrast; the 96-symbol pairs are the longer-record step check used in docs/dra-open-issues.md §9.",
+ "cases": [
+  {
+   "tag": "96sym_pp_0p488",
+   "num_symbols": 96,
+   "num_samples": 17280,
+   "pump_pump_raman": true,
+   "step_m": 0.48828125,
+   "waveform_center_snr_nli_db": 28.486789013558624,
+   "waveform_ch0_snr_nli_db": 21.703189010613823,
+   "waveform_ch151_snr_nli_db": 21.43772373853441,
+   "models": {
+    "hybrid_raman_paper/f1": {
+     "residual_center_db": 2.966836425688218,
+     "residual_mean_db": 3.058422443177734,
+     "residual_rms_db": 3.2787581605032545,
+     "residual_max_db": 11.063331963439612,
+     "residual_ch0_db": 11.063331963439612,
+     "residual_ch151_db": 5.432181532934855
+    },
+    "hybrid_raman_paper/f2": {
+     "residual_center_db": 3.7167703007662105,
+     "residual_mean_db": 4.479955383841149,
+     "residual_rms_db": 4.748723626056503,
+     "residual_max_db": 11.218767099263392,
+     "residual_ch0_db": 11.218767099263392,
+     "residual_ch151_db": 9.345141778762137
+    },
+    "pcfm_h3_raman/f1": {
+     "residual_center_db": 2.6206939049529865,
+     "residual_mean_db": 2.466299738643037,
+     "residual_rms_db": 2.7748991888929297,
+     "residual_max_db": 10.871902526305721,
+     "residual_ch0_db": 10.871902526305721,
+     "residual_ch151_db": 3.835606310190343
+    },
+    "pcfm_h3_raman/f2": {
+     "residual_center_db": 3.5705111538551684,
+     "residual_mean_db": 4.134749767792856,
+     "residual_rms_db": 4.348524032724277,
+     "residual_max_db": 11.192593214359515,
+     "residual_ch0_db": 11.192593214359515,
+     "residual_ch151_db": 8.283062615649403
+    }
+   }
+  },
+  {
+   "tag": "96sym_pp_0p244",
+   "num_symbols": 96,
+   "num_samples": 17280,
+   "pump_pump_raman": true,
+   "step_m": 0.244140625,
+   "waveform_center_snr_nli_db": 29.58093611468798,
+   "waveform_ch0_snr_nli_db": 22.113735157767294,
+   "waveform_ch151_snr_nli_db": 21.541395368080046,
+   "models": {
+    "hybrid_raman_paper/f1": {
+     "residual_center_db": 1.8726893245588627,
+     "residual_mean_db": 2.1534127254418327,
+     "residual_rms_db": 2.5056444648235066,
+     "residual_max_db": 10.65278581628614,
+     "residual_ch0_db": 10.65278581628614,
+     "residual_ch151_db": 5.328509903389218
+    },
+    "hybrid_raman_paper/f2": {
+     "residual_center_db": 2.6226231996368554,
+     "residual_mean_db": 3.5749456661052483,
+     "residual_rms_db": 4.030575486639595,
+     "residual_max_db": 10.80822095210992,
+     "residual_ch0_db": 10.80822095210992,
+     "residual_ch151_db": 9.2414701492165
+    },
+    "pcfm_h3_raman/f1": {
+     "residual_center_db": 1.5265468038236314,
+     "residual_mean_db": 1.5612900209071363,
+     "residual_rms_db": 1.9854619283672597,
+     "residual_max_db": 10.46135637915225,
+     "residual_ch0_db": 10.46135637915225,
+     "residual_ch151_db": 3.731934680644706
+    },
+    "pcfm_h3_raman/f2": {
+     "residual_center_db": 2.4763640527258133,
+     "residual_mean_db": 3.2297400500569546,
+     "residual_rms_db": 3.600656632830367,
+     "residual_max_db": 10.782047067206044,
+     "residual_ch0_db": 10.782047067206044,
+     "residual_ch151_db": 8.179390986103765
+    }
+   }
+  },
+  {
+   "tag": "48sym_pp_0p488",
+   "num_symbols": 48,
+   "num_samples": 8640,
+   "pump_pump_raman": true,
+   "step_m": 0.48828125,
+   "waveform_center_snr_nli_db": 24.764218220432547,
+   "waveform_ch0_snr_nli_db": 20.75040913857969,
+   "waveform_ch151_snr_nli_db": 22.12663065264307,
+   "models": {
+    "hybrid_raman_paper/f1": {
+     "residual_center_db": 6.689407218814296,
+     "residual_mean_db": 5.662966593865119,
+     "residual_rms_db": 5.848686979864329,
+     "residual_max_db": 12.016111835473744,
+     "residual_ch0_db": 12.016111835473744,
+     "residual_ch151_db": 4.743274618826195
+    },
+    "hybrid_raman_paper/f2": {
+     "residual_center_db": 7.439341093892288,
+     "residual_mean_db": 7.084499534528534,
+     "residual_rms_db": 7.128025846298473,
+     "residual_max_db": 12.171546971297523,
+     "residual_ch0_db": 12.171546971297523,
+     "residual_ch151_db": 8.656234864653477
+    }
+   }
+  },
+  {
+   "tag": "48sym_pp_0p244",
+   "num_symbols": 48,
+   "num_samples": 8640,
+   "pump_pump_raman": true,
+   "step_m": 0.244140625,
+   "waveform_center_snr_nli_db": 25.995737797311765,
+   "waveform_ch0_snr_nli_db": 20.8639018351049,
+   "waveform_ch151_snr_nli_db": 22.492205362761027,
+   "models": {
+    "hybrid_raman_paper/f1": {
+     "residual_center_db": 5.457887641935077,
+     "residual_mean_db": 5.1914919676239775,
+     "residual_rms_db": 5.35758232902315,
+     "residual_max_db": 11.902619138948534,
+     "residual_ch0_db": 11.902619138948534,
+     "residual_ch151_db": 4.377699908708237
+    },
+    "hybrid_raman_paper/f2": {
+     "residual_center_db": 6.20782151701307,
+     "residual_mean_db": 6.613024908287393,
+     "residual_rms_db": 6.658287923046141,
+     "residual_max_db": 12.058054274772314,
+     "residual_ch0_db": 12.058054274772314,
+     "residual_ch151_db": 8.29066015453552
+    }
+   }
+  },
+  {
+   "tag": "48sym_nopp_0p488",
+   "num_symbols": 48,
+   "num_samples": 8640,
+   "pump_pump_raman": false,
+   "step_m": 0.48828125,
+   "waveform_center_snr_nli_db": 29.707693833440686,
+   "waveform_ch0_snr_nli_db": 28.91463037348675,
+   "waveform_ch151_snr_nli_db": 28.6229068591534,
+   "models": {
+    "hybrid_raman_paper/f1": {
+     "residual_center_db": 1.745931605806156,
+     "residual_mean_db": 0.9050413598695652,
+     "residual_rms_db": 2.3302554077092554,
+     "residual_max_db": 4.364379242535488,
+     "residual_ch0_db": 3.8518906005666835,
+     "residual_ch151_db": -1.7530015876841354
+    },
+    "hybrid_raman_paper/f2": {
+     "residual_center_db": 2.4958654808841487,
+     "residual_mean_db": 2.326574300532981,
+     "residual_rms_db": 2.6026206860296726,
+     "residual_max_db": 4.601223220590818,
+     "residual_ch0_db": 4.007325736390463,
+     "residual_ch151_db": 2.1599586581431467
+    }
+   }
+  },
+  {
+   "tag": "48sym_nopp_0p244",
+   "num_symbols": 48,
+   "num_samples": 8640,
+   "pump_pump_raman": false,
+   "step_m": 0.244140625,
+   "waveform_center_snr_nli_db": 30.442669456054094,
+   "waveform_ch0_snr_nli_db": 29.55223127013277,
+   "waveform_ch151_snr_nli_db": 29.500841920773695,
+   "models": {
+    "hybrid_raman_paper/f1": {
+     "residual_center_db": 1.0109559831927477,
+     "residual_mean_db": 0.2354984802980424,
+     "residual_rms_db": 2.1597539509278914,
+     "residual_max_db": 3.914765067618987,
+     "residual_ch0_db": 3.2142897039206666,
+     "residual_ch151_db": -2.630936649304431
+    },
+    "hybrid_raman_paper/f2": {
+     "residual_center_db": 1.7608898582707404,
+     "residual_mean_db": 1.6570314209614583,
+     "residual_rms_db": 2.03039574078768,
+     "residual_max_db": 4.151609045674316,
+     "residual_ch0_db": 3.369724839744446,
+     "residual_ch151_db": 1.2820235965228512
+    }
+   }
+  }
+ ]
+}
