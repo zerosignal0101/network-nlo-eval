@@ -271,7 +271,7 @@ def test_warn_does_not_change_any_number(model_name: str, options) -> None:
 
 
 def test_warn_records_the_link_report_without_masking() -> None:
-    """warn 记录逐跨与链路级报告，但不改动 SNR。"""
+    """Warn 记录逐跨与链路级报告，但不改动 SNR。"""
     case = build_case("c_57ch")
     model = make_model("pcfm", case, validity_mode="warn")
     result = model.evaluate_path(build_path(case), launch_profile(case))
@@ -286,7 +286,7 @@ def test_warn_records_the_link_report_without_masking() -> None:
 
 
 def test_strict_masks_only_the_invalid_channels() -> None:
-    """strict 只把无效信道的 SNR 变成 NaN，其余信道与功率数组逐位不变。"""
+    """Strict 只把无效信道的 SNR 变成 NaN，其余信道与功率数组逐位不变。"""
     case = build_case("escl_479ch_1span")
     path = build_path(case)
     power = launch_profile(case)
