@@ -112,6 +112,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy.integrate import IntegrationWarning
@@ -151,6 +152,7 @@ __all__ = [
     "PCFM_MODEL_INFO",
     "PCFMModel",
     "PCFMSpanKernel",
+    "SpanValidityReport",
 ]
 
 #: Number of RK4 steps of the ISRS power-profile integration.
@@ -190,6 +192,147 @@ XCI_EDGE_MATERIALITY: float = 0.03
 
 #: Gauss-Legendre nodes of the exact XCI island integral (per flagged pair).
 XCI_EDGE_QUADRATURE_POINTS: int = 24
+
+#: Channel-power tilt above which the span is reported as outside the
+#: validated operating range.
+#:
+#: The base PCFM flags the launch-power tilt ``10 log10(max/min)`` over the
+#: active channels.  The H3 Raman kernel additionally folds in the span-gain
+#: tilt, because there the pump profile is what the polynomial representation
+#: cannot bound.  The threshold follows the strong-tilt audit
+#: (``dra-open-issues.md`` Section 9): at a 15 dB gain tilt the NLI residual is
+#: dominated by the *profile representation* rather than by the GN kernel.
+#: The ordinary C+L six-pump benchmark stays at 14.3 dB and is not flagged;
+#: the pump-depleted stress case is.  The unpumped E+S+C+L comb has 19.2 dB of
+#: ISRS tilt, which is reported in ``gain_tilt_db`` but does not flag the
+#: unpumped kernel: the ISRS profile is solved by the model itself.
+POWER_TILT_VALIDITY_DB: float = 15.0
+
+#: Confidence assigned to a channel whose XCI row is corrected by the edge
+#: gate.  The exact island integral makes the value usable, but the channel
+#: still sits in the regime where the printed closed form is not asymptotic.
+XCI_GATED_CONFIDENCE: float = 0.6
+
+#: Confidence assigned to a channel with a material XCI correction but no
+#: gate active (``edge_fix=False``).  The reported value is known to be wrong
+#: by more than the model error budget.
+XCI_UNCORRECTED_CONFIDENCE: float = 0.2
+
+#: Confidence assigned to an XCI row that is below the raw ``s`` switch but
+#: whose exact correction is immaterial (below the 3 % row gate).
+XCI_IMMATERIAL_CONFIDENCE: float = 0.9
+
+#: Confidence assigned to a channel using the small-``X`` SCI Taylor branch.
+SCI_TAYLOR_CONFIDENCE: float = 0.6
+
+#: Confidence assigned to a channel below the SCI switch without the branch.
+SCI_UNCORRECTED_CONFIDENCE: float = 0.2
+
+
+@dataclass(frozen=True)
+class SpanValidityReport:
+    """Per-channel applicability report of one PCFM span evaluation.
+
+    The report is the diagnostic counterpart of the two-tier ``edge_fix``:
+    it states, channel by channel, whether the closed-form kernels are inside
+    the domain where they were validated, and how much the edge machinery had
+    to intervene.  It never changes the NLI, ASE or power values; the model
+    layer decides what to do with it (``validity_mode``).
+
+    All per-channel arrays are in **model order** (the order of the launch
+    power and of :class:`~network_nlo_eval.models.base.PathQoTResult`).
+
+    Attributes
+    ----------
+        xci_gated:
+            ``(N,)`` boolean, ``True`` where the exact XCI island integral was
+            actually applied (``edge_fix=True`` and the row correction is
+            above :data:`XCI_EDGE_MATERIALITY`).
+        xci_row_correction:
+            ``(N,)`` relative change of the row's total XCI weight produced by
+            the exact island integral, before the materiality gate.  It is
+            computed even when ``edge_fix=False`` so that the diagnostic can
+            say how wrong the uncorrected row is.
+        xci_s_min:
+            ``(N,)`` minimum of the dimensionless phase-mismatch parameter
+            ``s = 2 pi**2 |beta2_eff| y B_CUT / alpha`` over the interfering
+            channels of the row.  ``inf`` for a row with no valid partner.
+            Values below :data:`XCI_EDGE_VALIDITY_SWITCH` mean the printed
+            asymptotic kernel is outside its derivation domain; the row is
+            only *materially* wrong when ``xci_row_correction`` also exceeds
+            :data:`XCI_EDGE_MATERIALITY`.  The two conditions differ on the
+            validated C/L bands, where many pairs are below the raw switch
+            but the exact correction moves the row by <2.3 %.
+        xci_s_below_switch:
+            ``(N,)`` boolean, ``xci_s_min < XCI_EDGE_VALIDITY_SWITCH``.
+        sci_x:
+            ``(N,)`` signed ``X = pi**2 beta2_eff_sci B**2 L`` of the SCI
+            kernel.  ``|X|`` is the distance from the zero-dispersion
+            crossing of the channel.
+        sci_taylor:
+            ``(N,)`` boolean, the small-``X`` Taylor branch was used (only
+            possible with ``edge_fix=True``).
+        sci_x_below_switch:
+            ``(N,)`` boolean, ``|sci_x| < SCI_X_SERIES_SWITCH``.  ``True``
+            with ``sci_taylor=False`` means the unstable recurrence was used.
+        sci_x_abs_min:
+            Minimum ``|X|`` over the active channels (dimensionless).  ``0``
+            when no channel is active.
+        power_tilt_db:
+            Launch-power tilt ``10 log10(max P / min P)`` over the active
+            channels (dB).
+        gain_tilt_db:
+            Span-gain tilt ``10 log10(max g / min g)`` with
+            ``g = P_out/P_in`` over the active channels (dB).  This is the
+            pump/ISRS gain tilt seen by the NLI profile.
+        pump_active:
+            Whether the span carries at least one positive-power pump.
+        pump_directions:
+            Directions of the active pumps, in the order of the pump list.
+            Empty when no pump is active.
+        pump_depletion:
+            ``(N_p,)`` depletion fraction ``1 - P_out/P_passive`` of every
+            active pump, where ``P_passive = P_in exp(-alpha_p L)`` is the
+            undepleted (own-attenuation) output.  Measuring against the
+            passive output keeps the 25 dB intrinsic pump attenuation out of
+            the number; a value near one means the signals consumed most of
+            the pump.  Forward pumps are measured at ``z=L`` and backward
+            pumps at ``z=0``, following
+            :class:`~network_nlo_eval.models.raman_ode.PaperRamanSpanResult`.
+        pump_depletion_max:
+            Largest entry of ``pump_depletion`` (``0`` without pumps).
+        flagged:
+            ``(N,)`` boolean, the channel is in a regime the two-tier fix
+            had to correct (``xci_row_correction > XCI_EDGE_MATERIALITY`` or
+            ``sci_x_below_switch``) or the span exceeds the tilt threshold.
+        valid:
+            ``(N,)`` boolean, the reported NLI is expected inside the model
+            error budget.  A corrected edge row is still valid (the exact
+            integral is applied); an uncorrected one is not.
+        confidence:
+            ``(N,)`` score in ``[0, 1]``.  It is a coarse ordering, not a
+            calibrated probability: 1 means inside the validated domain,
+            ~0.6 means "usable after the fix", ~0.2 means "known wrong".
+    """
+
+    xci_gated: NDArrayFloat
+    xci_row_correction: NDArrayFloat
+    xci_s_min: NDArrayFloat
+    xci_s_below_switch: NDArrayFloat
+    sci_x: NDArrayFloat
+    sci_taylor: NDArrayFloat
+    sci_x_below_switch: NDArrayFloat
+    sci_x_abs_min: float
+    power_tilt_db: float
+    gain_tilt_db: float
+    pump_active: bool
+    pump_directions: tuple[str, ...]
+    pump_depletion: NDArrayFloat
+    pump_depletion_max: float
+    flagged: NDArrayFloat
+    valid: NDArrayFloat
+    confidence: NDArrayFloat
+
 
 #: Relative power tolerance under which two span inputs are treated as the
 #: same state by the span memoisation.
@@ -867,6 +1010,40 @@ def _gn_weighted_xpm_visibility(
     return numerator / denominator
 
 
+def _xci_validity_s(
+    beta2_eff_xci: NDArrayFloat,
+    y2_hz: NDArrayFloat,
+    half_b_cut_hz: NDArrayFloat,
+    alpha_npm_m: float,
+) -> NDArrayFloat:
+    r"""Dimensionless phase-mismatch parameter ``s`` of the XCI closed form.
+
+    The printed kernel, Eq. (24), is the ``s >> 1`` limit of the GN frequency
+    integral with
+
+    .. math::
+
+        s = 2 \pi^2 |\beta_{2,eff}| y B_{CUT} / \alpha ,
+
+    evaluated at the upper edge ``y = y2`` of the interfering band.  The same
+    expression is used by the edge gate of
+    :func:`_xci_edge_weight_matrix` and by the validity report, so a change of
+    the gate definition cannot silently desynchronise the diagnostic.
+
+    Args:
+        beta2_eff_xci: ``(N, N)`` effective dispersion of the pair (s^2/m).
+        y2_hz: ``(N, N)`` upper edge of the interfering band relative to the
+            CUT centre (Hz).
+        half_b_cut_hz: ``(N,)`` half bandwidth of the CUT channel (Hz).
+        alpha_npm_m: Fibre power attenuation (Np/m).
+
+    Returns
+    -------
+        ``(N, N)`` parameter ``s`` of every pair.
+    """
+    return 2.0 * np.pi**2 * np.abs(beta2_eff_xci) * y2_hz * half_b_cut_hz[:, None] / alpha_npm_m
+
+
 def _xci_edge_weight_matrix(
     w_xci: NDArrayFloat,
     k_xci_matrix: NDArrayFloat,
@@ -948,7 +1125,7 @@ def _xci_edge_weight_matrix(
     y1 = delta - half_b[None, :]
     y2 = delta + half_b[None, :]
     # 适用域判据：相位失配相对线宽的量级 s。用干扰信道带上边缘 y2 与 CUT 带宽。
-    s_edge = 2.0 * np.pi**2 * np.abs(beta2_eff_xci) * y2 * half_b[:, None] / alpha_npm_m
+    s_edge = _xci_validity_s(beta2_eff_xci, y2, half_b, alpha_npm_m)
     valid = (log_xci != 0.0) & (y1 > 0.0) & (s_edge < validity_switch)
 
     w_edge = np.array(w_xci, dtype=np.float64, copy=True)
@@ -1103,6 +1280,11 @@ PCFM_MODEL_INFO = ModelInfo(
             "raman_ase",
             "Add the distributed Raman ASE before the span EDFA. Default True when Raman is enabled.",
         ),
+        (
+            "validity_mode",
+            "'warn' (default) records the per-channel applicability report without touching any "
+            "number; 'strict' additionally replaces the SNR of invalid channels with NaN.",
+        ),
     ),
 )
 
@@ -1174,6 +1356,10 @@ class PCFMSpanKernel:
         )
         # XCI 适用域修正按跨长惰性计算并缓存；键为跨长（微米取整）。
         self._xci_edge_cache: dict[int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        # 诊断层的静态量（s、行修正、X）只依赖光纤与跨长，按跨长缓存。
+        self._xci_validity_cache: dict[
+            int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]
+        ] = {}
         # 跨段状态记忆化：同一路径内的透明跨输入只差末位，命中即复用 SPP 与核。
         self._span_cache: list[tuple[NDArrayFloat, int, NDArrayFloat, NDArrayFloat, NDArrayFloat]] = []
         self.span_cache_hits = 0
@@ -1484,6 +1670,216 @@ class PCFMSpanKernel:
         key = int(round(span_length_m * 1e6))
         _, gated, fraction = self._xci_edge_cache[key]
         return gated, fraction
+
+    def _xci_validity_metrics(
+        self,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """Return the span-length-dependent part of the validity report.
+
+        The raw ``s`` parameter, the exact row correction and the SCI ``X``
+        depend only on the fibre, the channel plan and the span length, so
+        they are computed once per span length.  With ``edge_fix=True`` the
+        correction is already available from :meth:`xci_edge_audit`; with
+        ``edge_fix=False`` it is computed here on demand, because the
+        diagnostic must still say how large the omitted correction is.
+
+        Args:
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            The tuple ``(s_min, s_below, fraction, gated, material)`` in the
+            internal channel order.
+        """
+        key = int(round(span_length_m * 1e6))
+        cached = self._xci_validity_cache.get(key)
+        if cached is not None:
+            return cached
+
+        delta = np.abs(self.f_abs_hz[:, None] - self.f_abs_hz[None, :])
+        half_b = 0.5 * self.b_hz
+        y1 = delta - half_b[None, :]
+        y2 = delta + half_b[None, :]
+        s_pair = _xci_validity_s(self.beta2_eff_xci, y2, half_b, self.alpha_visibility_npm)
+        # 只有带内不重叠、有定义的干扰对参与判据；其余对本来就不进核。
+        pairs = (self.log_xci != 0.0) & (y1 > 0.0)
+        s_min = np.where(pairs, s_pair, np.inf).min(axis=1)
+        s_below = s_min < XCI_EDGE_VALIDITY_SWITCH
+
+        if self.edge_fix:
+            gated, fraction = self.xci_edge_audit(span_length_m)
+        else:
+            _, _, fraction = _xci_edge_weight_matrix(
+                self.w_xci,
+                self.k_xci_matrix,
+                self.log_xci,
+                self.gamma_xci,
+                self.beta2_eff_xci,
+                self.f_abs_hz,
+                self.b_hz,
+                self.alpha_visibility_npm,
+                float(span_length_m),
+            )
+            gated = np.zeros(self.n_nodes, dtype=bool)
+        material = fraction > XCI_EDGE_MATERIALITY
+
+        cached = (
+            np.ascontiguousarray(s_min),
+            np.ascontiguousarray(s_below),
+            np.ascontiguousarray(fraction),
+            np.ascontiguousarray(gated),
+            np.ascontiguousarray(material),
+        )
+        self._xci_validity_cache[key] = cached
+        return cached
+
+    def _validity_tilt_db(self, power_tilt_db: float, gain_tilt_db: float) -> float:
+        """Return the tilt metric that drives the validity flag.
+
+        The base kernel uses the launch-power tilt only: the span gain of an
+        unpumped fibre is dominated by ISRS, whose profile the model solves
+        explicitly, so a large ISRS tilt is not by itself a validity problem.
+        :class:`~network_nlo_eval.models.pcfm_h3_raman.PCFH3RamanSpanKernel`
+        overrides this to include the gain tilt when pumps are active, where
+        the pump-induced profile is the known weak point.
+
+        Args:
+            power_tilt_db: Launch-power tilt ``10 log10(max/min)`` (dB).
+            gain_tilt_db: Span-gain tilt ``10 log10(max/min)`` (dB).
+
+        Returns
+        -------
+            The tilt used for ``flagged`` and ``valid`` (dB).
+        """
+        return power_tilt_db
+
+    def validity_report(
+        self,
+        span_length_m: float,
+        power_in_w: NDArrayFloat,
+        *,
+        power_out_w: NDArrayFloat | None = None,
+    ) -> SpanValidityReport:
+        """Report the per-channel applicability of the closed-form kernels.
+
+        The report is a pure diagnostic: it never modifies the kernel state
+        beyond its caches and never feeds back into the NLI.  It is meant for
+        the network-level QoT layer, which can use ``valid``/``confidence`` to
+        warn, drop a channel, or trigger an exact fallback (the fallback
+        itself is intentionally not called here).
+
+        Args:
+            span_length_m: Span length (m).
+            power_in_w: ``(N,)`` launch power per channel (W), model order.
+            power_out_w: Optional ``(N,)`` span-end signal power in model
+                order.  The model passes its already-computed output here so
+                the diagnostic does not integrate the SPP a second time.
+                When omitted, the kernel integrates it itself.
+
+        Returns
+        -------
+            A :class:`SpanValidityReport` in model order.
+
+        Raises
+        ------
+            ValueError: ``power_in_w`` or ``power_out_w`` does not have one
+                value per channel.
+        """
+        power = np.asarray(power_in_w, dtype=np.float64)
+        if power.shape != (self.n_nodes,):
+            raise ValueError(f"power_in_w must have shape ({self.n_nodes},), got {power.shape}.")
+        power_internal = np.ascontiguousarray(power[self.order])
+        active = power_internal > 0.0
+
+        if power_out_w is None:
+            _, power_out = self._integrate_spp(power_internal, float(span_length_m))
+        else:
+            out = np.asarray(power_out_w, dtype=np.float64)
+            if out.shape != (self.n_nodes,):
+                raise ValueError(f"power_out_w must have shape ({self.n_nodes},), got {out.shape}.")
+            power_out = np.ascontiguousarray(out[self.order])
+
+        s_min, s_below, fraction, gated, material = self._xci_validity_metrics(span_length_m)
+
+        x_all = self._special_functions(span_length_m)[0]
+        abs_x = np.abs(x_all)
+        sci_taylor = abs_x < float(self._sci_small_x_switch)
+        sci_below = abs_x < SCI_X_SERIES_SWITCH
+        sci_x_abs_min = float(np.min(abs_x[active])) if np.any(active) else 0.0
+
+        def _tilt(values: NDArrayFloat) -> float:
+            """``10 log10(max/min)`` over the active channels, 0 below two."""
+            selected = values[active]
+            if selected.size < 2:
+                return 0.0
+            return float(10.0 * np.log10(float(selected.max()) / float(selected.min())))
+
+        power_tilt_db = _tilt(power_internal)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            gain = np.divide(
+                power_out,
+                power_internal,
+                out=np.ones_like(power_internal),
+                where=active,
+            )
+        gain_tilt_db = _tilt(gain)
+
+        tilt_db = self._validity_tilt_db(power_tilt_db, gain_tilt_db)
+        tilt_exceeded = tilt_db > POWER_TILT_VALIDITY_DB
+        tilt_confidence = (
+            1.0
+            if not tilt_exceeded
+            else float(
+                np.clip(1.0 - (tilt_db - POWER_TILT_VALIDITY_DB) / POWER_TILT_VALIDITY_DB, 0.0, 1.0)
+            )
+        )
+
+        # 置信度是逐信道取最弱项：XCI 修正、SCI 分支、功率倾斜。
+        xci_confidence = np.ones(self.n_nodes, dtype=np.float64)
+        xci_confidence = np.where(
+            s_below & ~material, XCI_IMMATERIAL_CONFIDENCE, xci_confidence
+        )
+        xci_confidence = np.where(
+            material,
+            np.where(gated, XCI_GATED_CONFIDENCE, XCI_UNCORRECTED_CONFIDENCE),
+            xci_confidence,
+        )
+        sci_confidence = np.where(
+            sci_below,
+            np.where(sci_taylor, SCI_TAYLOR_CONFIDENCE, SCI_UNCORRECTED_CONFIDENCE),
+            1.0,
+        )
+        confidence = np.minimum(np.minimum(xci_confidence, sci_confidence), tilt_confidence)
+
+        # 只有"本应修正却没修正"才算无效；已由精确积分兜底的信道仍然可用。
+        valid = ~((material & ~gated) | (sci_below & ~sci_taylor) | tilt_exceeded)
+        flagged = material | sci_below | tilt_exceeded
+
+        # 未占用信道没有可判定的物理量，也不应被 strict 变成 NaN。
+        valid = np.where(active, valid, True)
+        flagged = np.where(active, flagged, False)
+        confidence = np.where(active, confidence, 1.0)
+
+        return SpanValidityReport(
+            xci_gated=np.ascontiguousarray(gated[self.inverse_order]),
+            xci_row_correction=np.ascontiguousarray(fraction[self.inverse_order]),
+            xci_s_min=np.ascontiguousarray(s_min[self.inverse_order]),
+            xci_s_below_switch=np.ascontiguousarray(s_below[self.inverse_order]),
+            sci_x=np.ascontiguousarray(x_all[self.inverse_order]),
+            sci_taylor=np.ascontiguousarray(sci_taylor[self.inverse_order]),
+            sci_x_below_switch=np.ascontiguousarray(sci_below[self.inverse_order]),
+            sci_x_abs_min=sci_x_abs_min,
+            power_tilt_db=power_tilt_db,
+            gain_tilt_db=gain_tilt_db,
+            pump_active=False,
+            pump_directions=(),
+            pump_depletion=np.zeros(0, dtype=np.float64),
+            pump_depletion_max=0.0,
+            flagged=np.ascontiguousarray(flagged[self.inverse_order]),
+            valid=np.ascontiguousarray(valid[self.inverse_order]),
+            confidence=np.ascontiguousarray(confidence[self.inverse_order]),
+        )
 
     def clear_span_cache(self) -> None:
         """Forget the memoised span states and reset the hit/miss counters.
@@ -1983,6 +2379,7 @@ class PCFMModel(RouteModel):
         raman_ase: bool = True,
         raman_temperature_k: float = 300.0,
         raman_peak_gain_coefficient_m_per_w: float = 6e-14,
+        validity_mode: str = "warn",
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -1990,7 +2387,8 @@ class PCFMModel(RouteModel):
         Raises
         ------
             ValueError: ``poly_degree`` is negative, ``spp_steps`` is invalid,
-                or the Raman options are inconsistent.
+                the Raman options are inconsistent, or ``validity_mode`` is
+                not ``"warn"``/``"strict"``.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -1998,15 +2396,23 @@ class PCFMModel(RouteModel):
             raise ValueError(f"spp_steps must be >= 1 or 'auto', got {spp_steps!r}.")
         if raman_model not in (None, "off", "lumped"):
             raise ValueError(f"raman_model must be None, 'off' or 'lumped', got {raman_model!r}.")
+        if validity_mode not in ("warn", "strict"):
+            raise ValueError(f"validity_mode must be 'warn' or 'strict', got {validity_mode!r}.")
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.poly_degree = int(poly_degree)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.cache_spans = bool(cache_spans)
         self.spp_steps = spp_steps
+        self.validity_mode = str(validity_mode)
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
+        # 诊断层状态：逐跨报告与跨间最坏值，入口在 evaluate_path 里重置。
+        self.last_span_validity: list[SpanValidityReport] = []
+        self.last_validity_valid: NDArrayFloat | None = None
+        self.last_validity_flagged: NDArrayFloat | None = None
+        self.last_validity_confidence: NDArrayFloat | None = None
         # 拉曼默认关闭：只有显式 raman_model="lumped" 或显式给出 raman_pumps
         # 才启用；仅 fiber_config 自带泵浦不会改变既有 PCFM 结果。
         self._raman_pumps = None if raman_pumps is None else list(raman_pumps)
@@ -2032,6 +2438,44 @@ class PCFMModel(RouteModel):
             spp_steps=self._active_spp_steps,
         )
 
+    def _reset_validity(self) -> None:
+        """Forget the validity state of the previous path."""
+        self.last_span_validity = []
+        self.last_validity_valid = None
+        self.last_validity_flagged = None
+        self.last_validity_confidence = None
+
+    def _record_span_validity(
+        self,
+        kernel: PCFMSpanKernel,
+        power_in_w: NDArrayFloat,
+        power_out_w: NDArrayFloat,
+        span_length_m: float,
+    ) -> None:
+        """Attach the validity report of one span to the path state.
+
+        The link-level verdict is the worst span: a channel is valid only if
+        every span reports it valid, its confidence is the minimum, and any
+        span-level flag survives.  Keeping the per-span reports makes the
+        offending span identifiable without recomputing anything.
+
+        Args:
+            kernel: Kernel that evaluated the span.
+            power_in_w: ``(N,)`` span-input power (W), model order.
+            power_out_w: ``(N,)`` span-output power before the EDFA (W).
+            span_length_m: Span length (m).
+        """
+        report = kernel.validity_report(span_length_m, power_in_w, power_out_w=power_out_w)
+        self.last_span_validity.append(report)
+        if self.last_validity_valid is None:
+            self.last_validity_valid = np.array(report.valid, dtype=bool, copy=True)
+            self.last_validity_flagged = np.array(report.flagged, dtype=bool, copy=True)
+            self.last_validity_confidence = np.array(report.confidence, dtype=np.float64, copy=True)
+            return
+        self.last_validity_valid &= report.valid
+        self.last_validity_flagged |= report.flagged
+        np.minimum(self.last_validity_confidence, report.confidence, out=self.last_validity_confidence)
+
     def evaluate_path(self, optical_path, power_in_w):
         """Evaluate a path, resetting the EGN context and the span memoisation.
 
@@ -2039,6 +2483,13 @@ class PCFMModel(RouteModel):
         means that the identical (transparent) spans of one link share their
         SPP integration, while a new path or a new launch power never reuses a
         stale state.
+
+        In ``validity_mode="strict"`` the SNR of every channel that the span
+        reports as invalid is replaced by ``NaN``.  The NLI, ASE and signal
+        arrays are left untouched, so a caller can still inspect them and
+        decide on an exact fallback.  ``"warn"`` (the default) only records
+        the report in :attr:`last_validity_valid`,
+        :attr:`last_validity_flagged` and :attr:`last_validity_confidence`.
         """
         if self.spp_steps == "auto":
             peak_dbm = 10.0 * np.log10(max(float(np.max(power_in_w)), 1e-30) * 1e3)
@@ -2048,11 +2499,21 @@ class PCFMModel(RouteModel):
                 self._kernel_cache.clear()
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
+        self._reset_validity()
         for kernel in self._kernel_cache.values():
             clear = getattr(kernel, "clear_span_cache", None)
             if clear is not None:
                 clear()
-        return super().evaluate_path(optical_path, power_in_w)
+        result = super().evaluate_path(optical_path, power_in_w)
+        if (
+            self.validity_mode == "strict"
+            and self.last_validity_valid is not None
+            and not bool(np.all(self.last_validity_valid))
+        ):
+            snr_db = np.array(result.snr_db, dtype=np.float64, copy=True)
+            snr_db[~self.last_validity_valid] = np.nan
+            result = replace(result, snr_db=snr_db)
+        return result
 
     def span_step(
         self,
@@ -2132,6 +2593,7 @@ class PCFMModel(RouteModel):
                 )
                 if self._raman_ase:
                     input_ase_w = amplifier.ase_w(self.f_abs_hz, self.channel_bandwidth_hz_channels)
+        self._record_span_validity(kernel, power_in_w, fiber_output.power_out_w, span_length_m)
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
         element = apply_amplifier_and_roadm(
             power_in_w=power_in_w,
