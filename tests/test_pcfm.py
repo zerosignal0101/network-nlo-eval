@@ -630,6 +630,7 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
         "edge_fix",
         "cache_spans",
         "spp_steps",
+        "resolution",
         "raman_model",
         "raman_pumps",
         "raman_gain_model",

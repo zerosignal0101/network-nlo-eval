@@ -119,10 +119,12 @@ from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import (
     SPAN_CACHE_MAX_ENTRIES,
     SPAN_CACHE_RTOL,
+    XCI_EDGE_QUADRATURE_POINTS,
     PCFMModel,
     PCFMSpanKernel,
     SpanValidityReport,
     resolve_nli_power_convention,
+    resolve_resolution_profile,
 )
 from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.raman_ode import (
@@ -714,6 +716,14 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ("edge_fix", "PCFM zero-dispersion edge fix. Default True."),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
+        (
+            "resolution",
+            "Explicit opt-in resolution profile. None (default) keeps every per-option default "
+            "bit-for-bit. 'fast': XCI edge quadrature 12 nodes, SPP/Raman steps untouched (NLI "
+            "identical to 1e-11, up to 65% less first-call work). 'accurate': spp_steps=96 and "
+            "raman_steps=96, the converged reference of docs/h3-pareto-report.md. A profile never "
+            "overrides an explicit spp_steps/raman_steps: that raises ValueError.",
+        ),
         ("raman_pumps", "RamanPumpConfig sequence; omitted means use FiberSpanConfig.raman_pumps."),
         (
             "raman_gain_model",
@@ -913,6 +923,7 @@ class PCFH3RamanModel(PCFMModel):
         nli_power_convention: str = "auto",
         span_coherence: str = "auto",
         validity_mode: str = "warn",
+        resolution: str | None = None,
         **route_options: object,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
@@ -921,6 +932,25 @@ class PCFH3RamanModel(PCFMModel):
                 raise ValueError(f"raman_steps must be an integer or 'auto', got {raman_steps!r}.")
         elif int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
+        # 分辨率档位在这里解析：raman_steps 是本类的旋钮，父类不认识它。
+        profile = resolve_resolution_profile(resolution)
+        quadrature_points = XCI_EDGE_QUADRATURE_POINTS
+        if profile is not None:
+            if "spp_steps" in profile:
+                if spp_steps != "auto":
+                    raise ValueError(
+                        f"resolution={resolution!r} sets spp_steps={profile['spp_steps']}, but "
+                        f"spp_steps={spp_steps!r} was also given explicitly."
+                    )
+                spp_steps = profile["spp_steps"]
+            if "raman_steps" in profile:
+                if raman_steps != "auto":
+                    raise ValueError(
+                        f"resolution={resolution!r} sets raman_steps={profile['raman_steps']}, but "
+                        f"raman_steps={raman_steps!r} was also given explicitly."
+                    )
+                raman_steps = profile["raman_steps"]
+            quadrature_points = profile.get("xci_quadrature_points", XCI_EDGE_QUADRATURE_POINTS)
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
         if int(signal_polarizations) < 1:
@@ -968,11 +998,15 @@ class PCFH3RamanModel(PCFMModel):
             raman_temperature_k=raman_temperature_k,
             raman_peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
             validity_mode=validity_mode,
+            # 档位已在本类解析过（raman_steps 属于本类），不能再让父类重复解释。
+            resolution=None,
             **route_options,
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
         self._h3_raman_ase = bool(raman_ase)
         self._h3_raman_steps = raman_steps if isinstance(raman_steps, str) else int(raman_steps)
+        self.resolution = None if profile is None else str(resolution)
+        self.xci_edge_quadrature_points = int(quadrature_points)
         self._h3_raman_iterations = int(raman_iterations)
         self._h3_include_isrs = bool(include_isrs)
         self._h3_pump_depletion = bool(pump_depletion)
@@ -1070,6 +1104,7 @@ class PCFH3RamanModel(PCFMModel):
             edge_fix=self.edge_fix,
             cache_spans=self.cache_spans,
             spp_steps=self._active_spp_steps,
+            xci_edge_quadrature_points=self.xci_edge_quadrature_points,
         )
 
     def span_step(

@@ -188,8 +188,10 @@ __all__ = [
     "PCFM_MODEL_INFO",
     "PCFMModel",
     "PCFMSpanKernel",
+    "RESOLUTION_PROFILES",
     "SpanValidityReport",
     "resolve_nli_power_convention",
+    "resolve_resolution_profile",
     "TILT_INFORMATIONAL_KNEE_DB",
     "TILT_INFORMATIONAL_ZERO_DB",
     "informational_tilt_confidence",
@@ -203,6 +205,57 @@ __all__ = [
 #: the SPP of every channel of the benchmark combs to better than 0.1 % (see
 #: the report).
 DEFAULT_SPP_STEPS: int = 32
+
+#: Explicit, opt-in resolution profiles.  ``None`` (the default) reproduces the
+#: historical per-option defaults bit for bit.
+#:
+#: The values come from the accuracy/runtime sweep in
+#: ``docs/h3-pareto-report.md`` (script ``scripts/h3_pareto_sweep.py``), whose
+#: reference is ``spp_steps=96``, ``raman_steps=96`` and 64 Gauss-Legendre
+#: nodes.  Two facts drive the choice:
+#:
+#: * the XCI edge quadrature is *free* accuracy: 12 nodes reproduce the
+#:   64-node NLI to 1.4e-11 relative on the E-band comb (the only case with
+#:   gated rows), while 8 nodes already reach 5.2e-9.  Its cost is a one-time
+#:   per-span-length integral, 6-65 % of the first ``evaluate_path``
+#:   depending on the band, so lowering it is the only no-regret speed win;
+#: * ``spp_steps`` and ``raman_steps`` are *not* free.  On pumped links the
+#:   coarse ODE dominates both error and runtime: below 24 steps the backward
+#:   fixed point does not converge at all (NaN, and slower because it burns
+#:   the iteration cap), 24 steps is 0.3-2.7 dB off, and only 96 steps is
+#:   within 0.03 dB of 192.  Lowering them buys nothing that is defensible,
+#:   so ``"fast"`` leaves them alone.
+RESOLUTION_PROFILES: dict[str, dict[str, int]] = {
+    "fast": {"xci_quadrature_points": 12},
+    "accurate": {"spp_steps": 96, "raman_steps": 96},
+}
+
+
+def resolve_resolution_profile(resolution: str | None) -> dict[str, int] | None:
+    """Resolve an opt-in resolution profile to the knobs it overrides.
+
+    Args:
+        resolution: ``None`` or ``"default"`` (historical behaviour),
+            ``"fast"`` (drop the XCI edge quadrature to its measured-flat
+            value) or ``"accurate"`` (the converged sweep reference).
+
+    Returns
+    -------
+        A mapping of option name to value, or ``None`` when no profile is
+        requested.
+
+    Raises
+    ------
+        ValueError: ``resolution`` is not one of the accepted values.
+    """
+    if resolution is None or resolution == "default":
+        return None
+    if not isinstance(resolution, str) or resolution not in RESOLUTION_PROFILES:
+        raise ValueError(
+            f"resolution must be None, 'default' or one of {sorted(RESOLUTION_PROFILES)}, got {resolution!r}."
+        )
+    return dict(RESOLUTION_PROFILES[resolution])
+
 
 #: Supported NLI power conventions of the closed-form kernels.
 #:
@@ -1439,6 +1492,14 @@ PCFM_MODEL_INFO = ModelInfo(
             "RK4 steps of the SPP power-profile integration, or 'auto' (12 at <=0 dBm/ch, 32 above).",
         ),
         (
+            "resolution",
+            "Explicit opt-in resolution profile. None (default) keeps every per-option default "
+            "bit-for-bit. 'fast': XCI edge quadrature 12 nodes (NLI identical to 1e-11, 6-65% less "
+            "first-call work). 'accurate': spp_steps=96 (and raman_steps=96 on pcfm_h3_raman), the "
+            "converged reference of docs/h3-pareto-report.md. A profile never overrides an explicitly "
+            "different spp_steps/raman_steps: that raises ValueError.",
+        ),
+        (
             "raman_model",
             "Set to 'lumped' to add a lumped-equivalent distributed Raman amplifier at the span end. "
             "Default off, so links without pumps are bit-for-bit unchanged.",
@@ -1516,6 +1577,13 @@ class PCFMSpanKernel:
             per-polarization power, drives the kernels and the SPP with
             ``2 * P``, and halves the per-channel NLI and the span-end power.
             See the module docstring.
+        xci_edge_quadrature_points: Gauss-Legendre nodes of the exact XCI
+            island integral.  Only used for the CUT rows flagged by the
+            ``edge_fix`` gate.  Defaults to
+            :data:`XCI_EDGE_QUADRATURE_POINTS`; the sweep in
+            ``docs/h3-pareto-report.md`` shows 12 nodes already reproduce the
+            64-node result to 1e-11, so :data:`RESOLUTION_PROFILES` may lower
+            it without moving any number.
     """
 
     def __init__(
@@ -1531,6 +1599,7 @@ class PCFMSpanKernel:
         edge_fix: bool = True,
         cache_spans: bool = True,
         nli_power_convention: str = "total",
+        xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
     ) -> None:
         """Prepare the per-channel constants of the span.
 
@@ -1543,10 +1612,13 @@ class PCFMSpanKernel:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
         if spp_steps < 1:
             raise ValueError(f"spp_steps must be >= 1, got {spp_steps}.")
+        if int(xci_edge_quadrature_points) < 2:
+            raise ValueError(f"xci_edge_quadrature_points must be >= 2, got {xci_edge_quadrature_points}.")
 
         self.poly_degree = int(poly_degree)
         self.n_poly = self.poly_degree + 1
         self.spp_steps = int(spp_steps)
+        self.xci_edge_quadrature_points = int(xci_edge_quadrature_points)
         self.symbol_rate_hz = float(symbol_rate_hz)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
@@ -1850,6 +1922,7 @@ class PCFMSpanKernel:
             self.b_hz,
             self.alpha_visibility_npm,
             float(span_length_m),
+            n_quad=self.xci_edge_quadrature_points,
         )
         self._xci_edge_cache[key] = (w_edge, gated, fraction)
         return w_edge
@@ -1923,6 +1996,7 @@ class PCFMSpanKernel:
                 self.b_hz,
                 self.alpha_visibility_npm,
                 float(span_length_m),
+                n_quad=self.xci_edge_quadrature_points,
             )
             gated = np.zeros(self.n_nodes, dtype=bool)
         material = fraction > XCI_EDGE_MATERIALITY
@@ -2586,6 +2660,11 @@ class PCFMModel(RouteModel):
             leaves its validity domain, and stabilise the SCI kernel at small
             ``X``.  See :class:`PCFMSpanKernel`.
         cache_spans: Memoise the identical spans of one path.
+        spp_steps: RK4 steps of the SPP integration, or ``"auto"`` (12 at
+            ``<=0 dBm`` per channel, 32 above it).
+        resolution: Explicit opt-in resolution profile; ``None`` (default)
+            leaves every per-option default untouched.  See
+            :data:`RESOLUTION_PROFILES`.
         raman_model: ``"lumped"`` enables the lumped-equivalent distributed
             Raman amplifier of :mod:`network_nlo_eval.models.raman`.  ``None``
             (default) and ``"off"`` leave the model bit-for-bit unchanged.
@@ -2648,6 +2727,7 @@ class PCFMModel(RouteModel):
         raman_peak_gain_coefficient_m_per_w: float | None = None,
         validity_mode: str = "warn",
         nli_power_convention: str = "total",
+        resolution: str | None = None,
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -2656,7 +2736,9 @@ class PCFMModel(RouteModel):
         ------
             ValueError: ``poly_degree`` is negative, ``spp_steps`` is invalid,
                 the Raman options are inconsistent, ``validity_mode`` is not
-                ``"warn"``/``"strict"``, or ``nli_power_convention`` is unknown.
+                ``"warn"``/``"strict"``, ``nli_power_convention`` is unknown,
+                or ``resolution`` is unknown or conflicts with an explicit
+                ``spp_steps``.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -2666,6 +2748,18 @@ class PCFMModel(RouteModel):
             raise ValueError(f"raman_model must be None, 'off' or 'lumped', got {raman_model!r}.")
         if validity_mode not in ("warn", "strict"):
             raise ValueError(f"validity_mode must be 'warn' or 'strict', got {validity_mode!r}.")
+        profile = resolve_resolution_profile(resolution)
+        quadrature_points = XCI_EDGE_QUADRATURE_POINTS
+        if profile is not None:
+            if "spp_steps" in profile:
+                # 显式给了非默认步数就是调用方在自行定标，档位不应悄悄覆盖它。
+                if spp_steps != DEFAULT_SPP_STEPS:
+                    raise ValueError(
+                        f"resolution={resolution!r} sets spp_steps={profile['spp_steps']}, but "
+                        f"spp_steps={spp_steps!r} was also given explicitly."
+                    )
+                spp_steps = profile["spp_steps"]
+            quadrature_points = profile.get("xci_quadrature_points", XCI_EDGE_QUADRATURE_POINTS)
         nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.poly_degree = int(poly_degree)
@@ -2688,6 +2782,8 @@ class PCFMModel(RouteModel):
                 stacklevel=2,
             )
         self.spp_steps = spp_steps
+        self.resolution = None if profile is None else str(resolution)
+        self.xci_edge_quadrature_points = int(quadrature_points)
         self.validity_mode = str(validity_mode)
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
@@ -2722,6 +2818,7 @@ class PCFMModel(RouteModel):
             cache_spans=self.cache_spans,
             spp_steps=self._active_spp_steps,
             nli_power_convention=self.nli_power_convention,
+            xci_edge_quadrature_points=self.xci_edge_quadrature_points,
         )
 
     @property
