@@ -634,7 +634,12 @@ def _path_tilt_db(states: Sequence[tuple[PCFMSpanKernel, float]]) -> float:
     """
     tilt = 0.0
     for kernel, _span_length_m in states:
-        gain = np.asarray(kernel.last_span_gain, dtype=np.float64)
+        # 只有 H3 Raman 核记录逐跨增益；纯 PCFM 核没有拉曼状态，跳过即可，
+        # 否则 H3LinkValidityProvider 在 ``pcfm`` 上会因缺属性直接崩溃。
+        last_gain = getattr(kernel, "last_span_gain", None)
+        if last_gain is None:
+            continue
+        gain = np.asarray(last_gain, dtype=np.float64)
         gain = gain[gain > 0.0]
         if gain.size < 2:
             continue
@@ -699,10 +704,16 @@ def estimate_h3_error_budget(
         min_s = np.minimum(min_s, span_min_s)
         # 最差跨决定整个链路的可信度：链路预算里任何一跨的近似失效都不能被别的跨平均掉。
         confidence = np.minimum(confidence, span_confidence)
-        if kernel.active:
+        # 纯 PCFM 核没有泵状态（其拉曼增益是路由层的集总近似），用模型配置兜底；
+        # H3 Raman 核有 ``active``/``active_pumps``，仍以核记录为准。
+        if bool(getattr(kernel, "active", False)):
             directions.extend(str(pump.direction) for pump in kernel.active_pumps)
-            if not bool(kernel.last_raman_converged):
+            if not bool(getattr(kernel, "last_raman_converged", True)):
                 not_converged[:] = True
+
+    if not directions:
+        configured = getattr(model, "raman_pumps", None) or ()
+        directions = [str(pump.direction) for pump in configured if float(pump.power_w) > 0.0]
 
     pump_mode = classify_pump_mode(directions)
     bandwidth = np.asarray(model.channel_bandwidth_hz_channels, dtype=np.float64)

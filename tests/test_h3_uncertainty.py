@@ -109,6 +109,49 @@ def test_no_pump_budget_keeps_the_pcfm_result_and_has_no_pump_flags() -> None:
     assert bool(np.all(budget.margin_db > 0.0))
 
 
+def test_error_budget_supports_plain_pcfm_kernels() -> None:
+    """任务 Q 回归：纯 PCFM 核没有泵状态与跨增益，预算必须仍可用。
+
+    ``H3LinkValidityProvider`` 的文档声明支持 ``pcfm``/``pcfm_h3_raman``；
+    修复前 ``estimate_h3_error_budget`` 在 ``kernel.active`` 上抛
+    ``AttributeError``，链路级有效性层因此完全不可用于纯 PCFM。
+    """
+    from network_nlo_eval.rwa.validity import H3LinkValidityProvider
+
+    path = build_path(CASE_1)
+    power = launch_profile(CASE_1)
+    model = make_model("pcfm", CASE_1, egn=True)
+    result = model.evaluate_path(path, power)
+
+    budget = estimate_h3_error_budget(model, path, power, result)
+    assert budget.validity.pump_mode == "none"
+    assert bool(np.all(budget.validity.valid))
+    assert bool(np.all(budget.margin_db > 0.0))
+
+    # 用户可见入口同样不能再崩，且软 margin 默认为 0。
+    report = H3LinkValidityProvider(model)((0, 1), path.fiber_configs[0], None, power, 100e3)
+    assert np.isfinite(report.margin_at(0))
+    assert report.soft_margin_at(0) == 0.0
+
+
+def test_error_budget_reads_pump_directions_from_plain_pcfm_config() -> None:
+    """纯 PCFM 的集总拉曼核没有泵状态，预算须回落到模型配置。"""
+    path = build_path(CASE_1)
+    power = launch_profile(CASE_1)
+    model = make_model(
+        "pcfm",
+        CASE_1,
+        egn=True,
+        raman_model="lumped",
+        raman_pumps=[_pump(0.2, "backward")],
+    )
+    result = model.evaluate_path(path, power)
+
+    budget = estimate_h3_error_budget(model, path, power, result)
+    assert budget.validity.pump_mode == "backward"
+    assert bool(np.all(np.isfinite(budget.margin_db)))
+
+
 @pytest.mark.parametrize(
     ("pumps", "expected"),
     [

@@ -2822,6 +2822,16 @@ class PCFMModel(RouteModel):
         )
 
     @property
+    def raman_pumps(self) -> list[RamanPumpConfig]:
+        """Configured pumps of the model (empty when Raman is off).
+
+        ``PCFMSpanKernel`` carries no pump state, so the H3 error budget has to
+        read the pump directions from the model instead.  The H3 Raman subclass
+        keeps its pumps on the kernel and therefore leaves this empty.
+        """
+        return list(self._raman_pumps or [])
+
+    @property
     def physical_power_scale(self) -> float:
         """Ratio between the physical total power and one ``power_in_w`` entry.
 
