@@ -35,6 +35,7 @@ def assemble_link_noise(
     remainder_length_m: float,
     num_channels: int,
     validity: LinkValidity | None = None,
+    launch_power_convention: str | None = None,
 ) -> LinkNoiseCache:
     """把一条链路的整跨/余段噪声累加成单个 :class:`LinkNoiseCache`。
 
@@ -49,13 +50,21 @@ def assemble_link_noise(
         num_channels: 信道数，仅在零跨段时用来开三个全零数组。
         validity: 可选的有效性报告。只做**附加**，不参与噪声算术：三个噪声数组
             的求和顺序与结果与未接入时逐位相同。
+        launch_power_convention: 写入缓存的功率口径标签。``None``（默认）时取
+            评估器的 ``launch_power_convention``；网络层调用方应显式传入验证器
+            的评估器口径，避免光纤子评估器丢失声明。该标签只写入元数据，
+            不改变任何数值。
 
     Returns
     -------
         三个 ``(N,)`` 噪声分量（SPM / XPM / ASE）与物理跨段数。三个数组都处于
         评估器口径（``total`` 或 ``per_pol``），默认 ``total`` 时是物理总功率。
-        零跨段时三个数组各自独立，不共享内存。
+        ``launch_power_convention`` 记录该口径，供读取方判断能否复用。零跨段时
+        三个数组各自独立，不共享内存。
     """
+    convention = launch_power_convention
+    if convention is None:
+        convention = str(getattr(evaluator, "launch_power_convention", "total"))
     total_spm = np.zeros(num_channels, dtype=np.float64)
     total_xpm = np.zeros(num_channels, dtype=np.float64)
     total_ase = np.zeros(num_channels, dtype=np.float64)
@@ -86,4 +95,11 @@ def assemble_link_noise(
         total_ase += r_ase
         total_spans += 1
 
-    return LinkNoiseCache(spm=total_spm, xpm=total_xpm, ase=total_ase, span_count=total_spans, validity=validity)
+    return LinkNoiseCache(
+        spm=total_spm,
+        xpm=total_xpm,
+        ase=total_ase,
+        span_count=total_spans,
+        validity=validity,
+        launch_power_convention=convention,
+    )

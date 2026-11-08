@@ -13,6 +13,7 @@ from network_nlo_eval.core.types import (
     NDArrayInt,
     NodeID,
 )
+from network_nlo_eval.models.power_conventions import resolve_launch_power_convention
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.simulation.traffic import AllocatedService  # 依赖 ServiceRequest
 
@@ -24,6 +25,11 @@ if TYPE_CHECKING:
 class LinkNoiseCache:
     """缓存单条链路上所有信道的噪声方差 (W) 和物理跨段数。
 
+    ``spm`` / ``xpm`` / ``ase`` 的坐标由 ``launch_power_convention`` 标注：
+    ``"total"`` 表示每信道双偏振总功率，``"per_pol"`` 表示每偏振功率。
+    默认 ``None`` 表示**旧缓存未记录口径**：读取方按既有行为直接复用，下一次
+    写入时才补上口径。已知口径与当前评估器不一致时不得复用，必须重算。
+
     ``validity`` 是任务 H 的**可选**网络级有效性报告：``None``（默认）表示未接入，
     既有数值与判定完全不变；只有显式给出有效性策略时才会被填充。
     """
@@ -33,6 +39,14 @@ class LinkNoiseCache:
     ase: NDArrayFloat  # 每信道 ASE 噪声方差 (W)
     span_count: int  # 链路上的物理跨段数
     validity: "LinkValidity | None" = None  # 可选的有效性报告（任务 H，默认关闭）
+    #: 三个噪声数组的入纤功率口径（只读元数据，不参与算术）：
+    #: ``"total"`` / ``"per_pol"``；``None`` 为旧缓存（未记录口径）。
+    launch_power_convention: str | None = None
+
+    def __post_init__(self) -> None:
+        """规范化已知的口径；``None`` 保持旧缓存语义。"""
+        if self.launch_power_convention is not None:
+            self.launch_power_convention = resolve_launch_power_convention(self.launch_power_convention)
 
 
 @dataclass

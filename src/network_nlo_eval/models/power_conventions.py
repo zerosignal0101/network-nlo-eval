@@ -9,7 +9,8 @@ provider 入参都是这个坐标。模型可以声明自己的入口口径：
 
 ``LinkNoiseCache`` 与 ``accumulate_service_snr`` 的坐标跟随**评估器**口径：
 默认 ``total`` 评估器下是总功率；声明 ``per_pol`` 的评估器下是每偏振功率
-（信号与噪声同比缩放，SNR 不变）。
+（信号与噪声同比缩放，SNR 不变）。``LinkNoiseCache.launch_power_convention``
+记录写出时的口径，读取方发现已知口径不匹配时必须重算，不能跨口径复用。
 
 同一物理链路在两个坐标下只差一个因子 2，SNR = S/(NLI+ASE) 与坐标无关。
 换算必须集中在模型边界做**唯一一次**，绝不能在网络层与模型层各减半一次。

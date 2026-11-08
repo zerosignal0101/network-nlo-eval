@@ -325,6 +325,12 @@ class QoTValidator:
     缓存里的 EDFA ASE 由评估器产生，而 ROADM booster ASE 由本验证器累加，
     两者都用同一个 scale 才会落在同一坐标。``total`` 评估器取默认 ``1.0``，
     不做任何乘法。
+
+    缓存口径溯源：``LinkNoiseCache.launch_power_convention`` 记录该缓存是在哪个
+    评估器坐标下算出的。同一 ``NetworkState`` 上换用不同口径的验证器时，读取
+    已知口径且不匹配的缓存会触发重算并替换，绝不把 ``total`` 与 ``per_pol``
+    的噪声混在一条路径里。``None``（旧缓存）按既有行为直接复用，下次写入时
+    补上口径。
     """
 
     def __init__(
@@ -564,7 +570,8 @@ class QoTValidator:
 
         ``power_profile`` 按验证器构造时声明的口径解释，进入 provider /
         ``assemble_link_noise`` 前换算到评估器口径（默认 ``total``，此时
-        ``to_convention`` 返回原数组，不做算术）。
+        ``to_convention`` 返回原数组，不做算术）。写出的缓存总是带上
+        ``eval_power_convention`` 标签。
         """
         u, v = link_key
         fiber_config = self.network_topology.get_fiber_config(u, v)
@@ -600,6 +607,7 @@ class QoTValidator:
             remainder_length_m=remainder_length_m,
             num_channels=self.num_nodes,
             validity=validity,
+            launch_power_convention=self.eval_power_convention,
         )
 
     def _get_or_calc_noise_cache(
@@ -609,12 +617,20 @@ class QoTValidator:
         temp_noise_cache: dict[LinkKey, LinkNoiseCache],
         fixed_span_length_km: float | None,
     ) -> LinkNoiseCache:
-        """获取链路噪声缓存：优先从临时缓存，否则从 LinkState（惰性计算）。"""
+        """获取链路噪声缓存：优先从临时缓存，否则从 LinkState（惰性计算）。
+
+        ``LinkState`` 缓存会记录写入时的评估器口径。口径已知且与当前验证器
+        不一致时**不得复用**：按当前评估器重算并替换。``None`` 是旧缓存
+        （未记录口径），保持既有复用行为，等下一次写入时补上口径。
+        """
         if link_key in temp_noise_cache:
             return temp_noise_cache[link_key]
 
-        if link_state.noise_cache is not None:
-            return link_state.noise_cache
+        cached = link_state.noise_cache
+        if cached is not None:
+            convention = cached.launch_power_convention
+            if convention is None or convention == self.eval_power_convention:
+                return cached
 
         cache = self._calc_link_noise(
             link_key,
@@ -637,6 +653,7 @@ class QoTValidator:
 
         - 受影响链路从 ``temp_noise_cache`` 读取（含假设分配后的功率谱）。
         - 未受影响链路从 ``LinkState.noise_cache`` 读取（惰性计算并写回）。
+          若缓存记录了已知口径且与当前评估器不一致，会先重算再使用。
         - 信号功率取服务自身的 ``launch_power_w``。
 
         递推本身交给 :func:`accumulate_service_snr_detail`，本方法只负责取值与策略。
