@@ -76,6 +76,20 @@ state and every output stay per-polarization and the drive takes the
 dual-polarization total, so the photon budget closes at ratio 1 (verified in
 ``tests/test_h3_launch_convention.py``).  ``"total"`` with
 ``signal_polarizations=2`` is kept only for historical comparisons and warns.
+
+**The NLI kernels follow the same declared convention**
+
+The PCFM ``16/27``/``32/27`` weights are dual-polarization weights built for a
+*total* PSD (see the :mod:`~network_nlo_eval.models.pcfm` module docstring), and
+the waveform reference of this repository also uses total channel power.  A
+``"per_pol"`` launch therefore has to drive the NLI kernels with ``2 * P`` and
+halve their output, otherwise the NLI is ``2**3 = 8`` times too low while the
+signal is only halved.  ``nli_power_convention="auto"`` does that whenever the
+launch is declared per-polarization; ``"total"`` reproduces the pre-audit
+numbers as an explicit comparison control.  The EDFA ASE of the framework is
+still the total dual-polarization ASE, so a per-polarization
+``signal``/``NLI``/``ASE`` triple is not yet self-consistent: the audit script
+``scripts/h3_nli_polarization_audit.py`` quantifies that residual.
 """
 
 from __future__ import annotations
@@ -101,6 +115,7 @@ from network_nlo_eval.models.pcfm import (
     PCFMModel,
     PCFMSpanKernel,
     SpanValidityReport,
+    resolve_nli_power_convention,
 )
 from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel
 from network_nlo_eval.models.raman_ode import (
@@ -182,6 +197,47 @@ def _resolve_egn(egn: bool | str, pumps: Sequence[RamanPumpConfig] | None) -> bo
     return not any(pump.direction == "forward" for pump in _active_pumps(pumps))
 
 
+def _resolve_nli_convention(
+    nli_power_convention: str | None,
+    launch_power_convention: str,
+) -> str:
+    """Resolve the NLI power convention of the H3 kernel.
+
+    ``None``/``"auto"`` follows the declared launch convention: the NLI is
+    then driven by the physical total power whenever the caller declared
+    ``"per_pol"`` and the input really is per-polarization.  An explicit
+    ``"total"`` is kept as a comparison control: it reproduces the pre-audit
+    NLI (8x low under a per-polarization launch) without changing the ODE.
+    The opposite explicit combination is rejected because it would drive the
+    GN weights with ``2 * P`` while the caller already passed the total power.
+
+    Args:
+        nli_power_convention: ``None``, ``"auto"``, ``"total"`` or ``"per_pol"``.
+        launch_power_convention: Already resolved launch convention.
+
+    Returns
+    -------
+        ``"total"`` or ``"per_pol"``.
+
+    Raises
+    ------
+        ValueError: The value is unknown, or it contradicts the launch
+            convention.
+    """
+    if nli_power_convention is None or str(nli_power_convention) == "auto":
+        return "per_pol" if launch_power_convention == "per_pol" else "total"
+    resolved = resolve_nli_power_convention(nli_power_convention)
+    if resolved == "per_pol" and launch_power_convention != "per_pol":
+        raise ValueError(
+            "nli_power_convention='per_pol' requires launch_power_convention='per_pol': "
+            "the NLI kernels would otherwise drive the dual-polarization GN weights with "
+            "2x a power that is already the per-channel total power. Pass "
+            "launch_power_convention='per_pol' with power_in_w = P_total/2, or "
+            "nli_power_convention='total'."
+        )
+    return resolved
+
+
 class PCFH3RamanSpanKernel(PCFMSpanKernel):
     """PCFM kernel whose SPP is the coupled signal/pump profile of one span.
 
@@ -224,6 +280,13 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             ``2``.  The ODE state and the output stay per-polarization in both
             cases; only the coupling drive differs.  See
             :func:`~network_nlo_eval.models.raman_ode.resolve_launch_power_convention`.
+        nli_power_convention: Power convention of the NLI kernels.  ``None``
+            (default) follows ``launch_power_convention``: ``"per_pol"`` when
+            the launch is per-polarization, ``"total"`` otherwise.  An explicit
+            ``"total"`` under a per-polarization launch keeps the pre-audit
+            NLI (8x too low) as a comparison control; ``"per_pol"`` under a
+            total-power launch is rejected because it would double-count the
+            power.  See :class:`~network_nlo_eval.models.pcfm.PCFMSpanKernel`.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -243,6 +306,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
+        nli_power_convention: str | None = None,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -251,7 +315,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         ------
             ValueError: ``raman_steps`` or ``raman_iterations`` is not positive,
                 or a boolean option is not a ``bool``, or the
-                ``launch_power_convention``/``signal_polarizations``
+                ``launch_power_convention``/``signal_polarizations``/``nli_power_convention``
                 combination is inconsistent.
         """
         if int(raman_steps) < 4:
@@ -260,7 +324,17 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
-        super().__init__(f_abs_hz, b_hz, fiber_config, **kwargs)  # type: ignore[arg-type]
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
+        resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
+        resolved_nli = _resolve_nli_convention(nli_power_convention, resolved_convention)
+        super().__init__(
+            f_abs_hz,
+            b_hz,
+            fiber_config,
+            nli_power_convention=resolved_nli,
+            **kwargs,  # type: ignore[arg-type]
+        )
         self._fiber_config = fiber_config
         self._raman_pumps = _active_pumps(pumps)
         self._raman_gain_model = gain_model
@@ -271,11 +345,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.pump_depletion = bool(pump_depletion)
         self.signal_polarizations = int(signal_polarizations)
         self.pump_pump_raman = bool(pump_pump_raman)
-        if self.signal_polarizations < 1:
-            raise ValueError("signal_polarizations must be >= 1.")
-        self.launch_power_convention = resolve_launch_power_convention(
-            launch_power_convention, self.signal_polarizations
-        )
+        self.launch_power_convention = resolved_convention
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
         # 泵浦自身衰减系数：耗尽度要相对“无信号时”的泵浦出射功率定义，
@@ -647,6 +717,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "signal_polarizations=2 keeps the legacy unit-less 2x multiplier and emits a warning.",
         ),
         (
+            "nli_power_convention",
+            "'auto' (default) follows launch_power_convention: under 'per_pol' the NLI kernels are driven "
+            "with the physical total 2*P and their output is halved, so the NLI stays in the per-polarization "
+            "coordinates of the signal and ASE. 'total' under a per-polarization launch is the pre-audit "
+            "comparison control (NLI 8x low); 'per_pol' under a total-power launch is rejected.",
+        ),
+        (
             "span_coherence",
             "'pcfm' (default, visibility-weighted coherent NLI accumulation) or 'incoherent' "
             "(power sum, the paper's default epsilon=0; for paper-matched comparison).",
@@ -708,6 +785,13 @@ class PCFH3RamanModel(PCFMModel):
             dual-polarization total.  ``"total"`` with
             ``signal_polarizations=2`` is retained as the legacy unit-less
             multiplier and emits a :class:`UserWarning` at construction.
+        nli_power_convention: Declared power convention of the NLI kernels.
+            ``"auto"`` (default) follows ``launch_power_convention``, so a
+            per-polarization launch also drives the GN weights with the
+            physical total power and returns per-polarization NLI.  ``"total"``
+            keeps the pre-audit NLI under a per-polarization launch as a
+            comparison control; ``"per_pol"`` under a total-power launch is
+            rejected.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -749,6 +833,7 @@ class PCFH3RamanModel(PCFMModel):
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
+        nli_power_convention: str = "auto",
         span_coherence: str = "auto",
         validity_mode: str = "warn",
         **route_options: object,
@@ -766,6 +851,7 @@ class PCFH3RamanModel(PCFMModel):
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
+        resolved_nli_convention = _resolve_nli_convention(nli_power_convention, resolved_convention)
         if resolved_convention == "total" and int(signal_polarizations) != 1:
             warnings.warn(
                 "pcfm_h3_raman: launch_power_convention='total' with "
@@ -815,6 +901,7 @@ class PCFH3RamanModel(PCFMModel):
         self._signal_polarizations = int(signal_polarizations)
         self._h3_pump_pump_raman = bool(pump_pump_raman)
         self._launch_power_convention = resolved_convention
+        self._nli_power_convention = resolved_nli_convention
         active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
         resolved = str(span_coherence)
         if resolved == "auto":
@@ -850,6 +937,7 @@ class PCFH3RamanModel(PCFMModel):
             signal_polarizations=self._signal_polarizations,
             pump_pump_raman=self._h3_pump_pump_raman,
             launch_power_convention=self._launch_power_convention,
+            nli_power_convention=self._nli_power_convention,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,
