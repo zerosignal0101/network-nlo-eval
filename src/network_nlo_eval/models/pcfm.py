@@ -75,6 +75,14 @@ polarization with a factor ``1/2``.
 needed to keep the NLI in the same coordinates as the per-polarization signal
 and ASE outputs.
 
+The same doubling applies to the **ISRS profile**: the Raman coupling of
+:meth:`PCFMSpanKernel._integrate_spp` is a physical quantity driven by the
+dual-polarization total power, so ``"per_pol"`` integrates the SPP with
+``2 * P`` and halves the span-end power.  Without it the profile is computed
+from half the power, and although the signal/NLI ratio barely moves, the
+ISRS-induced gain tilt is wrong and the EDFA gain compensation built on it
+leaks into the ASE (0.19 dB mean / 1.30 dB worst on C+L unpumped).
+
 **Inter-span coherence (not a formula of the paper)**
 
 The paper accumulates the NLI linearly over transparent spans, Eq. (8): the
@@ -202,10 +210,11 @@ DEFAULT_SPP_STEPS: int = 32
 #: total* power.  The printed ``(16/27)`` / ``(32/27)`` prefactors are used
 #: as-is, which is the convention of the paper and of the numerical GN
 #: reference of this repository.
-#: ``"per_pol"``: ``power_in_w`` is *per-polarization* power.  The PSD that
-#: drives the kernels is the physical total ``2 * power_in_w`` and the
-#: per-channel NLI is halved on the way out, so that it stays in the
-#: per-polarization coordinates of the signal and ASE outputs.
+#: ``"per_pol"``: ``power_in_w`` is *per-polarization* power.  The power that
+#: drives the kernels and the ISRS profile is the physical total
+#: ``2 * power_in_w``; the per-channel NLI and the span-end signal power are
+#: halved on the way out, so that they stay in the per-polarization
+#: coordinates of the signal and ASE outputs.
 NLI_POWER_CONVENTIONS: tuple[str, ...] = ("total", "per_pol")
 
 
@@ -1447,8 +1456,8 @@ PCFM_MODEL_INFO = ModelInfo(
             "nli_power_convention",
             "'total' (default): power_in_w is the per-channel dual-polarization total power and the "
             "printed 16/27 and 32/27 GN weights apply as-is. 'per_pol': power_in_w is "
-            "per-polarization power, so the NLI kernels are driven with 2*P and their output is "
-            "halved. Declaring the wrong side scales the NLI by 8.",
+            "per-polarization power, so the NLI kernels and the ISRS profile are driven with 2*P and "
+            "the NLI and span-end signal power are halved. Declaring the wrong side scales the NLI by 8.",
         ),
     ),
 )
@@ -1481,10 +1490,12 @@ class PCFMSpanKernel:
             a span state, so that the identical spans of a transparent link
             are evaluated once.
         nli_power_convention: Power convention of ``power_in_w`` for the NLI
-            kernels.  ``"total"`` (default) is the per-channel dual-polarization
-            total power with the printed ``16/27``/``32/27`` weights; ``"per_pol"``
-            treats the input as per-polarization power, drives the kernels with
-            ``2 * P`` and halves the per-channel NLI.  See the module docstring.
+            kernels and the ISRS profile.  ``"total"`` (default) is the
+            per-channel dual-polarization total power with the printed
+            ``16/27``/``32/27`` weights; ``"per_pol"`` treats the input as
+            per-polarization power, drives the kernels and the SPP with
+            ``2 * P``, and halves the per-channel NLI and the span-end power.
+            See the module docstring.
     """
 
     def __init__(
@@ -2202,6 +2213,32 @@ class PCFMSpanKernel:
         energy = _profile_energy_jit(np.ascontiguousarray(q_scaled)) * float(span_length_m)
         return self.k_xci_matrix * energy[None, :]
 
+    def _spp_drive_scale(self) -> float:
+        """Power scale between ``power_in_w`` and the physical ISRS drive.
+
+        The ISRS power equations are a physical statement about the fibre: the
+        Raman coupling between two channels is driven by their
+        **dual-polarization total** power.  The coordinate of ``power_in_w`` is
+        therefore irrelevant to the profile itself.  Under
+        ``nli_power_convention="per_pol"`` the input is per-polarization power,
+        so the profile must be driven with ``2 * P``, exactly like the NLI
+        kernels; the span-end power is halved back on the way out.
+
+        ``"total"`` returns ``1.0`` and :meth:`_integrate_spp` then multiplies
+        nothing, which keeps the historical path bit-for-bit identical.
+
+        Returns
+        -------
+            ``2.0`` for a per-polarization input, ``1.0`` otherwise.
+
+        Notes
+        -----
+            Subclasses whose launch and NLI conventions may disagree override
+            this, see
+            :meth:`~network_nlo_eval.models.pcfm_h3_raman.PCFH3RamanSpanKernel._spp_drive_scale`.
+        """
+        return 2.0 if self.nli_power_convention == "per_pol" else 1.0
+
     def _integrate_spp(
         self,
         power: NDArrayFloat,
@@ -2210,15 +2247,20 @@ class PCFMSpanKernel:
         """Integrate the ISRS power equations and normalise the profile.
 
         Args:
-            power: ``(N,)`` launch power per channel (W), internal order.
+            power: ``(N,)`` launch power per channel (W), internal order, in the
+                kernel's ``nli_power_convention`` coordinate.
             span_length_m: Span length (m).
 
         Returns
         -------
             ``(profile_norm, power_out)``: the normalised SPP
             ``p_i(z) = P_i(z)/P_i(0)`` sampled twice per integration step and
-            the power at the span end.
+            the power at the span end, both in the input coordinate.
         """
+        drive_scale = self._spp_drive_scale()
+        # 物理驱动永远是双偏振总功率；total 口径下 drive 就是输入本身（不复制、
+        # 不乘 1.0），保证历史路径逐位不变。
+        drive = power * drive_scale if drive_scale != 1.0 else power
         lengths, losses, steps = self._span_segments(span_length_m)
         n_samples = 2 * int(steps.sum())
         profile = np.zeros((n_samples, self.n_nodes), dtype=np.float64)
@@ -2226,7 +2268,7 @@ class PCFMSpanKernel:
         _solve_spp_jit(
             self.coef_mat,
             self.alpha_npm,
-            power,
+            drive,
             lengths,
             losses,
             steps,
@@ -2236,10 +2278,14 @@ class PCFMSpanKernel:
         # A dark channel keeps a passive unit transfer function.
         with np.errstate(divide="ignore", invalid="ignore"):
             profile_norm = np.where(
-                power[None, :] > 0.0,
-                profile / np.where(power[None, :] > 0.0, power[None, :], 1.0),
+                drive[None, :] > 0.0,
+                profile / np.where(drive[None, :] > 0.0, drive[None, :], 1.0),
                 1.0,
             )
+        if drive_scale != 1.0:
+            # 出射功率回到输入坐标；除以 2 在二进制浮点下精确，per_pol 与
+            # total 因此逐位对齐，下游不需要再做换算。
+            power_out = power_out / drive_scale
         return profile_norm, power_out
 
     # -- inter-span coherence ---------------------------------------------

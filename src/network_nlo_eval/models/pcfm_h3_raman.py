@@ -77,7 +77,7 @@ dual-polarization total, so the photon budget closes at ratio 1 (verified in
 ``tests/test_h3_launch_convention.py``).  ``"total"`` with
 ``signal_polarizations=2`` is kept only for historical comparisons and warns.
 
-**The NLI kernels follow the same declared convention**
+**The NLI kernels and the ISRS profile follow the same declared convention**
 
 The PCFM ``16/27``/``32/27`` weights are dual-polarization weights built for a
 *total* PSD (see the :mod:`~network_nlo_eval.models.pcfm` module docstring), and
@@ -90,6 +90,13 @@ numbers as an explicit comparison control.  The EDFA ASE of the framework is
 still the total dual-polarization ASE, so a per-polarization
 ``signal``/``NLI``/``ASE`` triple is not yet self-consistent: the audit script
 ``scripts/h3_nli_polarization_audit.py`` quantifies that residual.
+
+The pump-free ISRS profile is physical in the same way: its Raman coupling is
+driven by the total power, so the parent
+:meth:`~network_nlo_eval.models.pcfm.PCFMSpanKernel._integrate_spp` is driven
+with ``2 * P`` and halves the span-end power.  Keying it off the *launch*
+convention (not the NLI one) keeps that true for the mixed control, and leaves
+``"total"`` untouched.
 """
 
 from __future__ import annotations
@@ -554,6 +561,24 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         resampled = (1.0 - weight)[:, None] * extended[index] + weight[:, None] * extended[index + 1]
         return np.ascontiguousarray(resampled)
 
+    def _spp_drive_scale(self) -> float:
+        """Return the ISRS drive scale from the *launch* convention, not the NLI one.
+
+        The two can differ on purpose in H3: an explicit
+        ``nli_power_convention="total"`` under a per-polarization launch keeps
+        the legacy 8x-low NLI as a comparison control, while the physical ISRS
+        profile must still be driven by the dual-polarization total power.  The
+        base class therefore keys off the NLI convention, which is only the
+        right answer when both follow the launch.
+
+        Returns
+        -------
+            ``2.0`` for a per-polarization launch, ``1.0`` otherwise (which
+            includes the historical ``total`` + ``signal_polarizations=2``
+            double-drive probe and keeps it unchanged).
+        """
+        return 2.0 if self.launch_power_convention == "per_pol" else 1.0
+
     def _integrate_spp(
         self,
         power: NDArrayFloat,
@@ -561,8 +586,11 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Return the normalised SPP and the span-end power.
 
-        With active pumps the profile is the coupled signal/pump solution.  With
-        no active pump the parent ISRS-only integration is used unchanged.
+        With active pumps the profile is the coupled signal/pump solution, whose
+        coupling drive already carries ``signal_polarizations``.  With no active
+        pump the parent ISRS-only integration is used; it applies
+        :meth:`_spp_drive_scale` itself, so a per-polarization launch is driven
+        by the physical total power without a second scaling here.
 
         Args:
             power: ``(N,)`` launch power per channel (W), internal order.
