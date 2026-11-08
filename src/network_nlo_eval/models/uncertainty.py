@@ -321,7 +321,16 @@ class ValidityReport:
         raman_wideband_multipump: The comb reaches S/E spectrum and the pump
             set is forward or multi-pump.  ``raman_steps="auto"`` uses the
             extended 96-step branch there; the flag is informational when the
-            solve converged, and invalidating when it did not.
+            solve converged, and invalidating when it did not.  It describes a
+            *numerical convergence risk* for pumps outside the signal band.
+        raman_pump_signal_overlap: ``(N,)`` boolean, a pump frequency falls
+            inside the occupied signal band.  This is a physical-configuration
+            error, not a convergence risk: the channel is invalid and its
+            margin is infinite.  It is independent of
+            ``raman_wideband_multipump``.
+        raman_pump_min_offset_hz: Smallest distance from an active pump to the
+            occupied signal band over the spans (Hz); ``0`` when a pump is
+            inside, ``inf`` without pumps.  Read-only.
         lumped_raman: The path used the pure PCFM lumped Raman approximation
             with active pumps.  The intra-span profile and pump depletion are
             not modelled, so the point value is not a trustworthy QoT even
@@ -366,6 +375,7 @@ class ValidityReport:
     pump_not_converged: NDArrayBool
     raman_not_converged: NDArrayBool
     raman_wideband_multipump: NDArrayBool
+    raman_pump_signal_overlap: NDArrayBool
     lumped_raman: NDArrayBool
     strong_tilt: NDArrayBool
     min_abs_x_sci: NDArrayFloat
@@ -379,6 +389,7 @@ class ValidityReport:
     min_channel_spacing_hz: float = float("inf")
     spacing_to_bandwidth: float = float("inf")
     dense_grid_overlap: bool = False
+    raman_pump_min_offset_hz: float = float("inf")
 
 
 @dataclass(frozen=True)
@@ -467,6 +478,9 @@ class H3ErrorBudget:
                 "raman_wideband_multipump": [
                     bool(value) for value in self.validity.raman_wideband_multipump
                 ],
+                "raman_pump_signal_overlap": [
+                    bool(value) for value in self.validity.raman_pump_signal_overlap
+                ],
                 "lumped_raman": [bool(value) for value in self.validity.lumped_raman],
                 "strong_tilt": [bool(value) for value in self.validity.strong_tilt],
                 "min_abs_x_sci": _json_values(self.validity.min_abs_x_sci),
@@ -488,6 +502,11 @@ class H3ErrorBudget:
                     else None
                 ),
                 "dense_grid_overlap": bool(self.validity.dense_grid_overlap),
+                "raman_pump_min_offset_hz": (
+                    float(self.validity.raman_pump_min_offset_hz)
+                    if np.isfinite(self.validity.raman_pump_min_offset_hz)
+                    else None
+                ),
             },
             "terms": [
                 {
@@ -808,12 +827,27 @@ def estimate_h3_error_budget(
     # 只能由模型层声明；H3 核把每次耦合求解的收敛与宽波段多泵区域写在报告里。
     raman_not_converged = np.zeros(n_nodes, dtype=bool)
     raman_wideband = np.zeros(n_nodes, dtype=bool)
+    pump_overlap = np.zeros(n_nodes, dtype=bool)
+    pump_min_offset = float("inf")
     lumped_raman = np.zeros(n_nodes, dtype=bool)
     for report in span_reports:
         if not bool(getattr(report, "raman_converged", True)):
             raman_not_converged[:] = True
         if bool(getattr(report, "raman_wideband_multipump", False)):
             raman_wideband[:] = True
+        pump_min_offset = min(
+            pump_min_offset,
+            float(getattr(report, "raman_pump_min_offset_hz", float("inf"))),
+        )
+        overlap_channels = np.asarray(
+            getattr(report, "raman_pump_overlap_channels", ()),
+            dtype=bool,
+        )
+        if overlap_channels.shape == (n_nodes,):
+            pump_overlap |= overlap_channels
+        elif bool(getattr(report, "raman_pump_signal_overlap", False)):
+            # 旧报告没有逐信道掩码：保守地按全部已发射信道处理。
+            pump_overlap |= launched
         if bool(getattr(report, "lumped_raman_approximation", False)):
             lumped_raman[:] = True
     raman_not_converged |= not_converged
@@ -821,6 +855,7 @@ def estimate_h3_error_budget(
         lumped_raman |= launched
     raman_not_converged &= launched
     raman_wideband &= launched
+    pump_overlap &= launched
     lumped_raman &= launched
     tilt_class = "strong" if tilt_db >= cfg.strong_tilt_db else "normal"
     strong_tilt = active & (tilt_class == "strong")
@@ -846,7 +881,9 @@ def estimate_h3_error_budget(
     # 已发射但点值非有限（例如 RK4 溢出）不能按“未占用”处理：那是硬失效，
     # margin 必须是无穷，否则只检查 margin 的调用方会把它当成可用结果。
     unusable_result = launched & (~snr_ok | ~np.isfinite(signal_values))
-    valid = active & snr_ok & ~raman_not_converged
+    # 泵在信号带内是物理配置错误（不是收敛问题）：与未收敛一样是硬失效，
+    # 对应信道 margin=inf；点值本身仍保留，便于调用方检查。
+    valid = active & snr_ok & ~raman_not_converged & ~pump_overlap
     confidence = np.where(strong_tilt, confidence - 0.30, confidence)
     confidence = np.where(not_converged, confidence - 0.40, confidence)
     confidence = np.where(raman_wideband, confidence - 0.15, confidence)
@@ -854,6 +891,7 @@ def estimate_h3_error_budget(
     confidence = np.clip(confidence, 0.05, 1.0)
     confidence = np.where(active, confidence, 0.0)
     confidence = np.where(unusable_result, 0.0, confidence)
+    confidence = np.where(pump_overlap, np.minimum(confidence, 0.2), confidence)
 
     entry, entry_notes = select_residual_entry(pump_mode, band_class, tilt_class)
     statistical = H3_STATISTICAL_TABLE[band_class]
@@ -879,6 +917,7 @@ def estimate_h3_error_budget(
         | not_converged
         | raman_not_converged
         | raman_wideband
+        | pump_overlap
         | lumped_raman
         | unusable_result
         | (dense_grid & active)
@@ -894,6 +933,7 @@ def estimate_h3_error_budget(
         pump_not_converged=not_converged,
         raman_not_converged=raman_not_converged,
         raman_wideband_multipump=raman_wideband,
+        raman_pump_signal_overlap=pump_overlap,
         lumped_raman=lumped_raman,
         strong_tilt=strong_tilt,
         min_abs_x_sci=min_abs_x,
@@ -907,6 +947,7 @@ def estimate_h3_error_budget(
         min_channel_spacing_hz=float(min_spacing_hz),
         spacing_to_bandwidth=float(spacing_ratio),
         dense_grid_overlap=dense_grid,
+        raman_pump_min_offset_hz=float(pump_min_offset),
     )
 
     terms = [
@@ -956,6 +997,13 @@ def estimate_h3_error_budget(
         notes.append(
             "S/E wideband with a forward or multi-pump set: raman_steps='auto' uses the extended "
             "96-step branch; the flag is informational when the solve converged"
+        )
+    if bool(np.any(pump_overlap)):
+        notes.append(
+            "a Raman pump lies inside the occupied signal band; that is not a physical DRA "
+            "configuration (the pump cannot be separated from the data channels), so the "
+            f"channel is invalid and gets an infinite margin (min pump/band offset "
+            f"{pump_min_offset / 1e12:.3f} THz). The point value is unchanged."
         )
     if bool(np.any(lumped_raman)):
         notes.append(

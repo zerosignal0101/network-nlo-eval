@@ -117,9 +117,11 @@ def test_escl_six_pump_backward_uses_96_steps_and_matches_192() -> None:
     assert float(np.max(np.abs(delta))) < 0.15
 
     budget = estimate_h3_error_budget(model_96, path, power, result_96)
-    assert bool(np.all(budget.validity.valid))
-    # S 的宽波段多泵 flag 把 confidence 降 0.15，margin 从 14.81 升到 15.26 dB。
-    assert float(np.median(budget.margin_db)) == pytest.approx(15.2594, abs=1e-3)
+    # 1505 nm 泵（199.2 THz）落在 S 带内：非物理 DRA 配置，信道不可用。
+    assert bool(np.all(budget.validity.raman_pump_signal_overlap))
+    assert not bool(np.any(budget.validity.valid))
+    assert bool(np.all(np.isinf(budget.margin_db)))
+    assert budget.validity.raman_pump_min_offset_hz == 0.0
 
 
 def test_unpumped_scl_edge_matches_the_numerical_primary_reference() -> None:

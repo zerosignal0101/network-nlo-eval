@@ -58,6 +58,22 @@ pumps, C+L backward pump sets).  ``egn=True``/``False`` still force the legacy
 behaviour.  The decision is made once per model from the same pump list that
 resolves ``span_coherence``, so every span of a link shares it.
 
+**Pump/signal-band overlap is a hard validity gate**
+
+A pump whose frequency falls inside the occupied signal band
+``[min(f_i), max(f_i)]`` (launched channels, plus
+:data:`PUMP_SIGNAL_OVERLAP_GUARD_HZ`) is not a physical DRA: it pumps the data
+band directly and a WDM cannot separate it from the signals.  The span report
+sets ``raman_pump_signal_overlap=True``, marks every active channel
+``raman_pump_overlap_channels`` (and therefore ``valid=False``,
+``confidence<=0.2``, ``flagged=True``) and emits one ``RuntimeWarning``.  The
+point NLI/ASE/SNR is not touched.  The error budget treats those channels like
+a non-converged solve (``margin=inf``).  This is deliberately distinct from
+``raman_wideband_multipump``, which only says that a *pump set outside* the
+band needed the extended 96-step branch: C+L six-pump combs keep
+``raman_steps=24`` and stay valid, while E+S+C+L and S+C+L six-pump combs
+contain the 1505 nm (199.2 THz) pump inside the S band and are invalid.
+
 **When there is no active pump the model is bit-for-bit the H3 PCFM**
 
 The Raman branch is entered only when at least one pump has positive power.
@@ -107,7 +123,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.base import (
     ModelInfo,
     PathQoTResult,
@@ -179,6 +195,59 @@ WIDEBAND_MULTIPUMP_RAMAN_STEPS: int = 96
 #: is exactly 195.9 THz) out of the extended-step rule.
 C_BAND_UPPER_EDGE_HZ: float = 195.9e12
 _WIDEBAND_EDGE_GUARD_HZ: float = 0.1e12
+
+#: Guard band added to each side of the occupied signal spectrum when the
+#: pump/signal overlap is decided (Hz).
+#:
+#: The occupied band is ``[min(f_i), max(f_i)]`` over the *launched* channel
+#: centres, extended by this guard.  ``0`` keeps the rule literal: the
+#: physical pump linewidth and the half-channel edge of the outermost signals
+#: are not modelled, so a pump needs to be inside the channel-centre interval
+#: (or within a deliberate positive guard) to be flagged.  The value is a
+#: module constant rather than an option because moving it only changes which
+#: configurations are declared non-physical, not any number.
+PUMP_SIGNAL_OVERLAP_GUARD_HZ: float = 0.0
+
+
+def _pump_signal_overlap(
+    pump_frequencies_hz: NDArrayFloat,
+    f_abs_hz: NDArrayFloat,
+    active_channels: NDArrayBool,
+) -> tuple[bool, float]:
+    """Return whether a pump lies inside the occupied signal band, and the offset.
+
+    The band is ``[min(f_i), max(f_i)]`` over the launched channels, widened
+    by :data:`PUMP_SIGNAL_OVERLAP_GUARD_HZ` on both sides.  A pump inside that
+    interval is a non-physical DRA configuration: it pumps the data band
+    directly and cannot be separated from the signals by a WDM.  The distance
+    is measured to the interval, so it is ``0`` inside and positive outside;
+    the minimum over the active pumps is the reported offset.
+
+    Args:
+        pump_frequencies_hz: ``(N_p,)`` active pump frequencies (Hz).
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz), any order.
+        active_channels: ``(N,)`` boolean mask of launched channels.
+
+    Returns
+    -------
+        ``(overlap, min_offset_hz)``.  Both are ``(False, inf)`` when there is
+        no active pump or no launched channel.
+    """
+    frequencies = np.asarray(f_abs_hz, dtype=np.float64)
+    mask = np.asarray(active_channels, dtype=bool)
+    pumps = np.asarray(pump_frequencies_hz, dtype=np.float64)
+    if pumps.size == 0 or frequencies.size == 0 or mask.shape != frequencies.shape or not bool(np.any(mask)):
+        return False, float("inf")
+    band_low = float(np.min(frequencies[mask])) - PUMP_SIGNAL_OVERLAP_GUARD_HZ
+    band_high = float(np.max(frequencies[mask])) + PUMP_SIGNAL_OVERLAP_GUARD_HZ
+    # 到闭区间的距离：带内为 0，带外为正。取所有泵的最小值。
+    offsets = np.where(
+        pumps < band_low,
+        band_low - pumps,
+        np.where(pumps > band_high, pumps - band_high, 0.0),
+    )
+    min_offset = float(np.min(offsets))
+    return bool(min_offset <= 0.0), min_offset
 
 
 def _reaches_s_band(f_abs_hz: NDArrayFloat) -> bool:
@@ -425,6 +494,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         )
         self._fiber_config = fiber_config
         self._raman_pumps = _active_pumps(pumps)
+        # 泵频率在构造期固定，重叠判定只需要信号带边界，因此没有热路径开销。
+        self._pump_frequencies_hz = np.asarray(
+            [C_LIGHT / (float(pump.wavelength_nm) * 1e-9) for pump in self._raman_pumps],
+            dtype=np.float64,
+        )
+        self._pump_overlap_warned = False
         self._raman_gain_model = resolve_raman_gain_model(gain_model)
         self._raman_ase = bool(raman_ase)
         self.raman_steps = int(raman_steps)
@@ -634,6 +709,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         solve is converged, so the caller can see that the default needed the
         extended step count.
 
+        A pump inside the occupied signal band is a separate, physical
+        invalidity: it is not a DRA configuration at all, so every active
+        channel is reported invalid regardless of convergence.  The point
+        NLI/ASE/SNR is not touched; only the report (and therefore the
+        ``strict`` mode and the error budget) refuses it.
+
         With no active pump the parent report is returned unchanged (empty
         pump arrays), which keeps the no-pump diagnostics bit-for-bit
         identical to :class:`PCFMSpanKernel`.
@@ -673,6 +754,34 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             valid = np.where(active, False, valid)
             confidence = np.where(active, np.minimum(confidence, 0.2), confidence)
 
+        # 泵落在活跃信号带内不是“收敛风险”，而是物理配置错误：整个 span 的
+        # 数据信道都被泵污染，无法用任何步数修好。硬失效，与收敛无关。
+        pump_overlap, min_offset = _pump_signal_overlap(
+            self._pump_frequencies_hz,
+            self.f_abs_hz,
+            power > 0.0,
+        )
+        overlap_channels = active & pump_overlap
+        if pump_overlap:
+            flagged = np.where(active, True, flagged)
+            valid = np.where(active, False, valid)
+            confidence = np.where(active, np.minimum(confidence, 0.2), confidence)
+            if not self._pump_overlap_warned:
+                self._pump_overlap_warned = True
+                wavelengths = ", ".join(f"{float(pump.wavelength_nm):g}" for pump in self._raman_pumps)
+                band_low = float(np.min(self.f_abs_hz[power > 0.0])) / 1e12
+                band_high = float(np.max(self.f_abs_hz[power > 0.0])) / 1e12
+                warnings.warn(
+                    "pcfm_h3_raman: at least one Raman pump falls inside the occupied signal "
+                    f"band ({band_low:.3f}-{band_high:.3f} THz; pumps at {wavelengths} nm). "
+                    "A pump inside the data band cannot be separated from the signals, so this "
+                    "is not a physical DRA configuration. The span is reported invalid by "
+                    "validity_report and the error budget; the point NLI/ASE/SNR is unchanged. "
+                    "Remove or move the in-band pump.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
         return replace(
             report,
             pump_active=True,
@@ -685,6 +794,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raman_converged=bool(result.converged),
             raman_steps=int(self.raman_steps),
             raman_wideband_multipump=bool(self._wideband_multipump),
+            raman_pump_signal_overlap=bool(pump_overlap),
+            raman_pump_overlap_channels=np.ascontiguousarray(overlap_channels),
+            raman_pump_min_offset_hz=float(min_offset),
         )
 
     def _resample_profile(self, profile: NDArrayFloat, span_length_m: float) -> NDArrayFloat:

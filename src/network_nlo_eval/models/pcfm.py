@@ -617,7 +617,31 @@ class SpanValidityReport:
             ``True`` when the comb reaches S/E spectrum *and* the pump set is
             forward or multi-pump.  ``raman_steps="auto"`` uses the extended
             96-step branch there; the flag is reported so a caller can see
-            that the default needed it.
+            that the default needed it.  It is a *numerical convergence risk*
+            for pumps outside the signal band, not a physical-configuration
+            error; see ``raman_pump_signal_overlap`` for the latter.
+        raman_pump_signal_overlap:
+            ``True`` when at least one active pump frequency falls inside the
+            occupied signal band of the span.  That configuration is not a
+            physical DRA: a pump inside the data band cannot be separated from
+            the signals, so the whole span is outside the model's domain.  It
+            invalidates every active channel (``valid=False``,
+            ``confidence<=0.2``, ``flagged=True``) *without* changing the
+            point NLI/ASE/SNR.  It is independent of
+            ``raman_wideband_multipump``: the latter can be ``True`` with all
+            pumps outside the band, where it only signals the extended-step
+            regime.  Always ``False`` for the no-pump/base kernel.
+        raman_pump_overlap_channels:
+            ``(N,)`` boolean in model order, the active channels invalidated
+            by ``raman_pump_signal_overlap``.  It is the all-active mask when
+            the flag is set (the pump contaminates every signal channel) and
+            all-``False`` otherwise.
+        raman_pump_min_offset_hz:
+            Smallest distance from an active pump frequency to the occupied
+            signal band ``[min f_i, max f_i]`` (Hz), ``0`` when a pump lies
+            inside, positive when every pump is outside, and ``inf`` without
+            pumps or active channels.  It makes the overlap decision readable
+            without re-deriving the band.
         lumped_raman_approximation:
             ``True`` for the pure PCFM kernel with ``raman_model="lumped"``
             and active pumps.  The lumped model multiplies only the span-end
@@ -671,6 +695,9 @@ class SpanValidityReport:
     raman_converged: bool = True
     raman_steps: int = 0
     raman_wideband_multipump: bool = False
+    raman_pump_signal_overlap: bool = False
+    raman_pump_overlap_channels: NDArrayBool = field(default_factory=lambda: np.zeros(0, dtype=bool))
+    raman_pump_min_offset_hz: float = float("inf")
     lumped_raman_approximation: bool = False
     xci_overlap_pairs: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     xci_overlap_weight_fraction: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
@@ -2556,6 +2583,7 @@ class PCFMSpanKernel:
             xci_overlap_weight_fraction=np.ascontiguousarray(overlap_fraction[self.inverse_order]),
             min_guard_hz=min_guard_hz,
             sci_taylor_fraction=sci_taylor_fraction,
+            raman_pump_overlap_channels=np.zeros(self.n_nodes, dtype=bool),
         )
 
     def clear_span_cache(self) -> None:
