@@ -146,6 +146,7 @@ __all__ = [
     "H3_RAMAN_MODEL_INFO",
     "PCFH3RamanModel",
     "PCFH3RamanSpanKernel",
+    "WIDEBAND_MULTIPUMP_RAMAN_STEPS",
 ]
 
 #: RK4 steps of the coarse Raman profile/ASE solve.
@@ -156,6 +157,81 @@ __all__ = [
 #: about this being a coarse solve: it is a fast profile provider, not a
 #: replacement for the full paper ODE.
 DEFAULT_H3_RAMAN_STEPS: int = 12
+
+#: RK4 steps used by ``raman_steps="auto"`` when the comb reaches the S/E band
+#: *and* the pump set is forward or multi-pump.
+#:
+#: The coupled ODE is stiff in this regime: the E+S+C+L six-pump comb at
+#: 6 dBm/channel overflows at 24 steps (the backward fixed point never
+#: converges, giving ``NaN``) and the forward six-pump solution is still
+#: 0.3-1.9 dB off its 192-step value.  96 steps restores a finite, converged
+#: solve; against 192 steps the per-channel residual is at most 0.027 dB
+#: (backward) and 0.079 dB (forward), with a 0.01 dB mean.  C/C+L combs do not
+#: reach the S band and keep their historical 12/24-step auto values, so their
+#: numbers are bit-for-bit unchanged.
+WIDEBAND_MULTIPUMP_RAMAN_STEPS: int = 96
+
+#: Upper edge of the C band (Hz), i.e. the lower edge of the S band.  A comb
+#: with a channel centre above this value occupies S/E spectrum, where the
+#: pumps of the six-pump set (1340-1505 nm) fall inside or next to the signal
+#: band and the coupled ODE becomes stiff.  The 100 GHz guard above the
+#: nominal 195.9 THz boundary keeps the C and C+L grids (whose highest centre
+#: is exactly 195.9 THz) out of the extended-step rule.
+C_BAND_UPPER_EDGE_HZ: float = 195.9e12
+_WIDEBAND_EDGE_GUARD_HZ: float = 0.1e12
+
+
+def _reaches_s_band(f_abs_hz: NDArrayFloat) -> bool:
+    """Return whether any channel centre lies above the C band.
+
+    The classification is deliberately based on the signal grid, not on a
+    caller-supplied band string, so it also catches custom combs that extend
+    into S/E.  The C and C+L benchmarks end exactly at 195.9 THz; the 0.1 THz
+    guard keeps them on the historical auto path.
+
+    Args:
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz).
+
+    Returns
+    -------
+        ``True`` when the comb reaches S/E spectrum.
+    """
+    if np.size(f_abs_hz) == 0:
+        return False
+    return bool(float(np.max(f_abs_hz)) > C_BAND_UPPER_EDGE_HZ + _WIDEBAND_EDGE_GUARD_HZ)
+
+
+def _resolve_auto_raman_steps(
+    active_pumps: Sequence[RamanPumpConfig],
+    f_abs_hz: NDArrayFloat,
+) -> int:
+    """Pick ``raman_steps="auto"`` for one link.
+
+    The rule is bounded and explicit:
+
+    * no active pump, or one backward pump: 12 steps;
+    * C/C+L with a forward or multi-pump set: 24 steps (historical);
+    * S/E-containing comb with a forward or multi-pump set: 96 steps.
+
+    A single backward pump never enters the extended branch, and C/C+L never
+    changes value, so the historical defaults are preserved bit for bit.
+
+    Args:
+        active_pumps: Pumps with positive power.
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz).
+
+    Returns
+    -------
+        The RK4 step count of the coarse solve.
+    """
+    if not active_pumps:
+        return DEFAULT_H3_RAMAN_STEPS
+    hard_pump_set = any(str(pump.direction) == "forward" for pump in active_pumps) or len(active_pumps) >= 4
+    if not hard_pump_set:
+        return DEFAULT_H3_RAMAN_STEPS
+    if _reaches_s_band(f_abs_hz):
+        return WIDEBAND_MULTIPUMP_RAMAN_STEPS
+    return 24
 
 #: Fixed-point iterations cap of the backward-pump solve.  The solver stops as
 #: soon as the relative pump change falls below its tolerance, so the cap only
@@ -358,6 +434,16 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.signal_polarizations = int(signal_polarizations)
         self.pump_pump_raman = bool(pump_pump_raman)
         self.launch_power_convention = resolved_convention
+        # 宽波段多泵/前向是粗 ODE 最难的区域：auto 在这里升到 96 步，报告里也
+        # 单独标出，便于调用方区分“默认已收敛”和“收敛是靠扩展步数得到的”。
+        self._wideband_multipump = (
+            bool(self._raman_pumps)
+            and (
+                any(str(pump.direction) == "forward" for pump in self._raman_pumps)
+                or len(self._raman_pumps) >= 4
+            )
+            and _reaches_s_band(self.f_abs_hz)
+        )
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
         # 泵浦自身衰减系数：耗尽度要相对“无信号时”的泵浦出射功率定义，
@@ -381,6 +467,17 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
     def active_pumps(self) -> tuple[RamanPumpConfig, ...]:
         """Active (positive-power) pumps of the span, in configuration order."""
         return tuple(self._raman_pumps)
+
+    @property
+    def wideband_multipump(self) -> bool:
+        """Whether the span is in the S/E multi-pump (extended-step) regime.
+
+        ``raman_steps="auto"`` raises the step count to
+        :data:`WIDEBAND_MULTIPUMP_RAMAN_STEPS` here.  The flag is reported
+        independently of the final convergence so an explicitly under-resolved
+        kernel (``raman_steps=12``) is still visible downstream.
+        """
+        return bool(self._wideband_multipump)
 
     @property
     def last_span_gain(self) -> NDArrayFloat:
@@ -493,6 +590,32 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             return max(power_tilt_db, gain_tilt_db)
         return power_tilt_db
 
+    @staticmethod
+    def _raman_solve_is_usable(result: PaperRamanSpanResult) -> bool:
+        """Return whether every array of a coupled solve is finite and converged.
+
+        The fixed-point flag alone is not sufficient: a forward-pump solve has
+        no fixed point, yet an under-resolved RK4 step can still return a
+        finite-but-wrong profile.  The auto rule handles the known E/S
+        multi-pump case; this predicate is the last-resort guard that keeps a
+        non-finite (or non-converged) solve from being reported as usable.
+
+        Args:
+            result: Result of :class:`RamanPaperSpanSolver`.
+
+        Returns
+        -------
+            ``True`` when the solve converged and every output array is finite.
+        """
+        if not result.converged:
+            return False
+        return bool(
+            np.all(np.isfinite(result.profile_norm))
+            and np.all(np.isfinite(result.power_out_w))
+            and np.all(np.isfinite(result.raman_ase_w))
+            and np.all(np.isfinite(result.pump_power_out_w))
+        )
+
     def validity_report(
         self,
         span_length_m: float,
@@ -500,13 +623,20 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         *,
         power_out_w: NDArrayFloat | None = None,
     ) -> SpanValidityReport:
-        """Add the pump direction and depletion to the PCFM validity report.
+        """Add the pump direction, depletion and Raman convergence to the report.
 
         The coupled solve already returns the pump power at each pump's exit
         face, so the depletion is read from the same state that produced the
-        NLI profile.  With no active pump the parent report is returned
-        unchanged (empty pump arrays), which keeps the no-pump diagnostics
-        bit-for-bit identical to :class:`PCFMSpanKernel`.
+        NLI profile.  A non-converged or non-finite solve invalidates every
+        active channel: the reported NLI/profile is not a solution, so a
+        downstream ``strict`` mode or the error budget must refuse it.  The
+        S/E multi-pump regime is also flagged independently, even when the
+        solve is converged, so the caller can see that the default needed the
+        extended step count.
+
+        With no active pump the parent report is returned unchanged (empty
+        pump arrays), which keeps the no-pump diagnostics bit-for-bit
+        identical to :class:`PCFMSpanKernel`.
 
         Args:
             span_length_m: Span length (m).
@@ -529,12 +659,32 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_passive = pump_in * np.exp(-self._pump_alpha_npm * float(span_length_m))
         depletion = np.clip(1.0 - result.pump_power_out_w / pump_passive, 0.0, 1.0)
         directions = tuple(str(pump.direction) for pump in self._raman_pumps)
+
+        usable = self._raman_solve_is_usable(result)
+        active = np.asarray(power_in_w, dtype=np.float64) > 0.0
+        flagged = np.array(report.flagged, dtype=bool, copy=True)
+        valid = np.array(report.valid, dtype=bool, copy=True)
+        confidence = np.array(report.confidence, dtype=np.float64, copy=True)
+        if self._wideband_multipump:
+            flagged = np.where(active, True, flagged)
+            confidence = np.where(active, np.minimum(confidence, 0.8), confidence)
+        if not usable:
+            flagged = np.where(active, True, flagged)
+            valid = np.where(active, False, valid)
+            confidence = np.where(active, np.minimum(confidence, 0.2), confidence)
+
         return replace(
             report,
             pump_active=True,
             pump_directions=directions,
             pump_depletion=np.ascontiguousarray(depletion),
             pump_depletion_max=float(np.max(depletion)) if depletion.size else 0.0,
+            flagged=np.ascontiguousarray(flagged),
+            valid=np.ascontiguousarray(valid),
+            confidence=np.ascontiguousarray(confidence),
+            raman_converged=bool(result.converged),
+            raman_steps=int(self.raman_steps),
+            raman_wideband_multipump=bool(self._wideband_multipump),
         )
 
     def _resample_profile(self, profile: NDArrayFloat, span_length_m: float) -> NDArrayFloat:
@@ -660,6 +810,16 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.last_raman_iterations = int(result.iterations)
         self.last_raman_converged = bool(result.converged)
         self.last_pump_power_out_w = np.ascontiguousarray(result.pump_power_out_w)
+        if not self._raman_solve_is_usable(result):
+            warnings.warn(
+                "pcfm_h3_raman: the coupled signal/pump solve is not usable "
+                f"(converged={bool(result.converged)}, raman_steps={self.raman_steps}, "
+                f"wideband_multipump={bool(self._wideband_multipump)}). The span is reported "
+                "invalid by validity_report and the error budget; do not use its SNR as a "
+                "trusted QoT. Increase raman_steps or use the full hybrid model.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         output = super().evaluate(
             power_in_w,
             span_length_m,
@@ -749,7 +909,12 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "Peak local Raman gain rate before A_eff division. Default 6e-14 (None). "
             "An explicit value overrides a gain table file and warns.",
         ),
-        ("raman_steps", "RK4 steps of the coarse solve, or 'auto': 12 backward single-pump, 24 forward/multi-pump."),
+        (
+            "raman_steps",
+            "RK4 steps of the coarse solve, or 'auto': 12 no/one backward pump, 24 C/C+L forward or "
+            "multi-pump, 96 S/E-containing comb with a forward or multi-pump set. The 96-step branch "
+            "removes the E+S+C+L six-pump NaN/bias; C/C+L auto values are unchanged.",
+        ),
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
         ("include_isrs", "Include channel-channel ISRS in the coupled solve. Default True."),
         (
@@ -1079,8 +1244,7 @@ class PCFH3RamanModel(PCFMModel):
             pumps = fiber_config.raman_pumps or []
         active = [pump for pump in pumps if float(pump.power_w) > 0.0]
         if self._h3_raman_steps == "auto":
-            # 前向泵把增益放在跨首，剖面更陡；多泵 C+L 的 ODE 也更难。
-            steps = 24 if any(str(pump.direction) == "forward" for pump in active) or len(active) >= 4 else 12
+            steps = _resolve_auto_raman_steps(active, self.f_abs_hz)
         else:
             steps = int(self._h3_raman_steps)
         return PCFH3RamanSpanKernel(

@@ -603,6 +603,25 @@ class SpanValidityReport:
             :data:`DENSE_GRID_SPACING_RATIO`.  It is a domain warning only:
             it ORs into ``flagged`` for every active channel but never changes
             ``valid``, ``confidence`` or the NLI itself.
+        raman_converged:
+            Whether the coupled Raman solve behind the report converged.
+            ``False`` also invalidates every active channel: the NLI profile
+            is not a solution.  Always ``True`` for the no-pump/base kernel.
+        raman_steps:
+            RK4 steps actually used by the coupled solve (``0`` without a
+            Raman solve).  It makes an explicitly under-resolved kernel
+            visible even when the solve happens to converge.
+        raman_wideband_multipump:
+            ``True`` when the comb reaches S/E spectrum *and* the pump set is
+            forward or multi-pump.  ``raman_steps="auto"`` uses the extended
+            96-step branch there; the flag is reported so a caller can see
+            that the default needed it.
+        lumped_raman_approximation:
+            ``True`` for the pure PCFM kernel with ``raman_model="lumped"``
+            and active pumps.  The lumped model multiplies only the span-end
+            power and does not model pump depletion or the intra-span profile,
+            so it is not a trustworthy QoT for pumped links.  It never changes
+            the point result; the error budget refuses it.
     """
 
     xci_gated: NDArrayFloat
@@ -627,6 +646,10 @@ class SpanValidityReport:
     min_channel_spacing_hz: float = float("inf")
     spacing_to_bandwidth: float = float("inf")
     dense_grid: bool = False
+    raman_converged: bool = True
+    raman_steps: int = 0
+    raman_wideband_multipump: bool = False
+    lumped_raman_approximation: bool = False
 
 
 #: Relative power tolerance under which two span inputs are treated as the
@@ -2884,6 +2907,23 @@ class PCFMModel(RouteModel):
         # 才启用；仅 fiber_config 自带泵浦不会改变既有 PCFM 结果。
         self._raman_pumps = None if raman_pumps is None else list(raman_pumps)
         self._raman_enabled = raman_model == "lumped" or (raman_model is None and self._raman_pumps is not None)
+        _pump_source = self._raman_pumps if self._raman_pumps is not None else ref_fiber_config.raman_pumps
+        self._lumped_raman_active = bool(
+            self._raman_enabled and any(float(pump.power_w) > 0.0 for pump in (_pump_source or ()))
+        )
+        if self._lumped_raman_active:
+            warnings.warn(
+                "pcfm: raman_model='lumped' with active pumps is not a trustworthy QoT model. "
+                "The lumped approximation multiplies only the span-end signal power by the on-off "
+                "gain; it does not model pump depletion, the intra-span Raman profile or the "
+                "wideband Raman ASE. The accuracy matrix measures 5-28 dB of optimistic error "
+                "against the DRA reference, while the H3 budget only covers 2.24-8.79 dB. The "
+                "point values are kept for backward compatibility, but validity_report and the "
+                "error budget flag every such span/channel as unusable. Use pcfm_h3_raman or "
+                "hybrid_raman_paper for pumped links.",
+                UserWarning,
+                stacklevel=2,
+            )
         self._raman_ase = bool(raman_ase)
         self._raman_gain_model = resolve_raman_gain_model(
             raman_gain_model,
@@ -2917,6 +2957,17 @@ class PCFMModel(RouteModel):
         keeps its pumps on the kernel and therefore leaves this empty.
         """
         return list(self._raman_pumps or [])
+
+    @property
+    def lumped_raman_active(self) -> bool:
+        """Whether this model applies the lumped Raman approximation with pumps.
+
+        Such a link is numerically supported for backward compatibility but is
+        not a trustworthy QoT: the intra-span profile and pump depletion are
+        missing.  The span reports and the error budget use this flag to refuse
+        it, without changing the point result.
+        """
+        return bool(self._lumped_raman_active)
 
     @property
     def physical_power_scale(self) -> float:
@@ -2965,6 +3016,16 @@ class PCFMModel(RouteModel):
             span_length_m: Span length (m).
         """
         report = kernel.validity_report(span_length_m, power_in_w, power_out_w=power_out_w)
+        if self._lumped_raman_active:
+            # 集总拉曼只改跨末功率，跨内剖面/耗尽缺失；点值保留（兼容），
+            # 但诊断层必须让下游看见“不可信”。未占用信道保持原样。
+            active = np.asarray(power_in_w, dtype=np.float64) > 0.0
+            report = replace(
+                report,
+                flagged=np.where(active, True, report.flagged),
+                confidence=np.where(active, 0.2, report.confidence),
+                lumped_raman_approximation=True,
+            )
         self.last_span_validity.append(report)
         if self.last_validity_valid is None:
             self.last_validity_valid = np.array(report.valid, dtype=bool, copy=True)

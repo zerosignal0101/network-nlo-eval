@@ -313,6 +313,21 @@ class ValidityReport:
         xci_low_s: XCI validity parameter fell below the deep-breakdown limit.
         pump_not_converged: Backward-pump fixed point stopped at its iteration
             cap.
+        raman_not_converged: The coupled Raman solve reported a non-converged
+            or non-finite result.  It is a hard failure: the channel is
+            invalid and its margin is infinite.  Kept separate from
+            ``pump_not_converged`` because a forward-pump solve has no fixed
+            point and can still be under-resolved.
+        raman_wideband_multipump: The comb reaches S/E spectrum and the pump
+            set is forward or multi-pump.  ``raman_steps="auto"`` uses the
+            extended 96-step branch there; the flag is informational when the
+            solve converged, and invalidating when it did not.
+        lumped_raman: The path used the pure PCFM lumped Raman approximation
+            with active pumps.  The intra-span profile and pump depletion are
+            not modelled, so the point value is not a trustworthy QoT even
+            though it is returned for backward compatibility.  The channel is
+            flagged and loses confidence (a scope warning, not a numerical
+            failure), so the margin grows but stays finite.
         strong_tilt: Measured power tilt exceeded the configured threshold.
         min_abs_x_sci: Smallest ``|X|`` over the spans of the path.
         min_s_xci: Smallest XCI validity parameter over the spans and pairs.
@@ -349,6 +364,9 @@ class ValidityReport:
     sci_small_x: NDArrayBool
     xci_low_s: NDArrayBool
     pump_not_converged: NDArrayBool
+    raman_not_converged: NDArrayBool
+    raman_wideband_multipump: NDArrayBool
+    lumped_raman: NDArrayBool
     strong_tilt: NDArrayBool
     min_abs_x_sci: NDArrayFloat
     min_s_xci: NDArrayFloat
@@ -445,6 +463,11 @@ class H3ErrorBudget:
                 "sci_small_x": [bool(value) for value in self.validity.sci_small_x],
                 "xci_low_s": [bool(value) for value in self.validity.xci_low_s],
                 "pump_not_converged": [bool(value) for value in self.validity.pump_not_converged],
+                "raman_not_converged": [bool(value) for value in self.validity.raman_not_converged],
+                "raman_wideband_multipump": [
+                    bool(value) for value in self.validity.raman_wideband_multipump
+                ],
+                "lumped_raman": [bool(value) for value in self.validity.lumped_raman],
                 "strong_tilt": [bool(value) for value in self.validity.strong_tilt],
                 "min_abs_x_sci": _json_values(self.validity.min_abs_x_sci),
                 "min_s_xci": _json_values(self.validity.min_s_xci),
@@ -764,7 +787,13 @@ def estimate_h3_error_budget(
     bandwidth = np.asarray(model.channel_bandwidth_hz_channels, dtype=np.float64)
     occupied_hz = float(np.ptp(np.asarray(model.f_abs_hz, dtype=np.float64)) + np.max(bandwidth))
     band_class = classify_bandwidth(occupied_hz)
-    active = (power > 0.0) & (np.asarray(result.signal_power_w, dtype=np.float64) > 0.0)
+    launched = power > 0.0
+    signal_values = np.asarray(result.signal_power_w, dtype=np.float64)
+    # 已发射但结果非有限（例如 RK4 溢出）不能按“未占用”处理：它是硬失效，
+    # 必须保持 active=True，否则后面的 ``margin = np.where(active, ...)`` 会把
+    # 无效信道的 inf margin 压回 0。
+    unusable_signal = launched & ~np.isfinite(signal_values)
+    active = launched & ((signal_values > 0.0) | unusable_signal)
     tilt_db = _path_tilt_db(states)
     # 倾斜是整条占用谱的属性，不是某一信道的属性；与 ``confidence`` 一样由最差跨
     # 决定。模型未记录逐跨报告时退化为 1（不产生软 margin），因此旧调用方逐位不变。
@@ -774,6 +803,25 @@ def estimate_h3_error_budget(
         default=1.0,
     )
     tilt_confidence_informational = float(np.clip(tilt_confidence_informational, 0.0, 1.0))
+
+    # 收敛/适用域 flag 来自逐跨报告。纯 PCFM 核（含集总拉曼）没有拉曼剖面，
+    # 只能由模型层声明；H3 核把每次耦合求解的收敛与宽波段多泵区域写在报告里。
+    raman_not_converged = np.zeros(n_nodes, dtype=bool)
+    raman_wideband = np.zeros(n_nodes, dtype=bool)
+    lumped_raman = np.zeros(n_nodes, dtype=bool)
+    for report in span_reports:
+        if not bool(getattr(report, "raman_converged", True)):
+            raman_not_converged[:] = True
+        if bool(getattr(report, "raman_wideband_multipump", False)):
+            raman_wideband[:] = True
+        if bool(getattr(report, "lumped_raman_approximation", False)):
+            lumped_raman[:] = True
+    raman_not_converged |= not_converged
+    if bool(getattr(model, "lumped_raman_active", False)):
+        lumped_raman |= launched
+    raman_not_converged &= launched
+    raman_wideband &= launched
+    lumped_raman &= launched
     tilt_class = "strong" if tilt_db >= cfg.strong_tilt_db else "normal"
     strong_tilt = active & (tilt_class == "strong")
 
@@ -791,13 +839,21 @@ def estimate_h3_error_budget(
 
     # 泵不收敛是硬失效：点的 NLI 不是解出来的，给任何有限 margin 都会误导。
     # ``+inf`` SNR（零噪声）仍是有限模型能给出的理想结果，只排除 NaN 与 -inf。
+    # 集总拉曼有泵不是数值失效，而是模型适用域问题：保持点值/有限 margin，
+    # 只通过 ``lumped_raman`` flag、confidence 扣分与 notes 让下游看见。
     snr_values = np.asarray(result.snr_db, dtype=np.float64)
     snr_ok = ~np.isnan(snr_values) & ~np.isneginf(snr_values)
-    valid = active & snr_ok & ~not_converged
+    # 已发射但点值非有限（例如 RK4 溢出）不能按“未占用”处理：那是硬失效，
+    # margin 必须是无穷，否则只检查 margin 的调用方会把它当成可用结果。
+    unusable_result = launched & (~snr_ok | ~np.isfinite(signal_values))
+    valid = active & snr_ok & ~raman_not_converged
     confidence = np.where(strong_tilt, confidence - 0.30, confidence)
     confidence = np.where(not_converged, confidence - 0.40, confidence)
+    confidence = np.where(raman_wideband, confidence - 0.15, confidence)
+    confidence = np.where(lumped_raman, confidence - 0.40, confidence)
     confidence = np.clip(confidence, 0.05, 1.0)
     confidence = np.where(active, confidence, 0.0)
+    confidence = np.where(unusable_result, 0.0, confidence)
 
     entry, entry_notes = select_residual_entry(pump_mode, band_class, tilt_class)
     statistical = H3_STATISTICAL_TABLE[band_class]
@@ -815,7 +871,18 @@ def estimate_h3_error_budget(
     margin = np.where(valid, margin, np.inf)
     margin = np.where(active, margin, 0.0)
 
-    flagged = gated | small_x | low_s | strong_tilt | not_converged | (dense_grid & active)
+    flagged = (
+        gated
+        | small_x
+        | low_s
+        | strong_tilt
+        | not_converged
+        | raman_not_converged
+        | raman_wideband
+        | lumped_raman
+        | unusable_result
+        | (dense_grid & active)
+    )
     validity = ValidityReport(
         valid=valid,
         active=active,
@@ -825,6 +892,9 @@ def estimate_h3_error_budget(
         sci_small_x=small_x,
         xci_low_s=low_s,
         pump_not_converged=not_converged,
+        raman_not_converged=raman_not_converged,
+        raman_wideband_multipump=raman_wideband,
+        lumped_raman=lumped_raman,
         strong_tilt=strong_tilt,
         min_abs_x_sci=min_abs_x,
         min_s_xci=min_s,
@@ -877,6 +947,21 @@ def estimate_h3_error_budget(
         notes.append("residual row is provisional: the reference behind it is not a converged calibration")
     if bool(np.any(not_converged)):
         notes.append("pump fixed point did not converge; all channels are marked invalid")
+    if bool(np.any(unusable_result)):
+        notes.append(
+            "non-finite signal or SNR on launched channels; they stay active and get an infinite "
+            "margin instead of being silently treated as unoccupied"
+        )
+    if bool(np.any(raman_wideband)):
+        notes.append(
+            "S/E wideband with a forward or multi-pump set: raman_steps='auto' uses the extended "
+            "96-step branch; the flag is informational when the solve converged"
+        )
+    if bool(np.any(lumped_raman)):
+        notes.append(
+            "lumped Raman approximation with active pumps is not a trustworthy QoT: it misses the "
+            "intra-span profile and pump depletion (5-28 dB optimistic in the accuracy matrix)"
+        )
     if bool(np.any(gated)):
         notes.append("XCI edge gate corrected at least one channel; confidence reduced")
     if bool(np.any(strong_tilt)):
