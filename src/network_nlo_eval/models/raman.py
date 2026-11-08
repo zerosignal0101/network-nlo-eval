@@ -24,7 +24,8 @@
 * 增益集总在跨段末端：跨内信号功率剖面与 NLI 不随拉曼增益改变；
 * 拉曼增益谱默认用 Gaussian 或论文 CZ 线性近似，而非实测二氧化硅谱；
   需要标定时可由调用方通过 ``gain_model="table"`` 给出表格谱，表项线性
-  插值、表外置零，未给定表格时仍走解析分支；
+  插值、表外置零，未给定表格时仍走解析分支。显式的 JSON/CSV 文件入口见
+  :mod:`network_nlo_eval.models.raman_table` 与 :meth:`RamanGainModel.from_file`；
 * 泵浦与信号之间的 XPM 不计入 NLI；
 * 只对稳态、单跨静态配置建模，不包含动态增益控制或 droop 效应。
 
@@ -35,8 +36,10 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
-from typing import Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from scipy.integrate import cumulative_trapezoid, trapezoid
@@ -44,14 +47,38 @@ from scipy.integrate import cumulative_trapezoid, trapezoid
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.network.elements import RamanPumpConfig
 
+if TYPE_CHECKING:
+    from network_nlo_eval.models.raman_table import (
+        RamanGainTable,
+        load_raman_gain_table,
+        save_raman_gain_table,
+    )
+
 __all__ = [
     "C_LIGHT",
     "H_PLANCK",
     "K_BOLTZMANN",
     "RamanAmplifier",
     "RamanGainModel",
+    "RamanGainTable",
+    "load_raman_gain_table",
     "resolve_raman_gain_model",
+    "save_raman_gain_table",
 ]
+
+
+def __getattr__(name: str):
+    """按需转出表格文件辅助函数，避免 ``raman`` ↔ ``raman_table`` 的导入环。
+
+    ``raman_table`` 在模块级需要 ``RamanGainModel``；若本模块在顶层导入它，
+    两个模块会互相等待。文件入口只在构造期使用，因此用 PEP 562 的延迟
+    属性转出即可。
+    """
+    if name in {"RamanGainTable", "load_raman_gain_table", "save_raman_gain_table"}:
+        from network_nlo_eval.models import raman_table
+
+        return getattr(raman_table, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 #: 真空光速 (m/s)。
 C_LIGHT = 299_792_458.0
@@ -79,6 +106,17 @@ DEFAULT_DELTA_F_SIGMA_HZ = 2.12e12
 DEFAULT_DELTA_F_CUTOFF_HZ = 15.0e12
 
 
+def _looks_like_gain_table_path(value: str) -> bool:
+    """判断字符串是否像增益表文件路径。
+
+    只把 ``.json``/``.csv`` 后缀或含路径分隔符的字符串当作文件；``"gaussian"``
+    等保留名称不会被误判。
+    """
+    lowered = value.lower()
+    separators = [os.sep] + ([os.altsep] if os.altsep else [])
+    return lowered.endswith((".json", ".csv")) or any(separator in value for separator in separators)
+
+
 class RamanGainModel:
     """泵浦到信号的集总拉曼增益谱与 ASE 模型。
 
@@ -93,7 +131,8 @@ class RamanGainModel:
             ``gains`` 是对应的**归一化**增益形（峰值 1 对应
             ``peak_gain_coefficient_m_per_w``），必须有限且非负。两者长度
             相同且至少两个点。表外频移的增益为 0，因此插值不会外推出
-            物理上不存在的增益尾巴。
+            物理上不存在的增益尾巴。文件加载请用 :meth:`from_file`，它会把
+            光纤、来源、标定波长等元数据保留在只读溯源属性上。
         peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)，使用前除以
             信号波长的有效模面积 ``A_eff``。
         delta_f_peak_hz: 拉曼增益峰值对应的泵浦-信号频移 (Hz)。
@@ -106,10 +145,22 @@ class RamanGainModel:
         ase_steps: ASE 沿跨段积分的等距节点数，至少 8。
         reference_a_eff_m2: 未显式给出 ``A_eff`` 时使用的有效模面积 (m²)。
 
+    Attributes
+    ----------
+        source_table: 由 :meth:`from_file`/``RamanGainTable.to_model`` 设置，
+            保存完整的表对象；内存构造时为 ``None``。
+        table_metadata: 文件溯源元数据（``fiber``/``source``/``note``/
+            ``reference_wavelength_nm`` 等）。**只读溯源，不参与计算。**
+        reference_wavelength_nm: 文件声明的标定波长 (nm)。**不参与计算**；
+            模型不会按信号波长对它做缩放。
+        fiber, source, note: 文件溯源文本。
+        calibration_overrides: 构造时显式覆盖的标定字段（若没有则为空）。
+
     Raises
     ------
         ValueError: 任一参数越界、``gain_model`` 不受支持、``table`` 与
             ``gain_model`` 不匹配，或表格本身不合法。
+        TypeError: 把已构造的 ``RamanGainModel`` 当作 ``gain_model`` 名称传入。
     """
 
     def __init__(
@@ -127,6 +178,23 @@ class RamanGainModel:
         reference_a_eff_m2: float = 80e-12,
     ) -> None:
         """校验并保存模型参数。"""
+        if isinstance(gain_model, RamanGainModel):
+            raise TypeError(
+                "gain_model must be a string name, not an already constructed RamanGainModel. "
+                "File-backed tables are only supported by pcfm (raman_model='lumped'), "
+                "pcfm_h3_raman, hybrid_raman_paper and RamanPaperSpanSolver; pass the instance only "
+                "to those models' raman_gain_model option."
+            )
+        if isinstance(gain_model, os.PathLike) or (
+            isinstance(gain_model, str) and _looks_like_gain_table_path(gain_model)
+        ):
+            raise ValueError(
+                f"gain_model does not accept the table file {gain_model!r}; construct it with "
+                "RamanGainModel.from_file(path) and pass the instance to raman_gain_model. File-backed "
+                "tables are supported by pcfm (raman_model='lumped'), pcfm_h3_raman, hybrid_raman_paper "
+                "and RamanPaperSpanSolver; buglia2024_ra_gn, zhang2024_dra_egn, numerical_dra, "
+                "semrau2019 and ecz do not expose this entry."
+            )
         if gain_model not in ("gaussian", "linear", "table"):
             raise ValueError(f"gain_model must be 'gaussian', 'linear' or 'table', got {gain_model!r}.")
         if gain_model == "table" and table is None:
@@ -158,6 +226,17 @@ class RamanGainModel:
         self.include_photon_energy_factor = bool(include_photon_energy_factor)
         self.ase_steps = int(ase_steps)
         self.reference_a_eff_m2 = float(reference_a_eff_m2)
+
+        # 以下字段只做溯源，不参与 gain_shape/on_off_gain/ase_w 的任何计算。
+        # reference_wavelength_nm 尤其不是波长缩放：模型把峰值系数固定应用在
+        # 所有信号波长上，跨 C+L 使用时的绝对增益偏差由调用方自行评估。
+        self.source_table: RamanGainTable | None = None
+        self.table_metadata: dict[str, object] = {}
+        self.reference_wavelength_nm: float | None = None
+        self.fiber: str | None = None
+        self.source: str | None = None
+        self.note: str | None = None
+        self.calibration_overrides: dict[str, float | None] = {}
 
     @classmethod
     def from_table(
@@ -198,6 +277,53 @@ class RamanGainModel:
             include_photon_energy_factor=include_photon_energy_factor,
             ase_steps=ase_steps,
             reference_a_eff_m2=reference_a_eff_m2,
+        )
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str | Path,
+        *,
+        strict_calibration_override: bool = False,
+        **overrides: object,
+    ) -> RamanGainModel:
+        """从实测拉曼增益谱表文件构造模型。
+
+        支持 ``.json`` 与 ``.csv``，格式、单位与校验规则见
+        :mod:`network_nlo_eval.models.raman_table`。温度、峰值系数与参考
+        ``A_eff`` 从文件读取；``overrides`` 只允许运行时参数
+        （``include_photon_energy_factor``、``ase_steps``）。若显式覆盖文件中的
+        标定字段（``temperature_k``、``peak_gain_coefficient_m_per_w``、
+        ``reference_a_eff_m2``），默认会发 ``UserWarning`` 并记录在
+        ``calibration_overrides``，不会静默覆盖；``strict_calibration_override=True``
+        则直接拒绝。
+
+        文件里的 ``fiber``/``source``/``note``/``reference_wavelength_nm``
+        会保存在返回模型的对应属性与 ``table_metadata`` 上。其中
+        ``reference_wavelength_nm`` **只做溯源，不参与计算**。
+
+        Args:
+            path: 表格文件路径（``.json`` 或 ``.csv``）。
+            strict_calibration_override: 覆盖文件标定字段时是否直接报错。
+            **overrides: 额外模型参数；未知参数会报错。
+
+        Returns
+        -------
+            以文件中谱表构造的 ``gain_model="table"`` 模型。
+
+        Raises
+        ------
+            FileNotFoundError: 文件不存在。
+            ValueError: 文件格式、单位或数值不合法，或试图覆盖
+                ``gain_model``/``table``/未知参数，或严格模式下覆盖标定字段。
+        """
+        # 延迟导入：raman_table 依赖本模块的 RamanGainModel，模块级导入会成环；
+        # 文件加载只发生在构造期，不影响 PCFM/ODE 热路径。
+        from network_nlo_eval.models.raman_table import load_raman_gain_table
+
+        return load_raman_gain_table(path).to_model(
+            strict_calibration_override=strict_calibration_override,
+            **overrides,
         )
 
     @staticmethod
@@ -476,7 +602,7 @@ class RamanGainModel:
 
 
 def resolve_raman_gain_model(
-    gain_model: str | RamanGainModel,
+    gain_model: str | os.PathLike[str] | RamanGainModel,
     *,
     table: tuple[Sequence[float], Sequence[float]] | None = None,
     peak_gain_coefficient_m_per_w: float = DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W,
@@ -490,11 +616,16 @@ def resolve_raman_gain_model(
     :class:`RamanGainModel` 原样返回：调用方显式给了模型时，峰值系数与温度
     以该实例为准，不再被这里的默认值覆盖。
 
+    从 H3 第四轮起，``.json``/``.csv`` 路径也会在这里一次性加载成实例；
+    加载只发生在模型构造期，不进入热路径。文件路径与 ``table`` 互斥。
+
     Args:
-        gain_model: ``"gaussian"``、``"linear"``、``"table"`` 或现成实例。
+        gain_model: ``"gaussian"``、``"linear"``、``"table"``、增益表文件
+            路径，或现成实例。
         table: ``(offsets_hz, gains)``，仅 ``"table"`` 使用。
-        peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)。
-        temperature_k: 光纤温度 (K)。
+        peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)。只在
+            ``gain_model`` 是名称或路径且调用方显式给出非默认值时作为覆盖。
+        temperature_k: 光纤温度 (K)。同上。
 
     Returns
     -------
@@ -502,12 +633,31 @@ def resolve_raman_gain_model(
 
     Raises
     ------
-        ValueError: 字符串不受支持，或 ``table`` 与 ``gain_model`` 不匹配。
+        ValueError: 字符串不受支持、``table`` 与 ``gain_model`` 不匹配，
+            或表文件不合法。
+        TypeError: 把实例/路径误传给只接受字符串的构造路径。
     """
     if isinstance(gain_model, RamanGainModel):
         if table is not None:
             raise ValueError("table must not be given when raman_gain_model is already a RamanGainModel.")
         return gain_model
+    is_path = isinstance(gain_model, os.PathLike) or (
+        isinstance(gain_model, str) and _looks_like_gain_table_path(gain_model)
+    )
+    if is_path:
+        if table is not None:
+            raise ValueError(
+                "raman_gain_table must not be given together with a Raman gain table file path; "
+                "the table is read from the file."
+            )
+        overrides: dict[str, float] = {}
+        # 模型构造函数的默认值不能覆盖文件标定；只有调用方显式给出非默认值
+        # 时才转成 override（to_model 会 warning 并记录）。
+        if float(peak_gain_coefficient_m_per_w) != DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W:
+            overrides["peak_gain_coefficient_m_per_w"] = float(peak_gain_coefficient_m_per_w)
+        if float(temperature_k) != 300.0:
+            overrides["temperature_k"] = float(temperature_k)
+        return RamanGainModel.from_file(gain_model, **overrides)
     return RamanGainModel(
         gain_model=gain_model,
         table=table,

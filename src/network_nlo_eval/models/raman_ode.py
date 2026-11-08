@@ -191,7 +191,8 @@ class RamanPaperSpanSolver:
         pump_alpha_npm: ``(N_p,)`` 泵浦功率衰减系数 (1/m)。
         pump_a_eff_m2: ``(N_p,)`` 泵浦有效模面积 (m²)。
         gain_model: 拉曼增益谱模型，或 ``"gaussian"``/``"linear"`` 字符串；
-            表格谱用 :meth:`RamanGainModel.from_table` 构造后传入实例。
+            表格谱可用 :meth:`RamanGainModel.from_table` 构造实例，或直接传
+            ``.json``/``.csv`` 增益表文件路径（构造期加载一次）。
         n_steps: RK4 步数；剖面按每步中点/终点采样，共 ``2*n_steps`` 行。
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS；关闭后只保留泵浦相关耦合。
