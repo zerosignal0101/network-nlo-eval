@@ -10,6 +10,10 @@
 因此 ``=2`` 不是一个可以独立于入纤功率口径切换的“更物理”开关。默认保持
 ``=1``；任何改默认的提案必须先显式声明基准算例的发射功率是总功率还是
 每偏振功率。
+
+任务 F 已把该声明落地为模型选项 ``launch_power_convention``：``"total"``
+（默认）与 ``"per_pol"``。本文件的 ``=2`` 用例都在 ``"total"`` 下运行，
+即历史倍率，因此会收到 warning，并用 :func:`pytest.warns` 固定下来。
 """
 
 from __future__ import annotations
@@ -77,7 +81,8 @@ def test_undepleted_pumps_without_isrs_ignore_signal_polarizations() -> None:
     pump = [RamanPumpConfig(wavelength_nm=1450.0, power_w=0.2, direction="forward", attenuation_db_per_km=0.25)]
     options = {"raman_pumps": pump, "pump_depletion": False, "include_isrs": False}
     one = make_model("pcfm_h3_raman", case, signal_polarizations=1, **options).evaluate_path(path, power)
-    two = make_model("pcfm_h3_raman", case, signal_polarizations=2, **options).evaluate_path(path, power)
+    with pytest.warns(UserWarning, match="launch_power_convention"):
+        two = make_model("pcfm_h3_raman", case, signal_polarizations=2, **options).evaluate_path(path, power)
     for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
         assert np.array_equal(np.asarray(getattr(one, name)), np.asarray(getattr(two, name))), name
 
@@ -95,7 +100,8 @@ def test_undepleted_pumps_with_isrs_change_only_the_isrs_term() -> None:
     pump = [RamanPumpConfig(wavelength_nm=1450.0, power_w=0.2, direction="forward", attenuation_db_per_km=0.25)]
     options = {"raman_pumps": pump, "pump_depletion": False, "include_isrs": True}
     one = make_model("pcfm_h3_raman", case, signal_polarizations=1, **options).evaluate_path(path, power)
-    two = make_model("pcfm_h3_raman", case, signal_polarizations=2, **options).evaluate_path(path, power)
+    with pytest.warns(UserWarning, match="launch_power_convention"):
+        two = make_model("pcfm_h3_raman", case, signal_polarizations=2, **options).evaluate_path(path, power)
     assert np.array_equal(np.asarray(one.signal_power_w), np.asarray(two.signal_power_w))
     nli_one = np.asarray(one.spm_noise_w) + np.asarray(one.xpm_noise_w)
     nli_two = np.asarray(two.spm_noise_w) + np.asarray(two.xpm_noise_w)
