@@ -20,6 +20,7 @@ from network_nlo_eval.benchmarks.cases import build_case, build_path, launch_pro
 from network_nlo_eval.benchmarks.runner import make_model
 from network_nlo_eval.models.pcfm import (
     XCI_EDGE_MATERIALITY,
+    XCI_EDGE_VALIDITY_SWITCH,
     _xci_edge_weight_matrix,
     _xci_validity_s,
 )
@@ -92,8 +93,8 @@ def test_xci_edge_kernel_converges_to_closed_form_at_large_s() -> None:
     ``(1 - e**(-ab))**2``) survives at every ``s``, so this ratio is a direct
     discriminator: the shipped bug gave 1.0485 on 100 km instead of 1.
     """
-    # beta2=3e-26 gives s ~ 400 at both island edges (the integral itself uses
-    # 2 pi**2 beta2 y B / alpha, i.e. twice the gate definition).
+    # beta2=3e-26 gives s ~ 400 at both island edges; the gate now uses the
+    # same s as the integral (2 pi**2 beta2 y B / alpha).
     w_edge, k_closed, gated, beta2_eff_xci, _ = _edge_matrix(3.0e-26)
     y1 = np.abs(_F_ABS_HZ[None, :] - _F_ABS_HZ[:, None]) - 0.5 * _B_HZ[None, :]
     s_pair = _xci_validity_s(beta2_eff_xci, y1 + _B_HZ[None, :], 0.5 * _B_HZ, _ALPHA_NPM_M)
@@ -164,3 +165,115 @@ def test_validated_100km_bands_keep_the_closed_form(case_name: str) -> None:
     gated, fraction = kernel.xci_edge_audit(case.span_length_km * 1e3)
     assert not np.any(gated), case_name
     assert float(np.max(fraction)) < XCI_EDGE_MATERIALITY, case_name
+
+
+def _half_s(
+    beta2_eff_xci: np.ndarray,
+    y2_hz: np.ndarray,
+    half_b_cut_hz: np.ndarray,
+    alpha_npm_m: float,
+) -> np.ndarray:
+    """Return the pre-fix gate definition ``pi**2 |beta2| y B / alpha`` (half the integral)."""
+    return 2.0 * np.pi**2 * np.abs(beta2_eff_xci) * y2_hz * half_b_cut_hz[:, None] / alpha_npm_m
+
+
+def _integral_s(
+    kernel,
+    y_hz: np.ndarray,
+    half_b_cut_hz: np.ndarray,
+) -> np.ndarray:
+    """Return the ``s`` the exact island integral evaluates internally."""
+    c_mix = 4.0 * np.pi**2 * np.abs(kernel.beta2_eff_xci)
+    return c_mix * y_hz * half_b_cut_hz[:, None] / kernel.alpha_visibility_npm
+
+
+def test_xci_validity_s_is_the_integral_s() -> None:
+    """The gate's ``s`` must be bit-for-bit the integral's ``s``, not half of it.
+
+    The integral uses ``s = 4 pi**2 |beta2| y (B/2)/alpha``; the old helper
+    returned ``2 pi**2 |beta2| y (B/2)/alpha``.  Anything but exact equality
+    means the gate and the diagnostic have drifted apart again.
+    """
+    case = build_case("scl_277ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    delta = np.abs(kernel.f_abs_hz[:, None] - kernel.f_abs_hz[None, :])
+    half_b = 0.5 * kernel.b_hz
+    y2 = delta + half_b[None, :]
+
+    s_gate = _xci_validity_s(kernel.beta2_eff_xci, y2, half_b, kernel.alpha_visibility_npm)
+    s_integral = _integral_s(kernel, y2, half_b)
+    mask = (kernel.log_xci != 0.0) & (delta - half_b[None, :] > 0.0)
+
+    assert np.array_equal(s_gate[mask], s_integral[mask])
+    # 旧口径恰好是一半；这个断言同时钉住“不要回退到 2 pi**2”。
+    half = _half_s(kernel.beta2_eff_xci, y2, half_b, kernel.alpha_visibility_npm)
+    assert np.array_equal(half[mask], 0.5 * s_integral[mask])
+
+
+@pytest.mark.parametrize("case_name", ["c_57ch", "cl_152ch", "scl_277ch"])
+@pytest.mark.parametrize("span_km", [40.0, 60.0, 80.0, 100.0])
+def test_gate_mask_is_unchanged_by_the_semantics_fix(
+    case_name: str,
+    span_km: float,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old (half-s, switch 100) and new (true-s, switch 200) must gate identically.
+
+    This is the regression that justifies the constant change: the whole
+    validated band, at every audited span length, keeps the same rows and the
+    same corrected matrix bit for bit.
+    """
+    import network_nlo_eval.models.pcfm as pcfm_module
+
+    case = build_case(case_name)
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    length_m = span_km * 1e3
+
+    def _gate():
+        return _xci_edge_weight_matrix(
+            kernel.w_xci,
+            kernel.k_xci_matrix,
+            kernel.log_xci,
+            kernel.gamma_xci,
+            kernel.beta2_eff_xci,
+            kernel.f_abs_hz,
+            kernel.b_hz,
+            kernel.alpha_visibility_npm,
+            length_m,
+            validity_switch=switch,
+        )
+
+    monkeypatch.setattr(pcfm_module, "_xci_validity_s", _half_s)
+    switch = 100.0
+    w_old, gated_old, fraction_old = _gate()
+
+    monkeypatch.setattr(pcfm_module, "_xci_validity_s", _xci_validity_s)
+    switch = XCI_EDGE_VALIDITY_SWITCH
+    w_new, gated_new, fraction_new = _gate()
+
+    assert np.array_equal(gated_old, gated_new), f"{case_name} {span_km} km: gate mask moved"
+    assert np.array_equal(w_old, w_new), f"{case_name} {span_km} km: corrected matrix moved"
+    assert np.array_equal(fraction_old, fraction_new)
+
+
+def test_xci_s_min_is_reported_in_integral_units() -> None:
+    """``xci_s_min`` must equal the integral's ``s`` and use the 200 switch."""
+    case = build_case("scl_277ch")
+    kernel = make_model("pcfm", case).kernel_for(build_path(case).fiber_configs[0])
+    power = launch_profile(case, None)
+    length_m = case.span_length_km * 1e3
+    report = kernel.validity_report(length_m, power)
+
+    delta = np.abs(kernel.f_abs_hz[:, None] - kernel.f_abs_hz[None, :])
+    half_b = 0.5 * kernel.b_hz
+    y2 = delta + half_b[None, :]
+    pairs = (kernel.log_xci != 0.0) & (delta - half_b[None, :] > 0.0)
+    s_pair = _integral_s(kernel, y2, half_b)
+    expected = np.where(pairs, s_pair, np.inf).min(axis=1)
+
+    assert np.array_equal(np.asarray(report.xci_s_min), expected[kernel.inverse_order])
+    assert np.array_equal(
+        np.asarray(report.xci_s_below_switch),
+        np.asarray(report.xci_s_min) < XCI_EDGE_VALIDITY_SWITCH,
+    )
+

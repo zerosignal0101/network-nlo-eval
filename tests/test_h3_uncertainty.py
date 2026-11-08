@@ -163,6 +163,30 @@ def test_span_validity_exposes_kernel_level_metrics() -> None:
     assert bool(np.all(min_abs_x >= 0.0))
 
 
+def test_span_validity_min_s_matches_the_kernel_report() -> None:
+    """The budget layer must print the same ``s`` as the kernel validity report.
+
+    Both are the exact island integral's ``s`` (not the pre-fix half value);
+    ``XCI_DEEP_BREAKDOWN_S`` is expressed in those units as well.
+    """
+    from network_nlo_eval.models.uncertainty import XCI_DEEP_BREAKDOWN_S
+
+    case = build_case("escl_479ch_1span")
+    model = make_model("pcfm", case)
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    length_m = case.span_length_km * 1e3
+    power = launch_profile(case, None)
+
+    report = kernel.validity_report(length_m, power)
+    flagged, confidence, min_abs_x, min_s = span_validity(kernel, length_m)
+
+    assert np.array_equal(min_s, np.asarray(report.xci_s_min))
+    assert np.array_equal(min_abs_x, np.abs(np.asarray(report.sci_x)))
+    # 深破坏判据与 gate 使用同一口径：这里只确认常量不是旧的半值单位。
+    assert XCI_DEEP_BREAKDOWN_S == 2.0
+
+
+
 # ---------------------------------------------------------------------------
 # Margin monotonicity
 # ---------------------------------------------------------------------------

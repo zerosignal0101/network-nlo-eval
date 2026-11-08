@@ -54,7 +54,12 @@ from network_nlo_eval.models.pcfm import (
     egn_rho_cut,
     egn_rho_nch,
 )
-from network_nlo_eval.models.pcfm_kernels import _j_batch_jit, _profile_energy_jit
+from network_nlo_eval.models.pcfm_kernels import (
+    SCI_X_SERIES_SWITCH,
+    _j_batch_jit,
+    _profile_energy_jit,
+    _sci_small_x_coefficients,
+)
 from network_nlo_eval.network.elements import EDFAConfig
 
 #: The numerical GN reference of the repository, used as the benchmark.
@@ -1298,6 +1303,161 @@ def test_sci_small_x_taylor_coefficients_are_converged() -> None:
     fine = _sci_small_x_coefficients(21, 160)
     assert coarse.shape[0] == fine.shape[0] == 22
     np.testing.assert_allclose(coarse, fine[:, :64], rtol=1e-10, atol=1e-14)
+
+
+def test_degree_nine_sci_kernel_is_positive_at_the_canonical_crossing() -> None:
+    """Degree 9 must not return a negative SCI kernel at ``X = +-0.61/0.66``.
+
+    With the old ``SCI_X_SERIES_SWITCH = 0.5`` the canonical 75 GHz
+    E+S+C+L comb evaluates these channels with the unstable recurrence, which
+    returns a kernel of the wrong sign and two orders of magnitude too large.
+    The Taylor branch must make every kernel positive and keep the two
+    channels close to their neighbours (no explosion).
+    """
+    case = build_case("escl_479ch_1span")
+    fiber = build_path(case).fiber_configs[0]
+    power = launch_profile(case, None)
+    kernel = make_model("pcfm", case, poly_degree=9).kernel_for(fiber)
+    q_scaled = kernel.profile_polynomial(COHERENCE_SPAN_LENGTH_M, power)
+    k_fixed = kernel.sci_kernel(COHERENCE_SPAN_LENGTH_M, q_scaled)
+    x_all = kernel.beta2_eff_sci * np.pi**2 * kernel.b_hz**2 * COHERENCE_SPAN_LENGTH_M
+
+    assert np.all(np.isfinite(k_fixed)), "degree 9 must not produce non-finite SCI"
+    assert np.all(k_fixed > 0.0), "degree 9 must not produce a negative SCI kernel"
+
+    for target in (-0.608, 0.661):
+        index = int(np.argmin(np.abs(x_all - target)))
+        assert abs(float(x_all[index]) - target) < 0.02
+        neighbours = 0.5 * (k_fixed[index - 1] + k_fixed[index + 1])
+        assert 0.5 < float(k_fixed[index] / neighbours) < 2.0
+
+        # Emulate the pre-fix switch: the recurrence turns the kernel negative.
+        kernel._sci_small_x_switch = 0.0
+        k_old = kernel.sci_kernel(COHERENCE_SPAN_LENGTH_M, q_scaled)
+        kernel._sci_small_x_switch = SCI_X_SERIES_SWITCH
+        assert float(k_old[index]) < 0.0, (
+            f"X={float(x_all[index]):+.4f}: the recurrence is expected to fail here"
+        )
+        print(
+            f"degree 9, X={float(x_all[index]):+.4f}: recurrence {float(k_old[index]):.3e}, "
+            f"Taylor {float(k_fixed[index]):.3e}, neighbour ratio "
+            f"{float(k_fixed[index] / neighbours):.4f}"
+        )
+
+
+def _exact_sci_taylor_reference(m_max: int = 19, n_terms: int = 200) -> list[list[object]]:
+    """Exact rational Taylor coefficients of ``b_p``, from the printed recurrence.
+
+    This is the reference used by :func:`test_sci_taylor_branch_matches_high_precision`.
+    It repeats the coefficient recurrence of
+    :func:`~network_nlo_eval.models.pcfm_kernels._sci_small_x_coefficients`
+    with :class:`fractions.Fraction` and never touches the float64 kernel.
+    """
+    from fractions import Fraction
+    from math import factorial
+
+    n_trig = n_terms + 2
+    cos_coeff = [Fraction(0)] * n_trig
+    sin_coeff = [Fraction(0)] * n_trig
+    for k in range((n_trig + 1) // 2 + 1):
+        if 2 * k < n_trig:
+            cos_coeff[2 * k] = Fraction((-1) ** k, factorial(2 * k))
+        if 2 * k + 1 < n_trig:
+            sin_coeff[2 * k + 1] = Fraction((-1) ** k, factorial(2 * k + 1))
+    rows: list[list[Fraction]] = []
+    rows.append([-cos_coeff[j + 1] if j + 1 < n_trig else Fraction(0) for j in range(n_trig)])
+    rows.append(
+        [
+            (sin_coeff[j + 2] if j + 2 < n_trig else Fraction(0))
+            - (cos_coeff[j + 1] if j + 1 < n_trig else Fraction(0))
+            for j in range(n_trig)
+        ]
+    )
+    for p in range(2, m_max + 1):
+        row = [Fraction(0)] * n_trig
+        for j in range(n_trig - 3, -1, -1):
+            t_j2 = (-cos_coeff[j + 1] if j + 1 < n_trig else Fraction(0)) + p * (
+                sin_coeff[j + 2] if j + 2 < n_trig else Fraction(0)
+            )
+            row[j] = t_j2 - p * (p - 1) * rows[p - 2][j + 2]
+        rows.append(row)
+    return rows
+
+
+def test_sci_taylor_branch_matches_high_precision() -> None:
+    """The float64 Taylor branch must equal a 60-digit reference at ``|X| <= 2``.
+
+    The reference evaluates the same exact rational series with
+    :class:`decimal.Decimal`.  Any truncation error above double precision, or
+    a wrong coefficient, would show up as a relative difference here.  The
+    check covers the canonical failing points and the switch itself.
+    """
+    from decimal import Decimal, localcontext
+
+    reference = _exact_sci_taylor_reference()
+    coefficients = _sci_small_x_coefficients(19)
+    assert coefficients.shape[1] < len(reference[0])
+
+    for x_value in (0.608, 0.661, 1.0, 2.0):
+        with localcontext() as ctx:
+            ctx.prec = 60
+            x_ref = Decimal(str(x_value))
+            for p in (0, 1, 2, 8, 19):
+                value = Decimal(0)
+                for j in range(len(reference[p]) - 1, -1, -1):
+                    coefficient = reference[p][j]
+                    value = value * x_ref + Decimal(coefficient.numerator) / Decimal(coefficient.denominator)
+                acc = 0.0
+                for j in range(coefficients.shape[1] - 1, -1, -1):
+                    acc = acc * x_value + float(coefficients[p, j])
+                relative = abs(acc - float(value)) / abs(float(value))
+                assert relative < 1.0e-14, (
+                    f"X={x_value}, p={p}: float64 Taylor differs from the reference by {relative:.3e}"
+                )
+
+
+@pytest.mark.parametrize("degree", [3, 5])
+def test_small_degree_sci_kernel_is_unchanged_by_the_switch(degree: int) -> None:
+    """The new switch may only move channels the old one already handled.
+
+    For ``poly_degree <= 5`` the recurrence is accurate over the whole
+    ``0.5 <= |X| < 2`` interval, so the two branches agree to the recurrence's
+    own error (~3e-8 relative at degree 5).  A larger difference would mean the
+    Taylor branch itself is wrong.
+    """
+    case = build_case("escl_479ch_1span")
+    fiber = build_path(case).fiber_configs[0]
+    power = launch_profile(case, None)
+    kernel = make_model("pcfm", case, poly_degree=degree).kernel_for(fiber)
+    q_scaled = kernel.profile_polynomial(COHERENCE_SPAN_LENGTH_M, power)
+
+    k_new = kernel.sci_kernel(COHERENCE_SPAN_LENGTH_M, q_scaled)
+    kernel._sci_small_x_switch = 0.5
+    k_old = kernel.sci_kernel(COHERENCE_SPAN_LENGTH_M, q_scaled)
+    kernel._sci_small_x_switch = SCI_X_SERIES_SWITCH
+
+    relative = np.abs(k_new - k_old) / np.abs(k_old)
+    assert float(np.max(relative)) < 1.0e-6, (
+        f"degree {degree}: the Taylor branch moved the kernel by {float(np.max(relative)):.3e}"
+    )
+
+
+def test_default_degree_snr_is_unchanged_by_the_sci_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default model (``poly_degree=5``) must not move by more than 1e-6 dB."""
+    import network_nlo_eval.models.pcfm as pcfm_module
+
+    case = build_case("escl_479ch_1span")
+    path = build_path(case)
+    power = launch_profile(case, None)
+
+    monkeypatch.setattr(pcfm_module, "SCI_X_SERIES_SWITCH", 0.5)
+    old = make_model("pcfm", case).evaluate_path(path, power)
+    monkeypatch.setattr(pcfm_module, "SCI_X_SERIES_SWITCH", SCI_X_SERIES_SWITCH)
+    new = make_model("pcfm", case).evaluate_path(path, power)
+
+    delta = np.abs(np.asarray(new.snr_db) - np.asarray(old.snr_db))
+    assert float(np.max(delta)) < 1.0e-6, f"default degree moved by {float(np.max(delta)):.3e} dB"
+
 
 
 @pytest.mark.skipif(not _NUMERICAL_AVAILABLE, reason="the numerical GN reference is not available")
