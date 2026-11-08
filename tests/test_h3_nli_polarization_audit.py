@@ -156,18 +156,17 @@ def test_control_total_plus_two_is_four_times_below_the_per_pol_kernel() -> None
 
 
 def test_ase_halving_closes_the_c_band_snr_gap() -> None:
-    """任务 L 后 C 波段 ``total``+1 与 ``per_pol``+2 的 SNR 平均差 <0.01 dB。
+    """任务 L 后 C 波段 ``total``+1 与 ``per_pol``+2 的 SNR 逐信道一致。
 
-    ``route`` 的 EDFA ASE 由 ``ase_polarization_scale=0.5`` 进入每偏振坐标；
-    无泵时没有 Raman ASE，剩余逐信道残差（max 约 0.064 dB）来自 PCFM 的
-    ISRS 剖面按半功率积分，不是 ASE 记账。平均差应回到 J 审计预测的
-    +0.001 dB 量级。
+    ``route`` 的 EDFA ASE 由 ``ase_polarization_scale=0.5`` 进入每偏振坐标，
+    任务 L2 又把 PCFM 的 ISRS 剖面改为按物理总功率驱动，因此无泵时两种
+    口径的链路逐位等价（只剩最后一位舍入）。
     """
     total = _arrays(_evaluate(pumps=None))
     per_pol = _arrays(_evaluate_at(0.5, pumps=None, signal_polarizations=2, launch_power_convention="per_pol"))
     gap = per_pol["snr_db"] - total["snr_db"]
-    assert abs(float(np.mean(gap))) < 0.01
-    assert float(np.max(np.abs(gap))) < 0.07
+    assert abs(float(np.mean(gap))) < 1e-9
+    assert float(np.max(np.abs(gap))) < 1e-9
 
 
 def test_ase_arrays_are_half_in_the_per_pol_coordinate_with_pumps() -> None:
@@ -221,7 +220,14 @@ def test_unknown_nli_convention_is_rejected(convention: str) -> None:
 
 
 def test_plain_kernel_per_pol_scales_the_nli_by_four() -> None:
-    """裸核：``per_pol`` 的 2P 驱动与输出减半合起来是同一数组的 4 倍。"""
+    """裸核：``per_pol`` 在同一数组下 NLI 约 4 倍，在 ``P/2`` 下是严格一半。
+
+    ``per_pol`` 声明输入是每偏振坐标，所以同一数组对它意味着 2 倍物理总
+    功率：``2**3`` 的 PSD 驱动再配 ``1/2`` 的输出回坐标，合起来是 4 倍。
+    但 ISRS 方程对功率是双线性的，2 倍功率会让剖面本身变化 1–4%，所以同一
+    数组下 4 倍只到百分级；只有**同一物理总功率**（``per_pol`` 取 ``P/2``）
+    才是逐位对齐的严格对照，此时 NLI 恰为 ``total`` 的一半。
+    """
     from network_nlo_eval.benchmarks.cases import grid_for
 
     grid = grid_for(CASE)
@@ -232,9 +238,20 @@ def test_plain_kernel_per_pol_scales_the_nli_by_four() -> None:
     per_pol = PCFMSpanKernel(
         grid.frequencies, bandwidths, fiber, nli_power_convention="per_pol"
     ).evaluate(power, 100e3)
-    assert np.array_equal(total.power_out_w, per_pol.power_out_w)
-    assert np.allclose(per_pol.spm_noise_w, 4.0 * total.spm_noise_w, rtol=1e-12)
-    assert np.allclose(per_pol.xpm_noise_w, 4.0 * total.xpm_noise_w, rtol=1e-12)
+    # 同一输入数组：2P 驱动把 NLI 放大 2**3，输出再减半 → 平均 4 倍；
+    # 逐信道 1–4% 的散布来自 ISRS 剖面随功率变化，不是口径误差。
+    for name in ("spm_noise_w", "xpm_noise_w"):
+        ratio = np.asarray(getattr(per_pol, name)) / np.asarray(getattr(total, name))
+        assert abs(float(np.mean(ratio)) - 4.0) < 1e-3, name
+        assert np.allclose(ratio, 4.0, rtol=0.05), name
+
+    # 同一物理总功率：per_pol 输入 P/2，出射功率与 NLI 都是 total 的一半。
+    same_link = PCFMSpanKernel(
+        grid.frequencies, bandwidths, fiber, nli_power_convention="per_pol"
+    ).evaluate(0.5 * power, 100e3)
+    assert np.array_equal(2.0 * same_link.power_out_w, total.power_out_w)
+    assert np.allclose(2.0 * same_link.spm_noise_w, total.spm_noise_w, rtol=1e-12)
+    assert np.allclose(2.0 * same_link.xpm_noise_w, total.xpm_noise_w, rtol=1e-12)
 
 
 def test_nli_power_conventions_are_documented() -> None:

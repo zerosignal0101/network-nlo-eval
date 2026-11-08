@@ -13,8 +13,8 @@
 2. 同一物理总功率下 ``per_pol``+2 的 SNR 与 ``total``+1 一致（C 波段
    平均差 <0.01 dB）；
 3. ASE 数组在 ``per_pol`` 下严格减半，且 ``input_ase_w`` 不被 route 二次缩放；
-4. C+L 残差按场景量化：有泵时 ODE 与 ASE 都同坐标（残差为零），无泵时
-   只剩 PCFM 的 ISRS 剖面按半功率积分造成的已知残差；
+4. C+L 残差按场景量化：有泵时 ODE 与 ASE 都同坐标，无泵时任务 L2 已把
+   PCFM 的 ISRS 剖面改为按物理总功率驱动，两种口径同样逐信道一致；
 5. 非法缩放因子与矛盾的 launch/NLI 口径必须报错。
 """
 
@@ -38,6 +38,8 @@ from network_nlo_eval.network.elements import (
 
 C_BAND = build_case("scaling_40ch")
 C_PLUS_L = build_case("scaling_160ch")
+#: 10 跨 C+L：透明跨记忆化与累积 ASE 都在这里被覆盖。
+C_PLUS_L_10_SPAN = build_case("cl_152ch")
 
 _BACKWARD = RamanPumpConfig(
     wavelength_nm=1450.0,
@@ -98,6 +100,23 @@ def test_default_total_plus_one_is_bit_identical(case, pumps) -> None:
     explicit = _arrays(
         _evaluate(
             case,
+            pumps=pumps,
+            signal_polarizations=1,
+            launch_power_convention="total",
+            nli_power_convention="total",
+        )
+    )
+    for name in _OUTPUT_FIELDS:
+        assert np.array_equal(baseline[name], explicit[name]), name
+
+
+@pytest.mark.parametrize("pumps", [None, [_BACKWARD], [_FORWARD]], ids=["unpumped", "backward", "forward"])
+def test_default_total_plus_one_is_bit_identical_on_a_ten_span_link(pumps) -> None:
+    """10 跨 C+L：任务 L2 的 ISRS 驱动改动不得触碰默认 ``total`` 路径。"""
+    baseline = _arrays(_evaluate(C_PLUS_L_10_SPAN, pumps=pumps))
+    explicit = _arrays(
+        _evaluate(
+            C_PLUS_L_10_SPAN,
             pumps=pumps,
             signal_polarizations=1,
             launch_power_convention="total",
@@ -249,9 +268,8 @@ def test_accumulate_route_scales_the_booster_ase_once() -> None:
 def test_per_pol_outputs_are_per_polarization_quantities(pumps) -> None:
     """``per_pol``+2 在 ``P/2`` 下四个数组都是 ``total``+1 的一半。
 
-    有泵时 Raman OE 与 EDFA 都在同一坐标，因此是严格的 2 倍关系；无泵时
-    PCFM 的 ISRS 剖面仍按半功率积分，ASE 会继承 1% 量级的增益差异，另由
-    ``test_c_band_snr_gap_is_below_0p01_db_on_average`` 覆盖。
+    有泵时 Raman OE 与 EDFA 都在同一坐标；无泵时任务 L2 把 PCFM 的 ISRS
+    剖面也改为按物理总功率驱动，两种口径因此都是严格的 2 倍关系。
     """
     total = _arrays(_evaluate(C_BAND, pumps=pumps, signal_polarizations=1, launch_power_convention="total"))
     per_pol = _arrays(
@@ -269,15 +287,19 @@ def test_per_pol_outputs_are_per_polarization_quantities(pumps) -> None:
     assert np.max(np.abs(per_pol["snr_db"] - total["snr_db"])) < 1e-9
 
 
-def test_c_band_snr_gap_is_below_0p01_db_on_average() -> None:
-    """C 波段无泵：平均 SNR 差 <0.01 dB（逐信道 max 约 0.064 dB）。"""
+def test_c_band_snr_gap_is_zero_after_the_isrs_fix() -> None:
+    """C 波段无泵：ISRS 按物理总功率驱动后，SNR 逐信道一致。
+
+    任务 L 记录过平均 +0.001 dB、逐信道 max 0.064 dB 的残差，来源是 PCFM
+    的 ISRS 剖面按半功率积分；任务 L2 修掉后残差为最后一位舍入。
+    """
     total = _arrays(_evaluate(C_BAND, pumps=None))
     per_pol = _arrays(
         _evaluate_at(C_BAND, 0.5, pumps=None, signal_polarizations=2, launch_power_convention="per_pol")
     )
     gap = per_pol["snr_db"] - total["snr_db"]
-    assert abs(float(np.mean(gap))) < 0.01
-    assert float(np.max(np.abs(gap))) < 0.07
+    assert abs(float(np.mean(gap))) < 1e-9
+    assert float(np.max(np.abs(gap))) < 1e-9
 
 
 def test_pumped_c_plus_l_snr_gap_is_zero() -> None:
@@ -297,23 +319,48 @@ def test_pumped_c_plus_l_snr_gap_is_zero() -> None:
         assert np.max(np.abs(per_pol["snr_db"] - total["snr_db"])) < 1e-9
 
 
-def test_c_plus_l_unpumped_residual_is_quantified() -> None:
-    """C+L 无泵的剩余残差来自 PCFM ISRS 剖面，不是 Raman ASE 记账。
+def test_c_plus_l_unpumped_residual_is_closed() -> None:
+    """C+L 无泵残差（任务 L：0.193 dB 平均 / 1.303 dB 最坏）已由 L2 消除。
 
-    无泵时 H3 不进入 Raman ODE（``last_raman_ase_w`` 为零），PCFM 的 ISRS
-    积分仍按每偏振半功率计算剖面；这会让 EDFA 的自动增益、从而 ASE 与
-    SNR 出现约 0.19 dB 的平均 / 1.30 dB 的最坏残差。任务 L 只修 ASE 口径，
-    这个残差需要 PCFM 的 ISRS 驱动也按物理总功率才能消除。
+    无泵时 H3 不进入 Raman ODE（``last_raman_ase_w`` 为零），残差全部来自
+    PCFM 的 ISRS 积分按每偏振半功率计算剖面：半功率让 ISRS 增益倾斜与
+    EDFA 自动增益补偿都偏掉，ASE/SNR 随之出现 0.2 dB 量级偏差。任务 L2 让
+    该积分按物理总功率驱动并把出射功率减半，两种口径逐位对齐。
     """
     total = _arrays(_evaluate(C_PLUS_L, pumps=None))
     per_pol = _arrays(
         _evaluate_at(C_PLUS_L, 0.5, pumps=None, signal_polarizations=2, launch_power_convention="per_pol")
     )
     gap = per_pol["snr_db"] - total["snr_db"]
-    mean_gap = float(np.mean(gap))
-    max_gap = float(np.max(np.abs(gap)))
-    assert 0.15 < mean_gap < 0.25
-    assert 1.0 < max_gap < 1.4
+    assert abs(float(np.mean(gap))) < 0.01
+    assert float(np.max(np.abs(gap))) < 0.01
+    # 信号/ASE 逐位成 2 倍关系，NLI 只差幅度平方根往返的舍入。
+    assert np.array_equal(2.0 * per_pol["signal_power_w"], total["signal_power_w"])
+    assert np.array_equal(2.0 * per_pol["ase_noise_w"], total["ase_noise_w"])
+    assert np.allclose(2.0 * _nli(per_pol), _nli(total), rtol=1e-12)
+
+
+def test_ten_span_unpumped_link_has_no_residual() -> None:
+    """10 跨 C+L 无泵：累积 ASE 也逐信道对齐，残差 <0.01 dB。
+
+    多跨会经过 10 次 EDFA 自动增益补偿，任何 ISRS 剖面偏差都会被放大，
+    因此这是任务 L2 修复的最强回归。
+    """
+    total = _arrays(_evaluate(C_PLUS_L_10_SPAN, pumps=None))
+    per_pol = _arrays(
+        _evaluate_at(
+            C_PLUS_L_10_SPAN,
+            0.5,
+            pumps=None,
+            signal_polarizations=2,
+            launch_power_convention="per_pol",
+        )
+    )
+    gap = per_pol["snr_db"] - total["snr_db"]
+    assert abs(float(np.mean(gap))) < 0.01
+    assert float(np.max(np.abs(gap))) < 0.01
+    assert np.array_equal(2.0 * per_pol["signal_power_w"], total["signal_power_w"])
+    assert np.array_equal(2.0 * per_pol["ase_noise_w"], total["ase_noise_w"])
 
 
 def test_raman_solver_returns_per_polarization_ase() -> None:

@@ -13,8 +13,8 @@
    （泵浦光子损失 / 双偏振信号光子增益），而 ``"total"`` + ``2`` 仍为 2；
 3. ``"total"`` + ``2`` 是“未声明单位的倍率”，模型层必须 warning；
    ``"per_pol"`` + ``1`` 自相矛盾，必须报错；
-4. 无泵时 ODE 没有可作用的耦合项；NLI 口径独立，``per_pol`` 默认按物理
-   总功率驱动 GN 权重（同一数组下 NLI 4 倍），显式 ``"total"`` 才逐位一致。
+4. 无泵时 ODE 没有可作用的耦合项；ISRS 剖面按物理总功率驱动（owner 是
+   launch 口径），NLI 口径独立（同一数组下 NLI 4 倍）。
 """
 
 from __future__ import annotations
@@ -197,13 +197,16 @@ def test_per_pol_requires_two_polarizations() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_pump_path_is_bit_identical_across_conventions() -> None:
-    """无泵时只有显式的旧 NLI 口径保持同一数组逐位一致。
+def test_no_pump_isrs_profile_follows_the_launch_convention() -> None:
+    """无泵时 ISRS 剖面只由 launch 口径决定，与 NLI 口径无关。
 
-    拉曼分支不进入，所以 ODE 层面两种口径没有可作用的耦合项；NLI 口径则
-    独立：``nli_power_convention="auto"`` 让 ``per_pol`` 用物理总功率驱动
-    GN 权重（``2P`` 驱动、输出减半），同一数组下 NLI 变成 4 倍。显式
-    ``"total"`` 复现改动前的逐位一致，是对照口径而非默认行为。
+    拉曼分支不进入，但父类的 ISRS 积分是物理方程：``per_pol`` 声明下必须
+    用双偏振总功率驱动，出射功率再减半。因此：
+
+    * 历史 ``total`` + ``signal_polarizations=2`` 倍率对照仍与默认逐位一致
+      （launch 是 ``total``，ISRS 不做驱动缩放）；
+    * ``per_pol`` 的两种 NLI 口径共享同一 ISRS 剖面，信号逐位一致，只有
+      NLI 差 4 倍——这钉住 ISRS 的 owner 是 launch 口径而不是 NLI 口径。
     """
     path = build_path(CASE)
     power = launch_profile(CASE)
@@ -221,18 +224,39 @@ def test_no_pump_path_is_bit_identical_across_conventions() -> None:
     with pytest.warns(UserWarning):
         legacy_multiplier = make_model("pcfm_h3_raman", CASE, signal_polarizations=2).evaluate_path(path, power)
     for name in _OUTPUT_FIELDS:
-        assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(legacy_nli, name))), name
         assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(legacy_multiplier, name))), name
-    # auto 口径：信号仍是同一数组；NLI 按 2**3/2 = 4 倍变化；ASE 进入
-    # 每偏振坐标后是 EDFA ASE 的一半（无泵时没有 Raman ASE）。
-    assert np.array_equal(np.asarray(baseline.signal_power_w), np.asarray(per_pol.signal_power_w))
-    assert np.allclose(
-        np.asarray(per_pol.ase_noise_w), 0.5 * np.asarray(baseline.ase_noise_w), rtol=0.03
-    )
+    # launch 口径相同 → ISRS 驱动与出射功率逐位一致，与 NLI 口径无关。
+    assert np.array_equal(np.asarray(per_pol.signal_power_w), np.asarray(legacy_nli.signal_power_w))
     for name in ("spm_noise_w", "xpm_noise_w"):
         assert np.allclose(
-            np.asarray(getattr(per_pol, name)), 4.0 * np.asarray(getattr(baseline, name)), rtol=1e-12
+            np.asarray(getattr(per_pol, name)), 4.0 * np.asarray(getattr(legacy_nli, name)), rtol=1e-12
         ), name
+
+
+def test_pcfm_isrs_profile_is_driven_by_the_physical_total_power() -> None:
+    """裸核：``per_pol`` 的 SPP 用 ``2P`` 驱动，出射功率再减半。
+
+    同一物理功率下（``total`` 用 ``P``、``per_pol`` 用 ``P/2``），归一化剖面
+    与出射功率必须逐位一致；这是任务 L2 的核心回归，也是 C+L 无泵残差
+    0.193 dB 的根因。
+    """
+    from network_nlo_eval.benchmarks.cases import grid_for
+    from network_nlo_eval.models.pcfm import PCFMSpanKernel
+
+    grid = grid_for(CASE)
+    fiber = build_path(CASE).fiber_configs[0]
+    bandwidths = np.full(CASE.num_channels, CASE.symbol_rate_hz)
+    power = launch_profile(CASE)
+    total = PCFMSpanKernel(grid.frequencies, bandwidths, fiber)
+    per_pol = PCFMSpanKernel(grid.frequencies, bandwidths, fiber, nli_power_convention="per_pol")
+    _, profile_total = total.spp_samples(100e3, power)
+    _, profile_per = per_pol.spp_samples(100e3, 0.5 * power)
+    assert np.array_equal(profile_total, profile_per)
+    out_total = total.evaluate(power, 100e3)
+    out_per = per_pol.evaluate(0.5 * power, 100e3)
+    assert np.array_equal(2.0 * out_per.power_out_w, out_total.power_out_w)
+    assert np.allclose(2.0 * out_per.spm_noise_w, out_total.spm_noise_w, rtol=1e-12)
+    assert np.allclose(2.0 * out_per.xpm_noise_w, out_total.xpm_noise_w, rtol=1e-12)
 
 
 def test_no_pump_solver_without_isrs_is_bit_identical_across_conventions() -> None:
