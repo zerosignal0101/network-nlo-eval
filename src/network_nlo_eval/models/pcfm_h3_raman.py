@@ -64,10 +64,23 @@ The Raman branch is entered only when at least one pump has positive power.
 With no pump the kernel delegates every operation to
 :class:`~network_nlo_eval.models.pcfm.PCFMSpanKernel` and the route step passes
 no Raman ASE, so the results are identical to ``pcfm`` with the same options.
+
+**Launch power convention is declared, not inferred**
+
+`signal_polarizations` only scales the *coupling drive*, never the ODE signal
+state, so on its own it is a unit-less multiplier.  ``launch_power_convention``
+declares what ``power_in_w`` means: ``"total"`` (default) is the historical
+per-channel dual-polarization total power, ``"per_pol"`` is per-polarization
+power with a physical total of ``2 * power_in_w``.  With ``"per_pol"`` the ODE
+state and every output stay per-polarization and the drive takes the
+dual-polarization total, so the photon budget closes at ratio 1 (verified in
+``tests/test_h3_launch_convention.py``).  ``"total"`` with
+``signal_polarizations=2`` is kept only for historical comparisons and warns.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import replace
 
@@ -94,6 +107,7 @@ from network_nlo_eval.models.raman_ode import (
     DEFAULT_FIXED_POINT_ITERATIONS,
     PaperRamanSpanResult,
     RamanPaperSpanSolver,
+    resolve_launch_power_convention,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.models.uncertainty import (
@@ -203,6 +217,13 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             the pump own attenuation, and the pump-signal / signal-signal
             coupling untouched.  A control convention for the C+L residual
             audit.
+        launch_power_convention: Power convention of ``power_in_w``.
+            ``"total"`` (default) means per-channel dual-polarization total
+            power; ``"per_pol"`` means per-polarization power, so the physical
+            total is ``2 * power_in_w`` and ``signal_polarizations`` must be
+            ``2``.  The ODE state and the output stay per-polarization in both
+            cases; only the coupling drive differs.  See
+            :func:`~network_nlo_eval.models.raman_ode.resolve_launch_power_convention`.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -221,6 +242,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -228,7 +250,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         Raises
         ------
             ValueError: ``raman_steps`` or ``raman_iterations`` is not positive,
-                or a boolean option is not a ``bool``.
+                or a boolean option is not a ``bool``, or the
+                ``launch_power_convention``/``signal_polarizations``
+                combination is inconsistent.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
@@ -249,6 +273,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.pump_pump_raman = bool(pump_pump_raman)
         if self.signal_polarizations < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        self.launch_power_convention = resolve_launch_power_convention(
+            launch_power_convention, self.signal_polarizations
+        )
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
         # 泵浦自身衰减系数：耗尽度要相对“无信号时”的泵浦出射功率定义，
@@ -327,6 +354,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             pump_depletion=self.pump_depletion,
             signal_polarizations=self.signal_polarizations,
             pump_pump_raman=self.pump_pump_raman,
+            launch_power_convention=self.launch_power_convention,
         )
         self._solver_cache[key] = solver
         return solver
@@ -612,6 +640,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "residual-audit control convention, not a more physical default.",
         ),
         (
+            "launch_power_convention",
+            "'total' (default) means power_in_w is the per-channel dual-polarization total power; 'per_pol' "
+            "means it is per-polarization power (physical total = 2x), which requires signal_polarizations=2. "
+            "Only the Raman coupling drive is scaled, never the ODE signal state. 'total' with "
+            "signal_polarizations=2 keeps the legacy unit-less 2x multiplier and emits a warning.",
+        ),
+        (
             "span_coherence",
             "'pcfm' (default, visibility-weighted coherent NLI accumulation) or 'incoherent' "
             "(power sum, the paper's default epsilon=0; for paper-matched comparison).",
@@ -664,6 +699,15 @@ class PCFH3RamanModel(PCFMModel):
         pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
             ``True`` (default) keeps the historical behaviour; ``False`` is the
             pump-pump-off control convention of the C+L residual audit.
+        launch_power_convention: Declared power convention of ``power_in_w``.
+            ``"total"`` (default) keeps the historical per-channel total power
+            and is bit-for-bit unchanged.  ``"per_pol"`` declares that the
+            input is per-polarization power (physical total = 2x) and requires
+            ``signal_polarizations=2``; the ODE state and every output stay
+            per-polarization, only the Raman coupling drive takes the
+            dual-polarization total.  ``"total"`` with
+            ``signal_polarizations=2`` is retained as the legacy unit-less
+            multiplier and emits a :class:`UserWarning` at construction.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -704,6 +748,7 @@ class PCFH3RamanModel(PCFMModel):
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
         span_coherence: str = "auto",
         validity_mode: str = "warn",
         **route_options: object,
@@ -720,6 +765,18 @@ class PCFH3RamanModel(PCFMModel):
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
+        resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
+        if resolved_convention == "total" and int(signal_polarizations) != 1:
+            warnings.warn(
+                "pcfm_h3_raman: launch_power_convention='total' with "
+                f"signal_polarizations={int(signal_polarizations)} multiplies the Raman coupling drive "
+                "by an undeclared unit factor. The input power is still the per-channel total power, "
+                "so the signal photons are counted twice in the pump depletion and ISRS drive. Use "
+                "launch_power_convention='per_pol' when power_in_w really is per-polarization power "
+                "(the physical total is then 2x), or keep signal_polarizations=1.",
+                UserWarning,
+                stacklevel=2,
+            )
         if span_coherence not in ("auto", "pcfm", "incoherent"):
             raise ValueError(
                 f"span_coherence must be 'auto', 'pcfm' or 'incoherent', got {span_coherence!r}."
@@ -757,6 +814,7 @@ class PCFH3RamanModel(PCFMModel):
         self._h3_pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
         self._h3_pump_pump_raman = bool(pump_pump_raman)
+        self._launch_power_convention = resolved_convention
         active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
         resolved = str(span_coherence)
         if resolved == "auto":
@@ -791,6 +849,7 @@ class PCFH3RamanModel(PCFMModel):
             pump_depletion=self._h3_pump_depletion,
             signal_polarizations=self._signal_polarizations,
             pump_pump_raman=self._h3_pump_pump_raman,
+            launch_power_convention=self._launch_power_convention,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,

@@ -31,9 +31,17 @@ from network_nlo_eval.network.elements import RamanPumpConfig
 __all__ = [
     "DEFAULT_FIXED_POINT_ITERATIONS",
     "DEFAULT_PAPER_SPP_STEPS",
+    "LAUNCH_POWER_CONVENTIONS",
     "PaperRamanSpanResult",
     "RamanPaperSpanSolver",
+    "resolve_launch_power_convention",
 ]
+
+#: 支持的入纤功率口径。
+#:
+#: ``"total"``：``power_in_w`` 是每信道（双偏振）总功率，历史默认；
+#: ``"per_pol"``：``power_in_w`` 是每偏振功率，物理总功率是它的 2 倍。
+LAUNCH_POWER_CONVENTIONS: tuple[str, ...] = ("total", "per_pol")
 
 #: ODE 默认的 RK4 步数。与 PCFM 的 SPP 采样网格一致（每步取中点与终点）。
 DEFAULT_PAPER_SPP_STEPS: int = DEFAULT_SPP_STEPS
@@ -93,6 +101,54 @@ def _interp_rows(grid: NDArrayFloat, values: NDArrayFloat, query: float) -> NDAr
     return (1.0 - weight) * values[index] + weight * values[index + 1]
 
 
+def resolve_launch_power_convention(
+    launch_power_convention: str,
+    signal_polarizations: int,
+) -> str:
+    """校验入纤功率口径与状态偏振数的组合。
+
+    ``signal_polarizations`` 只放大耦合项的**驱动功率**，不放大状态本身。因此
+    只有两种自洽的声明：
+
+    * ``"total"`` + ``signal_polarizations=1``：状态就是每信道总功率，驱动也
+      用总功率，光子预算比值 1。这是历史默认。
+    * ``"per_pol"`` + ``signal_polarizations=2``：状态是每偏振功率，驱动取
+      ``2 * P`` 的双偏振总功率，物理总功率 = 2 × 输入。光子预算（按物理总
+      功率计）比值 1。
+
+    ``"total"`` + ``signal_polarizations=2`` 是把总功率再乘 2 驱动，物理上
+    重复计数；该组合在求解器层保留（历史对照与倍率探针），但调用方必须显式
+    warning，见 :class:`~network_nlo_eval.models.pcfm_h3_raman.PCFH3RamanModel`。
+    ``"per_pol"`` + ``signal_polarizations=1`` 自相矛盾（声明每偏振却没有第二
+    个偏振），直接报错。
+
+    Args:
+        launch_power_convention: ``"total"`` 或 ``"per_pol"``。
+        signal_polarizations: ODE 信号状态代表的偏振数。
+
+    Returns
+    -------
+        规范化后的口径名。
+
+    Raises
+    ------
+        ValueError: 口径非法，或 ``"per_pol"`` 与 ``signal_polarizations`` 不匹配。
+    """
+    convention = str(launch_power_convention)
+    if convention not in LAUNCH_POWER_CONVENTIONS:
+        raise ValueError(
+            f"launch_power_convention must be one of {LAUNCH_POWER_CONVENTIONS}, got {launch_power_convention!r}."
+        )
+    if convention == "per_pol" and int(signal_polarizations) != 2:
+        raise ValueError(
+            "launch_power_convention='per_pol' declares a per-polarization input, so the ODE state "
+            "must be per-polarization: signal_polarizations must be 2, got "
+            f"{int(signal_polarizations)}. Use launch_power_convention='total' for a "
+            "per-channel total-power input."
+        )
+    return convention
+
+
 class RamanPaperSpanSolver:
     r"""单跨信号/泵浦/ASE coupled ODE 求解器。
 
@@ -138,6 +194,16 @@ class RamanPaperSpanSolver:
             物理波形 ``DistributedRamanFiber`` 的泵浦耗尽驱动一致。接收波
             自己的功率仍然只乘一次，因此不会像 ``solve(2 * power)`` 那样把
             信号状态本身也放大。
+        launch_power_convention: ``power_in_w`` 的功率口径。``"total"``（默认）
+            表示每信道双偏振总功率，``signal_polarizations=1`` 时逐位保持旧
+            行为；``"per_pol"`` 表示每偏振功率，物理总功率是它的 2 倍，此时
+            状态与输出都保持每偏振口径，只有耦合驱动取双偏振总功率，因此
+            ``signal_polarizations`` 必须是 ``2``。两种口径是同一物理的两种
+            坐标：``per_pol`` 用 ``P/2`` 得到的驱动与 ``total`` 用 ``P`` 完全
+            相同，信号/泵浦剖面按每偏振功率等比缩放。
+            ``total`` + ``signal_polarizations=2`` 是把总功率再乘 2 的
+            **未声明单位倍率**（物理上重复计数），本层保留它只为历史对照，
+            模型层会就此发出 warning。
         pump_depletion: 泵浦是否被信号/其他泵浦耗尽。``True``（默认）解完整
             耦合 Eq. (2)；``False`` 把泵浦行从耦合矩阵中清零，泵浦只按自身
             衰减 ``dP_p/dz = -alpha_p P_p`` 演化；信号仍从泵浦获得增益，泵浦-泵浦
@@ -151,7 +217,8 @@ class RamanPaperSpanSolver:
 
     Raises
     ------
-        ValueError: 任一数组形状不匹配、跨长/步数非正，或布尔开关不是 ``bool``。
+        ValueError: 任一数组形状不匹配、跨长/步数非正、布尔开关不是 ``bool``；
+            口径非法或 ``"per_pol"`` 与 ``signal_polarizations`` 不匹配。
     """
 
     def __init__(
@@ -173,6 +240,7 @@ class RamanPaperSpanSolver:
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
     ) -> None:
         """校验参数并构建与 z 无关的耦合矩阵。"""
         if length_m <= 0:
@@ -185,6 +253,7 @@ class RamanPaperSpanSolver:
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
+        resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
 
         self.signal_frequencies_hz = np.asarray(signal_frequencies_hz, dtype=np.float64)
         self.signal_bandwidths_hz = np.asarray(signal_bandwidths_hz, dtype=np.float64)
@@ -200,6 +269,7 @@ class RamanPaperSpanSolver:
         self.pump_depletion = bool(pump_depletion)
         self.signal_polarizations = int(signal_polarizations)
         self.pump_pump_raman = bool(pump_pump_raman)
+        self.launch_power_convention = resolved_convention
 
         n_signal = self.signal_frequencies_hz.size
         if self.signal_bandwidths_hz.shape != (n_signal,):
@@ -254,6 +324,8 @@ class RamanPaperSpanSolver:
 
         # 驱动功率 = 状态功率 * 该波的偏振数。信号状态是每偏振功率，泵浦是
         # 单偏振泵浦功率；``signal_polarizations=1`` 时该因子恒为 1，逐位不变。
+        # ``launch_power_convention="per_pol"`` 要求 ``signal_polarizations=2``，
+        # 于是驱动恰为双偏振总功率，而状态/输出仍是每偏振功率。
         self._drive_scale = np.where(
             self._is_pump,
             1.0,
