@@ -4,8 +4,13 @@
 --------
 * **默认关闭**：:class:`LinkValidityPolicy` 的 ``mode`` 默认是 ``"off"``。此时代码
   不计算报告、不读 flags、不改 SNR，默认路径与接入前逐位一致。
-* **策略显式**：只有 ``"flag"`` / ``"reject"`` / ``"degrade"`` 三种模式会启用接入，
-  且必须由调用方显式给出；未知取值直接 ``ValueError``。没有"猜一个默认策略"的入口。
+* **策略显式**：只有 ``"flag"`` / ``"reject"`` / ``"degrade"`` / ``"soft"``
+  四种模式会启用接入，且必须由调用方显式给出；未知取值直接 ``ValueError``。
+  没有"猜一个默认策略"的入口。
+* **软 margin 不是 hard valid**：``"soft"`` 只按倾斜信息扣一个可加 margin，
+  不改 ``valid`` / ``flagged``，也不把 informational 分数当成可用性门槛。
+  它只扣 :attr:`LinkValidity.soft_margin_db`，不碰 ``margin_db``；``degrade``
+  的既有语义因此保持不变。
 * **非有限 SNR 永不算合格**：任何启用的模式都会把 ``NaN`` / ``-inf`` 的 SNR 映射为
   ``-inf``。这是 ``NaN < requirement`` 为 ``False`` 那个静默通过缺陷的唯一防线。
 * **状态隔离**：:class:`LinkValidity` 是冻结值对象，内部数组在构造时拷贝并置为
@@ -51,9 +56,69 @@ __all__ = [
     "LinkValidityCache",
     "LinkValidityPolicy",
     "LinkValidityProvider",
+    "TILT_SOFT_MARGIN_FULL_DB",
     "link_optical_path",
     "occupancy_fingerprint",
+    "tilt_soft_margin_db",
 ]
+
+
+#: Full-scale additivity of the informational tilt soft margin (dB).
+#:
+#: The informational score decays from 1 at
+#: :data:`~network_nlo_eval.models.pcfm.TILT_INFORMATIONAL_KNEE_DB` (10 dB) to 0
+#: at :data:`~network_nlo_eval.models.pcfm.TILT_INFORMATIONAL_ZERO_DB` (30 dB).
+#: A full scale of 1 dB puts the hard-flag boundary (15 dB) at
+#: ``(1 - 0.84375) * 1 = 0.15625 dB``, which is the order of the ~0.15 dB
+#: representation residual measured at the C+L six-pump benchmark.  The scale
+#: is deliberately small: it is a soft correction and must never compete with
+#: the hard flag, which is what actually gates validity.
+TILT_SOFT_MARGIN_FULL_DB: float = 1.0
+
+
+def tilt_soft_margin_db(
+    confidence: NDArrayFloat | float,
+    *,
+    full_scale_db: float = TILT_SOFT_MARGIN_FULL_DB,
+) -> NDArrayFloat:
+    r"""Map informational tilt confidence to an additive soft margin.
+
+    The formula is linear in the *lost* confidence:
+
+    .. math::
+
+        m_{soft} = m_{full} \cdot \left(1 - \mathrm{clip}(c, 0, 1)\right).
+
+    It is zero while the tilt is at or below the informational knee (``c = 1``),
+    increases monotonically as the tilt grows, and reaches ``full_scale_db`` at
+    the zero of the informational curve.  A non-finite confidence is treated as
+    zero confidence (the worst case), so a missing or broken score can only
+    increase the margin, never silently remove it.
+
+    The mapping is intentionally not a validity rule: it only produces a
+    number.  A caller opts in to subtracting it with
+    :class:`LinkValidityPolicy` ``mode="soft"``.
+
+    Args:
+        confidence: Informational tilt confidence, scalar or ``(N,)`` array.
+        full_scale_db: Margin at ``confidence == 0`` (dB); default
+            :data:`TILT_SOFT_MARGIN_FULL_DB`.
+
+    Returns
+    -------
+        Non-negative soft margin (dB), same shape as ``confidence``; a scalar
+        input returns a 0-d array.
+
+    Raises
+    ------
+        ValueError: ``full_scale_db`` is negative or not finite.
+    """
+    scale = float(full_scale_db)
+    if not np.isfinite(scale) or scale < 0.0:
+        raise ValueError(f"full_scale_db must be finite and >= 0, got {full_scale_db!r}.")
+    values = np.asarray(confidence, dtype=np.float64)
+    values = np.where(np.isfinite(values), values, 0.0)
+    return scale * (1.0 - np.clip(values, 0.0, 1.0))
 
 
 class InvalidChannelPolicy(StrEnum):
@@ -67,12 +132,17 @@ class InvalidChannelPolicy(StrEnum):
         REJECT: 无效信道的有效 SNR 置为 ``-inf``；有效信道保持原 SNR。
         DEGRADE: 有效信道扣掉 :attr:`LinkValidity.margin_db`，无效信道置为
             ``-inf``。
+        SOFT: 有效信道只扣掉倾斜软 margin :attr:`LinkValidity.soft_margin_db`，
+            无效信道置为 ``-inf``。它不扣 ``margin_db``，也不改变任何
+            ``valid`` / ``flagged`` 判定，因此可以单独观察"只按倾斜收缩余量"
+            的影响。
     """
 
     OFF = "off"
     FLAG = "flag"
     REJECT = "reject"
     DEGRADE = "degrade"
+    SOFT = "soft"
 
 
 @dataclass(frozen=True)
@@ -80,12 +150,12 @@ class LinkValidityPolicy:
     """网络级有效性接入的显式开关。
 
     Args:
-        mode: ``"off"`` / ``"flag"`` / ``"reject"`` / ``"degrade"``。默认 ``"off"``，
-            即完全不接入；其余三种必须由调用方显式写出。
+        mode: ``"off"`` / ``"flag"`` / ``"reject"`` / ``"degrade"`` / ``"soft"``。
+            默认 ``"off"``，即完全不接入；其余四种必须由调用方显式写出。
 
     Raises
     ------
-        ValueError: ``mode`` 不是上述四个取值之一。
+        ValueError: ``mode`` 不是上述五个取值之一。
     """
 
     mode: InvalidChannelPolicy | str = InvalidChannelPolicy.OFF
@@ -111,6 +181,7 @@ class LinkValidityPolicy:
         snr_db: NDArrayFloat,
         valid: NDArrayBool,
         margin_db: NDArrayFloat,
+        soft_margin_db: NDArrayFloat | None = None,
     ) -> NDArrayFloat:
         """Apply the policy to an SNR vector.
 
@@ -120,6 +191,8 @@ class LinkValidityPolicy:
             snr_db: ``(N,)`` 物理 SNR (dB)。
             valid: ``(N,)`` 有效性标志。
             margin_db: ``(N,)`` 建议 margin (dB)。
+            soft_margin_db: ``(N,)`` 倾斜软 margin (dB)；``None`` 视为全 0。
+                只有 ``mode="soft"`` 会读这个参数。
 
         Returns
         -------
@@ -130,6 +203,7 @@ class LinkValidityPolicy:
             np.asarray(valid, dtype=bool),
             np.asarray(margin_db, dtype=np.float64),
             InvalidChannelPolicy(self.mode),
+            None if soft_margin_db is None else np.asarray(soft_margin_db, dtype=np.float64),
         )
 
 
@@ -167,6 +241,7 @@ def _effective_snr(
     valid: NDArrayBool,
     margin_db: NDArrayFloat,
     mode: InvalidChannelPolicy,
+    soft_margin_db: NDArrayFloat | None = None,
 ) -> NDArrayFloat:
     """Apply one policy to an SNR array.
 
@@ -179,6 +254,8 @@ def _effective_snr(
         valid: ``(N,)`` 有效性标志。
         margin_db: ``(N,)`` 建议 margin (dB)，无效信道为 ``inf``。
         mode: 已归一化的策略。
+        soft_margin_db: ``(N,)`` 倾斜软 margin (dB)；``None`` 视为全 0。只有
+            ``soft`` 会读它；``degrade`` 仍只扣 ``margin_db``，语义不变。
 
     Returns
     -------
@@ -195,6 +272,12 @@ def _effective_snr(
     accept = np.asarray(valid, dtype=bool) & usable
     if mode is InvalidChannelPolicy.REJECT:
         return np.where(accept, values, -np.inf)
+    if mode is InvalidChannelPolicy.SOFT:
+        soft = np.zeros(values.shape, dtype=np.float64) if soft_margin_db is None else soft_margin_db
+        # 非有限或负的软 margin 没有安全含义，按 0 处理；它是可加的保守量，
+        # 不能因为坏输入让 SNR 变大。
+        soft = np.where(np.isfinite(soft) & (soft >= 0.0), soft, 0.0)
+        return np.where(accept, values - soft, -np.inf)
     penalty = np.asarray(margin_db, dtype=np.float64)
     penalty = np.where(accept & np.isfinite(penalty), penalty, 0.0)
     return np.where(accept, values - penalty, -np.inf)
@@ -215,6 +298,13 @@ class LinkValidity:
         flagged: D 给出的"预算被拉伸"标志（不等于不可用）。
         confidence: ``[0, 1]`` 证据强度，驱动 margin 中的有效性罚项。
         margin_db: 建议加性 margin (dB)；无效信道为 ``inf``，未占用为 ``0``。
+        tilt_confidence_informational: ``[0, 1]`` 倾斜信息分数，逐信道常数。
+            它不参与 ``valid`` / ``flagged`` / ``confidence``，只用于映射软
+            margin；``None`` 等价于全 1（无软 margin）。
+        soft_margin_db: 倾斜软 margin (dB)，由
+            :func:`tilt_soft_margin_db` 从 ``tilt_confidence_informational``
+            映射；未占用信道为 ``0``。它从不自动生效，只有
+            ``LinkValidityPolicy(mode="soft")`` 才会从 SNR 扣除。
         model: 产生该报告的模型名。
         span_count: 该链路的物理跨数。
         fingerprint: 占用谱指纹，见 :func:`occupancy_fingerprint`。
@@ -230,14 +320,20 @@ class LinkValidity:
     span_count: int = 0
     fingerprint: str = ""
     link_key: LinkKey | None = None
+    tilt_confidence_informational: NDArrayFloat | float | None = None
+    soft_margin_db: NDArrayFloat | float | None = None
 
     def __post_init__(self) -> None:
         """Copy, freeze and validate the per-channel arrays.
 
+        ``tilt_confidence_informational`` 与 ``soft_margin_db`` 是可选的：
+        ``None`` 分别退化为全 1 与全 0，因此旧调用方构造的报告逐位不变。
+        标量输入会广播成逐信道数组。
+
         Raises
         ------
             ValueError: 数组形状不一致、不是一维、margin 为负或为 ``NaN``、
-                confidence 越界。
+                confidence 越界、可选字段越界或非有限。
         """
         arrays: dict[str, Any] = {}
         for name, dtype in (
@@ -257,11 +353,38 @@ class LinkValidity:
         shapes = {name: value.shape for name, value in arrays.items()}
         if len(set(shapes.values())) != 1:
             raise ValueError(f"validity arrays must share one shape, got {shapes}.")
+        # 可选字段在必需字段校验通过后按同一长度归一化。默认值保证旧调用方
+        # 得到的软 margin 恒为 0，从而默认路径逐位不变。
+        num_channels = int(arrays["valid"].shape[0])
+        for name, default in (
+            ("tilt_confidence_informational", 1.0),
+            ("soft_margin_db", 0.0),
+        ):
+            raw = getattr(self, name)
+            if raw is None:
+                value = np.full(num_channels, default, dtype=np.float64)
+            else:
+                value = np.asarray(raw, dtype=np.float64)
+                if value.ndim == 0:
+                    value = np.full(num_channels, float(value), dtype=np.float64)
+                elif value.shape != (num_channels,):
+                    raise ValueError(f"{name} must have shape ({num_channels},), got {value.shape}.")
+                value = np.array(value, dtype=np.float64, copy=True)
+            value.setflags(write=False)
+            arrays[name] = value
+            object.__setattr__(self, name, value)
+
         if np.any(np.isnan(arrays["margin_db"])) or np.any(arrays["margin_db"] < 0.0):
             raise ValueError("margin_db must be non-negative and never NaN.")
         confidence = arrays["confidence"]
         if np.any((confidence < 0.0) | (confidence > 1.0)):
             raise ValueError("confidence must lie in [0, 1].")
+        informational = arrays["tilt_confidence_informational"]
+        if np.any(~np.isfinite(informational)) or np.any((informational < 0.0) | (informational > 1.0)):
+            raise ValueError("tilt_confidence_informational must be finite and lie in [0, 1].")
+        soft = arrays["soft_margin_db"]
+        if np.any(~np.isfinite(soft)) or np.any(soft < 0.0):
+            raise ValueError("soft_margin_db must be finite and non-negative.")
         if int(self.span_count) < 0:
             raise ValueError(f"span_count must be >= 0, got {self.span_count}.")
 
@@ -277,6 +400,10 @@ class LinkValidity:
     def margin_at(self, channel_idx: int) -> float:
         """该信道的建议 margin (dB)。"""
         return float(self.margin_db[channel_idx])
+
+    def soft_margin_at(self, channel_idx: int) -> float:
+        """该信道的倾斜软 margin (dB)。"""
+        return float(self.soft_margin_db[channel_idx])
 
     def adjusted_snr_db(
         self,
@@ -300,7 +427,7 @@ class LinkValidity:
         values = np.asarray(snr_db, dtype=np.float64)
         if values.shape != self.valid.shape:
             raise ValueError(f"snr_db shape {values.shape} does not match the report {self.valid.shape}.")
-        return (policy or LinkValidityPolicy()).apply(values, self.valid, self.margin_db)
+        return (policy or LinkValidityPolicy()).apply(values, self.valid, self.margin_db, self.soft_margin_db)
 
     @classmethod
     def from_budget(
@@ -332,12 +459,19 @@ class LinkValidity:
         report = budget.validity
         margin = np.asarray(budget.margin_db, dtype=np.float64)
         valid = np.asarray(report.valid, dtype=bool) & np.asarray(report.active, dtype=bool) & np.isfinite(margin)
+        # 倾斜是整条占用谱的标量分数，广播成逐信道数组；软 margin 只在占用信道上
+        # 有意义，未占用信道置 0（它们的 SNR 本来就不参与判定）。
+        informational = float(report.tilt_confidence_informational)
+        active = np.asarray(report.active, dtype=bool)
+        soft = np.where(active, tilt_soft_margin_db(informational), 0.0)
         return cls(
             valid=valid,
-            active=np.asarray(report.active, dtype=bool),
+            active=active,
             flagged=np.asarray(report.flagged, dtype=bool),
             confidence=np.asarray(report.confidence, dtype=np.float64),
             margin_db=margin,
+            tilt_confidence_informational=np.full(active.shape, informational, dtype=np.float64),
+            soft_margin_db=soft,
             model=str(budget.model),
             span_count=int(report.span_count if span_count is None else span_count),
             fingerprint=fingerprint,
@@ -356,6 +490,8 @@ class LinkValidity:
             "flagged": [bool(value) for value in self.flagged],
             "confidence": [float(value) for value in self.confidence],
             "margin_db": [float(value) if np.isfinite(value) else None for value in self.margin_db],
+            "tilt_confidence_informational": [float(value) for value in self.tilt_confidence_informational],
+            "soft_margin_db": [float(value) for value in self.soft_margin_db],
         }
 
 
@@ -365,22 +501,26 @@ class ChannelValidity:
 
     聚合规则是"最坏链路 + margin 相加"：任一链路判无效则信道无效；margin 是
     各链路建议值之和（dB 域的保守加性近似，不与噪声做功率域换算）。
+    ``soft_margin_db`` 同样按有效链路相加，只服务 ``mode="soft"``。
 
     Attributes
     ----------
         valid: ``(N,)`` 该信道在整条路径上是否可用。
         margin_db: ``(N,)`` 路径级加性 margin (dB)。
+        soft_margin_db: ``(N,)`` 路径级倾斜软 margin (dB)；无效链路不贡献。
     """
 
     valid: NDArrayBool
     margin_db: NDArrayFloat
+    soft_margin_db: NDArrayFloat | None = None
 
     def __post_init__(self) -> None:
         """Copy and freeze the arrays.
 
         Raises
         ------
-            ValueError: 两个数组形状不同或不是一维。
+            ValueError: 两个必需数组形状不同或不是一维，可选软 margin 形状
+                不匹配或非有限/为负。
         """
         valid = np.array(self.valid, dtype=bool, copy=True)
         margin = np.array(self.margin_db, dtype=np.float64, copy=True)
@@ -390,10 +530,25 @@ class ChannelValidity:
             )
         if np.any(np.isnan(margin)) or np.any(margin < 0.0):
             raise ValueError("margin_db must be non-negative and never NaN.")
+        num_channels = int(valid.shape[0])
+        raw_soft = self.soft_margin_db
+        if raw_soft is None:
+            soft = np.zeros(num_channels, dtype=np.float64)
+        else:
+            soft = np.asarray(raw_soft, dtype=np.float64)
+            if soft.ndim == 0:
+                soft = np.full(num_channels, float(soft), dtype=np.float64)
+            elif soft.shape != (num_channels,):
+                raise ValueError(f"soft_margin_db must have shape ({num_channels},), got {soft.shape}.")
+            soft = np.array(soft, dtype=np.float64, copy=True)
+        if np.any(~np.isfinite(soft)) or np.any(soft < 0.0):
+            raise ValueError("soft_margin_db must be finite and non-negative.")
         valid.setflags(write=False)
         margin.setflags(write=False)
+        soft.setflags(write=False)
         object.__setattr__(self, "valid", valid)
         object.__setattr__(self, "margin_db", margin)
+        object.__setattr__(self, "soft_margin_db", soft)
 
     @classmethod
     def combine(cls, links: Sequence[LinkValidity], num_channels: int) -> ChannelValidity:
@@ -413,6 +568,7 @@ class ChannelValidity:
         """
         valid = np.ones(num_channels, dtype=bool)
         margin = np.zeros(num_channels, dtype=np.float64)
+        soft = np.zeros(num_channels, dtype=np.float64)
         for link in links:
             if link.num_channels != num_channels:
                 raise ValueError(
@@ -420,7 +576,8 @@ class ChannelValidity:
                 )
             valid &= link.valid
             margin += np.where(link.valid, np.where(np.isfinite(link.margin_db), link.margin_db, 0.0), 0.0)
-        return cls(valid=valid, margin_db=margin)
+            soft += np.where(link.valid, link.soft_margin_db, 0.0)
+        return cls(valid=valid, margin_db=margin, soft_margin_db=soft)
 
     def adjusted_snr_db(
         self,
@@ -444,7 +601,7 @@ class ChannelValidity:
         values = np.asarray(snr_db, dtype=np.float64)
         if values.shape != self.valid.shape:
             raise ValueError(f"snr_db shape {values.shape} does not match the verdict {self.valid.shape}.")
-        return (policy or LinkValidityPolicy()).apply(values, self.valid, self.margin_db)
+        return (policy or LinkValidityPolicy()).apply(values, self.valid, self.margin_db, self.soft_margin_db)
 
 
 class LinkValidityProvider(Protocol):
