@@ -72,7 +72,9 @@ class PaperRamanSpanResult:
             ``p_i(z) = P_i(z)/P_i(0)``，顺序与输入信号一致。
         power_out_w: ``(N,)`` 跨末信号功率 (W)，已含拉曼增益/泵浦耗尽。
         raman_ase_w: ``(N,)`` 本跨**新产生**的拉曼 ASE (W)，已扣除输入 ASE
-            按信号净增益搬运的部分。
+            按信号净增益搬运的部分。坐标与求解器的
+            ``launch_power_convention`` 一致：``total`` 是双偏振总量，
+            ``per_pol`` 是每偏振量。
         pump_power_out_w: ``(N_p,)`` 泵浦在各自出射端的功率 (W)。FW 泵取
             ``z=L``，BW 泵取 ``z=0``。
         iterations: 实际做的不动点迭代次数。
@@ -339,6 +341,14 @@ class RamanPaperSpanSolver:
             float(self.signal_polarizations),
         ).astype(np.float64)
 
+        # ASE 坐标由 ``launch_power_convention`` 决定：``total``（默认，含历史
+        # 的 ``signal_polarizations=2`` 倍率对照）保留 ``2*h*nu*B`` 的双偏振
+        # 源项；``per_pol`` 的 ASE 是每偏振量，源项降为 ``1*h*nu*B``，但源
+        # 功率仍用物理总功率（``drive``，信号槽乘偏振数）驱动。这样
+        # ``per_pol`` 的 raman_ase_w 恰为 ``total`` 的一半，输入 ASE 与输出
+        # ASE 在同一坐标，route 层不需要再缩放。
+        self._ase_source_scale = 1.0 if resolved_convention == "per_pol" else 2.0
+
         self._signal_slots = np.flatnonzero(~self._is_pump)
         self._fwd_slots = np.flatnonzero(self._direction > 0)
         self._bw_slots = np.flatnonzero(self._direction < 0)
@@ -434,7 +444,14 @@ class RamanPaperSpanSolver:
         d_power = power * gain_fwd - self._alpha_fwd * power
         if not self.include_ase:
             return d_power, np.zeros_like(ase)
-        source = 2.0 * H_PLANCK * self._b_fwd * self._f_fwd * (self._source_fwd @ total)
+        # 自发源项：``total`` 坐标用双偏振状态与 2 个接收偏振；``per_pol``
+        # 坐标的 ASE 只有每偏振一份，必须用物理总功率（``drive``）驱动，否则
+        # 信号-信号项会因状态减半而低 2 倍。源项系数只在 ``per_pol`` 时降为 1。
+        if self._ase_source_scale == 2.0:
+            ase_drive = total
+        else:
+            ase_drive = drive
+        source = self._ase_source_scale * H_PLANCK * self._b_fwd * self._f_fwd * (self._source_fwd @ ase_drive)
         d_ase = gain_fwd * ase + source - self._alpha_fwd * ase
         return d_power, d_ase
 
@@ -568,6 +585,9 @@ class RamanPaperSpanSolver:
         Args:
             signal_power_in_w: ``(N,)`` 跨首信号功率 (W)。
             signal_ase_in_w: ``(N,)`` 进入本跨的信号 ASE (W)，``None`` 表示 0。
+            其坐标必须与 ``launch_power_convention`` 一致：``total`` 时是
+            双偏振总 ASE，``per_pol`` 时是每偏振 ASE。返回值
+            :attr:`PaperRamanSpanResult.raman_ase_w` 使用同一坐标。
 
         Returns
         -------

@@ -799,16 +799,22 @@ class PCFH3RamanModel(PCFMModel):
             input is per-polarization power (physical total = 2x) and requires
             ``signal_polarizations=2``; the ODE state and every output stay
             per-polarization, only the Raman coupling drive takes the
-            dual-polarization total.  ``"total"`` with
-            ``signal_polarizations=2`` is retained as the legacy unit-less
-            multiplier and emits a :class:`UserWarning` at construction.
+            dual-polarization total.  With a per-polarization launch the
+            newly generated EDFA and ROADM booster ASE are also halved once
+            (``ase_polarization_scale=0.5``) so that ``signal_power_w``,
+            ``spm_noise_w``, ``xpm_noise_w`` and ``ase_noise_w`` are all
+            per-polarization quantities; ``snr_db`` is coordinate independent.
+            ``"total"`` with ``signal_polarizations=2`` is retained as the
+            legacy unit-less multiplier and emits a :class:`UserWarning` at
+            construction.
         nli_power_convention: Declared power convention of the NLI kernels.
             ``"auto"`` (default) follows ``launch_power_convention``, so a
             per-polarization launch also drives the GN weights with the
             physical total power and returns per-polarization NLI.  ``"total"``
             keeps the pre-audit NLI under a per-polarization launch as a
-            comparison control; ``"per_pol"`` under a total-power launch is
-            rejected.
+            comparison control and also keeps the total-power ASE (a
+            deliberately mixed control, not an end-to-end coordinate);
+            ``"per_pol"`` under a total-power launch is rejected.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -930,6 +936,37 @@ class PCFH3RamanModel(PCFMModel):
         # power-sum convention without changing the PCFM class default.
         self.supports_span_context = self.span_coherence == "pcfm"
 
+    @property
+    def launch_power_convention(self) -> str:
+        """Declared power convention of ``power_in_w`` (``"total"``/``"per_pol"``)."""
+        return self._launch_power_convention
+
+    @property
+    def nli_power_convention(self) -> str:
+        """Resolved power convention of the NLI kernels (``"total"``/``"per_pol"``)."""
+        return self._nli_power_convention
+
+    @nli_power_convention.setter
+    def nli_power_convention(self, value: str) -> None:
+        """Keep the parent ``PCFMModel.__init__`` assignment compatible."""
+        self._nli_power_convention = value
+
+    @property
+    def ase_polarization_scale(self) -> float:
+        """Scale of newly generated EDFA/ROADM ASE for this model's coordinate.
+
+        Only an end-to-end per-polarization model (launch *and* NLI both
+        ``"per_pol"``) returns ``0.5``: its signal and NLI are per-polarization,
+        so the dual-polarization ASE of the shared route layer must be halved
+        once.  The Raman ASE is already produced in the same coordinate by
+        :class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver`, so
+        the route layer never scales ``input_ase_w``.  Any mixed convention
+        keeps the historical total ASE (``1.0``).
+        """
+        if self._launch_power_convention == "per_pol" and self._nli_power_convention == "per_pol":
+            return 0.5
+        return 1.0
+
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFH3RamanSpanKernel:
         """Build the profile-aware kernel of this fibre."""
         if self._h3_raman_pumps is not None:
@@ -1012,6 +1049,7 @@ class PCFH3RamanModel(PCFMModel):
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
             input_ase_w=input_ase_w,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)

@@ -223,9 +223,12 @@ def test_no_pump_path_is_bit_identical_across_conventions() -> None:
     for name in _OUTPUT_FIELDS:
         assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(legacy_nli, name))), name
         assert np.array_equal(np.asarray(getattr(baseline, name)), np.asarray(getattr(legacy_multiplier, name))), name
-    # auto 口径：信号与 ASE 仍是同一数组，只有 NLI 按 2**3/2 = 4 倍变化。
+    # auto 口径：信号仍是同一数组；NLI 按 2**3/2 = 4 倍变化；ASE 进入
+    # 每偏振坐标后是 EDFA ASE 的一半（无泵时没有 Raman ASE）。
     assert np.array_equal(np.asarray(baseline.signal_power_w), np.asarray(per_pol.signal_power_w))
-    assert np.array_equal(np.asarray(baseline.ase_noise_w), np.asarray(per_pol.ase_noise_w))
+    assert np.allclose(
+        np.asarray(per_pol.ase_noise_w), 0.5 * np.asarray(baseline.ase_noise_w), rtol=0.03
+    )
     for name in ("spm_noise_w", "xpm_noise_w"):
         assert np.allclose(
             np.asarray(getattr(per_pol, name)), 4.0 * np.asarray(getattr(baseline, name)), rtol=1e-12
@@ -265,8 +268,10 @@ def test_per_pol_and_total_with_two_polarizations_share_the_ode_state() -> None:
     """同一数组下 ``per_pol``+2 与 ``total``+2 的 ODE 完全相同。
 
     口径只改变输入的**声明含义**（因此 ``total``+2 被 warning 标记为重复
-    计数），不改变同一数组算出来的信号与 ASE。NLI 口径独立：``per_pol``
-    默认按物理总功率驱动 GN 权重，所以 NLI 是 ``4 = 2**3 / 2`` 倍。
+    计数），不改变同一数组算出来的信号，也不改变 Raman ASE 的 ODE 状态。
+    NLI 口径独立：``per_pol`` 默认按物理总功率驱动 GN 权重，所以 NLI 是
+    ``4 = 2**3 / 2`` 倍。任务 L 之后 route 的 EDFA ASE 跟随端到端口径：
+    ``per_pol`` 减半，``total``+2 作为显式旧口径不减半。
     """
     path = build_path(CASE)
     power = launch_profile(CASE)
@@ -275,19 +280,23 @@ def test_per_pol_and_total_with_two_polarizations_share_the_ode_state() -> None:
     ).evaluate_path(path, power)
     with pytest.warns(UserWarning):
         total = make_model("pcfm_h3_raman", CASE, signal_polarizations=2, **PUMPED).evaluate_path(path, power)
-    for name in ("signal_power_w", "ase_noise_w"):
-        assert np.array_equal(np.asarray(getattr(per_pol, name)), np.asarray(getattr(total, name))), name
+    assert np.array_equal(np.asarray(per_pol.signal_power_w), np.asarray(total.signal_power_w))
+    # Raman ASE 由同一 ODE 状态产生；``total``+2 沿用旧的双偏振源项，
+    # ``per_pol`` 的端到端 ASE 恰为一半。
+    assert np.allclose(np.asarray(per_pol.ase_noise_w), 0.5 * np.asarray(total.ase_noise_w), rtol=0.02)
     for name in ("spm_noise_w", "xpm_noise_w"):
         assert np.allclose(
             np.asarray(getattr(per_pol, name)), 4.0 * np.asarray(getattr(total, name)), rtol=1e-12
         ), name
 
 
-def test_explicit_legacy_nli_convention_restores_identical_arrays() -> None:
-    """显式 ``nli_power_convention="total"`` 复现改动前的同数组逐位一致。
+def test_explicit_legacy_nli_convention_keeps_signal_and_nli_identical() -> None:
+    """显式 ``nli_power_convention="total"`` 保留旧 NLI 口径。
 
     这条把旧对照口径保留下来：NLI 口径是独立声明，不与 launch 口径强行
-    绑定；改动只发生在默认 ``"auto"`` 选择的那一侧。
+    绑定；信号与 NLI 在 1e-4 相对误差内一致。任务 L 之后 Raman ASE 的
+    坐标跟随 launch 口径，所以混合对照的 ASE 不再是总量：``per_pol`` 少了
+    泵驱动源项的一半，而 EDFA 仍按旧口径（NLI 为 ``total`` 时缩放为 1）。
     """
     path = build_path(CASE)
     power = launch_profile(CASE)
@@ -301,8 +310,12 @@ def test_explicit_legacy_nli_convention_restores_identical_arrays() -> None:
     ).evaluate_path(path, power)
     with pytest.warns(UserWarning):
         total = make_model("pcfm_h3_raman", CASE, signal_polarizations=2, **PUMPED).evaluate_path(path, power)
-    for name in _OUTPUT_FIELDS:
-        assert np.array_equal(np.asarray(getattr(per_pol, name)), np.asarray(getattr(total, name))), name
+    for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w"):
+        assert np.allclose(
+            np.asarray(getattr(per_pol, name)), np.asarray(getattr(total, name)), rtol=1e-4
+        ), name
+    assert np.all(np.asarray(per_pol.ase_noise_w) <= np.asarray(total.ase_noise_w))
+    assert np.all(np.asarray(per_pol.ase_noise_w) >= 0.5 * np.asarray(total.ase_noise_w))
 
 
 def test_option_metadata_documents_the_convention() -> None:

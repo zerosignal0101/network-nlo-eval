@@ -69,6 +69,29 @@ def resolve_noise_figure(
     return 10 ** (noise_figure_db / 10)
 
 
+def _validate_ase_polarization_scale(ase_polarization_scale: float) -> float:
+    """校验 ASE 偏振缩放因子。
+
+    该因子只允许有限正数：0 会把噪声归零并让 SNR 变成 ``inf``，负值会产生
+    非物理的负噪声，两者都应在入口处失败，而不是悄悄污染整条链路。
+
+    Args:
+        ase_polarization_scale: 每偏振 ASE 相对双偏振总量的缩放。
+
+    Returns
+    -------
+        规范化为 ``float`` 的缩放因子。
+
+    Raises
+    ------
+        ValueError: 非有限或非正。
+    """
+    scale = float(ase_polarization_scale)
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError(f"ase_polarization_scale must be finite and positive, got {ase_polarization_scale!r}.")
+    return scale
+
+
 def apply_amplifier_and_roadm(
     *,
     power_in_w: NDArrayFloat,
@@ -79,6 +102,7 @@ def apply_amplifier_and_roadm(
     f_abs_hz: NDArrayFloat,
     bandwidth_hz: NDArrayFloat,
     input_ase_w: NDArrayFloat | None = None,
+    ase_polarization_scale: float = 1.0,
 ) -> ElementOutput:
     """把单跨光纤结果接到放大器（与可选 ROADM），得到出跨功率与 ASE。
 
@@ -97,12 +121,22 @@ def apply_amplifier_and_roadm(
         bandwidth_hz: ``(N,)`` 每信道带宽 ``B_i`` (Hz)。
         input_ase_w: ``(N,)`` 进入放大器的已有 ASE (W)，例如分布式拉曼
             ASE。``None``（默认）表示没有，逐位保持旧行为；有 EDFA 时该
-            ASE 与信号一起被放大，无 EDFA 时原样输出。
+            ASE 与信号一起被放大，无 EDFA 时原样输出。调用方必须按**目标
+            输出坐标**提供它：``per_pol`` 时它已经是每偏振 ASE，因此本函数
+            **不**再缩放它。
+        ase_polarization_scale: 本跨**新产生** EDFA ASE 的偏振缩放，默认
+            ``1.0`` 保持双偏振总量。``per_pol`` 模型传 ``0.5``，只让新
+            ASE 进入每偏振坐标；``input_ase_w`` 不受影响，避免二次缩放。
 
     Returns
     -------
         出跨功率与三项噪声。
+
+    Raises
+    ------
+        ValueError: ``ase_polarization_scale`` 非有限或非正。
     """
+    ase_polarization_scale = _validate_ase_polarization_scale(ase_polarization_scale)
     power_out_fiber = fiber_output.power_out_w
     spm = fiber_output.spm_noise_w
     xpm = fiber_output.xpm_noise_w
@@ -130,7 +164,11 @@ def apply_amplifier_and_roadm(
             gain *= 10 ** (ripple / 10)
         power_out = power_out_fiber * gain
         ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
+        if ase_polarization_scale != 1.0:
+            # 只在需要时做乘法，默认 total 路径保持与旧实现逐位一致。
+            ase = ase * ase_polarization_scale
         if input_ase_w is not None:
+            # 已有 ASE 已经是调用方坐标下的量，绝不能再按本跨口径缩放。
             ase = ase + np.asarray(input_ase_w, dtype=np.float64) * gain
         ase[power_in_w <= 0] = 0
         # 注意：功率口径的 NLI 在本层**不**乘放大器增益（黄金向量锁定该口径），
@@ -157,6 +195,8 @@ def accumulate_route(
     model: QoTModel,
     optical_path: MultiSpanOpticalPath,
     power_in_w: NDArrayFloat,
+    *,
+    ase_polarization_scale: float = 1.0,
 ) -> PathQoTResult:
     """按拓扑顺序把逐跨结果累加成路径级 QoT。
 
@@ -169,6 +209,10 @@ def accumulate_route(
         model: 提供逐节点数组与单跨步进的模型。
         optical_path: 有序逐跳路径。
         power_in_w: ``(N,)`` 入口功率 (W)，非负。
+        ase_polarization_scale: ROADM booster **新产生** ASE 的偏振缩放，
+            默认 ``1.0`` 保持双偏振总量。``per_pol`` 模型传 ``0.5``，让
+            booster 与本跨 EDFA ASE 一样进入每偏振坐标；已累积的 ASE 只随
+            ``transfer``/``loss`` 缩放，不会二次应用该因子。
 
     Returns
     -------
@@ -176,8 +220,10 @@ def accumulate_route(
 
     Raises
     ------
-        ValueError: 功率向量形状不符或含负值。
+        ValueError: 功率向量形状不符或含负值，或 ``ase_polarization_scale``
+            非有限/非正。
     """
+    ase_polarization_scale = _validate_ase_polarization_scale(ase_polarization_scale)
     power = np.asarray(power_in_w, dtype=np.float64).copy()
     if power.shape != (model.n_nodes,) or np.any(power < 0):
         raise ValueError("power_in_w must be a non-negative vector with one value per channel.")
@@ -286,6 +332,10 @@ def accumulate_route(
             booster_ase = (
                 nf * H_PLANCK * model.f_abs_hz * model.channel_bandwidth_hz_channels * (gain - 1)
             )
+            if ase_polarization_scale != 1.0:
+                # booster 与本跨 EDFA 一样只缩放“新产生”的 ASE；已累积的
+                # total_ase 在上面的 *= gain 中已随坐标缩放。
+                booster_ase = booster_ase * ase_polarization_scale
             booster_ase[power <= 0] = 0
             total_ase += booster_ase
         penalty = 10 ** (roadm.filtering_penalty_db / 10)
@@ -388,6 +438,15 @@ class RouteModel:
         self._kernel_cache: dict[str, SpanKernel] = {}
 
     # --- 几何 -------------------------------------------------------------
+    @property
+    def ase_polarization_scale(self) -> float:
+        """本模型新产生 ASE 的偏振缩放；默认 ``1.0``（双偏振总量）。
+
+        只有声明 ``per_pol`` 坐标的模型才覆盖为 ``0.5``，且缩放只作用于本跨
+        EDFA ASE 与 ROADM booster ASE。默认模型不做任何乘法，保持逐位不变。
+        """
+        return 1.0
+
     @property
     def n_nodes(self) -> int:
         """节点数：遗留模式 = 信道数；逐连接模式 = 连接数。"""
@@ -509,6 +568,7 @@ class RouteModel:
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
 
     @property
@@ -519,4 +579,9 @@ class RouteModel:
     # --- 路径 -------------------------------------------------------------
     def evaluate_path(self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat) -> PathQoTResult:
         """沿路径评估，返回逐信道结果。"""
-        return accumulate_route(self, optical_path, power_in_w)
+        return accumulate_route(
+            self,
+            optical_path,
+            power_in_w,
+            ase_polarization_scale=self.ase_polarization_scale,
+        )
