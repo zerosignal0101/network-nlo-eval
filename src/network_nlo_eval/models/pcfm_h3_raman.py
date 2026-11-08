@@ -756,15 +756,20 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "launch_power_convention",
             "'total' (default) means power_in_w is the per-channel dual-polarization total power; 'per_pol' "
             "means it is per-polarization power (physical total = 2x), which requires signal_polarizations=2. "
-            "Only the Raman coupling drive is scaled, never the ODE signal state. 'total' with "
-            "signal_polarizations=2 keeps the legacy unit-less 2x multiplier and emits a warning.",
+            "The convention also selects the ASE polarization scale: under 'per_pol' the newly generated "
+            "EDFA/ROADM booster ASE is halved once, and 'input_ase_w' (Raman ASE, already in model "
+            "coordinates) is never rescaled. Only the Raman coupling drive is scaled, never the ODE signal "
+            "state. The network/RWA reference plane is always per-channel total power; the network and QoT "
+            "adapters do the single conversion at the model boundary, so never halve the spectrum a second "
+            "time. 'total' with signal_polarizations=2 keeps the legacy unit-less 2x multiplier and warns.",
         ),
         (
             "nli_power_convention",
             "'auto' (default) follows launch_power_convention: under 'per_pol' the NLI kernels are driven "
             "with the physical total 2*P and their output is halved, so the NLI stays in the per-polarization "
-            "coordinates of the signal and ASE. 'total' under a per-polarization launch is the pre-audit "
-            "comparison control (NLI 8x low); 'per_pol' under a total-power launch is rejected.",
+            "coordinates of the signal and ASE. Keep 'auto' for end-to-end per_pol: an explicit 'total' under "
+            "a per-polarization launch is only the pre-audit comparison control (NLI 8x low) and must not be "
+            "mixed with a per_pol network reference plane; 'per_pol' under a total-power launch is rejected.",
         ),
         (
             "span_coherence",

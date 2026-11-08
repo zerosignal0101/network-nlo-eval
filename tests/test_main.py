@@ -85,3 +85,43 @@ def test_simulate_runs_with_flexible_grid(runner: CliRunner, tmp_path: Path) -> 
 
     report = json.loads((output_dir / "simulation_results.json").read_text(encoding="utf-8"))
     assert "simulation_metrics" in report
+
+
+def test_compare_launch_power_convention_keeps_the_physical_power(runner: CliRunner, tmp_path: Path) -> None:
+    """``--launch-power-dbm`` 是物理总功率，口径只改数组坐标，不改统计结果。"""
+    topology_file = _write_topology(tmp_path)
+    base = [
+        "compare",
+        "-t",
+        str(topology_file),
+        "--path",
+        "1,2",
+        "--channel",
+        "2",
+        "--num-channels",
+        "4",
+    ]
+    total = runner.invoke(__main__.main, [*base, "--launch-power-convention", "total"])
+    per_pol = runner.invoke(__main__.main, [*base, "--launch-power-convention", "per_pol"])
+    assert total.exit_code == 0, total.output
+    assert per_pol.exit_code == 0, per_pol.output
+    assert json.loads(total.output) == json.loads(per_pol.output)
+
+
+def test_compare_rejects_an_unknown_launch_power_convention(runner: CliRunner, tmp_path: Path) -> None:
+    """口径选项只接受 total/per_pol。"""
+    topology_file = _write_topology(tmp_path)
+    result = runner.invoke(
+        __main__.main,
+        [
+            "compare",
+            "-t",
+            str(topology_file),
+            "--path",
+            "1,2",
+            "--launch-power-convention",
+            "per-pal",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "Invalid value" in result.output

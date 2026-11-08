@@ -13,6 +13,7 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
 from network_nlo_eval.models.numba_kernels import _calc_beta2_from_d, _calc_beta3_from_s_d, _w_to_dbm
+from network_nlo_eval.models.power_conventions import resolve_launch_power_convention, to_convention
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
 from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
@@ -117,6 +118,13 @@ class PyNLOQoTEvaluator:
     The historical name is retained for API compatibility. The physical
     package runs the Manakov solver through PyNLO, which requires a CuPy
     compute context for dual-polarization WDM propagation.
+
+    ``launch_power_convention`` declares how ``launch_power_profile_w`` is
+    interpreted (``"total"``, the default network reference plane, or
+    ``"per_pol"``).  The waveform engine itself always works in total dual-
+    polarization power, so :meth:`create_wdm_signal` normalises the input to
+    that coordinate exactly once before the existing ``/n_pol`` split for the
+    IQ modulator; a per-polarization input is never halved twice.
     """
 
     def __init__(
@@ -131,14 +139,25 @@ class PyNLOQoTEvaluator:
         pilot_info: dict[str, Any] | None = None,
         connections: Sequence[ConnectionSpec] | None = None,
         slots_per_channel: int | None = None,
+        *,
+        launch_power_convention: str = "total",
     ) -> None:
         """初始化拓扑波形 QoT 评估器。
 
         ``compute_ctx_name`` 默认为 ``"cupy"``：Manakov 求解器在 MKL FFT
         后端上会被 PyNLO 直接拒绝，CPU 回退对本评估器不可用。
+
+        Args:
+            launch_power_convention: ``launch_power_profile_w`` 的口径，
+                ``"total"``（默认）或 ``"per_pol"``。
+
+        Raises
+        ------
+            ValueError: 采样率/每符号采样数非正，或功率口径非法。
         """
         if sps <= 0 or symbol_rate_hz <= 0:
             raise ValueError("Symbol rate and samples per symbol must be positive.")
+        self.launch_power_convention = resolve_launch_power_convention(launch_power_convention)
         self.physical = _load_physical_layer()
         self.spectrum_grid = spectrum_grid
         self.connections = list(connections) if connections is not None else None
@@ -211,10 +230,16 @@ class PyNLOQoTEvaluator:
     def create_wdm_signal(
         self, launch_power_profile_w: NDArrayFloat, num_symbols: int = 1024
     ) -> tuple[Any, list[NDArrayBool]]:
-        """创建与统计模型功率参考面一致的双偏振 WDM 波形."""
+        """创建与统计模型功率参考面一致的双偏振 WDM 波形.
+
+        输入按构造时声明的 ``launch_power_convention`` 解释，先归一化到波形引擎的
+        总功率坐标，再执行 ``/n_pol``。默认 ``total`` 时换算返回原数组，波形输出
+        与旧路径逐位相同。
+        """
         powers = np.asarray(launch_power_profile_w, dtype=float)
         if powers.shape != (self.spectrum_grid.num_channels,) or np.any(powers < 0):
             raise ValueError("Launch power must contain one non-negative value per channel.")
+        powers = to_convention(powers, self.launch_power_convention, "total")
         rng = np.random.default_rng(self.seed)
         channel_signals: list[Any] = []
         all_bits: list[NDArrayBool] = []
@@ -376,7 +401,8 @@ class PyNLOQoTEvaluator:
 
         Args:
             optical_path: 有序光路。
-            launch_power_profile_w: ``(N,)`` 入纤功率 (W)。
+            launch_power_profile_w: ``(N,)`` 入纤功率 (W)，口径为构造时的
+                ``launch_power_convention``。
             num_symbols: 每信道符号数。
             validity: 可选 H3 链路报告。给出时**必须**同时给出 ``validity_policy``，
                 否则视为配置错误而不是静默忽略。
@@ -417,7 +443,8 @@ class PyNLOQoTEvaluator:
         Args:
             topology: 网络拓扑。
             path: 节点路径。
-            launch_power_profile_w: ``(N,)`` 入纤功率 (W)。
+            launch_power_profile_w: ``(N,)`` 入纤功率 (W)，口径为构造时的
+                ``launch_power_convention``。
             num_symbols: 每信道符号数。
             validity: 可选 H3 链路报告，语义同 :meth:`evaluate_path`。
             validity_policy: 可选显式策略。

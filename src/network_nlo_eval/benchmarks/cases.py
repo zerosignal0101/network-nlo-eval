@@ -23,6 +23,7 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import MultiSpanOpticalPath
+from network_nlo_eval.models.power_conventions import resolve_launch_power_convention
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
@@ -117,6 +118,11 @@ class BenchCase:
         span_count: 跨段数。
         edfa_noise_figure_db: 每跨 EDFA 噪声系数 (dB)。
         total_power_dbm: 标称总入纤功率 (dBm)，用于把"每信道功率"解释成论文口径。
+            它始终是**物理总功率**，与 ``launch_power_convention`` 无关。
+        launch_power_convention: 算例驱动的功率口径，``"total"``（默认）或
+            ``"per_pol"``。``per_channel_power_dbm`` 与 ``launch_profile`` 的
+            ``power_dbm`` 仍表示每信道物理总功率，只有 ``launch_profile`` 的
+            输出坐标随本字段变化。
     """
 
     name: str
@@ -129,11 +135,17 @@ class BenchCase:
     span_count: int
     edfa_noise_figure_db: float
     total_power_dbm: float
+    launch_power_convention: str = "total"
 
     @property
     def per_channel_power_dbm(self) -> float:
-        """标称总功率摊到每信道的 dBm 值。"""
+        """标称总功率摊到每信道的 dBm 值（每信道物理总功率）。"""
         return self.total_power_dbm - 10.0 * np.log10(self.num_channels)
+
+    @property
+    def per_channel_power_dbm_per_pol(self) -> float:
+        """同一每信道功率的每偏振 dBm 值（比总功率低 ``10 log10 2``）。"""
+        return self.per_channel_power_dbm - 10.0 * np.log10(2.0)
 
 
 def _case(
@@ -143,6 +155,7 @@ def _case(
     spacing_hz: float,
     span_count: int,
     total_power_dbm: float,
+    launch_power_convention: str = "total",
 ) -> BenchCase:
     """由波段范围与信道数反推网格中心，避免手填中心频率写错半个带宽。"""
     low, high = band_edges_hz(bands)
@@ -158,6 +171,7 @@ def _case(
         span_count=span_count,
         edfa_noise_figure_db=5.5,
         total_power_dbm=total_power_dbm,
+        launch_power_convention=resolve_launch_power_convention(launch_power_convention),
     )
 
 
@@ -215,6 +229,7 @@ def launch_profile(
     *,
     tilt_db: float = 0.0,
     tilt_reference: str = "total",
+    launch_power_convention: str = "auto",
 ) -> NDArrayFloat:
     r"""入纤功率谱 ``(N,)`` (W)，可选线性（dB 域）功率倾斜。
 
@@ -229,25 +244,38 @@ def launch_profile(
     :attr:`~network_nlo_eval.models.pcfm.SpanValidityReport.power_tilt_db`
     的度量一致。频偏方向固定（红端低、蓝端高），调用方无需再猜符号。
 
+    ``power_dbm`` 始终是每信道**物理总功率**，与输出口径无关。函数先生成
+    总功率谱（含 ``tilt_reference="total"`` 的总功率归一化），最后按
+    ``launch_power_convention`` 决定是否乘 ``0.5`` 输出每偏振功率。
+
     Args:
         case: 算例。
-        power_dbm: 目标每信道功率 (dBm)；``None`` 时取算例的标称每信道功率。
-            它同时是 ``tilt_reference="center"`` 的中心锚定值。
+        power_dbm: 目标每信道物理总功率 (dBm)；``None`` 时取算例的标称每信道
+            功率。它同时是 ``tilt_reference="center"`` 的中心锚定值。
         tilt_db: 最大/最小功率比 (dB)，必须非负有限。``0`` 时走与旧实现
             完全相同的 ``np.full`` 分支（逐位不变）。
         tilt_reference: ``"total"``（默认）把总功率归一到
             ``N * 10**((power_dbm - 10 log10 N)/10)``；``"center"`` 不归一，
             让倾斜直线在网格中心频率处等于标称每信道功率。
+        launch_power_convention: 输出坐标，``"auto"``（默认）取
+            ``case.launch_power_convention``；``"per_pol"`` 在总功率结果上乘
+            ``0.5``（每偏振功率），``"total"`` 原样返回。
 
     Returns
     -------
-        ``(N,)`` 功率 (W)。
+        ``(N,)`` 功率 (W)，口径见 ``launch_power_convention``。
 
     Raises
     ------
-        ValueError: ``tilt_db`` 为负/非有限、``tilt_reference`` 非法，或在
-            单信道算例上要求非零倾斜。
+        ValueError: ``tilt_db`` 为负/非有限、``tilt_reference`` 非法、口径非法，
+            或在单信道算例上要求非零倾斜。
     """
+    convention = (
+        case.launch_power_convention
+        if launch_power_convention == "auto"
+        else resolve_launch_power_convention(launch_power_convention)
+    )
+    convention = resolve_launch_power_convention(convention)
     level = case.per_channel_power_dbm if power_dbm is None else power_dbm
     base_w = 1e-3 * 10 ** (level / 10.0)
     if tilt_reference not in TILT_REFERENCES:
@@ -255,7 +283,8 @@ def launch_profile(
     if not np.isfinite(tilt_db) or tilt_db < 0.0:
         raise ValueError(f"tilt_db must be a finite non-negative value, got {tilt_db!r}.")
     if tilt_db == 0.0:
-        return np.full(case.num_channels, base_w, dtype=np.float64)
+        profile = np.full(case.num_channels, base_w, dtype=np.float64)
+        return profile if convention == "total" else profile * 0.5
     if case.num_channels < 2:
         raise ValueError("a non-zero tilt needs at least two channels.")
 
@@ -265,4 +294,7 @@ def launch_profile(
     if tilt_reference == "total":
         # 归一化到平坦谱的总功率：倾斜只改谱形，不改链路总功率。
         power *= (case.num_channels * base_w) / float(np.sum(power))
+    if convention == "per_pol":
+        # 总功率归一化之后再折算，per_pol 输出的物理总功率仍是同一链路功率。
+        power = power * 0.5
     return np.ascontiguousarray(power)

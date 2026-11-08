@@ -31,6 +31,7 @@ from network_nlo_eval.benchmarks.cases import (
 )
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import create_model
+from network_nlo_eval.models.power_conventions import resolve_launch_power_convention
 
 __all__ = [
     "ModelRun",
@@ -150,20 +151,48 @@ def time_calls(
     return cold_ms, float(np.median(timings)), float(np.percentile(timings, 95)), peak / 1024.0, reps_used
 
 
+def _require_case_convention(model: Any, case: BenchCase) -> str:
+    """返回算例口径，并拒绝口径不一致的模型。
+
+    ``launch_profile`` 按算例口径生成数组；如果模型按另一种口径解释同一数组，
+    SNR 会整体偏移约 3 dB。相比静默偏移，直接报错。
+    """
+    convention = resolve_launch_power_convention(case.launch_power_convention)
+    model_convention = resolve_launch_power_convention(
+        str(getattr(model, "launch_power_convention", "total"))
+    )
+    if model_convention != convention:
+        raise ValueError(
+            f"model declares launch_power_convention={model_convention!r} but benchmark case "
+            f"{case.name!r} drives it with {convention!r}; pass the matching model option "
+            "(e.g. launch_power_convention='per_pol' with signal_polarizations=2) or change "
+            "the case convention."
+        )
+    return convention
+
+
 def sweep_snr(model: Any, case: BenchCase, powers_dbm: tuple[float, ...] = POWER_SWEEP_DBM) -> NDArrayFloat:
     """在功率扫描点上逐信道算 SNR。
 
     Args:
-        model: 模型实例。
+        model: 模型实例；``launch_power_convention`` 必须与算例一致。
         case: 算例。
-        powers_dbm: 功率点。
+        powers_dbm: 功率点（每信道物理总功率）。
 
     Returns
     -------
         ``(len(powers_dbm), N)`` SNR (dB)。
+
+    Raises
+    ------
+        ValueError: 模型口径与算例不一致。
     """
+    convention = _require_case_convention(model, case)
     path = build_path(case)
-    rows = [model.evaluate_path(path, launch_profile(case, power)).snr_db for power in powers_dbm]
+    rows = [
+        model.evaluate_path(path, launch_profile(case, power, launch_power_convention=convention)).snr_db
+        for power in powers_dbm
+    ]
     return np.vstack(rows)
 
 
@@ -187,14 +216,22 @@ def run_case(
     Returns
     -------
         读数组。
+
+    Raises
+    ------
+        ValueError: 模型口径与算例不一致。
     """
     case = build_case(case_name)
     model = make_model(model_name, case, **(options or {}))
+    convention = _require_case_convention(model, case)
     # 先测速再扫功率：cold 必须是该实例的第一次调用，才包含 JIT 编译与惰性
     # (N, N) 常量构建。测速用中间功率点，避开极低功率下 SNR 为 +inf 的分支差异。
     probe = powers_dbm[len(powers_dbm) // 2]
     cold_ms, median_ms, p95_ms, peak_kib, reps_used = time_calls(
-        model, build_path(case), launch_profile(case, probe), reps=reps
+        model,
+        build_path(case),
+        launch_profile(case, probe, launch_power_convention=convention),
+        reps=reps,
     )
     snr = sweep_snr(model, case, powers_dbm)
     return ModelRun(

@@ -10,6 +10,7 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import create_model, describe_models
 from network_nlo_eval.models.numba_kernels import _dbm_to_w
+from network_nlo_eval.models.power_conventions import to_convention
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.state import NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
@@ -106,6 +107,16 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
     show_default=True,
     help="Registered QoT model used for SNR checks (see 'network-nlo-eval models').",
 )
+@click.option(
+    "--launch-power-convention",
+    type=click.Choice(["total", "per_pol"]),
+    default="total",
+    show_default=True,
+    help=(
+        "Power convention of NetworkState/ServiceRequest launch powers (total = per-channel "
+        "dual-polarization total). Converted once to the model convention inside QoTValidator."
+    ),
+)
 def simulate(
     topology_file: Path,
     service_num: int,
@@ -118,6 +129,7 @@ def simulate(
     max_ksp_paths: int,
     slot_width_ghz: float | None,
     qot_model: str,
+    launch_power_convention: str,
 ) -> None:
     """Run a dynamic RWA simulation."""
     click.echo(f"Starting simulation with topology: {topology_file}")
@@ -156,6 +168,7 @@ def simulate(
         gn_evaluator=gn_evaluator,
         network_topology=network_topology,
         spectrum_grid=spectrum_grid,
+        launch_power_convention=launch_power_convention,
     )
 
     # 路径计算缓存
@@ -253,7 +266,23 @@ def simulate(
 @click.option("-t", "--topology-file", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
 @click.option("--path", "path_text", required=True, help="Comma-separated original topology node IDs.")
 @click.option("--channel", "channels", type=int, multiple=True, help="Active zero-based channel; repeat as needed.")
-@click.option("--launch-power-dbm", type=float, default=0.0, show_default=True)
+@click.option(
+    "--launch-power-dbm",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Per-channel physical total launch power (dBm); independent of the power convention.",
+)
+@click.option(
+    "--launch-power-convention",
+    type=click.Choice(["total", "per_pol"]),
+    default="total",
+    show_default=True,
+    help=(
+        "Convention of the launch profile handed to the comparator (total = per-channel "
+        "dual-polarization total). Each engine converts to its own convention once."
+    ),
+)
 @click.option("--num-channels", type=int, default=80, show_default=True)
 @click.option("--channel-spacing-ghz", type=float, default=50.0, show_default=True)
 @click.option("--center-freq-thz", type=float, default=193.1, show_default=True)
@@ -272,6 +301,7 @@ def compare(
     path_text: str,
     channels: tuple[int, ...],
     launch_power_dbm: float,
+    launch_power_convention: str,
     num_channels: int,
     channel_spacing_ghz: float,
     center_freq_thz: float,
@@ -290,11 +320,17 @@ def compare(
         if any(index < 0 or index >= num_channels for index in active_channels):
             raise ValueError("Channel index is outside the configured spectrum grid.")
         launch_profile = np.zeros(num_channels, dtype=np.float64)
-        launch_profile[list(active_channels)] = _dbm_to_w(launch_power_dbm)
-        gn_evaluator = create_model(qot_model, grid, topology.get_default_fiber_config())
-        result = TopologyQoTComparator(topology, grid, gn_evaluator=gn_evaluator).evaluate(
-            path, launch_profile, run_waveform=waveform, num_symbols=num_symbols
+        # ``--launch-power-dbm`` 始终是每信道物理总功率；数组按声明的口径存放。
+        launch_profile[list(active_channels)] = to_convention(
+            _dbm_to_w(launch_power_dbm), "total", launch_power_convention
         )
+        gn_evaluator = create_model(qot_model, grid, topology.get_default_fiber_config())
+        result = TopologyQoTComparator(
+            topology,
+            grid,
+            gn_evaluator=gn_evaluator,
+            launch_power_convention=launch_power_convention,
+        ).evaluate(path, launch_profile, run_waveform=waveform, num_symbols=num_symbols)
         payload = result.to_dict()
         payload["original_path"] = original_path
         output = json.dumps(payload, ensure_ascii=False, indent=2)

@@ -12,6 +12,10 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.models.power_conventions import (
+    resolve_launch_power_convention,
+    to_convention,
+)
 from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
@@ -289,6 +293,14 @@ class QoTValidator:
     :class:`~network_nlo_eval.rwa.validity.LinkValidity`，并按策略修正 SNR。
     默认两者都不给，判定与接入前逐位一致。``mode="soft"`` 只扣倾斜软 margin，
     不改变 ``valid`` / ``flagged``，也不扣 ``margin_db``。
+
+    入纤功率口径（任务 O2）：``NetworkState.launch_power_profile_w``、
+    ``ServiceRequest.launch_power_w`` 与 provider 的入参都按构造时的
+    ``launch_power_convention`` 解释（默认 ``"total"``，即网络参考面）。
+    内部在送进 ``gn_evaluator`` / ``assemble_link_noise`` 前**唯一一次**换算到
+    评估器口径（``eval_power_convention``），因此 ``LinkNoiseCache`` 永远是总功率
+    坐标。当前 ``assemble_link_noise`` 只有总功率实现，评估器声明 ``per_pol`` 时
+    构造期直接 ``NotImplementedError``，不会静默混用两种坐标。
     """
 
     def __init__(
@@ -298,6 +310,7 @@ class QoTValidator:
         spectrum_grid: SpectrumGrid,
         fixed_span_length_km: float | None = None,
         *,
+        launch_power_convention: str = "total",
         validity_policy: LinkValidityPolicy | None = None,
         validity_provider: LinkValidityProvider | None = None,
     ):
@@ -308,13 +321,19 @@ class QoTValidator:
             network_topology: 网络拓扑。
             spectrum_grid: 频谱网格。
             fixed_span_length_km: 固定跨长 (km)；``None`` 时用光纤配置。
+            launch_power_convention: ``NetworkState`` / ``ServiceRequest`` 与
+                provider 入参的功率口径，``"total"``（默认）或 ``"per_pol"``。
+                内部会换算到评估器口径；默认 ``total`` 时不产生任何算术。
             validity_policy: 可选的有效性策略。默认 ``"off"``。
             validity_provider: 可选的有效性提供者。策略非 ``off`` 时必填；
                 策略为 ``off`` 时给出会报错，避免"配了但没生效"的死配置。
 
         Raises
         ------
-            ValueError: 策略与提供者的组合不一致。
+            ValueError: 策略与提供者的组合不一致，或 provider 的
+                ``input_power_convention`` 与评估器口径不一致。
+            NotImplementedError: 评估器声明了非 ``total`` 的入纤口径，而
+                ``assemble_link_noise`` 仍是总功率实现。
         """
         policy = validity_policy or LinkValidityPolicy()
         if policy.enabled and validity_provider is None:
@@ -331,6 +350,29 @@ class QoTValidator:
         self.network_topology = network_topology
         self.spectrum_grid = spectrum_grid
         self._fixed_span_length_km = fixed_span_length_km
+        self.launch_power_convention = resolve_launch_power_convention(launch_power_convention)
+        #: 评估器（``gn_evaluator`` / ``assemble_link_noise`` / ``LinkNoiseCache``）
+        #: 的功率坐标。它永远是总功率坐标，换算只在内部入口做一次。
+        self.eval_power_convention = resolve_launch_power_convention(
+            str(getattr(gn_evaluator, "launch_power_convention", "total"))
+        )
+        if self.eval_power_convention != "total":
+            raise NotImplementedError(
+                "QoTValidator requires a total-power evaluator until assemble_link_noise is "
+                f"implemented for per-polarization noise; got launch_power_convention="
+                f"{self.eval_power_convention!r}. Pass a total-power evaluator, or convert the "
+                "power spectrum to total before network QoT."
+            )
+        provider_convention = getattr(validity_provider, "input_power_convention", None)
+        if provider_convention is not None:
+            provider_convention = resolve_launch_power_convention(str(provider_convention))
+            if provider_convention != self.eval_power_convention:
+                raise ValueError(
+                    "validity_provider input_power_convention="
+                    f"{provider_convention!r} must equal the evaluator convention "
+                    f"{self.eval_power_convention!r}; QoTValidator passes evaluator-coordinate power "
+                    "to the provider, so a mismatch would convert the spectrum twice."
+                )
         self.validity_policy = policy
         self.validity_provider = validity_provider
         #: 最近一次 ``verify_allocation`` 里每条受影响链路的有效性报告。
@@ -485,11 +527,16 @@ class QoTValidator:
 
         接入有效性时（策略非 ``off``），先由 ``validity_provider`` 用同一份功率谱
         产出链路报告，再把它附加到缓存上。报告**不参与**噪声算术。
+
+        ``power_profile`` 按验证器构造时声明的口径解释，进入 provider /
+        ``assemble_link_noise`` 前换算到评估器口径（默认 ``total``，此时
+        ``to_convention`` 返回原数组，不做算术）。
         """
         u, v = link_key
         fiber_config = self.network_topology.get_fiber_config(u, v)
         edfa_config = self.network_topology.get_link_edfa_config(u, v)
         evaluator = self.gn_evaluator.for_fiber(fiber_config)
+        power_eval = to_convention(power_profile, self.launch_power_convention, self.eval_power_convention)
 
         link_total_length_m = fiber_config.length_km * 1000
         span_length_m = (fixed_span_length_km or fiber_config.max_span_length_km) * 1000
@@ -505,7 +552,7 @@ class QoTValidator:
                 link_key=link_key,
                 fiber_config=fiber_config,
                 edfa_config=edfa_config,
-                power_profile_w=power_profile,
+                power_profile_w=power_eval,
                 span_length_m=span_length_m,
             )
             self.last_link_validity[link_key] = validity
@@ -513,7 +560,7 @@ class QoTValidator:
         return assemble_link_noise(
             evaluator=evaluator,
             edfa_config=edfa_config,
-            power_profile=power_profile,
+            power_profile=power_eval,
             span_length_m=span_length_m,
             num_full_spans=num_full_spans,
             remainder_length_m=remainder_length_m,
@@ -565,8 +612,11 @@ class QoTValidator:
         策略为 ``off`` 时返回值就是物理 SNR，与接入前逐位一致；非 ``off`` 时按
         :class:`~network_nlo_eval.rwa.validity.LinkValidityPolicy` 扣除 margin 或
         把无效信道压成 ``-inf``。
+
+        信号功率按构造时声明的口径解释，交给累积器前换算到评估器口径。
         """
         frequency_hz, channel_bandwidth_hz = self._node_frequency_and_bandwidth(channel_idx)
+        launch_power_eval = to_convention(launch_power_w, self.launch_power_convention, self.eval_power_convention)
         last_hop = len(path) - 2
 
         def _hops() -> Iterable[HopPair]:
@@ -581,7 +631,7 @@ class QoTValidator:
         qot = accumulate_service_snr_detail(
             _hops(),
             channel_idx=channel_idx,
-            launch_power_w=launch_power_w,
+            launch_power_w=launch_power_eval,
             frequency_hz=frequency_hz,
             channel_bandwidth_hz=channel_bandwidth_hz,
             is_blocked=lambda terms: self._is_blocked(terms.config, channel_idx),
@@ -639,6 +689,9 @@ class QoTValidator:
 
         策略为 ``off`` 时返回物理 SNR，与接入前逐位一致；非 ``off`` 时用各跳链路
         有效性做"最坏链路 + margin 相加"的聚合，再按策略修正。
+
+        功率谱按构造时声明的口径解释，换算到评估器口径后再参与算术；默认
+        ``total`` 时 ``to_convention`` 返回原数组，逐步位不变。
         """
         total_spm = np.zeros(self.num_nodes, dtype=np.float64)
         total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
@@ -651,6 +704,7 @@ class QoTValidator:
             signal_power = temp_power_profiles[link_key0].copy()
         else:
             signal_power = network_state.get_link_state(u0, v0).launch_power_profile_w.copy()
+        signal_power = to_convention(signal_power, self.launch_power_convention, self.eval_power_convention)
 
         for i in range(len(path) - 1):
             u, v = path[i], path[i + 1]
