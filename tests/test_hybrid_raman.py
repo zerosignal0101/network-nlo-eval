@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -657,20 +658,20 @@ def test_invalid_signal_polarizations_is_rejected() -> None:
         make_model("hybrid_raman_paper", CASE, signal_polarizations=0)
 
 
-def test_signal_polarizations_two_warns_that_per_pol_is_not_end_to_end() -> None:
-    """Hybrid 没有 launch/ASE 口径，非 1 的偏振数只能是对照，必须告警。"""
-    with pytest.warns(UserWarning, match="does not implement an end-to-end"):
+def test_signal_polarizations_two_warns_about_the_mixed_control() -> None:
+    """``total``+2 把总功率再乘 2 驱动，只能是对照，必须告警。"""
+    with pytest.warns(UserWarning, match="launch_power_convention='per_pol'"):
         make_model("hybrid_raman_paper", CASE, signal_polarizations=2)
     options = dict(HYBRID_RAMAN_PAPER_MODEL_INFO.options)
-    assert "not end-to-end per_pol" in options["signal_polarizations"]
+    assert "launch_power_convention='per_pol'" in options["signal_polarizations"]
 
 
-def test_default_signal_polarizations_does_not_warn_about_the_per_pol_gap() -> None:
-    """默认 signal_polarizations=1 不触发该 warning（默认路径静默）。"""
+def test_default_signal_polarizations_does_not_warn() -> None:
+    """默认 total+1 是自洽组合，构造时不产生任何 UserWarning。"""
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         make_model("hybrid_raman_paper", CASE)
-    assert not [item for item in caught if "end-to-end per-polarization" in str(item.message)]
+    assert not [item for item in caught if issubclass(item.category, UserWarning)]
 
 
 # ---------------------------------------------------------------------------
@@ -868,3 +869,203 @@ def test_hybrid_model_metadata_documents_the_gain_table() -> None:
     options = dict(HYBRID_RAMAN_PAPER_MODEL_INFO.options)
     assert "raman_gain_table" in options
     assert "table" in options["raman_gain_model"]
+
+
+# ---------------------------------------------------------------------------
+# 端到端 per_pol：launch_power_convention / ase_polarization_scale
+# ---------------------------------------------------------------------------
+
+#: 40 信道 C+L 10 跨：152 信道的完整算例在 hybrid 的逐信道 Eq. (10) 拟合下
+#: 太慢，这里保持同样的波段与跨数、缩小信道数，覆盖跨间 ASE 累积。
+CL_40CH_10SPAN = replace(
+    build_case("c_57ch"),
+    name="cl_40ch_10span",
+    bands="C+L",
+    num_channels=40,
+    center_frequency_hz=190.0e12,
+    span_count=10,
+)
+
+CL_40CH_1SPAN = replace(CL_40CH_10SPAN, name="cl_40ch_1span", span_count=1)
+
+#: 论文 hybrid 的六泵 E+C+L 配置，与 ``pcfm_h3_raman`` 的 C+L 算例一致。
+SIX_PUMPS = [
+    _pump_at(1340.0, 0.63),
+    _pump_at(1360.0, 0.63),
+    _pump_at(1427.0, 0.165),
+    _pump_at(1445.0, 0.131),
+    _pump_at(1476.0, 0.125),
+    _pump_at(1505.0, 0.075),
+]
+
+#: ``(tag, case, pumps)``：C/C+L、1/10 跨、无泵/有泵都由这个矩阵覆盖。
+PER_POL_MATRIX = [
+    ("c_1span_none", build_case("scaling_40ch"), None),
+    ("c_1span_forward", build_case("scaling_40ch"), [_pump(direction="forward")]),
+    ("c_10span_none", build_case("c_57ch"), None),
+    ("c_10span_backward", build_case("c_57ch"), [_pump()]),
+    ("cl_1span_none", build_case("scaling_160ch"), None),
+    ("cl_1span_backward", build_case("scaling_160ch"), [_pump()]),
+    ("cl_10span_none", CL_40CH_10SPAN, None),
+]
+
+_OUTPUT_FIELDS = ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db")
+
+
+def _readings(case, power: np.ndarray, *, pumps=None, **options):
+    """Evaluate one case; ``pumps`` is only passed when non-empty."""
+    opts = dict(options)
+    if pumps:
+        opts["raman_pumps"] = list(pumps)
+    return make_model("hybrid_raman_paper", case, **opts).evaluate_path(build_path(case), power)
+
+
+@pytest.mark.parametrize(
+    "pumps", [None, [_pump()], [_pump(direction="forward")]], ids=["unpumped", "backward", "forward"]
+)
+def test_default_total_convention_is_bit_identical_to_explicit_total(pumps) -> None:
+    """默认路径与显式 ``total``+1 逐位一致（硬门槛，含 Raman ASE）。"""
+    power = launch_profile(CASE)
+    baseline = _readings(CASE, power, pumps=pumps)
+    explicit = _readings(
+        CASE,
+        power,
+        pumps=pumps,
+        signal_polarizations=1,
+        launch_power_convention="total",
+    )
+    for name in _OUTPUT_FIELDS:
+        np.testing.assert_array_equal(
+            np.asarray(getattr(baseline, name)), np.asarray(getattr(explicit, name))
+        )
+
+
+def test_ase_polarization_scale_follows_the_launch_convention() -> None:
+    """只有声明的 ``per_pol`` 才把 0.5 传给 route；默认 ``total`` 是 1.0。"""
+    assert make_model("hybrid_raman_paper", CASE).launch_power_convention == "total"
+    assert make_model("hybrid_raman_paper", CASE).ase_polarization_scale == 1.0
+    end_to_end = make_model(
+        "hybrid_raman_paper",
+        CASE,
+        signal_polarizations=2,
+        launch_power_convention="per_pol",
+    )
+    assert end_to_end.launch_power_convention == "per_pol"
+    assert end_to_end.nli_power_convention == "per_pol"
+    assert end_to_end.ase_polarization_scale == 0.5
+
+
+@pytest.mark.parametrize(
+    ("tag", "case", "pumps"), PER_POL_MATRIX, ids=[row[0] for row in PER_POL_MATRIX]
+)
+def test_per_pol_plus_two_matches_total_plus_one_snr(tag, case, pumps) -> None:
+    """同一物理链路：``per_pol``+2 的 ``P/2`` 与 ``total``+1 的 ``P`` 逐信道一致。
+
+    ODE 状态、NLI（GN 权重按物理总功率驱动再减半）与新产生的 EDFA/booster
+    ASE 都换到每偏振坐标，Raman ASE 由求解器直接按口径输出。残差只允许是
+    浮点舍入，因此门槛取 0.01 dB（实测为 0）。
+    """
+    power = launch_profile(case)
+    total = _readings(case, power, pumps=pumps)
+    per_pol = _readings(
+        case,
+        0.5 * power,
+        pumps=pumps,
+        signal_polarizations=2,
+        launch_power_convention="per_pol",
+    )
+    gap = np.asarray(per_pol.snr_db, dtype=np.float64) - np.asarray(total.snr_db, dtype=np.float64)
+    assert float(np.max(np.abs(gap))) < 0.01, f"{tag}: worst SNR gap {float(np.max(np.abs(gap))):.3e} dB"
+    # 信号与两条 ASE 路径都必须是严格的 2 倍关系。
+    np.testing.assert_array_equal(2.0 * np.asarray(per_pol.signal_power_w), np.asarray(total.signal_power_w))
+    np.testing.assert_array_equal(2.0 * np.asarray(per_pol.ase_noise_w), np.asarray(total.ase_noise_w))
+    np.testing.assert_allclose(
+        2.0 * (np.asarray(per_pol.spm_noise_w) + np.asarray(per_pol.xpm_noise_w)),
+        np.asarray(total.spm_noise_w) + np.asarray(total.xpm_noise_w),
+        rtol=1e-12,
+    )
+
+
+def test_per_pol_ase_arrays_are_halved() -> None:
+    """``per_pol`` 的 ASE 数组恰为同物理链路 ``total`` 的一半，``input_ase_w`` 不二次缩放。"""
+    power = launch_profile(CASE)
+    total = _readings(CASE, power, pumps=[_pump()])
+    per_pol = _readings(
+        CASE,
+        0.5 * power,
+        pumps=[_pump()],
+        signal_polarizations=2,
+        launch_power_convention="per_pol",
+    )
+    np.testing.assert_allclose(
+        np.asarray(per_pol.ase_noise_w), 0.5 * np.asarray(total.ase_noise_w), rtol=1e-12
+    )
+
+
+def test_per_pol_with_two_polarizations_does_not_warn() -> None:
+    """声明的 ``per_pol``+2 是自洽组合，构造时不应 warning。"""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        make_model(
+            "hybrid_raman_paper",
+            CASE,
+            signal_polarizations=2,
+            launch_power_convention="per_pol",
+        )
+    assert not [item for item in caught if issubclass(item.category, UserWarning)]
+
+
+def test_per_pol_requires_two_signal_polarizations() -> None:
+    """``per_pol`` 声明每偏振输入而状态是单偏振，必须报错。"""
+    with pytest.raises(ValueError, match="signal_polarizations must be 2"):
+        make_model("hybrid_raman_paper", CASE, launch_power_convention="per_pol")
+
+
+@pytest.mark.parametrize("convention", ["per-pal", "perpol", "", "TOTAL"])
+def test_unknown_launch_power_convention_is_rejected(convention: str) -> None:
+    """口径只接受 ``"total"`` / ``"per_pol"``，拼写错误不得静默降级。"""
+    with pytest.raises(ValueError, match="launch_power_convention"):
+        make_model("hybrid_raman_paper", CASE, launch_power_convention=convention)
+
+
+def test_c_l_six_pumps_run_end_to_end() -> None:
+    """C+L 六泵走通 hybrid 的 ODE/NLI 路径，且 per_pol 与 total 一致。"""
+    power = launch_profile(CL_40CH_1SPAN)
+    total = _readings(CL_40CH_1SPAN, power, pumps=SIX_PUMPS)
+    assert np.all(np.isfinite(total.snr_db))
+    assert float(np.mean(np.asarray(total.spm_noise_w) + np.asarray(total.xpm_noise_w))) > 0.0
+    per_pol = _readings(
+        CL_40CH_1SPAN,
+        0.5 * power,
+        pumps=SIX_PUMPS,
+        signal_polarizations=2,
+        launch_power_convention="per_pol",
+    )
+    gap = np.asarray(per_pol.snr_db, dtype=np.float64) - np.asarray(total.snr_db, dtype=np.float64)
+    assert float(np.max(np.abs(gap))) < 0.01
+
+
+@pytest.mark.parametrize("nli_form", ["paper", "integral", "pcfm"])
+def test_per_pol_is_consistent_for_every_nli_form(nli_form: str) -> None:
+    """三种 NLI 口径都在 per_pol 下与 total 一致（``pcfm`` 是旧近似对照）。"""
+    power = launch_profile(CASE)
+    total = _readings(CASE, power, nli_form=nli_form)
+    per_pol = _readings(
+        CASE,
+        0.5 * power,
+        nli_form=nli_form,
+        signal_polarizations=2,
+        launch_power_convention="per_pol",
+    )
+    gap = np.asarray(per_pol.snr_db, dtype=np.float64) - np.asarray(total.snr_db, dtype=np.float64)
+    assert float(np.max(np.abs(gap))) < 0.01
+
+
+def test_option_metadata_documents_the_launch_convention() -> None:
+    """模型 options 元数据必须同步暴露新口径。"""
+    options = dict(HYBRID_RAMAN_PAPER_MODEL_INFO.options)
+    assert "launch_power_convention" in options
+    text = options["launch_power_convention"]
+    assert "'total'" in text and "'per_pol'" in text
+    assert "signal_polarizations=2" in text
+    assert "ase_polarization_scale=0.5" in text

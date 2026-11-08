@@ -47,7 +47,7 @@ from network_nlo_eval.models.pcfm import (
     _self_beating_visibility,
 )
 from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel
-from network_nlo_eval.models.raman_ode import RamanPaperSpanSolver
+from network_nlo_eval.models.raman_ode import RamanPaperSpanSolver, resolve_launch_power_convention
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
@@ -634,6 +634,12 @@ class DRASpanKernelBase:
             ``True`` (default) keeps the historical behaviour; ``False`` zeroes
             only the pump-pump block, leaving pump depletion by the signals and
             the pump-signal / signal-signal coupling untouched.
+        launch_power_convention: Declared power convention of ``power_in_w``,
+            forwarded to :class:`RamanPaperSpanSolver`.  ``"total"`` (default)
+            keeps every historical result bit-for-bit; ``"per_pol"`` declares a
+            per-polarization input (physical total is ``2x``) and requires
+            ``signal_polarizations=2``.  Only ``hybrid_raman_paper`` declares
+            it; the two DRA controls keep the default.
     """
 
     #: Human-readable profile kind, used in diagnostics.
@@ -660,6 +666,7 @@ class DRASpanKernelBase:
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
     ) -> None:
         if n_steps < 4:
             raise ValueError("n_steps must be >= 4.")
@@ -671,6 +678,9 @@ class DRASpanKernelBase:
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
+        self.launch_power_convention = resolve_launch_power_convention(
+            launch_power_convention, signal_polarizations
+        )
 
         f_abs = np.asarray(f_abs_hz, dtype=np.float64)
         bandwidths = np.asarray(b_hz, dtype=np.float64)
@@ -813,6 +823,7 @@ class DRASpanKernelBase:
                 pump_depletion=self._pump_depletion,
                 signal_polarizations=self._signal_polarizations,
                 pump_pump_raman=self._pump_pump_raman,
+                launch_power_convention=self.launch_power_convention,
             )
             self._solver_cache[key] = solver
         return solver

@@ -47,6 +47,8 @@ DOI:10.1109/JLT.2024.3439999.
   Gaussian/CZ 近似，不是论文 Fig. 4 的实测二氧化硅谱。
 * 泵浦 ASE 未单独求解（信号 ASE 耦合完整）。
 * 泵浦-信号 XPM 按论文 Eq. (7) 的说明略去。
+* 入纤功率口径只支持 ``"total"``（默认）与 ``"per_pol"`` 两种自洽组合；
+  ``"total"`` + ``signal_polarizations=2`` 是历史对照，物理上重复计数。
 * ``epsilon`` 论文未印出，默认 0。
 * 论文 Eq. (9) 印刷版最后一项漏加号，本仓按 Appendix D Eq. (56) 补齐；
   Eq. (8)/(9) 的第三项符号按 Eq. (31)-(33) 推导取负号，见
@@ -77,6 +79,7 @@ from network_nlo_eval.models.raman_ode import (
     DEFAULT_PAPER_SPP_STEPS,
     PaperRamanSpanResult,
     RamanPaperSpanSolver,
+    resolve_launch_power_convention,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
@@ -149,10 +152,18 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             行为；``False`` 只把耦合矩阵的泵浦×泵浦块清零，泵浦仍被信号耗尽、
             仍按自身衰减演化，泵浦-信号与信号-信号耦合不变。C+L 残差审计的
             对照口径。
+        launch_power_convention: ``power_in_w`` 的功率口径。``"total"``（默认）
+            是每信道双偏振总功率，历史行为逐位不变；``"per_pol"`` 是每偏振
+            功率，物理总功率是它的 2 倍，此时信号状态/出射功率保持每偏振，
+            耦合驱动取双偏振总功率（``signal_polarizations`` 必须为 2）。
+            NLI 的 GN 权重（``16/27``/``32/27``）按总功率定义，因此本核在
+            ``"per_pol"`` 下用 ``2 * P`` 驱动 NLI 并把结果减半，使其与信号、
+            ASE 同坐标。默认 ``"total"`` 不做任何乘法。
 
     Raises
     ------
-        ValueError: ``nli_form`` 非法或 ODE/积分参数不合法。
+        ValueError: ``nli_form`` 非法、ODE/积分参数不合法，或
+            ``launch_power_convention``/``signal_polarizations`` 组合矛盾。
     """
 
     #: 剖面类型，用于诊断。
@@ -180,10 +191,12 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
     ) -> None:
         """校验口径并缓存 ``gamma`` 与泵浦平均频率 ``f_hat``。"""
         if nli_form not in ("paper", "integral"):
             raise ValueError("nli_form must be 'paper' or 'integral' for the paper kernel.")
+        resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         super().__init__(
             f_abs_hz,
             b_hz,
@@ -199,6 +212,10 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             signal_polarizations=signal_polarizations,
             pump_pump_raman=pump_pump_raman,
         )
+        self.launch_power_convention = resolved_convention
+        # GN 权重是双偏振总功率权重；per_pol 输入只有一半物理功率，驱动要
+        # 乘 2、输出再减半。``total`` 下为 1.0，不做任何乘法。
+        self._nli_drive_scale = 2.0 if resolved_convention == "per_pol" else 1.0
         self._nli_form = str(nli_form)
         self._spm_exponent = float(spm_coherence_exponent)
         # Eq. (8)/(9) 的 gamma_i 是逐信道的：gamma = 2 pi f n2 / A_eff。
@@ -242,30 +259,43 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         profile: BugliaClosedProfile,  # type: ignore[override]
         span_context: SpanContext | None,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
-        """Eq. (6)-(9)：本跨 SPM/XPM 噪声功率 (W)。"""
+        """Eq. (6)-(9)：本跨 SPM/XPM 噪声功率 (W)。
+
+        per_pol 输入下 ``power_internal`` 是每偏振功率；把驱动换成物理总功率
+        （``2 * P``）再减半，等价于在总功率坐标里算完再换回每偏振，与信号、
+        ASE 的坐标一致。``total`` 下 ``_nli_drive_scale == 1.0``，不做乘法，
+        保持历史逐位不变。
+        """
+        powers = power_internal if self._nli_drive_scale == 1.0 else power_internal * self._nli_drive_scale
         if self._nli_form == "integral":
-            return nli_integral(
+            spm, xpm = nli_integral(
                 profile,
                 self.b_hz,
-                power_internal,
+                powers,
                 self.gamma_per_w_m,
                 self.beta2,
                 self.beta3,
                 self.reference_frequency_hz,
                 n_frequency=max(16, min(64, int(self._n_quadrature) * 2)),
             )
-        n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
-        return nli_closed_form(
-            profile,
-            self.b_hz,
-            power_internal,
-            self.gamma_per_w_m,
-            self.beta2,
-            self.beta3,
-            self.reference_frequency_hz,
-            spm_coherence_exponent=self._spm_exponent,
-            n_spans=n_spans,
-        )
+        else:
+            n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
+            spm, xpm = nli_closed_form(
+                profile,
+                self.b_hz,
+                powers,
+                self.gamma_per_w_m,
+                self.beta2,
+                self.beta3,
+                self.reference_frequency_hz,
+                spm_coherence_exponent=self._spm_exponent,
+                n_spans=n_spans,
+            )
+        if self._nli_drive_scale != 1.0:
+            # 除以 2 在二进制浮点下精确，per_pol 结果与 total/2 逐位对齐。
+            spm = spm / self._nli_drive_scale
+            xpm = xpm / self._nli_drive_scale
+        return spm, xpm
 
 
 class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
@@ -291,6 +321,10 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
             :class:`RamanPaperSpanSolver`）；默认 1 保持旧结果逐位不变。
         pump_pump_raman: 是否计入泵浦-泵浦拉曼耦合；默认 ``True`` 保持历史
             行为，``False`` 是 C+L 残差审计的对照口径。
+        launch_power_convention: ``power_in_w`` 的功率口径。本核把同一取值
+            作为 PCFM 的 ``nli_power_convention`` 传给父类：``"per_pol"`` 下
+            NLI 用 ``2 * P`` 驱动并减半，无泵时父类的 ISRS 积分也按物理总功率
+            驱动；``"total"``（默认）不做任何缩放。
         **kwargs: 透传给 :class:`PCFMSpanKernel`。
     """
 
@@ -308,13 +342,22 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
         **kwargs: object,
     ) -> None:
         """构造核并缓存泵浦参数。"""
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
+        resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         kwargs.setdefault("cache_spans", False)
-        super().__init__(f_abs_hz, b_hz, fiber_config, **kwargs)  # type: ignore[arg-type]
+        super().__init__(  # type: ignore[arg-type]
+            f_abs_hz,
+            b_hz,
+            fiber_config,
+            nli_power_convention=resolved_convention,
+            **kwargs,
+        )
+        self.launch_power_convention = resolved_convention
         self._pumps = list(pumps)
         self._gain_model = resolve_raman_gain_model(gain_model)
         self._raman_ase_enabled = bool(raman_ase)
@@ -400,6 +443,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
                 pump_depletion=self._pump_depletion,
                 signal_polarizations=self._signal_polarizations,
                 pump_pump_raman=self._pump_pump_raman,
+                launch_power_convention=self.launch_power_convention,
             )
             self._solver_cache[key] = solver
         return solver
@@ -490,9 +534,18 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
             "signal_polarizations",
             "Polarizations represented by each ODE signal state. Default 1 (historical per-polarization "
             "drive, bit-for-bit unchanged). 2 drives the coupling with the dual-polarization total signal "
-            "power, matching the physical waveform pump-depletion drive. This model declares no "
-            "launch_power_convention and does not scale EDFA/booster ASE, so a value other than 1 is a "
-            "mixed-coordinate comparison control and warns at construction; it is not end-to-end per_pol.",
+            "power, matching the physical waveform pump-depletion drive; together with "
+            "launch_power_convention='per_pol' it is the end-to-end per-polarization coordinate.",
+        ),
+        (
+            "launch_power_convention",
+            "'total' (default) means power_in_w is the per-channel dual-polarization total power; 'per_pol' "
+            "means per-polarization power (physical total = 2x) and requires signal_polarizations=2. Under "
+            "'per_pol' the coupled ODE state, the NLI and the newly generated EDFA/ROADM booster ASE all stay "
+            "per-polarization: the Raman/NLI drive takes the physical total power, the NLI is halved back and "
+            "ase_polarization_scale=0.5 is passed to the route layer. input_ase_w (the Raman ASE, already in "
+            "model coordinates) is never rescaled. 'total' with signal_polarizations=2 keeps the legacy "
+            "unit-less 2x multiplier as a mixed-coordinate comparison control and warns at construction.",
         ),
         (
             "pump_pump_raman",
@@ -519,6 +572,19 @@ class HybridRamanPaperModel(PCFMModel):
     The model keeps its own cross-span ASE state and hands only the newly
     generated Raman ASE to the span EDFA, while the shared route layer
     transports the accumulated ASE with the signal transfer factor.
+
+    ``launch_power_convention`` declares the coordinate of ``power_in_w``.
+    ``"total"`` (default) is the historical per-channel dual-polarization total
+    power and is bit-for-bit unchanged.  ``"per_pol"`` declares a
+    per-polarization input with ``signal_polarizations=2``; the coupled ODE
+    state, the NLI and the newly generated EDFA/booster ASE then all stay
+    per-polarization (``ase_polarization_scale=0.5``), so ``snr_db`` equals the
+    ``"total"`` result of the same physical link.  The Raman ASE is already
+    produced in the same coordinate by
+    :class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver`, so it is
+    never rescaled a second time.  ``"total"`` with ``signal_polarizations=2``
+    keeps the legacy unit-less multiplier as a mixed-coordinate control and
+    warns at construction.
 
     Args:
         grid: Spectrum grid.
@@ -562,19 +628,28 @@ class HybridRamanPaperModel(PCFMModel):
             state.  ``1`` (default) is the historical per-polarization drive
             and keeps the old results bit-for-bit; ``2`` uses the
             dual-polarization total signal power as the coupling drive, which
-            is the physical waveform convention.  This model declares **no**
-            ``launch_power_convention`` and does not scale the EDFA/booster
-            ASE, so ``2`` is a pump-depletion comparison control with a mixed
-            coordinate (it warns at construction), not an end-to-end per-pol
-            result.
+            is the physical waveform convention.  Combine with
+            ``launch_power_convention="per_pol"`` for an end-to-end
+            per-polarization link.
         pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
             ``True`` (default) keeps the historical behaviour; ``False`` is the
             pump-pump-off control convention of the C+L residual audit.
+        launch_power_convention: Declared power convention of ``power_in_w``.
+            ``"total"`` (default) keeps the historical per-channel total power
+            and is bit-for-bit unchanged.  ``"per_pol"`` declares that the
+            input is per-polarization power (physical total = 2x) and requires
+            ``signal_polarizations=2``; the ODE state, the NLI and the newly
+            generated EDFA/ROADM booster ASE all stay per-polarization, and the
+            Raman ASE of the solver is already in that coordinate.
+            ``"total"`` with ``signal_polarizations=2`` is retained as the
+            legacy unit-less multiplier and emits a :class:`UserWarning` at
+            construction.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
     ------
-        ValueError: Invalid NLI form, ODE or PCFM options.
+        ValueError: Invalid NLI form, ODE or PCFM options, or an inconsistent
+            ``launch_power_convention``/``signal_polarizations`` pair.
     """
 
     info = HYBRID_RAMAN_PAPER_MODEL_INFO
@@ -602,6 +677,7 @@ class HybridRamanPaperModel(PCFMModel):
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
+        launch_power_convention: str = "total",
         **route_options: object,
     ) -> None:
         """Build the paper model."""
@@ -611,18 +687,18 @@ class HybridRamanPaperModel(PCFMModel):
             raise ValueError(f"nli_form must be one of {NLI_FORMS}, got {nli_form!r}.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
-        if int(signal_polarizations) != 1:
-            # hybrid 没有 launch_power_convention，也继承 route 的
-            # ase_polarization_scale=1.0；signal_polarizations=2 只放大 ODE 驱动，
-            # ASE 仍是双偏振总量，不能当作端到端 per_pol（不要半支持）。
+        resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
+        if resolved_convention == "total" and int(signal_polarizations) != 1:
+            # 历史 ``total``+2 是把每信道总功率再乘 2 驱动：光子重复计数，
+            # 信号/NLI 是总量而 Raman ASE 源项也按 total 算，只作对照口径。
             warnings.warn(
-                "hybrid_raman_paper does not implement an end-to-end per-polarization coordinate: "
-                f"signal_polarizations={int(signal_polarizations)} only multiplies the coupled-ODE "
-                "drive and no launch_power_convention is declared, so the EDFA/booster ASE stays a "
-                "dual-polarization total (ase_polarization_scale=1.0) and the SNR is a mixed "
-                "coordinate. This is a pump-depletion comparison control, not a per-pol result. "
-                "Use pcfm_h3_raman(signal_polarizations=2, launch_power_convention='per_pol') for "
-                "an end-to-end per-pol link, or keep signal_polarizations=1.",
+                "hybrid_raman_paper: launch_power_convention='total' with "
+                f"signal_polarizations={int(signal_polarizations)} multiplies the Raman coupling drive "
+                "by an undeclared unit factor: the input power is already the per-channel total power, "
+                "so the signal photons are counted twice in the pump depletion and ISRS/NLI drive. "
+                "This is a mixed-coordinate comparison control, not a per-pol result. Use "
+                "launch_power_convention='per_pol' when power_in_w really is per-polarization power "
+                "(the physical total is then 2x), or keep signal_polarizations=1.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -655,7 +731,30 @@ class HybridRamanPaperModel(PCFMModel):
         self._pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
         self._pump_pump_raman = bool(pump_pump_raman)
+        self._launch_power_convention = resolved_convention
+        # NLI 与信号同坐标：per_pol 下核把 GN 权重按物理总功率驱动并减半。
+        self.nli_power_convention = resolved_convention
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
+
+    @property
+    def launch_power_convention(self) -> str:
+        """Declared power convention of ``power_in_w`` (``"total"``/``"per_pol"``)."""
+        return self._launch_power_convention
+
+    @property
+    def ase_polarization_scale(self) -> float:
+        """Scale of newly generated EDFA/ROADM ASE for this model's coordinate.
+
+        An end-to-end per-polarization model returns ``0.5``: its signal, NLI
+        and Raman ASE are per-polarization, so the dual-polarization ASE of the
+        shared route layer must be halved once.  The default ``"total"``
+        coordinate returns ``1.0`` and multiplies nothing.  The route layer
+        never scales ``input_ase_w`` (the Raman ASE is already in model
+        coordinates).
+        """
+        if self._launch_power_convention == "per_pol":
+            return 0.5
+        return 1.0
 
     def _build_kernel(self, fiber_config: FiberSpanConfig):
         """Build the span kernel of this fibre for the selected NLI form."""
@@ -679,6 +778,7 @@ class HybridRamanPaperModel(PCFMModel):
                 pump_depletion=self._pump_depletion,
                 signal_polarizations=self._signal_polarizations,
                 pump_pump_raman=self._pump_pump_raman,
+                launch_power_convention=self._launch_power_convention,
             )
         return HybridRamanPaperSpanKernel(
             self.f_abs_hz,
@@ -695,6 +795,7 @@ class HybridRamanPaperModel(PCFMModel):
             pump_depletion=self._pump_depletion,
             signal_polarizations=self._signal_polarizations,
             pump_pump_raman=self._pump_pump_raman,
+            launch_power_convention=self._launch_power_convention,
         )
 
     def evaluate_path(self, optical_path, power_in_w):
@@ -756,6 +857,7 @@ class HybridRamanPaperModel(PCFMModel):
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
             input_ase_w=raman_ase_w,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
         self._ase_in_w = np.array(element.ase_noise_w, dtype=np.float64, copy=True)
         self._span_index += 1
