@@ -16,6 +16,12 @@ from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.rwa.link_noise import assemble_link_noise
+from network_nlo_eval.rwa.validity import (
+    ChannelValidity,
+    LinkValidity,
+    LinkValidityPolicy,
+    LinkValidityProvider,
+)
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
 #: 普朗克常数 (J·s)。booster ASE 项 ``NF * h * nu * B_i * (G-1)`` 的系数。
@@ -91,6 +97,50 @@ def fold_roadm_terms(config: ROADMConfig, *, is_last_hop: bool) -> RoadmTerms:
 #: 一跳上交给累积器的材料：(该跳的 ROADM 常量, 该跳的噪声缓存)。
 HopPair = tuple[RoadmTerms, LinkNoiseCache]
 
+#: 取某一跳有效性报告的回调；返回 ``None`` 表示该跳未接入有效性。
+ValidityOfHop = Callable[[RoadmTerms, LinkNoiseCache], "LinkValidity | None"]
+
+
+@dataclass(frozen=True)
+class ServiceQoT:
+    """一条业务路径的物理 SNR 与有效性聚合。
+
+    物理 SNR 与接入前逐位一致；``margin_db`` / ``valid`` 是新增的网络级口径。
+    默认策略（``off``）下 :meth:`effective_snr_db` 原样返回 ``snr_db``，不做任何
+    算术，因此默认判定逐位不变。
+
+    Attributes
+    ----------
+        snr_db: 沿业务自身路径累积的物理 SNR (dB)；被阻断为 ``-inf``，
+            噪声为零为 ``+inf``。
+        margin_db: 路径上各链路建议 margin 之和 (dB)，只累计有效链路。
+        valid: 路径上所有已接入链路是否都判该信道有效。
+        invalid_links: 判该信道无效的链路键（按首次出现顺序去重）。
+    """
+
+    snr_db: float
+    margin_db: float = 0.0
+    valid: bool = True
+    invalid_links: tuple[LinkKey, ...] = ()
+
+    def effective_snr_db(self, policy: LinkValidityPolicy | None = None) -> float:
+        """Apply the validity policy to the scalar SNR.
+
+        Args:
+            policy: 策略；``None`` 等价于 ``"off"``（返回物理 SNR，不做算术）。
+
+        Returns
+        -------
+            用于阈值比较的 SNR (dB)。
+        """
+        return float(
+            (policy or LinkValidityPolicy()).apply(
+                np.array([self.snr_db], dtype=np.float64),
+                np.array([self.valid], dtype=bool),
+                np.array([self.margin_db], dtype=np.float64),
+            )[0]
+        )
+
 
 def accumulate_service_snr(
     hops: Iterable[HopPair],
@@ -100,6 +150,8 @@ def accumulate_service_snr(
     frequency_hz: float,
     channel_bandwidth_hz: float,
     is_blocked: Callable[[RoadmTerms], bool],
+    validity_of: ValidityOfHop | None = None,
+    validity_policy: LinkValidityPolicy | None = None,
 ) -> float:
     """沿服务自身路径累积噪声，给出单信道 SNR (dB)。
 
@@ -113,16 +165,63 @@ def accumulate_service_snr(
         frequency_hz: 该节点的中心频率 (Hz)。
         channel_bandwidth_hz: 该节点的信道带宽 ``B_i`` (Hz)，booster ASE 用它。
         is_blocked: 判定某一跳的该信道是否被阻断。
+        validity_of: 可选回调，返回该跳的链路有效性。``None`` 时不读任何报告，
+            物理 SNR 与历史逐位一致。
+        validity_policy: 可选策略，默认 ``"off"``。只有显式给出非 ``off`` 策略时
+            返回值才会被 margin / 无效标记修正。
 
     Returns
     -------
-        SNR (dB)；被阻断为 ``-inf``，噪声为 0 为 ``+inf``。
+        SNR (dB)；被阻断为 ``-inf``，噪声为 0 为 ``+inf``。策略为 ``off`` 时与
+        :func:`accumulate_service_snr_detail` 的物理值逐位相同。
+    """
+    return accumulate_service_snr_detail(
+        hops,
+        channel_idx=channel_idx,
+        launch_power_w=launch_power_w,
+        frequency_hz=frequency_hz,
+        channel_bandwidth_hz=channel_bandwidth_hz,
+        is_blocked=is_blocked,
+        validity_of=validity_of,
+    ).effective_snr_db(validity_policy)
+
+
+def accumulate_service_snr_detail(
+    hops: Iterable[HopPair],
+    *,
+    channel_idx: int,
+    launch_power_w: float,
+    frequency_hz: float,
+    channel_bandwidth_hz: float,
+    is_blocked: Callable[[RoadmTerms], bool],
+    validity_of: ValidityOfHop | None = None,
+) -> ServiceQoT:
+    """沿服务自身路径累积噪声，返回物理 SNR 与有效性聚合。
+
+    与 :func:`accumulate_service_snr` 是同一套算术：浮点求和顺序、阻断时机、
+    ``+inf``/``-inf`` 约定都没有改动，只是额外收集各跳的 margin 与有效性。
+
+    Args:
+        hops: 逐跳的 ``(ROADM 常量, 噪声缓存)``，可为惰性迭代器。
+        channel_idx: 候选信道（ODE 节点下标）。
+        launch_power_w: 该业务的发射功率 (W)。
+        frequency_hz: 该节点的中心频率 (Hz)。
+        channel_bandwidth_hz: 该节点的信道带宽 ``B_i`` (Hz)。
+        is_blocked: 判定某一跳的该信道是否被阻断。
+        validity_of: 可选回调；被阻断的跳不会触发回调。
+
+    Returns
+    -------
+        物理 SNR 与路径级有效性聚合。
     """
     total_spm = 0.0
     total_xpm = 0.0
     total_ase = 0.0
     signal_power = launch_power_w
     total_spans = 0
+    total_margin_db = 0.0
+    valid = True
+    invalid_links: list[LinkKey] = []
 
     for roadm, cache in hops:
         total_spm += cache.spm.item(channel_idx)
@@ -131,7 +230,19 @@ def accumulate_service_snr(
         total_spans += cache.span_count
 
         if is_blocked(roadm):
-            return float("-inf")
+            return ServiceQoT(snr_db=float("-inf"), valid=False)
+
+        # 有效性只在未阻断的跳上读取：阻断信道本来就没有物理量可判。
+        if validity_of is not None:
+            link_validity = validity_of(roadm, cache)
+            if link_validity is not None:
+                if link_validity.channel_valid(channel_idx):
+                    total_margin_db += link_validity.margin_at(channel_idx)
+                else:
+                    valid = False
+                    if link_validity.link_key is not None and link_validity.link_key not in invalid_links:
+                        invalid_links.append(link_validity.link_key)
+
         if roadm.equalize:
             total_ase += roadm.booster_base * frequency_hz * channel_bandwidth_hz * (roadm.loss - 1.0)
         else:
@@ -147,8 +258,15 @@ def accumulate_service_snr(
     penalty = total_spans**0.05 if total_spans > 0 else 1.0
     noise = total_spm * penalty + total_xpm + total_ase
     if noise <= 0:
-        return float("inf")
-    return 10.0 * math.log10(signal_power / noise)
+        snr_db = float("inf")
+    else:
+        snr_db = 10.0 * math.log10(signal_power / noise)
+    return ServiceQoT(
+        snr_db=snr_db,
+        margin_db=total_margin_db,
+        valid=valid,
+        invalid_links=tuple(invalid_links),
+    )
 
 
 class QoTValidator:
@@ -157,6 +275,11 @@ class QoTValidator:
     RWA 算法使用它来判断一个候选分配方案是否满足 SNR 要求。
 
     核心策略：**临时副本 + 局部缓存**，不修改 LinkState，无需回滚。
+
+    网络级有效性接入（任务 H）是**可选**的：只有同时给出非 ``off`` 的
+    ``validity_policy`` 与 ``validity_provider`` 时才会在链路噪声缓存上附带
+    :class:`~network_nlo_eval.rwa.validity.LinkValidity`，并按策略修正 SNR。
+    默认两者都不给，判定与接入前逐位一致。
     """
 
     def __init__(
@@ -165,11 +288,45 @@ class QoTValidator:
         network_topology: NetworkTopology,
         spectrum_grid: SpectrumGrid,
         fixed_span_length_km: float | None = None,
+        *,
+        validity_policy: LinkValidityPolicy | None = None,
+        validity_provider: LinkValidityProvider | None = None,
     ):
+        """初始化验证器。
+
+        Args:
+            gn_evaluator: 链路噪声评估器。
+            network_topology: 网络拓扑。
+            spectrum_grid: 频谱网格。
+            fixed_span_length_km: 固定跨长 (km)；``None`` 时用光纤配置。
+            validity_policy: 可选的有效性策略。默认 ``"off"``。
+            validity_provider: 可选的有效性提供者。策略非 ``off`` 时必填；
+                策略为 ``off`` 时给出会报错，避免"配了但没生效"的死配置。
+
+        Raises
+        ------
+            ValueError: 策略与提供者的组合不一致。
+        """
+        policy = validity_policy or LinkValidityPolicy()
+        if policy.enabled and validity_provider is None:
+            raise ValueError(
+                f"validity_policy mode={policy.mode} requires a validity_provider; "
+                "pass an H3LinkValidityProvider or use mode='off'."
+            )
+        if not policy.enabled and validity_provider is not None:
+            raise ValueError(
+                "validity_provider was given with validity_policy mode='off'; "
+                "choose an explicit mode ('flag', 'reject' or 'degrade') to enable it."
+            )
         self.gn_evaluator = gn_evaluator
         self.network_topology = network_topology
         self.spectrum_grid = spectrum_grid
         self._fixed_span_length_km = fixed_span_length_km
+        self.validity_policy = policy
+        self.validity_provider = validity_provider
+        #: 最近一次 ``verify_allocation`` 里每条受影响链路的有效性报告。
+        #: 每次调用开头清空，因此不会把上一次的状态带到下一次。
+        self.last_link_validity: dict[LinkKey, LinkValidity] = {}
 
     # ------------------------------------------------------------------
     # 公开接口
@@ -228,6 +385,7 @@ class QoTValidator:
               否则为 None。
         """
         span_km = fixed_span_length_km or self._fixed_span_length_km
+        self.last_link_validity.clear()
 
         # 1. 创建临时功率谱副本 & 检查波长可用性
         temp_power_profiles: dict[LinkKey, NDArrayFloat] = {}
@@ -314,7 +472,11 @@ class QoTValidator:
         power_profile: NDArrayFloat,
         fixed_span_length_km: float | None,
     ) -> LinkNoiseCache:
-        """计算单条链路在给定功率谱下的噪声缓存。"""
+        """计算单条链路在给定功率谱下的噪声缓存。
+
+        接入有效性时（策略非 ``off``），先由 ``validity_provider`` 用同一份功率谱
+        产出链路报告，再把它附加到缓存上。报告**不参与**噪声算术。
+        """
         u, v = link_key
         fiber_config = self.network_topology.get_fiber_config(u, v)
         edfa_config = self.network_topology.get_link_edfa_config(u, v)
@@ -325,6 +487,20 @@ class QoTValidator:
         num_full_spans = int(link_total_length_m // span_length_m)
         remainder_length_m = link_total_length_m % span_length_m
 
+        validity: LinkValidity | None = None
+        if self.validity_policy.enabled:
+            provider = self.validity_provider
+            if provider is None:  # pragma: no cover - __init__ 已拒绝该组合
+                raise RuntimeError("validity_policy is enabled but no provider is configured.")
+            validity = provider(
+                link_key=link_key,
+                fiber_config=fiber_config,
+                edfa_config=edfa_config,
+                power_profile_w=power_profile,
+                span_length_m=span_length_m,
+            )
+            self.last_link_validity[link_key] = validity
+
         return assemble_link_noise(
             evaluator=evaluator,
             edfa_config=edfa_config,
@@ -333,6 +509,7 @@ class QoTValidator:
             num_full_spans=num_full_spans,
             remainder_length_m=remainder_length_m,
             num_channels=self.num_nodes,
+            validity=validity,
         )
 
     def _get_or_calc_noise_cache(
@@ -372,9 +549,13 @@ class QoTValidator:
         - 未受影响链路从 ``LinkState.noise_cache`` 读取（惰性计算并写回）。
         - 信号功率取服务自身的 ``launch_power_w``。
 
-        递推本身交给 :func:`accumulate_service_snr`，本方法只负责取值。传进去的
-        是生成器而非列表：被阻断的跳让累积器立刻返回 ``-inf``，生成器随之停止
-        拉取，该跳之后的链路因此不会被写回缓存——缓存时机是调用方依赖的语义。
+        递推本身交给 :func:`accumulate_service_snr_detail`，本方法只负责取值与策略。
+        传进去的是生成器而非列表：被阻断的跳让累积器立刻返回 ``-inf``，生成器随之
+        停止拉取，该跳之后的链路因此不会被写回缓存——缓存时机是调用方依赖的语义。
+
+        策略为 ``off`` 时返回值就是物理 SNR，与接入前逐位一致；非 ``off`` 时按
+        :class:`~network_nlo_eval.rwa.validity.LinkValidityPolicy` 扣除 margin 或
+        把无效信道压成 ``-inf``。
         """
         frequency_hz, channel_bandwidth_hz = self._node_frequency_and_bandwidth(channel_idx)
         last_hop = len(path) - 2
@@ -388,14 +569,25 @@ class QoTValidator:
                 roadm = self.network_topology.get_roadm_config(v)
                 yield fold_roadm_terms(roadm, is_last_hop=i == last_hop), cache
 
-        return accumulate_service_snr(
+        qot = accumulate_service_snr_detail(
             _hops(),
             channel_idx=channel_idx,
             launch_power_w=launch_power_w,
             frequency_hz=frequency_hz,
             channel_bandwidth_hz=channel_bandwidth_hz,
             is_blocked=lambda terms: self._is_blocked(terms.config, channel_idx),
+            validity_of=self._validity_of if self.validity_policy.enabled else None,
         )
+        return qot.effective_snr_db(self.validity_policy)
+
+    @staticmethod
+    def _validity_of(_roadm: RoadmTerms, cache: LinkNoiseCache) -> LinkValidity | None:
+        """取某一跳噪声缓存上附带的有效性报告。
+
+        报告与缓存同生命周期：``LinkState`` 的缓存在占用谱变化时失效，临时缓存在
+        一次 ``verify_allocation`` 内构造，因此这里读到的报告永远对应当前功率谱。
+        """
+        return cache.validity
 
     def _collect_affected_services(
         self,
@@ -434,11 +626,16 @@ class QoTValidator:
         network_state: NetworkState,
         fixed_span_length_km: float | None,
     ) -> NDArrayFloat:
-        """构建新业务路径上各信道的 SNR (dB) 数组，用于返回值。"""
+        """构建新业务路径上各信道的 SNR (dB) 数组，用于返回值。
+
+        策略为 ``off`` 时返回物理 SNR，与接入前逐位一致；非 ``off`` 时用各跳链路
+        有效性做"最坏链路 + margin 相加"的聚合，再按策略修正。
+        """
         total_spm = np.zeros(self.num_nodes, dtype=np.float64)
         total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
         total_ase = np.zeros(self.num_nodes, dtype=np.float64)
         total_spans = 0
+        link_validities: list[LinkValidity] = []
         u0, v0 = path[0], path[1]
         link_key0 = _normalize(u0, v0)
         if link_key0 in temp_power_profiles:
@@ -462,6 +659,8 @@ class QoTValidator:
             total_xpm += cache.xpm
             total_ase += cache.ase
             total_spans += cache.span_count
+            if self.validity_policy.enabled and cache.validity is not None:
+                link_validities.append(cache.validity)
 
             roadm = self.network_topology.get_roadm_config(v)
             # 与 :meth:`_eval_service_snr` 的标量分支同源（同一个 fold_roadm_terms），
@@ -499,7 +698,10 @@ class QoTValidator:
             if signal_power[ch_idx] > 0:
                 snrs_db[ch_idx] = 10.0 * math.log10(signal_power[ch_idx] / total_noise[ch_idx])
 
-        return snrs_db
+        if not link_validities:
+            return snrs_db
+        verdict = ChannelValidity.combine(link_validities, self.num_nodes)
+        return np.asarray(verdict.adjusted_snr_db(snrs_db, self.validity_policy), dtype=np.float64)
 
 
 # --- 基础 RWA 分配器接口 ---

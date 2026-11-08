@@ -9,12 +9,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.network.elements import EDFAConfig
 from network_nlo_eval.network.state import LinkNoiseCache
+
+if TYPE_CHECKING:
+    from network_nlo_eval.rwa.validity import LinkValidity
 
 #: 余段短于这个长度（m）时不单独成段。
 _REMAINDER_EPSILON_M = 1.0
@@ -29,6 +34,7 @@ def assemble_link_noise(
     num_full_spans: int,
     remainder_length_m: float,
     num_channels: int,
+    validity: LinkValidity | None = None,
 ) -> LinkNoiseCache:
     """把一条链路的整跨/余段噪声累加成单个 :class:`LinkNoiseCache`。
 
@@ -40,6 +46,8 @@ def assemble_link_noise(
         num_full_spans: 整跨个数；``0`` 表示该链路连一个整跨都放不下。
         remainder_length_m: 余段长度 (m)；``<= 1.0`` 时不成段。
         num_channels: 信道数，仅在零跨段时用来开三个全零数组。
+        validity: 可选的有效性报告。只做**附加**，不参与噪声算术：三个噪声数组
+            的求和顺序与结果与未接入时逐位相同。
 
     Returns
     -------
@@ -76,4 +84,4 @@ def assemble_link_noise(
         total_ase += r_ase
         total_spans += 1
 
-    return LinkNoiseCache(spm=total_spm, xpm=total_xpm, ase=total_ase, span_count=total_spans)
+    return LinkNoiseCache(spm=total_spm, xpm=total_xpm, ase=total_ase, span_count=total_spans, validity=validity)

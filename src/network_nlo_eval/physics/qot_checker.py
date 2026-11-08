@@ -16,10 +16,56 @@ from network_nlo_eval.models.numba_kernels import _calc_beta2_from_d, _calc_beta
 from network_nlo_eval.network.slots import connection_overlaps_slots
 from network_nlo_eval.physics.metrics import compute_snr_from_evm
 from network_nlo_eval.rwa.qot_checker import fold_roadm_terms
+from network_nlo_eval.rwa.validity import LinkValidity, LinkValidityPolicy
+
+__all__ = [
+    "PyNLOQoTEvaluator",
+    "WaveformQoTEvaluator",
+    "apply_link_validity",
+]
 
 if TYPE_CHECKING:
     from network_nlo_eval.network.elements import ROADMConfig
     from network_nlo_eval.network.topology import NetworkTopology
+
+
+def apply_link_validity(
+    metrics: dict[str, NDArrayFloat],
+    validity: LinkValidity,
+    policy: LinkValidityPolicy,
+) -> dict[str, NDArrayFloat]:
+    """Overlay an H3 link report on waveform metrics (opt-in).
+
+    The default path (``policy.mode == "off"``) returns a shallow copy with the
+    same arrays, so existing consumers see the exact same numbers.  Any enabled
+    policy replaces ``"snr"`` by the policy-adjusted value and adds
+    ``"valid"`` / ``"margin_db"`` keys for the caller; the input dictionary and
+    its arrays are never mutated.
+
+    Args:
+        metrics: 波形评估返回的度数字典，必须含 ``"snr"``。
+        validity: 与本次评估链路/占用谱对应的 H3 链路报告。
+        policy: 显式策略，不允许省略。
+
+    Returns
+    -------
+        新的度数字典；``off`` 时不新增键。
+
+    Raises
+    ------
+        KeyError: ``metrics`` 没有 ``"snr"``。
+        ValueError: ``snr`` 长度与报告不一致。
+    """
+    snr = np.asarray(metrics["snr"], dtype=np.float64)
+    if snr.shape != validity.valid.shape:
+        raise ValueError(f"snr shape {snr.shape} does not match the report {validity.valid.shape}.")
+    if not policy.enabled:
+        return dict(metrics)
+    adjusted = dict(metrics)
+    adjusted["snr"] = validity.adjusted_snr_db(snr, policy)
+    adjusted["valid"] = np.array(validity.valid, dtype=bool, copy=True)
+    adjusted["margin_db"] = np.array(validity.margin_db, dtype=np.float64, copy=True)
+    return adjusted
 
 
 def _load_physical_layer() -> dict[str, Any]:
@@ -319,14 +365,39 @@ class PyNLOQoTEvaluator:
         optical_path: MultiSpanOpticalPath,
         launch_power_profile_w: NDArrayFloat,
         num_symbols: int = 1024,
+        *,
+        validity: LinkValidity | None = None,
+        validity_policy: LinkValidityPolicy | None = None,
     ) -> tuple[Any, dict[str, NDArrayFloat]]:
-        """生成波形并沿给定拓扑路径完成端到端 QoT 评估."""
+        """生成波形并沿给定拓扑路径完成端到端 QoT 评估.
+
+        Args:
+            optical_path: 有序光路。
+            launch_power_profile_w: ``(N,)`` 入纤功率 (W)。
+            num_symbols: 每信道符号数。
+            validity: 可选 H3 链路报告。给出时**必须**同时给出 ``validity_policy``，
+                否则视为配置错误而不是静默忽略。
+            validity_policy: 可选显式策略。
+
+        Returns
+        -------
+            ``(received, metrics)``。未启用有效性时 ``metrics`` 与接入前完全一致。
+
+        Raises
+        ------
+            ValueError: 只给了 ``validity`` 而没给策略。
+        """
+        if validity is not None and validity_policy is None:
+            raise ValueError("validity requires an explicit validity_policy; nothing is applied implicitly.")
         signal, bits = self.create_wdm_signal(launch_power_profile_w, num_symbols=num_symbols)
         received = self.propagate_path(signal, optical_path)
         active = np.asarray(launch_power_profile_w) > 0
         for roadm in optical_path.roadm_configs or []:
             active[[index for index in roadm.blocked_channels if index < len(active)]] = False
-        return received, self._receiver_metrics(received, bits, optical_path, active)
+        metrics = self._receiver_metrics(received, bits, optical_path, active)
+        if validity is not None:
+            metrics = apply_link_validity(metrics, validity, validity_policy or LinkValidityPolicy())
+        return received, metrics
 
     def evaluate_topology_path(
         self,
@@ -334,9 +405,31 @@ class PyNLOQoTEvaluator:
         path: list[NodeID],
         launch_power_profile_w: NDArrayFloat,
         num_symbols: int = 1024,
+        *,
+        validity: LinkValidity | None = None,
+        validity_policy: LinkValidityPolicy | None = None,
     ) -> tuple[Any, dict[str, NDArrayFloat]]:
-        """从拓扑节点路径构建共享物理路径并评估."""
-        return self.evaluate_path(topology.build_optical_path(path), launch_power_profile_w, num_symbols)
+        """从拓扑节点路径构建共享物理路径并评估.
+
+        Args:
+            topology: 网络拓扑。
+            path: 节点路径。
+            launch_power_profile_w: ``(N,)`` 入纤功率 (W)。
+            num_symbols: 每信道符号数。
+            validity: 可选 H3 链路报告，语义同 :meth:`evaluate_path`。
+            validity_policy: 可选显式策略。
+
+        Returns
+        -------
+            ``(received, metrics)``。
+        """
+        return self.evaluate_path(
+            topology.build_optical_path(path),
+            launch_power_profile_w,
+            num_symbols,
+            validity=validity,
+            validity_policy=validity_policy,
+        )
 
     def evaluate_channel_evm_and_ber(
         self,

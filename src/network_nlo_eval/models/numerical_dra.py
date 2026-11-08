@@ -12,6 +12,23 @@ r"""独立数值 DRA 参考：``scipy.integrate.solve_ivp`` + Eq. (6)-(8) 双重
 信道-信道 ISRS、波长相关的衰减/有效面积/色散都保留。信号 ASE 单独求解，跨段
 EDFA 的 ASE 仍由路由层负责，因此“拉曼 ASE”与“EDFA ASE”在结果里是分开的。
 
+耦合口径
+--------
+耦合矩阵的负耦合（接收波频率高于源波）取**接收波/源波**频率因子
+``-(f_receiver/f_source)``，与
+:class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver` 一致，满足
+
+.. math::
+
+    \frac{C[j,k]}{f_j} + \frac{C[k,j]}{f_k} = 0
+    \quad\Longleftrightarrow\quad
+    \frac{d}{dz}\sum_j \frac{P_j}{f_j} = 0 ,
+
+即光子数守恒（``A_eff`` 与频率无关时严格成立）。论文 Eq. (1)/(2) 印刷的负
+耦合因子是 ``f_source/f_receiver``；按印刷式实现会少耗尽
+``(f_s/f_p)^2`` 的泵浦功率，因此本参考采用标准的接收/源频率因子。旧口径
+（论文印刷式）的数值可在 ``5e0fe2a`` 及其之前的结果中复现。
+
 数值口径
 --------
 1. **ODE**：状态按 ``[信号, FW 泵]`` 前向积分，``[BW 泵]`` 以 ``s = L - z`` 反向
@@ -34,6 +51,12 @@ EDFA 的 ASE 仍由路由层负责，因此“拉曼 ASE”与“EDFA ASE”在�
 3. **剖面插值**：ODE 在信道中心求解，``rho(z, f)`` 在频率方向按相邻信道线性插值。
    这是本参考唯一的频率近似；对 75 GHz 栅格、64 GBd 信道，信道内剖面变化远小于
    信道间变化，实测对 NLI 的影响小于 0.1 dB（见 ``docs/dra-benchmark.md``）。
+4. **偏振**：``signal_polarizations`` 只把**耦合项的驱动功率**乘上该因子
+   （信号状态按每偏振功率解释）；接收波自己的功率仍只乘一次，因此不会像
+   ``solve(signal_polarizations * P)`` 那样把状态本身也放大。``=1`` 是历史
+   驱动倍率；``=2`` 与 H3/hybrid 的双偏振驱动一致，泵浦耗尽按双偏振总信号
+   功率计算，而每偏振信号的增益不变。该开关与上面的频率因子修正正交：即使
+   ``=1``，修正后的前向/多泵数值也与 ``5e0fe2a`` 及之前不同。
 
 已知限制
 --------
@@ -176,6 +199,9 @@ class NumericalDRASpanSolver:
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS。
         include_ase: 是否求解信号 ASE。
+        signal_polarizations: 信号状态代表的偏振数，只放大耦合项的驱动功率。
+            默认 ``1`` 是历史驱动倍率；``2`` 表示状态仍是每偏振功率，但耦合驱动取
+            双偏振总功率（与 H3/hybrid 一致）。接收波自己的功率不重复放大。
 
     Raises
     ------
@@ -200,6 +226,7 @@ class NumericalDRASpanSolver:
         n_iterations: int = 24,
         include_isrs: bool = True,
         include_ase: bool = True,
+        signal_polarizations: int = 1,
     ) -> None:
         if length_m <= 0:
             raise ValueError("length_m must be positive.")
@@ -209,6 +236,8 @@ class NumericalDRASpanSolver:
             raise ValueError("n_iterations must be >= 1.")
         if rtol <= 0 or atol <= 0:
             raise ValueError("rtol and atol must be positive.")
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
 
         self.signal_frequencies_hz = np.asarray(signal_frequencies_hz, dtype=np.float64)
         self.signal_bandwidths_hz = np.asarray(signal_bandwidths_hz, dtype=np.float64)
@@ -223,6 +252,7 @@ class NumericalDRASpanSolver:
         self.n_iterations = int(n_iterations)
         self.include_isrs = bool(include_isrs)
         self.include_ase = bool(include_ase)
+        self.signal_polarizations = int(signal_polarizations)
 
         n_signal = self.signal_frequencies_hz.size
         if self.signal_bandwidths_hz.shape != (n_signal,):
@@ -263,6 +293,14 @@ class NumericalDRASpanSolver:
         )
         self._n_waves = self._f_hz.size
 
+        # 驱动功率 = 状态功率 * 该波的偏振数。信号状态是每偏振功率，泵浦是
+        # 单偏振泵浦功率；``signal_polarizations=1`` 时因子恒为 1，逐位不变。
+        self._drive_scale = np.where(
+            self._is_pump,
+            1.0,
+            float(self.signal_polarizations),
+        ).astype(np.float64)
+
         self._signal_slots = np.arange(n_signal, dtype=np.int64)
         self._fwd_slots = np.flatnonzero(self._direction > 0).astype(np.int64)
         self._bw_slots = np.flatnonzero(self._direction < 0).astype(np.int64)
@@ -292,15 +330,28 @@ class NumericalDRASpanSolver:
         return bool(self._bw_slots.size)
 
     def _build_coupling_matrix(self) -> NDArrayFloat:
-        """按 Eq. (1) 构造 ``(M, M)`` 拉曼耦合矩阵 (1/(W·m))。"""
+        r"""按 Eq. (1) 构造 ``(M, M)`` 拉曼耦合矩阵 (1/(W·m))。
+
+        负耦合（接收波频率高于源波）按光子数守恒取
+        ``-(f_receiver/f_source)``，使 ``C[j,k]/f_j + C[k,j]/f_k = 0``，
+        与 :class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver`
+        同口径。论文 Eq. (1)/(2) 印刷的是 ``f_source/f_receiver``（其倒数），
+        按印刷式实现会少耗尽 ``(f_s/f_p)^2`` 的泵浦功率。
+
+        ``A_eff`` 仍按接收波归一。逐波 ``A_eff`` 不同时会残留一个与频率因子
+        无关的 ``O(ΔA_eff/A_eff)`` 项，因此上述判据只在 ``A_eff`` 与频率无关
+        时严格成立；本函数只修正 Eq. (1) 的频率因子，不改 ``A_eff`` 口径。
+        """
         delta = np.abs(self._f_hz[:, None] - self._f_hz[None, :])
         shape = self.gain_model.gain_shape(delta)
         gain = self.gain_model.peak_gain_coefficient_m_per_w / self._a_eff_m2[:, None] * shape
+        # 源频率更高 -> 接收波获得功率；源频率更低 -> 接收波把功率交给源，
+        # 并按光子数守恒乘 f_receiver/f_source（``f_hz[:, None]`` 为接收波）。
         source_higher = self._f_hz[None, :] > self._f_hz[:, None]
         coupling = np.where(
             source_higher,
             gain,
-            -(self._f_hz[None, :] / self._f_hz[:, None]) * gain,
+            -(self._f_hz[:, None] / self._f_hz[None, :]) * gain,
         )
         np.fill_diagonal(coupling, 0.0)
         if not self.include_isrs:
@@ -353,7 +404,9 @@ class NumericalDRASpanSolver:
         total = np.empty(self._n_waves, dtype=np.float64)
         total[self._fwd_slots] = state
         total[self._bw_slots] = backward
-        return state * (self._coupling_fwd @ total) - self._alpha_fwd * state
+        # 耦合的源功率用驱动功率（信号槽乘偏振数），接收功率 ``state`` 仍只乘一次。
+        drive = total * self._drive_scale
+        return state * (self._coupling_fwd @ drive) - self._alpha_fwd * state
 
     def _backward_rhs(
         self,
@@ -364,7 +417,8 @@ class NumericalDRASpanSolver:
         total = np.empty(self._n_waves, dtype=np.float64)
         total[self._fwd_slots] = forward_state
         total[self._bw_slots] = state
-        return state * (self._coupling_bw @ total) - self._alpha_bw * state
+        drive = total * self._drive_scale
+        return state * (self._coupling_bw @ drive) - self._alpha_bw * state
 
     def _solve_forward(self, signal_power_in_w: NDArrayFloat, backward_profile: NDArrayFloat):
         """给定 BW 泵剖面，前向积分信号 + FW 泵。"""
@@ -429,7 +483,9 @@ class NumericalDRASpanSolver:
             total[self._bw_slots] = backward_state
             # 信号 ASE 进入总功率，参与受激放大与自发源；泵浦 ASE 视为零。
             total[self._signal_slots] += ase
-            gain_rate = self._coupling_signal @ total
+            # 受激项用双偏振驱动（与功率 ODE 同口径），自发源项是每偏振源的
+            # 一次项，不再乘偏振数。
+            gain_rate = self._coupling_signal @ (total * self._drive_scale)
             source_rate = 2.0 * H_PLANCK * self._f_signal * self._b_signal * (
                 self._source_signal @ total
             )
@@ -871,7 +927,8 @@ class NumericalDRAKernel(DRASpanKernelBase):
         n_profile: 纵向剖面节点数（奇数）。
         n_xpm_x / n_xpm_y: XPM 双重积分节点数。
         n_spm_x / n_spm_y: SPM 双重积分节点数。
-        **kwargs: 透传给 :class:`DRASpanKernelBase`。
+        **kwargs: 透传给 :class:`DRASpanKernelBase`；其中 ``signal_polarizations``
+            会继续透传给 ``solve_ivp`` 求解器的驱动倍率。
     """
 
     profile_kind = "numerical_ode"
@@ -925,6 +982,7 @@ class NumericalDRAKernel(DRASpanKernelBase):
                 n_iterations=self._n_iterations,
                 include_isrs=self._include_isrs,
                 include_ase=self._raman_ase_enabled,
+                signal_polarizations=self._signal_polarizations,
             )
             self._solver_cache[key] = solver
         return solver
@@ -1065,6 +1123,13 @@ NUMERICAL_DRA_MODEL_INFO = ModelInfo(
         ("raman_temperature_k", "Fibre temperature of the spontaneous Raman factor. Default 300 K."),
         ("raman_peak_gain_coefficient_m_per_w", "Peak local Raman gain rate. Default 6e-14."),
         ("include_isrs", "Include channel-channel ISRS in the coupled ODE. Default True."),
+        (
+            "signal_polarizations",
+            "Polarizations represented by each per-polarization ODE signal state. Default 1 "
+            "is the historical drive factor; 2 drives the coupling with the dual-polarization "
+            "total signal power while the state itself is not scaled. The f_receiver/f_source "
+            "fix changes forward-pump results independently of this switch.",
+        ),
         ("fixed_point_iterations", "Maximum backward-pump fixed-point iterations. Default 24."),
         ("rtol", "DOP853 relative tolerance. Default 1e-10."),
         ("atol", "DOP853 absolute tolerance. Default 1e-15."),
@@ -1103,9 +1168,11 @@ class NumericalDRAModel(DRARamanModelBase):
         n_xpm_x / n_xpm_y: XPM 双重积分节点数。
         n_spm_x / n_spm_y: SPM 双重积分节点数。
         xpm_phase_limit: XPM 相干峰的相位截断 ``|phi L|``。
-        signal_polarizations: 该模型使用独立的 ``solve_ivp`` 求解器，
-            目前只支持 ``1``（历史每偏振口径）；其它值会显式报错，
-            避免被静默忽略。
+        signal_polarizations: 信号状态代表的偏振数，只放大耦合项的驱动功率。
+            ``1``（默认）保持历史的单偏振驱动倍率；``2`` 表示状态仍是每偏振功率，
+            但耦合驱动取双偏振总功率，泵浦耗尽按总信号功率计算。语义与
+            ``pcfm_h3_raman`` / ``hybrid_raman_paper`` 一致。该开关与频率因子
+            修正正交，修正后的前向/多泵数值不回到 ``5e0fe2a`` 的旧口径。
         **route_options: 透传给 :class:`~network_nlo_eval.models.route.RouteModel`。
     """
 
@@ -1139,11 +1206,8 @@ class NumericalDRAModel(DRARamanModelBase):
     ) -> None:
         if n_profile < 5 or n_profile % 2 == 0:
             raise ValueError("n_profile must be an odd integer >= 5.")
-        if int(signal_polarizations) != 1:
-            raise ValueError(
-                "numerical_dra uses an independent solve_ivp solver and does not implement "
-                "signal_polarizations != 1; use hybrid_raman_paper or pcfm_h3_raman."
-            )
+        if int(signal_polarizations) < 1:
+            raise ValueError("signal_polarizations must be >= 1.")
         self._rtol = float(rtol)
         self._atol = float(atol)
         self._n_profile = int(n_profile)
@@ -1166,6 +1230,7 @@ class NumericalDRAModel(DRARamanModelBase):
             fixed_point_iterations=fixed_point_iterations,
             n_steps=DEFAULT_DRA_STEPS,
             n_quadrature=DEFAULT_DRA_NLI_QUADRATURE,
+            signal_polarizations=signal_polarizations,
             **route_options,
         )
 
@@ -1182,6 +1247,7 @@ class NumericalDRAModel(DRARamanModelBase):
             n_iterations=self._fixed_point_iterations,
             include_isrs=self._include_isrs,
             n_quadrature=DEFAULT_DRA_NLI_QUADRATURE,
+            signal_polarizations=self._signal_polarizations,
             rtol=self._rtol,
             atol=self._atol,
             n_profile=self._n_profile,

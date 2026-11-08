@@ -37,6 +37,21 @@ def _pump(power_w: float = 0.2, direction: str = "backward") -> RamanPumpConfig:
     )
 
 
+def _pump_at(wavelength_nm: float, power_w: float, direction: str = "backward") -> RamanPumpConfig:
+    """构造指定波长的泵浦，用于需要泵浦-泵浦耦合的对照。"""
+    return RamanPumpConfig(
+        wavelength_nm=wavelength_nm,
+        power_w=power_w,
+        direction=direction,  # type: ignore[arg-type]
+        attenuation_db_per_km=0.25,
+    )
+
+
+def _multi_pumps() -> list[RamanPumpConfig]:
+    """波长不同的两个后向泵：泵浦-泵浦块非对角，开关才有可观测效果。"""
+    return [_pump_at(1440.0, 0.2), _pump_at(1500.0, 0.1)]
+
+
 def _solver(
     pumps: list[RamanPumpConfig],
     *,
@@ -44,6 +59,7 @@ def _solver(
     pump_depletion: bool = True,
     include_isrs: bool = True,
     signal_polarizations: int = 1,
+    pump_pump_raman: bool = True,
 ) -> RamanPaperSpanSolver:
     """在 9 个 C 波段信道上构造一个小规模 ODE 求解器。"""
     frequencies = C_LIGHT / np.linspace(1530e-9, 1565e-9, 9)
@@ -67,6 +83,7 @@ def _solver(
         pump_depletion=pump_depletion,
         include_isrs=include_isrs,
         signal_polarizations=signal_polarizations,
+        pump_pump_raman=pump_pump_raman,
     )
 
 
@@ -266,6 +283,75 @@ def test_coupling_matrix_conserves_photon_number() -> None:
     scale = np.abs(coupling / f_hz[:, None])[off_diagonal]
     relative = np.abs(violation) / np.maximum(scale, np.finfo(np.float64).tiny)
     assert float(np.max(relative)) < 1e-12
+
+
+def test_pump_pump_off_zeroes_only_the_pump_pump_block() -> None:
+    """关闭泵浦-泵浦耦合不得改动泵浦-信号或信号-信号项。
+
+    状态向量按频率降序重排后泵浦槽与信号槽交错，因此逐块比较而不是按
+    行列区间比较，正是为了钉住 ``_build_coupling_matrix`` 的掩码用法。
+    """
+    pumps = [_pump_at(1420.0, 0.2), _pump_at(1450.0, 0.1), _pump_at(1500.0, 0.05)]
+    on = _solver(pumps)
+    off = _solver(pumps, pump_pump_raman=False)
+    pump_slots = np.flatnonzero(on._is_pump)  # noqa: SLF001 - 直接审计耦合矩阵
+    signal_slots = on._signal_slots  # noqa: SLF001
+    coupling_on = on._coupling  # noqa: SLF001
+    coupling_off = off._coupling  # noqa: SLF001
+
+    assert np.all(coupling_off[np.ix_(pump_slots, pump_slots)] == 0.0)
+    assert np.array_equal(
+        coupling_off[np.ix_(signal_slots, pump_slots)],
+        coupling_on[np.ix_(signal_slots, pump_slots)],
+    )
+    assert np.array_equal(
+        coupling_off[np.ix_(pump_slots, signal_slots)],
+        coupling_on[np.ix_(pump_slots, signal_slots)],
+    )
+    assert np.array_equal(
+        coupling_off[np.ix_(signal_slots, signal_slots)],
+        coupling_on[np.ix_(signal_slots, signal_slots)],
+    )
+    # 泵浦仍从信号失去功率（泵浦行的信号列为负），不是把整行清零。
+    assert np.any(coupling_off[np.ix_(pump_slots, signal_slots)] < 0.0)
+
+
+def test_pump_pump_off_single_pump_is_bit_identical() -> None:
+    """单泵没有泵浦-泵浦对：开关前后三个输出数组必须逐位一致。"""
+    power_in = np.full(9, 1e-3)
+    on = _solver([_pump(0.2)]).solve(power_in)
+    off = _solver([_pump(0.2)], pump_pump_raman=False).solve(power_in)
+    assert np.array_equal(on.power_out_w, off.power_out_w)
+    assert np.array_equal(on.profile_norm, off.profile_norm)
+    assert np.array_equal(on.raman_ase_w, off.raman_ase_w)
+    assert np.array_equal(on.pump_power_out_w, off.pump_power_out_w)
+
+
+def test_pump_pump_off_changes_multi_pump_transfer() -> None:
+    """多泵时泵浦之间互相搬运功率；关掉后泵浦输出与信号剖面都要改变。"""
+    pumps = [_pump_at(1420.0, 0.2), _pump_at(1450.0, 0.1), _pump_at(1500.0, 0.05)]
+    power_in = np.full(9, 1e-3)
+    on = _solver(pumps).solve(power_in)
+    off = _solver(pumps, pump_pump_raman=False).solve(power_in)
+    assert not np.allclose(on.pump_power_out_w, off.pump_power_out_w, rtol=1e-6)
+    assert not np.allclose(on.power_out_w, off.power_out_w, rtol=1e-6)
+    assert not np.allclose(on.profile_norm, off.profile_norm, rtol=1e-6)
+
+
+def test_pump_pump_off_no_pump_is_bit_identical() -> None:
+    """无泵时该开关是空操作。"""
+    power_in = np.full(9, 1e-3)
+    on = _solver([]).solve(power_in)
+    off = _solver([], pump_pump_raman=False).solve(power_in)
+    assert np.array_equal(on.power_out_w, off.power_out_w)
+    assert np.array_equal(on.profile_norm, off.profile_norm)
+    assert np.array_equal(on.pump_power_out_w, off.pump_power_out_w)
+
+
+def test_invalid_pump_pump_raman_solver_option_is_rejected() -> None:
+    """求解器层的布尔开关不能接受整数/字符串。"""
+    with pytest.raises(ValueError, match="pump_pump_raman"):
+        _solver([_pump()], pump_pump_raman=1)
 
 
 def test_two_wave_power_transfer_matches_the_frequency_ratio() -> None:
@@ -566,6 +652,54 @@ def test_invalid_signal_polarizations_is_rejected() -> None:
         _solver([], signal_polarizations=0)
     with pytest.raises(ValueError, match="signal_polarizations"):
         make_model("hybrid_raman_paper", CASE, signal_polarizations=0)
+
+
+# ---------------------------------------------------------------------------
+# 泵浦-泵浦拉曼开关
+# ---------------------------------------------------------------------------
+
+
+def test_pump_pump_raman_option_is_documented_as_default_on() -> None:
+    """模型元数据必须声明该开关，且默认值保持历史行为。"""
+    options = dict(HYBRID_RAMAN_PAPER_MODEL_INFO.options)
+    assert "pump_pump_raman" in options
+    assert "Default True" in options["pump_pump_raman"]
+
+
+def test_invalid_pump_pump_raman_model_option_is_rejected() -> None:
+    """Hybrid 模型层同样拒绝非布尔开关，而不是等到建核时才失败。"""
+    with pytest.raises(ValueError, match="pump_pump_raman"):
+        make_model("hybrid_raman_paper", CASE, pump_pump_raman="yes")
+
+
+def test_pump_pump_off_no_pump_is_bit_identical_to_the_default_model() -> None:
+    """无泵时 hybrid 的开关是空操作。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    default = make_model("hybrid_raman_paper", CASE).evaluate_path(path, power)
+    off = make_model("hybrid_raman_paper", CASE, pump_pump_raman=False).evaluate_path(path, power)
+    for field in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db"):
+        np.testing.assert_array_equal(np.asarray(getattr(default, field)), np.asarray(getattr(off, field)))
+
+
+@pytest.mark.parametrize("nli_form", ["paper", "pcfm"])
+def test_pump_pump_off_multi_pump_changes_the_link_result(nli_form: str) -> None:
+    """多泵时开关必须真正透传到 ODE，两种 NLI 口径下都改变链路结果。"""
+    power = launch_profile(CASE)
+    path = build_path(CASE)
+    pumps = _multi_pumps()
+    on = make_model("hybrid_raman_paper", CASE, raman_pumps=pumps, nli_form=nli_form).evaluate_path(
+        path, power
+    )
+    off = make_model(
+        "hybrid_raman_paper",
+        CASE,
+        raman_pumps=pumps,
+        nli_form=nli_form,
+        pump_pump_raman=False,
+    ).evaluate_path(path, power)
+    assert not np.allclose(np.asarray(on.snr_db), np.asarray(off.snr_db), rtol=1e-9, atol=0.0)
+    assert not np.allclose(np.asarray(on.spm_noise_w), np.asarray(off.spm_noise_w), rtol=1e-6, atol=0.0)
 
 
 # ---------------------------------------------------------------------------
