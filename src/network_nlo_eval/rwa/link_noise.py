@@ -41,7 +41,8 @@ def assemble_link_noise(
     Args:
         evaluator: 该链路光纤参数对应的评估器（通常是 ``for_fiber`` 的缓存结果）。
         edfa_config: 跨段 EDFA 配置，语义与串行逐跨路径一致。
-        power_profile: ``(N,)`` 入纤功率谱 (W)。
+        power_profile: ``(N,)`` 入纤功率谱 (W)，口径为 ``evaluator`` 的
+            ``launch_power_convention``。本函数只做累加，不跨口径换算。
         span_length_m: 整跨长度 (m)。
         num_full_spans: 整跨个数；``0`` 表示该链路连一个整跨都放不下。
         remainder_length_m: 余段长度 (m)；``<= 1.0`` 时不成段。
@@ -51,8 +52,9 @@ def assemble_link_noise(
 
     Returns
     -------
-        三个 ``(N,)`` 噪声分量（SPM / XPM / ASE）与物理跨段数。零跨段时三个数组
-        各自独立，不共享内存。
+        三个 ``(N,)`` 噪声分量（SPM / XPM / ASE）与物理跨段数。三个数组都处于
+        评估器口径（``total`` 或 ``per_pol``），默认 ``total`` 时是物理总功率。
+        零跨段时三个数组各自独立，不共享内存。
     """
     total_spm = np.zeros(num_channels, dtype=np.float64)
     total_xpm = np.zeros(num_channels, dtype=np.float64)

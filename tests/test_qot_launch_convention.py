@@ -7,8 +7,10 @@
 * 默认 ``total`` 与旧调用逐位一致；
 * ``launch_power_convention="per_pol"`` 的网络功率谱（物理总功率的一半）与
   ``total`` 输入给出相同的判定与逐位相同的 SNR；
-* ``LinkNoiseCache`` 仍是总功率坐标；
-* 评估器声明 ``per_pol`` 时构造期 ``NotImplementedError``，不静默混用。
+* ``LinkNoiseCache`` 使用评估器坐标：默认 ``total`` 时是总功率，``per_pol``
+  评估器时是每偏振功率；
+* 评估器声明 ``per_pol`` 时被接受（任务 X）；坐标与 ASE 缩放的等价性在
+  ``test_qot_network_perpol`` 中覆盖。
 """
 
 from __future__ import annotations
@@ -155,13 +157,15 @@ class _PerPolEvaluator:
     """只声明口径的占位评估器；构造校验发生在读取其他属性之前。"""
 
     launch_power_convention = "per_pol"
+    ase_polarization_scale = 0.5
 
 
-def test_evaluator_declaring_per_pol_is_rejected() -> None:
-    """``assemble_link_noise`` 仍是总功率实现，非 total 评估器必须显式失败。"""
+def test_evaluator_declaring_per_pol_is_accepted() -> None:
+    """任务 X：``assemble_link_noise`` 在评估器坐标内工作，per_pol 不再被拒绝。"""
     topology, grid, _evaluator, _state = _network()
-    with pytest.raises(NotImplementedError, match="total-power evaluator"):
-        QoTValidator(_PerPolEvaluator(), topology, grid)
+    validator = QoTValidator(_PerPolEvaluator(), topology, grid)
+    assert validator.eval_power_convention == "per_pol"
+    assert validator.ase_polarization_scale == 0.5
 
 
 def test_provider_input_convention_must_match_the_evaluator() -> None:

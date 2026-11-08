@@ -2,10 +2,14 @@
 
 网络/RWA 的参考面永远是**每信道双偏振总功率** ``P_total`` (W)：
 ``NetworkState.launch_power_profile_w``、``ServiceRequest.launch_power_w`` 与
-``LinkNoiseCache`` 都是这个坐标。模型可以声明自己的入口口径：
+provider 入参都是这个坐标。模型可以声明自己的入口口径：
 
 * ``"total"``：``power_in_w`` 就是 ``P_total``；
 * ``"per_pol"``：``power_in_w`` 是每偏振功率，物理总功率是它的 2 倍。
+
+``LinkNoiseCache`` 与 ``accumulate_service_snr`` 的坐标跟随**评估器**口径：
+默认 ``total`` 评估器下是总功率；声明 ``per_pol`` 的评估器下是每偏振功率
+（信号与噪声同比缩放，SNR 不变）。
 
 同一物理链路在两个坐标下只差一个因子 2，SNR = S/(NLI+ASE) 与坐标无关。
 换算必须集中在模型边界做**唯一一次**，绝不能在网络层与模型层各减半一次。

@@ -414,7 +414,9 @@ class MultiBandISRSGN:
         """计算单跨段的功率演化、NLI 噪声和 ASE 噪声。
 
         Args:
-            power_in_w: 各信道入纤功率 (W)。
+            power_in_w: 各信道入纤功率 (W)，口径为本评估器的
+                ``launch_power_convention``。``"total"`` 时是双偏振总功率，
+                ``"per_pol"`` 时是每偏振功率。
             span_length_m: 跨段长度 (m)。
             edfa_config: 跨段后的 EDFA 配置。
             roadm_config: (可选) 跨段后的 ROADM 配置。
@@ -427,6 +429,10 @@ class MultiBandISRSGN:
             - sigma2_spm_w: 产生的 SPM 噪声方差 (W)。
             - sigma2_xpm_w: 产生的 XPM 噪声方差 (W)。
             - sigma2_ase_w: 产生的 ASE 噪声方差 (W)。
+
+        返回值全部处于 ``launch_power_convention`` 坐标；新产生的 EDFA ASE 按
+        :attr:`ase_polarization_scale` 缩放（``per_pol`` 为 0.5，``total`` 为
+        1.0 且不做乘法）。
         """
         # 1. 光纤物理核（放大器与 ROADM 在下一步统一施加）。
         fiber_output = self.span_fiber_output(power_in_w, span_length_m, n_effective_spans)
@@ -440,6 +446,7 @@ class MultiBandISRSGN:
             nf_lin=self._resolve_nf(edfa_config),
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
         return element.power_out_w, element.spm_noise_w, element.xpm_noise_w, element.ase_noise_w
 

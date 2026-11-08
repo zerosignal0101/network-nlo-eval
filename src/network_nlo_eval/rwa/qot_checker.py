@@ -13,6 +13,9 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.models.power_conventions import (
+    ase_polarization_scale as convention_ase_polarization_scale,
+)
+from network_nlo_eval.models.power_conventions import (
     resolve_launch_power_convention,
     to_convention,
 )
@@ -160,6 +163,7 @@ def accumulate_service_snr(
     is_blocked: Callable[[RoadmTerms], bool],
     validity_of: ValidityOfHop | None = None,
     validity_policy: LinkValidityPolicy | None = None,
+    ase_polarization_scale: float = 1.0,
 ) -> float:
     """沿服务自身路径累积噪声，给出单信道 SNR (dB)。
 
@@ -177,6 +181,10 @@ def accumulate_service_snr(
             物理 SNR 与历史逐位一致。
         validity_policy: 可选策略，默认 ``"off"``。只有显式给出非 ``off`` 策略时
             返回值才会被 margin / 无效标记修正。
+        ase_polarization_scale: 共享层新产生 ROADM booster ASE 的偏振缩放。
+            ``"total"`` 评估器为 ``1.0``（默认）；``"per_pol"`` 评估器为
+            ``0.5``，使累加器与链路噪声缓存处于同一坐标。默认值不产生任何
+            算术，因此 total 路径逐位不变。
 
     Returns
     -------
@@ -191,6 +199,7 @@ def accumulate_service_snr(
         channel_bandwidth_hz=channel_bandwidth_hz,
         is_blocked=is_blocked,
         validity_of=validity_of,
+        ase_polarization_scale=ase_polarization_scale,
     ).effective_snr_db(validity_policy)
 
 
@@ -203,6 +212,7 @@ def accumulate_service_snr_detail(
     channel_bandwidth_hz: float,
     is_blocked: Callable[[RoadmTerms], bool],
     validity_of: ValidityOfHop | None = None,
+    ase_polarization_scale: float = 1.0,
 ) -> ServiceQoT:
     """沿服务自身路径累积噪声，返回物理 SNR 与有效性聚合。
 
@@ -217,6 +227,10 @@ def accumulate_service_snr_detail(
         channel_bandwidth_hz: 该节点的信道带宽 ``B_i`` (Hz)。
         is_blocked: 判定某一跳的该信道是否被阻断。
         validity_of: 可选回调；被阻断的跳不会触发回调。
+        ase_polarization_scale: 共享层新产生 ROADM booster ASE 的偏振缩放。
+            ``"total"`` 坐标下为 ``1.0``（默认，不做任何算术）；``"per_pol"``
+            坐标下为 ``0.5``。它只缩放 booster 项，不影响从缓存读出的 SPM/XPM/
+            ASE——后者已经是评估器坐标。
 
     Returns
     -------
@@ -255,7 +269,11 @@ def accumulate_service_snr_detail(
                         invalid_links.append(link_validity.link_key)
 
         if roadm.equalize:
-            total_ase += roadm.booster_base * frequency_hz * channel_bandwidth_hz * (roadm.loss - 1.0)
+            booster_ase = roadm.booster_base * frequency_hz * channel_bandwidth_hz * (roadm.loss - 1.0)
+            # 默认 total 路径 scale == 1.0，不做乘法，逐位保持历史结果。
+            if ase_polarization_scale != 1.0:
+                booster_ase *= ase_polarization_scale
+            total_ase += booster_ase
         else:
             signal_power /= roadm.loss
             total_spm /= roadm.loss
@@ -294,13 +312,19 @@ class QoTValidator:
     默认两者都不给，判定与接入前逐位一致。``mode="soft"`` 只扣倾斜软 margin，
     不改变 ``valid`` / ``flagged``，也不扣 ``margin_db``。
 
-    入纤功率口径（任务 O2）：``NetworkState.launch_power_profile_w``、
+    入纤功率口径（任务 O2 / X）：``NetworkState.launch_power_profile_w``、
     ``ServiceRequest.launch_power_w`` 与 provider 的入参都按构造时的
     ``launch_power_convention`` 解释（默认 ``"total"``，即网络参考面）。
     内部在送进 ``gn_evaluator`` / ``assemble_link_noise`` 前**唯一一次**换算到
-    评估器口径（``eval_power_convention``），因此 ``LinkNoiseCache`` 永远是总功率
-    坐标。当前 ``assemble_link_noise`` 只有总功率实现，评估器声明 ``per_pol`` 时
-    构造期直接 ``NotImplementedError``，不会静默混用两种坐标。
+    评估器口径（``eval_power_convention``），因此 ``LinkNoiseCache`` 与
+    ``accumulate_service_snr`` 的坐标始终是评估器口径：默认 ``total`` 时就是
+    物理总功率；``per_pol`` 评估器时则是每偏振功率。同一物理总功率下两种坐标
+    给出等价 SNR（信号与噪声同比缩放）。
+
+    ``per_pol`` 评估器必须同时声明 ``ase_polarization_scale=0.5``：链路噪声
+    缓存里的 EDFA ASE 由评估器产生，而 ROADM booster ASE 由本验证器累加，
+    两者都用同一个 scale 才会落在同一坐标。``total`` 评估器取默认 ``1.0``，
+    不做任何乘法。
     """
 
     def __init__(
@@ -331,9 +355,8 @@ class QoTValidator:
         Raises
         ------
             ValueError: 策略与提供者的组合不一致，或 provider 的
-                ``input_power_convention`` 与评估器口径不一致。
-            NotImplementedError: 评估器声明了非 ``total`` 的入纤口径，而
-                ``assemble_link_noise`` 仍是总功率实现。
+                ``input_power_convention`` 与评估器口径不一致，或评估器的
+                ``ase_polarization_scale`` 非法/与评估器口径不匹配。
         """
         policy = validity_policy or LinkValidityPolicy()
         if policy.enabled and validity_provider is None:
@@ -352,17 +375,28 @@ class QoTValidator:
         self._fixed_span_length_km = fixed_span_length_km
         self.launch_power_convention = resolve_launch_power_convention(launch_power_convention)
         #: 评估器（``gn_evaluator`` / ``assemble_link_noise`` / ``LinkNoiseCache``）
-        #: 的功率坐标。它永远是总功率坐标，换算只在内部入口做一次。
+        #: 的功率坐标。换算只在内部入口做一次；它可以是 ``"total"``（默认）或
+        #: ``"per_pol"``。
         self.eval_power_convention = resolve_launch_power_convention(
             str(getattr(gn_evaluator, "launch_power_convention", "total"))
         )
-        if self.eval_power_convention != "total":
-            raise NotImplementedError(
-                "QoTValidator requires a total-power evaluator until assemble_link_noise is "
-                f"implemented for per-polarization noise; got launch_power_convention="
-                f"{self.eval_power_convention!r}. Pass a total-power evaluator, or convert the "
-                "power spectrum to total before network QoT."
+        #: 共享层新产生 ASE（ROADM booster）的偏振缩放。评估器若声明 per_pol
+        #: 坐标，必须同时给出 0.5，才能与缓存里的每偏振噪声同坐标。
+        scale = float(getattr(gn_evaluator, "ase_polarization_scale", 1.0))
+        if not np.isfinite(scale) or scale <= 0.0:
+            raise ValueError(
+                f"gn_evaluator.ase_polarization_scale must be finite and positive, got {scale!r}."
             )
+        expected_scale = convention_ase_polarization_scale(self.eval_power_convention)
+        if scale != expected_scale:
+            raise ValueError(
+                "gn_evaluator.ase_polarization_scale must be "
+                f"{expected_scale:g} for launch_power_convention="
+                f"{self.eval_power_convention!r}, got {scale:g}. The shared ROADM booster ASE "
+                "would otherwise be accumulated in a different coordinate than the link-noise "
+                "cache."
+            )
+        self.ase_polarization_scale = scale
         provider_convention = getattr(validity_provider, "input_power_convention", None)
         if provider_convention is not None:
             provider_convention = resolve_launch_power_convention(str(provider_convention))
@@ -636,6 +670,7 @@ class QoTValidator:
             channel_bandwidth_hz=channel_bandwidth_hz,
             is_blocked=lambda terms: self._is_blocked(terms.config, channel_idx),
             validity_of=self._validity_of if self.validity_policy.enabled else None,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
         return qot.effective_snr_db(self.validity_policy)
 
@@ -738,6 +773,9 @@ class QoTValidator:
                 )
                 # 信号为 0 的节点 SNR 必为 -inf（下游按 signal_power > 0 过滤）。
                 booster_ase[signal_power <= 0] = 0
+                # total 坐标 scale == 1.0：不做乘法，保持历史逐位结果。
+                if self.ase_polarization_scale != 1.0:
+                    booster_ase = booster_ase * self.ase_polarization_scale
                 total_ase += booster_ase
             else:
                 signal_power /= terms.loss
