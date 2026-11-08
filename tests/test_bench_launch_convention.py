@@ -122,10 +122,12 @@ def test_runner_per_pol_case_rejects_a_total_model() -> None:
 
 
 def test_c_band_per_pol_plus_two_matches_total_plus_one() -> None:
-    """C 波段端到端：``total``+1 与 ``per_pol``+2 的 SNR 平均差 <0.01 dB。
+    """C 波段端到端：``total``+1 与 ``per_pol``+2 的 SNR 差分逐信道 <0.01 dB。
 
-    逐信道残差（max 约 0.064 dB）来自 PCFM 的 ISRS 剖面按半功率积分，不是
-    ASE 记账；J 的审计测试对同一算例有同样结论。
+    两个坐标本就代表同一条物理链路，所以比较的是同一算例在两种口径下的
+    数值轨迹。L2 已把无泵 ISRS 剖面按物理总功率驱动，本任务再把
+    ``spp_steps="auto"`` 的峰值判据换成物理总功率，于是 per_pol 在 3 dBm
+    处也选 32 步，残差归零。
     """
     total_case = build_case("scaling_40ch")
     per_pol_case = _per_pol_case("scaling_40ch")
@@ -141,15 +143,17 @@ def test_c_band_per_pol_plus_two_matches_total_plus_one() -> None:
     per_pol = sweep_snr(per_pol_model, per_pol_case, powers)
     gap = per_pol - total
     assert abs(float(np.mean(gap))) < 0.01
-    assert float(np.max(np.abs(gap))) < 0.07
+    assert float(np.max(np.abs(gap))) < 0.01
+    # 同一物理链路必须走同一条积分分支；3 dBm 是最后一次扫描，两模型都是 32 步。
+    assert total_model._active_spp_steps == per_pol_model._active_spp_steps == 32
 
 
-def test_c_plus_l_per_pol_residual_is_recorded() -> None:
-    """C+L 端到端残差：记录量级，不做 <0.01 dB 的硬断言。
+def test_c_plus_l_per_pol_residual_is_closed() -> None:
+    """C+L 端到端：``total``+1 与 ``per_pol``+2 的残差闭合到 <0.01 dB。
 
-    10 跨、152 信道的 C+L 谱在 half-power ISRS 剖面上累积出随频率线性增长的
-    残差（约 -0.68 dB 到 +1.13 dB，均值 +0.16 dB）。这是剖面模型对功率的
-    非线性，不是口径换算错误：均值远小于 1 dB，且 0.5 因子逐位精确。
+    L2 修正了 ISRS 驱动口径，本任务修正了 auto 步数，两个坐标在 0 dBm 处
+    走同一条 12 步轨迹，1024 km 累积后只剩浮点噪声（均值约 1e-17，
+    最坏约 3.6e-15）。
     """
     total_case = build_case("cl_152ch")
     per_pol_case = _per_pol_case("cl_152ch")
@@ -164,8 +168,8 @@ def test_c_plus_l_per_pol_residual_is_recorded() -> None:
     per_pol = sweep_snr(per_pol_model, per_pol_case, (0.0,))
     gap = per_pol - total
     assert np.all(np.isfinite(gap))
-    assert abs(float(np.mean(gap))) < 0.3
-    assert float(np.max(np.abs(gap))) < 1.6
+    assert abs(float(np.mean(gap))) < 0.01
+    assert float(np.max(np.abs(gap))) < 0.01
 
 
 def test_default_total_sweep_is_bit_identical_to_the_uncoupled_path() -> None:

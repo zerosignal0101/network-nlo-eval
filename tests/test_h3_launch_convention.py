@@ -295,15 +295,25 @@ def test_per_pol_and_total_with_two_polarizations_share_the_ode_state() -> None:
     计数），不改变同一数组算出来的信号，也不改变 Raman ASE 的 ODE 状态。
     NLI 口径独立：``per_pol`` 默认按物理总功率驱动 GN 权重，所以 NLI 是
     ``4 = 2**3 / 2`` 倍。任务 L 之后 route 的 EDFA ASE 跟随端到端口径：
-    ``per_pol`` 减半，``total``+2 作为显式旧口径不减半。
+    ``per_pol`` 减半，``total``+2 作为显式旧口径不减半。两个模型固定在同一
+    SPP 步数，让断言只反映口径语义而不受自适应分辨率影响。
     """
     path = build_path(CASE)
     power = launch_profile(CASE)
+    # 这两条守卫比较的是口径语义，必须让两个模型用同一条积分轨迹：同一数组在
+    # per_pol 下代表两倍物理功率，auto 会（正确地）为它选更多 SPP 步。
     per_pol = make_model(
-        "pcfm_h3_raman", CASE, signal_polarizations=2, launch_power_convention="per_pol", **PUMPED
+        "pcfm_h3_raman",
+        CASE,
+        signal_polarizations=2,
+        launch_power_convention="per_pol",
+        spp_steps=12,
+        **PUMPED,
     ).evaluate_path(path, power)
     with pytest.warns(UserWarning):
-        total = make_model("pcfm_h3_raman", CASE, signal_polarizations=2, **PUMPED).evaluate_path(path, power)
+        total = make_model(
+            "pcfm_h3_raman", CASE, signal_polarizations=2, spp_steps=12, **PUMPED
+        ).evaluate_path(path, power)
     assert np.array_equal(np.asarray(per_pol.signal_power_w), np.asarray(total.signal_power_w))
     # Raman ASE 由同一 ODE 状态产生；``total``+2 沿用旧的双偏振源项，
     # ``per_pol`` 的端到端 ASE 恰为一半。
@@ -324,16 +334,20 @@ def test_explicit_legacy_nli_convention_keeps_signal_and_nli_identical() -> None
     """
     path = build_path(CASE)
     power = launch_profile(CASE)
+    # 同前：混合口径的对照只在同一 SPP 步数下比较语义。
     per_pol = make_model(
         "pcfm_h3_raman",
         CASE,
         signal_polarizations=2,
         launch_power_convention="per_pol",
         nli_power_convention="total",
+        spp_steps=12,
         **PUMPED,
     ).evaluate_path(path, power)
     with pytest.warns(UserWarning):
-        total = make_model("pcfm_h3_raman", CASE, signal_polarizations=2, **PUMPED).evaluate_path(path, power)
+        total = make_model(
+            "pcfm_h3_raman", CASE, signal_polarizations=2, spp_steps=12, **PUMPED
+        ).evaluate_path(path, power)
     for name in ("signal_power_w", "spm_noise_w", "xpm_noise_w"):
         assert np.allclose(
             np.asarray(getattr(per_pol, name)), np.asarray(getattr(total, name)), rtol=1e-4

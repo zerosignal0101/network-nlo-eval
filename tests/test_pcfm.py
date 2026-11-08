@@ -672,6 +672,32 @@ def test_auto_spp_steps_tracks_launch_power() -> None:
     assert model._active_spp_steps == 32
 
 
+def test_auto_spp_steps_uses_the_physical_total_power_under_per_pol() -> None:
+    """``auto`` thresholds physical total power, not one polarization.
+
+    A 3 dBm physical launch is 0 dBm in the per-polarization coordinate, so a
+    peak taken from ``power_in_w`` alone would fall into the low-power branch
+    and pick 12 steps.  The model-level scale restores the physical peak and
+    the same link must get the same 32 steps as the total coordinate.
+    """
+    case = build_case("scaling_40ch")
+    total_model = make_model("pcfm", case, poly_degree=3, egn=True, spp_steps="auto")
+    per_pol_model = make_model(
+        "pcfm",
+        case,
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+        nli_power_convention="per_pol",
+    )
+    path = build_path(case)
+    assert total_model.physical_power_scale == 1.0
+    assert per_pol_model.physical_power_scale == 2.0
+    total_model.evaluate_path(path, launch_profile(case, 3.0))
+    per_pol_model.evaluate_path(path, launch_profile(case, 3.0, launch_power_convention="per_pol"))
+    assert total_model._active_spp_steps == per_pol_model._active_spp_steps == 32
+
+
 # ---------------------------------------------------------------------------
 # inter-span coherence (this round of work)
 # ---------------------------------------------------------------------------
