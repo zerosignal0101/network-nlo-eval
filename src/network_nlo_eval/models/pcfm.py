@@ -147,7 +147,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy.integrate import IntegrationWarning
@@ -176,6 +176,7 @@ from network_nlo_eval.models.pcfm_kernels import (
     _sci_small_x_coefficients,
     _solve_spp_jit,
     r_coefficient_matrix,
+    sci_small_x_branch_mask,
 )
 from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
@@ -183,6 +184,7 @@ from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
     "DENSE_GRID_SPACING_RATIO",
+    "DenseGridDiagnostics",
     "EGN_A_COEFFICIENTS",
     "EGN_PHI_VALUES",
     "NLI_POWER_CONVENTIONS",
@@ -622,6 +624,26 @@ class SpanValidityReport:
             power and does not model pump depletion or the intra-span profile,
             so it is not a trustworthy QoT for pumped links.  It never changes
             the point result; the error budget refuses it.
+        xci_overlap_pairs:
+            ``(N,)`` number of active interfering channels whose rectangular
+            spectrum overlaps the CUT band (``|f_j - f_i| < (B_i + B_j)/2``).
+            It is the pair-level counterpart of ``dense_grid``: the plan flag
+            says the grid is outside the non-overlapping derivation domain,
+            this array says which rows actually see an overlapping pair.
+            It never changes ``valid``, ``confidence`` or the NLI.
+        xci_overlap_weight_fraction:
+            ``(N,)`` share of the CUT row's closed-form XCI weight
+            ``sum_j |w_xci[i, j]|`` that comes from overlapping pairs.  A
+            large value means the printed Eq. (24) island integral is being
+            applied where its disjoint-spectrum premise does not hold.  Read
+            only.
+        min_guard_hz:
+            Minimum over active pairs of ``|f_j - f_i| - (B_i + B_j)/2`` (Hz).
+            Negative means at least one pair overlaps; ``inf`` when no pair is
+            active.
+        sci_taylor_fraction:
+            Fraction of active channels that take the small-``X`` SCI Taylor
+            branch.  ``0`` means the branch is irrelevant on this plan.
     """
 
     xci_gated: NDArrayFloat
@@ -650,6 +672,82 @@ class SpanValidityReport:
     raman_steps: int = 0
     raman_wideband_multipump: bool = False
     lumped_raman_approximation: bool = False
+    xci_overlap_pairs: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    xci_overlap_weight_fraction: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    min_guard_hz: float = float("inf")
+    sci_taylor_fraction: float = 0.0
+
+
+@dataclass(frozen=True)
+class DenseGridDiagnostics:
+    """密集栅格的只读误差来源诊断（不参与任何数值路径）。
+
+    这个结构把 ``dense_grid`` 这一个布尔 flag 拆成可核查的分量：相邻矩形谱
+    是否重叠、重叠对在 XCI 行权重中占多大比例、SCI 小 ``X`` 分支是否被使用、
+    SPP 多项式拟合残差有多大、XCI 边缘/求积修正是否真正触发。所有字段都是
+    评估后的观测值，不会被任何下游代码写回 NLI、ASE 或 SNR。
+
+    数组字段均为 **model order**（与 :class:`PathQoTResult` 一致）。``None``
+    表示调用方没有提供入纤功率，因而无法计算依赖功率的 SPP 拟合残差。
+
+    Attributes
+    ----------
+        span_length_m:
+            诊断所用跨长 (m)。
+        dense_grid:
+            ``spacing_to_bandwidth < DENSE_GRID_SPACING_RATIO``。
+        min_channel_spacing_hz:
+            活跃信道的最小间隔 (Hz)；少于两个活跃信道时为 ``inf``。
+        spacing_to_bandwidth:
+            最小间隔 / 最大带宽；``< 1`` 表示矩形谱重叠。
+        min_guard_hz:
+            所有活跃对上 ``|Δf| - (B_i + B_j)/2`` 的最小值 (Hz)。负值就是
+            非重叠假设失效的直接证据，``inf`` 表示没有可比较的对。
+        xci_overlap_pairs:
+            ``(N,)`` 每个 CUT 行的重叠干扰信道数。
+        xci_overlap_weight_fraction:
+            ``(N,)`` 重叠对在闭式 XCI 行权重 ``sum_j |w_xci[i, j]|`` 中的
+            占比。它是"多少 XCI 权重落在失效域"的度量。
+        xci_edge_gated:
+            ``(N,)`` 实际触发了精确 XCI 边缘积分的 CUT 行。
+        xci_row_correction:
+            ``(N,)`` 精确边缘积分对每一行的相对改变（未过材质门槛）。
+        xci_edge_quadrature_points:
+            边缘积分实际使用的 Gauss-Legendre 节点数。
+        sci_x_abs_min:
+            活跃信道中 ``|X|`` 的最小值（无量纲）。
+        sci_taylor:
+            ``(N,)`` 小 ``|X|`` Taylor 分支是否被使用。
+        sci_taylor_fraction:
+            活跃信道中使用该分支的比例。
+        spp_fit_residual:
+            ``(N,)`` 每个信道的 SPP 多项式拟合最大绝对残差；无功率时为
+            ``None``。
+        spp_fit_residual_max:
+            全信道、全采样点的最大绝对残差；无功率时为 ``None``。
+        spp_fit_residual_rms:
+            全信道、全采样点的 RMS 残差；无功率时为 ``None``。
+        spp_fit_residual_rel_rms:
+            ``rms(residual) / rms(profile)``，无量纲；无功率时为 ``None``。
+    """
+
+    span_length_m: float
+    dense_grid: bool
+    min_channel_spacing_hz: float
+    spacing_to_bandwidth: float
+    min_guard_hz: float
+    xci_overlap_pairs: NDArrayFloat
+    xci_overlap_weight_fraction: NDArrayFloat
+    xci_edge_gated: NDArrayBool
+    xci_row_correction: NDArrayFloat
+    xci_edge_quadrature_points: int
+    sci_x_abs_min: float
+    sci_taylor: NDArrayFloat
+    sci_taylor_fraction: float
+    spp_fit_residual: NDArrayFloat | None = None
+    spp_fit_residual_max: float | None = None
+    spp_fit_residual_rms: float | None = None
+    spp_fit_residual_rel_rms: float | None = None
 
 
 #: Relative power tolerance under which two span inputs are treated as the
@@ -1736,6 +1834,11 @@ class PCFMSpanKernel:
         self._xci_validity_cache: dict[
             int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]
         ] = {}
+        # 密集栅格诊断的静态量（势垒、重叠矩阵、|w_xci| 行权重）只依赖信道
+        # 计划，与跨长和功率无关，构造后计算一次即可。
+        self._overlap_cache: (
+            tuple[NDArrayFloat, NDArrayBool, NDArrayFloat, NDArrayFloat] | None
+        ) = None
         # 跨段状态记忆化：同一路径内的透明跨输入只差末位，命中即复用 SPP 与核。
         self._span_cache: list[tuple[NDArrayFloat, int, NDArrayFloat, NDArrayFloat, NDArrayFloat]] = []
         self.span_cache_hits = 0
@@ -2112,6 +2215,170 @@ class PCFMSpanKernel:
         self._xci_validity_cache[key] = cached
         return cached
 
+    def _xci_overlap_metrics(
+        self,
+    ) -> tuple[NDArrayFloat, NDArrayBool, NDArrayFloat, NDArrayFloat]:
+        """Return the plan-level overlap metrics of the XCI rows (read only).
+
+        The closed-form XCI kernel of Eq. (24) is derived for two *disjoint*
+        rectangular spectra.  The true disjointness condition is
+
+        .. code-block:: text
+
+            |f_j - f_i| >= (B_i + B_j) / 2 ,
+
+        which is stronger than the ``log_xci`` mask (``|f_j - f_i| >
+        B_j / 2``).  A comb with ``spacing < bandwidth`` therefore enters the
+        kernel even though the spectra overlap; ``dense_grid`` says so at plan
+        level, and this helper quantifies it row by row.
+
+        The result only depends on the channel plan (not on the span length,
+        the launch power or the pumps), so it is computed once and cached.
+
+        Returns
+        -------
+            ``(guard_hz, overlap, weight_abs, weight_row_sum)``: the pairwise
+            guard ``|f_j - f_i| - (B_i + B_j)/2`` (negative where the
+            rectangles overlap), the off-diagonal overlap mask, the absolute
+            closed-form XCI weight matrix, and its row sum.  All arrays are in
+            the internal (descending-frequency) order.
+        """
+        cached = self._overlap_cache
+        if cached is not None:
+            return cached
+        delta = np.abs(self.f_abs_hz[:, None] - self.f_abs_hz[None, :])
+        half_b = 0.5 * self.b_hz
+        guard = delta - (half_b[:, None] + half_b[None, :])
+        off_diagonal = ~np.eye(self.n_nodes, dtype=bool)
+        overlap = (guard < 0.0) & off_diagonal
+        weight_abs = np.abs(self.w_xci)
+        weight_row_sum = weight_abs.sum(axis=1)
+        self._overlap_cache = (
+            np.ascontiguousarray(guard),
+            np.ascontiguousarray(overlap),
+            np.ascontiguousarray(weight_abs),
+            np.ascontiguousarray(weight_row_sum),
+        )
+        return self._overlap_cache
+
+    def dense_grid_diagnostics(
+        self,
+        span_length_m: float,
+        power_in_w: NDArrayFloat | None = None,
+    ) -> DenseGridDiagnostics:
+        """Report the error sources of a dense (overlapping) channel plan.
+
+        This is a pure read-only diagnostic.  It never changes the NLI, the
+        ASE or the SPP state, so a caller can inspect it before and after an
+        :meth:`evaluate` call without affecting the numbers.
+
+        Args:
+            span_length_m: Span length (m).
+            power_in_w: Optional ``(N,)`` launch power per channel in model
+                order.  When given, the SPP polynomial fit residual is
+                computed (it needs the power-dependent profile).
+
+        Returns
+        -------
+            A :class:`DenseGridDiagnostics` in model order.
+
+        Raises
+        ------
+            ValueError: ``power_in_w`` does not have one value per channel.
+        """
+        length_m = float(span_length_m)
+        if power_in_w is None:
+            power = None
+            active = np.ones(self.n_nodes, dtype=bool)
+        else:
+            power = np.asarray(power_in_w, dtype=np.float64)
+            if power.shape != (self.n_nodes,):
+                raise ValueError(f"power_in_w must have shape ({self.n_nodes},), got {power.shape}.")
+            power = np.ascontiguousarray(power[self.order])
+            active = power > 0.0
+
+        min_spacing_hz, spacing_ratio = dense_grid_metrics(self.f_abs_hz, self.b_hz, active)
+        dense_grid = bool(spacing_ratio < DENSE_GRID_SPACING_RATIO)
+
+        guard, overlap, weight_abs, weight_row_sum = self._xci_overlap_metrics()
+        pair_active = active[:, None] & active[None, :]
+        overlap_active = overlap & pair_active
+        overlap_counts = overlap_active.sum(axis=1).astype(np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            overlap_fraction = np.divide(
+                (weight_abs * overlap_active).sum(axis=1),
+                weight_row_sum,
+                out=np.zeros(self.n_nodes, dtype=np.float64),
+                where=weight_row_sum > 0.0,
+            )
+        overlap_fraction = np.where(active, overlap_fraction, 0.0)
+        guard_active = guard[pair_active & ~np.eye(self.n_nodes, dtype=bool)]
+        min_guard_hz = float(np.min(guard_active)) if guard_active.size else float("inf")
+
+        x_all = self._special_functions(length_m)[0]
+        abs_x = np.abs(x_all)
+        sci_taylor = sci_small_x_branch_mask(x_all, self._sci_small_x_switch)
+        sci_x_abs_min = float(np.min(abs_x[active])) if np.any(active) else 0.0
+        n_active = int(np.count_nonzero(active))
+        sci_taylor_fraction = (
+            float(np.count_nonzero(sci_taylor & active)) / float(n_active) if n_active else 0.0
+        )
+
+        if self.edge_fix:
+            # 先触发边缘缓存的构建，再读取 gate 与行修正。
+            self._xci_weight_matrix(length_m)
+            gated, correction = self.xci_edge_audit(length_m)
+        else:
+            _, _, correction = _xci_edge_weight_matrix(
+                self.w_xci,
+                self.k_xci_matrix,
+                self.log_xci,
+                self.gamma_xci,
+                self.beta2_eff_xci,
+                self.f_abs_hz,
+                self.b_hz,
+                self.alpha_visibility_npm,
+                length_m,
+                n_quad=self.xci_edge_quadrature_points,
+            )
+            gated = np.zeros(self.n_nodes, dtype=bool)
+
+        fit_residual = None
+        fit_max = None
+        fit_rms = None
+        fit_rel_rms = None
+        if power is not None:
+            profile_norm, _ = self._integrate_spp(power, length_m)
+            q_scaled = self._fit_operator(length_m) @ profile_norm
+            design = np.vander(self._sample_positions(length_m), self.n_poly, increasing=True)
+            residual = profile_norm - design @ q_scaled
+            fit_residual = np.max(np.abs(residual), axis=0)
+            fit_max = float(np.max(np.abs(residual)))
+            fit_rms = float(np.sqrt(np.mean(residual**2)))
+            profile_rms = float(np.sqrt(np.mean(profile_norm**2)))
+            fit_rel_rms = fit_rms / profile_rms if profile_rms > 0.0 else 0.0
+
+        inverse = self.inverse_order
+        return DenseGridDiagnostics(
+            span_length_m=length_m,
+            dense_grid=dense_grid,
+            min_channel_spacing_hz=float(min_spacing_hz),
+            spacing_to_bandwidth=float(spacing_ratio),
+            min_guard_hz=min_guard_hz,
+            xci_overlap_pairs=np.ascontiguousarray(overlap_counts[inverse]),
+            xci_overlap_weight_fraction=np.ascontiguousarray(overlap_fraction[inverse]),
+            xci_edge_gated=np.ascontiguousarray(gated[inverse]),
+            xci_row_correction=np.ascontiguousarray(correction[inverse]),
+            xci_edge_quadrature_points=int(self.xci_edge_quadrature_points),
+            sci_x_abs_min=sci_x_abs_min,
+            sci_taylor=np.ascontiguousarray(sci_taylor[inverse]),
+            sci_taylor_fraction=sci_taylor_fraction,
+            spp_fit_residual=None if fit_residual is None else np.ascontiguousarray(fit_residual[inverse]),
+            spp_fit_residual_max=fit_max,
+            spp_fit_residual_rms=fit_rms,
+            spp_fit_residual_rel_rms=fit_rel_rms,
+        )
+
     def _validity_tilt_db(self, power_tilt_db: float, gain_tilt_db: float) -> float:
         """Return the tilt metric that drives the validity flag.
 
@@ -2182,7 +2449,7 @@ class PCFMSpanKernel:
 
         x_all = self._special_functions(span_length_m)[0]
         abs_x = np.abs(x_all)
-        sci_taylor = abs_x < float(self._sci_small_x_switch)
+        sci_taylor = sci_small_x_branch_mask(x_all, self._sci_small_x_switch)
         sci_below = abs_x < SCI_X_SERIES_SWITCH
         sci_x_abs_min = float(np.min(abs_x[active])) if np.any(active) else 0.0
 
@@ -2236,6 +2503,27 @@ class PCFMSpanKernel:
         dense_grid = bool(spacing_ratio < DENSE_GRID_SPACING_RATIO)
         flagged = flagged | (dense_grid & active)
 
+        # 重叠对的 row 级分解：dense_grid 是计划级 flag，这里给出每一行究竟
+        # 有多少 XCI 权重落在非重叠假设之外。只读，不改 valid/confidence。
+        guard, overlap, weight_abs, weight_row_sum = self._xci_overlap_metrics()
+        pair_active = active[:, None] & active[None, :]
+        overlap_active = overlap & pair_active
+        overlap_counts = overlap_active.sum(axis=1).astype(np.float64)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            overlap_fraction = np.divide(
+                (weight_abs * overlap_active).sum(axis=1),
+                weight_row_sum,
+                out=np.zeros(self.n_nodes, dtype=np.float64),
+                where=weight_row_sum > 0.0,
+            )
+        overlap_fraction = np.where(active, overlap_fraction, 0.0)
+        guard_active = guard[pair_active & ~np.eye(self.n_nodes, dtype=bool)]
+        min_guard_hz = float(np.min(guard_active)) if guard_active.size else float("inf")
+        n_active = int(np.count_nonzero(active))
+        sci_taylor_fraction = (
+            float(np.count_nonzero(sci_taylor & active)) / float(n_active) if n_active else 0.0
+        )
+
         # 未占用信道没有可判定的物理量，也不应被 strict 变成 NaN。
         valid = np.where(active, valid, True)
         flagged = np.where(active, flagged, False)
@@ -2264,6 +2552,10 @@ class PCFMSpanKernel:
             min_channel_spacing_hz=float(min_spacing_hz),
             spacing_to_bandwidth=float(spacing_ratio),
             dense_grid=dense_grid,
+            xci_overlap_pairs=np.ascontiguousarray(overlap_counts[self.inverse_order]),
+            xci_overlap_weight_fraction=np.ascontiguousarray(overlap_fraction[self.inverse_order]),
+            min_guard_hz=min_guard_hz,
+            sci_taylor_fraction=sci_taylor_fraction,
         )
 
     def clear_span_cache(self) -> None:
@@ -2957,6 +3249,29 @@ class PCFMModel(RouteModel):
         keeps its pumps on the kernel and therefore leaves this empty.
         """
         return list(self._raman_pumps or [])
+
+    def dense_grid_diagnostics(
+        self,
+        power_in_w: NDArrayFloat | None = None,
+        span_length_m: float | None = None,
+    ) -> DenseGridDiagnostics:
+        """Return the kernel's dense-grid diagnostic through the model layer.
+
+        Args:
+            power_in_w: Optional ``(N,)`` launch power per channel in model
+                order.  When given, the SPP polynomial fit residual is
+                included.
+            span_length_m: Span length (m); ``None`` uses the reference
+                fibre's length.
+
+        Returns
+        -------
+            A :class:`DenseGridDiagnostics` in model order.
+        """
+        length_m = float(
+            self.ref_fiber_config.length_km * 1.0e3 if span_length_m is None else span_length_m
+        )
+        return self.kernel_for(self.ref_fiber_config).dense_grid_diagnostics(length_m, power_in_w)
 
     @property
     def lumped_raman_active(self) -> bool:

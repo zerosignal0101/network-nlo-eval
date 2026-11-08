@@ -48,7 +48,7 @@ from math import factorial
 import numpy as np
 from numba import njit
 
-from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.numerical_kernels import _raman_gain_jit
 
 __all__ = [
@@ -62,6 +62,7 @@ __all__ = [
     "_sci_small_x_coefficients",
     "_solve_spp_jit",
     "r_coefficient_matrix",
+    "sci_small_x_branch_mask",
 ]
 
 #: Speed of light in vacuum (m/s).
@@ -328,6 +329,26 @@ def _j_batch_jit(x: NDArrayFloat, c_const: float) -> NDArrayFloat:
 # ---------------------------------------------------------------------------
 # SCI kernel, Eq. (30)
 # ---------------------------------------------------------------------------
+
+
+def sci_small_x_branch_mask(x_all: NDArrayFloat, small_x_switch: float) -> NDArrayBool:
+    """Return the channels that take the small-``|X|`` SCI Taylor branch.
+
+    The condition is the one tested inside :func:`_sci_kernel_batch_jit`
+    (``abs(X) < small_x_switch``).  Keeping it in one place lets the
+    diagnostics report the branch usage without re-deriving the threshold
+    from the kernel implementation.  With ``small_x_switch = 0`` the branch is
+    disabled, exactly as in the kernel.
+
+    Args:
+        x_all: ``(N,)`` ``X = pi**2 beta2_eff B**2 L`` of every channel.
+        small_x_switch: Threshold below which the Taylor branch is used.
+
+    Returns
+    -------
+        ``(N,)`` boolean mask; it does not change any kernel value.
+    """
+    return np.abs(np.asarray(x_all, dtype=np.float64)) < float(small_x_switch)
 
 
 @lru_cache(maxsize=16)
