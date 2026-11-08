@@ -629,6 +629,7 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
         "raman_gain_model",
         "raman_ase",
         "validity_mode",
+        "nli_power_convention",
     ]
     assert PCFM_MODEL_INFO == info
 
