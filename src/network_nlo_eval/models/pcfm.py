@@ -48,6 +48,33 @@ both change the numbers and both need to be visible to a reader of the code:
     ``beta4`` term of Eq. (A.15) is set to zero.  Over a C+L band this is a
     sub-per-mille effect on the effective dispersion.
 
+**Polarization convention of the NLI kernels**
+
+The ``16/27`` (SCI) and ``32/27`` (XCI = ``2 * 16/27``) prefactors are the
+*dual-polarization* weights of the GN model, not single-polarization weights.
+The derivation used elsewhere in this repository (``damico2022.SPM_WEIGHT``)
+writes them as
+
+.. code-block:: text
+
+    16/27 = (8/9)**2 * 6 / 2**3 ,
+
+where ``(8/9)**2`` is the Manakov nonlinear coefficient and the ``2**3`` is the
+fact that each of the three interacting waves carries **half** of the total
+channel power.  The kernel therefore expects ``G(f) = P_total / B``: the sum of
+both polarizations.  The same convention is used by the numerical GN reference
+(``numerical_kernels.py``, ``numerical_dra.py``) and by the waveform reference
+``physical-nlo-eval``, whose ``launch_power_w`` is explicitly documented as the
+total dual-polarization channel power and whose EDFA ASE is generated per
+polarization with a factor ``1/2``.
+
+``nli_power_convention`` makes that assumption explicit.  With ``"total"``
+(default) the kernel is bit-for-bit the historical implementation.  With
+``"per_pol"`` the input is per-polarization power, so the PSD drive is
+``2 * P / B`` and the per-channel NLI is halved on the way out; both steps are
+needed to keep the NLI in the same coordinates as the per-polarization signal
+and ASE outputs.
+
 **Inter-span coherence (not a formula of the paper)**
 
 The paper accumulates the NLI linearly over transparent spans, Eq. (8): the
@@ -142,17 +169,22 @@ from network_nlo_eval.models.pcfm_kernels import (
     _solve_spp_jit,
     r_coefficient_matrix,
 )
-from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel
+from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
     "EGN_A_COEFFICIENTS",
     "EGN_PHI_VALUES",
+    "NLI_POWER_CONVENTIONS",
     "PCFM_MODEL_INFO",
     "PCFMModel",
     "PCFMSpanKernel",
     "SpanValidityReport",
+    "resolve_nli_power_convention",
+    "TILT_INFORMATIONAL_KNEE_DB",
+    "TILT_INFORMATIONAL_ZERO_DB",
+    "informational_tilt_confidence",
 ]
 
 #: Number of RK4 steps of the ISRS power-profile integration.
@@ -163,6 +195,47 @@ __all__ = [
 #: the SPP of every channel of the benchmark combs to better than 0.1 % (see
 #: the report).
 DEFAULT_SPP_STEPS: int = 32
+
+#: Supported NLI power conventions of the closed-form kernels.
+#:
+#: ``"total"`` (default): ``power_in_w`` is the per-channel *dual-polarization
+#: total* power.  The printed ``(16/27)`` / ``(32/27)`` prefactors are used
+#: as-is, which is the convention of the paper and of the numerical GN
+#: reference of this repository.
+#: ``"per_pol"``: ``power_in_w`` is *per-polarization* power.  The PSD that
+#: drives the kernels is the physical total ``2 * power_in_w`` and the
+#: per-channel NLI is halved on the way out, so that it stays in the
+#: per-polarization coordinates of the signal and ASE outputs.
+NLI_POWER_CONVENTIONS: tuple[str, ...] = ("total", "per_pol")
+
+
+def resolve_nli_power_convention(nli_power_convention: str) -> str:
+    """Validate the NLI power convention.
+
+    The two GN prefactors are not symmetric in the input power: SCI goes as
+    ``psd**3`` and XCI as ``psd**3`` as well, so feeding a per-polarization
+    power to a kernel that was derived for the total PSD scales the NLI by
+    ``2**3 = 8``.  The convention therefore has to be declared, exactly like
+    the launch-power convention of the coupled Raman ODE.
+
+    Args:
+        nli_power_convention: ``"total"`` or ``"per_pol"``.
+
+    Returns
+    -------
+        The normalized convention name.
+
+    Raises
+    ------
+        ValueError: The value is not one of :data:`NLI_POWER_CONVENTIONS`.
+    """
+    convention = str(nli_power_convention)
+    if convention not in NLI_POWER_CONVENTIONS:
+        raise ValueError(
+            f"nli_power_convention must be one of {NLI_POWER_CONVENTIONS}, got {nli_power_convention!r}."
+        )
+    return convention
+
 
 #: Dimensionless validity parameter of the XCI island closed form below which
 #: the exact island integral is evaluated for the pair.
@@ -207,6 +280,63 @@ XCI_EDGE_QUADRATURE_POINTS: int = 24
 #: ISRS tilt, which is reported in ``gain_tilt_db`` but does not flag the
 #: unpumped kernel: the ISRS profile is solved by the model itself.
 POWER_TILT_VALIDITY_DB: float = 15.0
+
+#: Low knee of the *informational* continuous tilt confidence (dB).
+#:
+#: The hard flag above stays at :data:`POWER_TILT_VALIDITY_DB`; this knee only
+#: shapes an additive, non-gating score.  The value comes from the tilt audit
+#: (``scripts/h3_tilt_isrs_audit.py``): between 0 and 10 dB the measured
+#: representation residual of the default H3 fit against its converged form is
+#: below 0.1 dB for both an unpumped launch tilt and a pumped gain tilt, while
+#: at the ~14 dB gain tilt of the C+L six-pump benchmark it reaches 0.15 dB.
+#: Starting the decay at 10 dB therefore gives downstream margin *before* the
+#: hard flag fires, without moving any default value.
+TILT_INFORMATIONAL_KNEE_DB: float = 10.0
+
+#: Tilt at which the informational confidence reaches zero (dB).
+#:
+#: Kept equal to the zero of the hard map (``2 * POWER_TILT_VALIDITY_DB``) so
+#: the two curves share their end point: 30 dB is twice the flag threshold and
+#: no audited configuration comes close to it.
+TILT_INFORMATIONAL_ZERO_DB: float = 2.0 * POWER_TILT_VALIDITY_DB
+
+
+def informational_tilt_confidence(tilt_db: float) -> float:
+    r"""Continuous, non-gating confidence as a function of power/gain tilt.
+
+    The hard validity flag is a step at :data:`POWER_TILT_VALIDITY_DB`; the
+    ``confidence`` field already decays linearly *above* it.  This auxiliary
+    curve additionally decays *below* the threshold, so a network layer can
+    apply a soft margin without changing ``valid``/``flagged``.
+
+    The curve is a cubic smoothstep from :data:`TILT_INFORMATIONAL_KNEE_DB`
+    (score 1) to :data:`TILT_INFORMATIONAL_ZERO_DB` (score 0):
+
+    .. math::
+
+        x = \\mathrm{clip}\\left(\\frac{t - t_{knee}}{t_{zero} - t_{knee}}, 0, 1\\right),
+        \\qquad c = 1 - x^2 (3 - 2x).
+
+    It is monotonically non-increasing and C1 at both ends, so a caller can
+    interpolate it without kinks.  The knee is placed where the audit measures
+    the default H3 fit to be within 0.1 dB of its converged form; it is
+    deliberately *not* a second validity threshold.
+
+    Args:
+        tilt_db: Tilt ``10 log10(max/min)`` in dB.  Values below the knee
+            return 1; values at or above the zero return 0.
+
+    Returns
+    -------
+        Score in ``[0, 1]``.
+    """
+    tilt = float(tilt_db)
+    if not np.isfinite(tilt):
+        return 0.0
+    span = TILT_INFORMATIONAL_ZERO_DB - TILT_INFORMATIONAL_KNEE_DB
+    x = float(np.clip((tilt - TILT_INFORMATIONAL_KNEE_DB) / span, 0.0, 1.0))
+    return float(1.0 - x * x * (3.0 - 2.0 * x))
+
 
 #: Confidence assigned to a channel whose XCI row is corrected by the edge
 #: gate.  The exact island integral makes the value usable, but the channel
@@ -313,6 +443,19 @@ class SpanValidityReport:
             ``(N,)`` score in ``[0, 1]``.  It is a coarse ordering, not a
             calibrated probability: 1 means inside the validated domain,
             ~0.6 means "usable after the fix", ~0.2 means "known wrong".
+        effective_tilt_db:
+            The tilt actually compared against
+            :data:`POWER_TILT_VALIDITY_DB` (dB).  For the base kernel this is
+            ``power_tilt_db``; the H3 Raman kernel uses
+            ``max(power_tilt_db, gain_tilt_db)`` when pumps are active.  It
+            makes the flag decision readable without re-deriving the rule.
+        tilt_confidence_informational:
+            Continuous, **non-gating** tilt score in ``[0, 1]`` from
+            :func:`informational_tilt_confidence`.  It is 1 below
+            :data:`TILT_INFORMATIONAL_KNEE_DB` and decays smoothly to 0 at
+            :data:`TILT_INFORMATIONAL_ZERO_DB`, so a caller can apply a soft
+            margin before the hard flag fires.  It never changes ``valid``,
+            ``flagged`` or ``confidence``.
     """
 
     xci_gated: NDArrayFloat
@@ -332,6 +475,8 @@ class SpanValidityReport:
     flagged: NDArrayFloat
     valid: NDArrayFloat
     confidence: NDArrayFloat
+    effective_tilt_db: float = 0.0
+    tilt_confidence_informational: float = 1.0
 
 
 #: Relative power tolerance under which two span inputs are treated as the
@@ -1274,7 +1419,13 @@ PCFM_MODEL_INFO = ModelInfo(
         ),
         (
             "raman_gain_model",
-            "'gaussian' (default) or 'linear' CZ approximation of the Raman gain spectrum.",
+            "'gaussian' (default), 'linear' CZ approximation or 'table' (normalized spectrum given by "
+            "raman_gain_table). An explicit RamanGainModel instance is also accepted.",
+        ),
+        (
+            "raman_gain_table",
+            "(offsets_hz, gains) normalized Raman gain table used when raman_gain_model='table'. "
+            "Linear interpolation, zero outside the table.",
         ),
         (
             "raman_ase",
@@ -1284,6 +1435,13 @@ PCFM_MODEL_INFO = ModelInfo(
             "validity_mode",
             "'warn' (default) records the per-channel applicability report without touching any "
             "number; 'strict' additionally replaces the SNR of invalid channels with NaN.",
+        ),
+        (
+            "nli_power_convention",
+            "'total' (default): power_in_w is the per-channel dual-polarization total power and the "
+            "printed 16/27 and 32/27 GN weights apply as-is. 'per_pol': power_in_w is "
+            "per-polarization power, so the NLI kernels are driven with 2*P and their output is "
+            "halved. Declaring the wrong side scales the NLI by 8.",
         ),
     ),
 )
@@ -1315,6 +1473,11 @@ class PCFMSpanKernel:
         cache_spans: Memoise the SPP integration and the closed-form kernels of
             a span state, so that the identical spans of a transparent link
             are evaluated once.
+        nli_power_convention: Power convention of ``power_in_w`` for the NLI
+            kernels.  ``"total"`` (default) is the per-channel dual-polarization
+            total power with the printed ``16/27``/``32/27`` weights; ``"per_pol"``
+            treats the input as per-polarization power, drives the kernels with
+            ``2 * P`` and halves the per-channel NLI.  See the module docstring.
     """
 
     def __init__(
@@ -1329,6 +1492,7 @@ class PCFMSpanKernel:
         spp_steps: int = DEFAULT_SPP_STEPS,
         edge_fix: bool = True,
         cache_spans: bool = True,
+        nli_power_convention: str = "total",
     ) -> None:
         """Prepare the per-channel constants of the span.
 
@@ -1349,6 +1513,7 @@ class PCFMSpanKernel:
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.cache_spans = bool(cache_spans)
+        self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # 小 |X| 的 SCI 泰勒系数只依赖多项式阶数；edge_fix=False 时关闭该分支。
         self._sci_small_x_switch = SCI_X_SERIES_SWITCH if self.edge_fix else 0.0
         self._sci_small_x_coeff = (
@@ -1830,16 +1995,12 @@ class PCFMSpanKernel:
         tilt_confidence = (
             1.0
             if not tilt_exceeded
-            else float(
-                np.clip(1.0 - (tilt_db - POWER_TILT_VALIDITY_DB) / POWER_TILT_VALIDITY_DB, 0.0, 1.0)
-            )
+            else float(np.clip(1.0 - (tilt_db - POWER_TILT_VALIDITY_DB) / POWER_TILT_VALIDITY_DB, 0.0, 1.0))
         )
 
         # 置信度是逐信道取最弱项：XCI 修正、SCI 分支、功率倾斜。
         xci_confidence = np.ones(self.n_nodes, dtype=np.float64)
-        xci_confidence = np.where(
-            s_below & ~material, XCI_IMMATERIAL_CONFIDENCE, xci_confidence
-        )
+        xci_confidence = np.where(s_below & ~material, XCI_IMMATERIAL_CONFIDENCE, xci_confidence)
         xci_confidence = np.where(
             material,
             np.where(gated, XCI_GATED_CONFIDENCE, XCI_UNCORRECTED_CONFIDENCE),
@@ -1879,6 +2040,8 @@ class PCFMSpanKernel:
             flagged=np.ascontiguousarray(flagged[self.inverse_order]),
             valid=np.ascontiguousarray(valid[self.inverse_order]),
             confidence=np.ascontiguousarray(confidence[self.inverse_order]),
+            effective_tilt_db=float(tilt_db),
+            tilt_confidence_informational=informational_tilt_confidence(tilt_db),
         )
 
     def clear_span_cache(self) -> None:
@@ -2275,7 +2438,13 @@ class PCFMSpanKernel:
 
         # --- NLI PSDs, Eqs. (21) and (26) ----------------------------------
         active = power > 0.0
-        psd = np.where(active, power / self.b_hz, 0.0)  # G_WDM,i
+        if self.nli_power_convention == "per_pol":
+            # (16/27) = (8/9)^2 * 6/2^3 是按“总功率 PSD 由两个偏振均分”推出
+            # 的双偏振权重，核的输入必须是物理总功率；per_pol 输入是每偏振
+            # 功率，所以驱动 PSD 乘 2。
+            psd = np.where(active, 2.0 * power / self.b_hz, 0.0)  # G_WDM,i
+        else:
+            psd = np.where(active, power / self.b_hz, 0.0)  # G_WDM,i
 
         rho_cut = np.ones(self.n_nodes, dtype=np.float64)
         rho_nch = np.ones(self.n_nodes, dtype=np.float64)
@@ -2297,6 +2466,10 @@ class PCFMSpanKernel:
 
         spm = np.where(active, g_sci * self.b_hz, 0.0)
         xpm = np.where(active, g_xci * self.b_hz, 0.0)
+        if self.nli_power_convention == "per_pol":
+            # 输出回到每偏振坐标：信号与 ASE 都是每偏振量，NLI 也必须除 2。
+            spm = 0.5 * spm
+            xpm = 0.5 * xpm
 
         inverse = self.inverse_order
         n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
@@ -2346,13 +2519,21 @@ class PCFMModel(RouteModel):
         raman_pumps: Pumps applied to every span.  Providing this argument
             also enables the lumped model when ``raman_model`` is ``None``.
             When omitted, the pumps of each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"`` or ``"linear"`` Raman gain shape.
+        raman_gain_model: ``"gaussian"``、``"linear"``、``"table"`` 或
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` 实例。
+        raman_gain_table: ``gain_model="table"`` 时的归一化增益表
+            ``(offsets_hz, gains)``。
         raman_ase: Include the distributed Raman ASE before the span EDFA.
         raman_temperature_k: Fibre temperature used by the Raman spontaneous
             emission factor.
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate per
             watt before division by ``A_eff``.  The default matches the
             waveform-level ``physics_nlo_eval.RamanPump`` for cross-checking.
+        nli_power_convention: ``"total"`` (default) means ``power_in_w`` is the
+            per-channel dual-polarization total power and the printed
+            ``16/27``/``32/27`` weights apply as-is; ``"per_pol"`` means it is
+            per-polarization power, so the kernels are driven with ``2 * P`` and
+            the NLI is halved.  See :class:`PCFMSpanKernel`.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
     """
 
@@ -2375,11 +2556,13 @@ class PCFMModel(RouteModel):
         spp_steps: int | str = DEFAULT_SPP_STEPS,
         raman_model: str | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
-        raman_gain_model: str = "gaussian",
+        raman_gain_model: str | RamanGainModel = "gaussian",
+        raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
         raman_temperature_k: float = 300.0,
         raman_peak_gain_coefficient_m_per_w: float = 6e-14,
         validity_mode: str = "warn",
+        nli_power_convention: str = "total",
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -2387,8 +2570,8 @@ class PCFMModel(RouteModel):
         Raises
         ------
             ValueError: ``poly_degree`` is negative, ``spp_steps`` is invalid,
-                the Raman options are inconsistent, or ``validity_mode`` is
-                not ``"warn"``/``"strict"``.
+                the Raman options are inconsistent, ``validity_mode`` is not
+                ``"warn"``/``"strict"``, or ``nli_power_convention`` is unknown.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -2398,11 +2581,13 @@ class PCFMModel(RouteModel):
             raise ValueError(f"raman_model must be None, 'off' or 'lumped', got {raman_model!r}.")
         if validity_mode not in ("warn", "strict"):
             raise ValueError(f"validity_mode must be 'warn' or 'strict', got {validity_mode!r}.")
+        nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **route_options)
         self.poly_degree = int(poly_degree)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.cache_spans = bool(cache_spans)
+        self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         self.spp_steps = spp_steps
         self.validity_mode = str(validity_mode)
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
@@ -2418,8 +2603,9 @@ class PCFMModel(RouteModel):
         self._raman_pumps = None if raman_pumps is None else list(raman_pumps)
         self._raman_enabled = raman_model == "lumped" or (raman_model is None and self._raman_pumps is not None)
         self._raman_ase = bool(raman_ase)
-        self._raman_gain_model = RamanGainModel(
-            gain_model=raman_gain_model,
+        self._raman_gain_model = resolve_raman_gain_model(
+            raman_gain_model,
+            table=raman_gain_table,
             peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
             temperature_k=raman_temperature_k,
         )
@@ -2436,6 +2622,7 @@ class PCFMModel(RouteModel):
             edge_fix=self.edge_fix,
             cache_spans=self.cache_spans,
             spp_steps=self._active_spp_steps,
+            nli_power_convention=self.nli_power_convention,
         )
 
     def _reset_validity(self) -> None:

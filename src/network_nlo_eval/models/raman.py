@@ -22,7 +22,9 @@
 
 * 泵浦未耗尽：忽略信号对泵浦的消耗、泵浦之间的相互作用与二阶泵浦；
 * 增益集总在跨段末端：跨内信号功率剖面与 NLI 不随拉曼增益改变；
-* 拉曼增益谱用 Gaussian 或论文 CZ 线性近似，而非实测二氧化硅谱；
+* 拉曼增益谱默认用 Gaussian 或论文 CZ 线性近似，而非实测二氧化硅谱；
+  需要标定时可由调用方通过 ``gain_model="table"`` 给出表格谱，表项线性
+  插值、表外置零，未给定表格时仍走解析分支；
 * 泵浦与信号之间的 XPM 不计入 NLI；
 * 只对稳态、单跨静态配置建模，不包含动态增益控制或 droop 效应。
 
@@ -48,6 +50,7 @@ __all__ = [
     "K_BOLTZMANN",
     "RamanAmplifier",
     "RamanGainModel",
+    "resolve_raman_gain_model",
 ]
 
 #: 真空光速 (m/s)。
@@ -82,7 +85,15 @@ class RamanGainModel:
     Parameters
     ----------
         gain_model: ``"gaussian"`` 使用以 13.2 THz 为峰的高斯谱；
-            ``"linear"`` 使用 CZ 的线性近似，并在 ``delta_f_cutoff_hz`` 处截断。
+            ``"linear"`` 使用 CZ 的线性近似，并在 ``delta_f_cutoff_hz`` 处截断；
+            ``"table"`` 使用 ``table`` 给出的归一化表格谱（线性插值，表外
+            置零）。默认 ``"gaussian"`` 逐位保持历史数值。
+        table: ``(offsets_hz, gains)``，仅 ``gain_model="table"`` 时使用。
+            ``offsets_hz`` 是泵浦-信号频移 (Hz)，必须非负且严格递增；
+            ``gains`` 是对应的**归一化**增益形（峰值 1 对应
+            ``peak_gain_coefficient_m_per_w``），必须有限且非负。两者长度
+            相同且至少两个点。表外频移的增益为 0，因此插值不会外推出
+            物理上不存在的增益尾巴。
         peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)，使用前除以
             信号波长的有效模面积 ``A_eff``。
         delta_f_peak_hz: 拉曼增益峰值对应的泵浦-信号频移 (Hz)。
@@ -97,13 +108,15 @@ class RamanGainModel:
 
     Raises
     ------
-        ValueError: 任一参数越界或 ``gain_model`` 不受支持。
+        ValueError: 任一参数越界、``gain_model`` 不受支持、``table`` 与
+            ``gain_model`` 不匹配，或表格本身不合法。
     """
 
     def __init__(
         self,
         *,
-        gain_model: Literal["gaussian", "linear"] = "gaussian",
+        gain_model: Literal["gaussian", "linear", "table"] = "gaussian",
+        table: tuple[Sequence[float], Sequence[float]] | None = None,
         peak_gain_coefficient_m_per_w: float = DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W,
         delta_f_peak_hz: float = DEFAULT_DELTA_F_PEAK_HZ,
         delta_f_sigma_hz: float = DEFAULT_DELTA_F_SIGMA_HZ,
@@ -114,8 +127,12 @@ class RamanGainModel:
         reference_a_eff_m2: float = 80e-12,
     ) -> None:
         """校验并保存模型参数。"""
-        if gain_model not in ("gaussian", "linear"):
-            raise ValueError(f"gain_model must be 'gaussian' or 'linear', got {gain_model!r}.")
+        if gain_model not in ("gaussian", "linear", "table"):
+            raise ValueError(f"gain_model must be 'gaussian', 'linear' or 'table', got {gain_model!r}.")
+        if gain_model == "table" and table is None:
+            raise ValueError("gain_model='table' requires table=(offsets_hz, gains).")
+        if gain_model != "table" and table is not None:
+            raise ValueError("table is only used when gain_model='table'.")
         if peak_gain_coefficient_m_per_w < 0:
             raise ValueError("peak_gain_coefficient_m_per_w must be non-negative.")
         if delta_f_peak_hz <= 0 or delta_f_sigma_hz <= 0 or delta_f_cutoff_hz <= 0:
@@ -130,6 +147,9 @@ class RamanGainModel:
             raise ValueError("reference_a_eff_m2 must be positive.")
 
         self.gain_model = gain_model
+        self.table: tuple[NDArrayFloat, NDArrayFloat] | None = (
+            None if table is None else self._validate_gain_table(table)
+        )
         self.peak_gain_coefficient_m_per_w = float(peak_gain_coefficient_m_per_w)
         self.delta_f_peak_hz = float(delta_f_peak_hz)
         self.delta_f_sigma_hz = float(delta_f_sigma_hz)
@@ -139,6 +159,93 @@ class RamanGainModel:
         self.ase_steps = int(ase_steps)
         self.reference_a_eff_m2 = float(reference_a_eff_m2)
 
+    @classmethod
+    def from_table(
+        cls,
+        offsets_hz: Sequence[float],
+        gains: Sequence[float],
+        *,
+        peak_gain_coefficient_m_per_w: float = DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W,
+        temperature_k: float = 300.0,
+        include_photon_energy_factor: bool = True,
+        ase_steps: int = 64,
+        reference_a_eff_m2: float = 80e-12,
+    ) -> RamanGainModel:
+        """用归一化增益表构造模型。
+
+        Args:
+            offsets_hz: ``(K,)`` 泵浦-信号频移 (Hz)，非负、严格递增。
+            gains: ``(K,)`` 归一化增益形；``1.0`` 对应峰值系数。
+            peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)。
+            temperature_k: 光纤温度 (K)。
+            include_photon_energy_factor: 是否保留 ``f_p / f_s`` 因子。
+            ase_steps: ASE 积分节点数。
+            reference_a_eff_m2: 参考有效模面积 (m²)。
+
+        Returns
+        -------
+            以 ``gain_model="table"`` 构造的模型。
+
+        Raises
+        ------
+            ValueError: 表格不合法，或任一标量参数越界。
+        """
+        return cls(
+            gain_model="table",
+            table=(offsets_hz, gains),
+            peak_gain_coefficient_m_per_w=peak_gain_coefficient_m_per_w,
+            temperature_k=temperature_k,
+            include_photon_energy_factor=include_photon_energy_factor,
+            ase_steps=ase_steps,
+            reference_a_eff_m2=reference_a_eff_m2,
+        )
+
+    @staticmethod
+    def _validate_gain_table(
+        table: tuple[Sequence[float], Sequence[float]],
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """校验并冻结增益表。
+
+        表是**归一化谱形**，不是绝对增益：绝对值由
+        ``peak_gain_coefficient_m_per_w / A_eff`` 给出。因此这里只要求
+        频移非负、严格递增、增益有限非负，不要求峰值为 1（允许用户保留
+        实测谱的相对起伏）。
+
+        Args:
+            table: ``(offsets_hz, gains)``。
+
+        Returns
+        -------
+            ``(offsets, gains)`` 的 ``float64`` 只读副本。
+
+        Raises
+        ------
+            ValueError: 形状、单调性、有限性或符号不合法。
+        """
+        try:
+            offsets_raw, gains_raw = table
+        except (TypeError, ValueError):
+            raise ValueError("table must be a pair (offsets_hz, gains).") from None
+        offsets = np.array(offsets_raw, dtype=np.float64, copy=True)
+        gains = np.array(gains_raw, dtype=np.float64, copy=True)
+        if offsets.ndim != 1 or gains.ndim != 1:
+            raise ValueError("gain table offsets and gains must be one-dimensional.")
+        if offsets.size != gains.size:
+            raise ValueError("gain table offsets and gains must have the same length.")
+        if offsets.size < 2:
+            raise ValueError("gain table must contain at least two points.")
+        if not np.all(np.isfinite(offsets)) or not np.all(np.isfinite(gains)):
+            raise ValueError("gain table values must be finite.")
+        if np.any(offsets < 0.0):
+            raise ValueError("gain table offsets must be non-negative.")
+        if np.any(np.diff(offsets) <= 0.0):
+            raise ValueError("gain table offsets must be strictly increasing.")
+        if np.any(gains < 0.0):
+            raise ValueError("gain table gains must be non-negative.")
+        offsets.setflags(write=False)
+        gains.setflags(write=False)
+        return offsets, gains
+
     def gain_shape(self, shift_hz: NDArrayFloat | float) -> NDArrayFloat:
         """返回归一化拉曼增益谱形状 ``g(|Δf|) / g_peak``。
 
@@ -147,12 +254,19 @@ class RamanGainModel:
 
         Returns
         -------
-            无量纲形状，峰值 1；负频移与非正频移返回 0。
+            无量纲形状，峰值 1（表格谱由表定义）；负频移与非正频移返回 0，
+            表格谱在 ``offsets_hz`` 范围外返回 0。
         """
         shift = np.asarray(shift_hz, dtype=np.float64)
         if self.gain_model == "gaussian":
             gaussian = np.exp(-0.5 * ((shift - self.delta_f_peak_hz) / self.delta_f_sigma_hz) ** 2)
             return np.where(shift > 0, gaussian, 0.0)
+        if self.gain_model == "table":
+            offsets, gains = self.table
+            # 表外置零而不是按端点值外推：实测谱在未覆盖的频移上没有可
+            # 信数据，外推会把截断误差放大到增益指数里。
+            interpolated = np.interp(shift, offsets, gains, left=0.0, right=0.0)
+            return np.where(shift > 0, interpolated, 0.0)
         linear = shift / self.delta_f_peak_hz
         return np.where((shift > 0) & (shift <= self.delta_f_cutoff_hz), linear, 0.0)
 
@@ -359,6 +473,47 @@ class RamanGainModel:
         if values.shape != shape:
             raise ValueError("signal_attenuation_npm must be a scalar or contain one value per signal.")
         return values
+
+
+def resolve_raman_gain_model(
+    gain_model: str | RamanGainModel,
+    *,
+    table: tuple[Sequence[float], Sequence[float]] | None = None,
+    peak_gain_coefficient_m_per_w: float = DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W,
+    temperature_k: float = 300.0,
+) -> RamanGainModel:
+    """把模型层的 ``raman_gain_model`` 选项解析成 :class:`RamanGainModel`。
+
+    模型层历史上只接受 ``"gaussian"``/``"linear"`` 字符串，并在内部把峰值
+    系数和温度写进 :class:`RamanGainModel`。表格谱需要一个额外的 ``table``
+    参数，因此统一由本函数构造，避免每个模型各写一份分支。已经构造好的
+    :class:`RamanGainModel` 原样返回：调用方显式给了模型时，峰值系数与温度
+    以该实例为准，不再被这里的默认值覆盖。
+
+    Args:
+        gain_model: ``"gaussian"``、``"linear"``、``"table"`` 或现成实例。
+        table: ``(offsets_hz, gains)``，仅 ``"table"`` 使用。
+        peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)。
+        temperature_k: 光纤温度 (K)。
+
+    Returns
+    -------
+        可直接交给 ODE 求解器的增益模型。
+
+    Raises
+    ------
+        ValueError: 字符串不受支持，或 ``table`` 与 ``gain_model`` 不匹配。
+    """
+    if isinstance(gain_model, RamanGainModel):
+        if table is not None:
+            raise ValueError("table must not be given when raman_gain_model is already a RamanGainModel.")
+        return gain_model
+    return RamanGainModel(
+        gain_model=gain_model,
+        table=table,
+        peak_gain_coefficient_m_per_w=peak_gain_coefficient_m_per_w,
+        temperature_k=temperature_k,
+    )
 
 
 class RamanAmplifier:

@@ -25,7 +25,13 @@ import numpy as np
 
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.pcfm import DEFAULT_SPP_STEPS
-from network_nlo_eval.models.raman import C_LIGHT, H_PLANCK, K_BOLTZMANN, RamanGainModel
+from network_nlo_eval.models.raman import (
+    C_LIGHT,
+    H_PLANCK,
+    K_BOLTZMANN,
+    RamanGainModel,
+    resolve_raman_gain_model,
+)
 from network_nlo_eval.network.elements import RamanPumpConfig
 
 __all__ = [
@@ -182,7 +188,8 @@ class RamanPaperSpanSolver:
         signal_a_eff_m2: ``(N,)`` 信号有效模面积 (m²)。
         pump_alpha_npm: ``(N_p,)`` 泵浦功率衰减系数 (1/m)。
         pump_a_eff_m2: ``(N_p,)`` 泵浦有效模面积 (m²)。
-        gain_model: 拉曼增益谱模型。
+        gain_model: 拉曼增益谱模型，或 ``"gaussian"``/``"linear"`` 字符串；
+            表格谱用 :meth:`RamanGainModel.from_table` 构造后传入实例。
         n_steps: RK4 步数；剖面按每步中点/终点采样，共 ``2*n_steps`` 行。
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS；关闭后只保留泵浦相关耦合。
@@ -231,7 +238,7 @@ class RamanPaperSpanSolver:
         signal_a_eff_m2: NDArrayFloat,
         pump_alpha_npm: NDArrayFloat,
         pump_a_eff_m2: NDArrayFloat,
-        gain_model: RamanGainModel,
+        gain_model: RamanGainModel | str,
         *,
         n_steps: int = DEFAULT_PAPER_SPP_STEPS,
         n_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
@@ -261,7 +268,7 @@ class RamanPaperSpanSolver:
         self.signal_a_eff_m2 = np.asarray(signal_a_eff_m2, dtype=np.float64)
         self.pumps = list(pumps)
         self.length_m = float(length_m)
-        self.gain_model = gain_model
+        self.gain_model = resolve_raman_gain_model(gain_model)
         self.n_steps = int(n_steps)
         self.n_iterations = int(n_iterations)
         self.include_isrs = bool(include_isrs)

@@ -60,6 +60,7 @@ def _solver(
     include_isrs: bool = True,
     signal_polarizations: int = 1,
     pump_pump_raman: bool = True,
+    gain_model: RamanGainModel | None = None,
 ) -> RamanPaperSpanSolver:
     """在 9 个 C 波段信道上构造一个小规模 ODE 求解器。"""
     frequencies = C_LIGHT / np.linspace(1530e-9, 1565e-9, 9)
@@ -77,7 +78,7 @@ def _solver(
         a_eff,
         pump_alpha,
         pump_a_eff,
-        RamanGainModel(),
+        gain_model if gain_model is not None else RamanGainModel(),
         n_steps=n_steps,
         n_iterations=24,
         pump_depletion=pump_depletion,
@@ -766,3 +767,86 @@ def test_solver_rejects_wrong_input_shape() -> None:
     solver = _solver([_pump()])
     with pytest.raises(ValueError, match="one value per signal"):
         solver.solve(np.ones(8))
+
+
+# ---------------------------------------------------------------------------
+# 表格增益谱
+# ---------------------------------------------------------------------------
+
+#: 默认（Gaussian）单泵 C 波段指纹，抓取自基线 ``830c062``。
+GOLDEN_C_BAND_DEFAULT = {
+    "mean_snr_db": "0x1.e8370f48ade53p+4",
+    "mean_nli_w": "0x1.e2d733476ce16p-22",
+    "mean_ase_w": "0x1.d3d03f7fc62e8p-22",
+    "mean_signal_w": "0x1.04e74cc73ee86p-10",
+}
+
+
+def _default_readings(**options) -> dict[str, float]:
+    """在 C 波段单泵单跨上取均值读数。"""
+    result = make_model("hybrid_raman_paper", CASE, raman_pumps=[_pump()], **options).evaluate_path(
+        build_path(CASE), launch_profile(CASE)
+    )
+    nli = np.asarray(result.spm_noise_w) + np.asarray(result.xpm_noise_w)
+    return {
+        "mean_snr_db": float(np.mean(result.snr_db)),
+        "mean_nli_w": float(np.mean(nli)),
+        "mean_ase_w": float(np.mean(result.ase_noise_w)),
+        "mean_signal_w": float(np.mean(result.signal_power_w)),
+    }
+
+
+def test_default_paper_result_is_bit_for_bit_unchanged() -> None:
+    """表入口不得改变默认 Gaussian 的 paper 结果。"""
+    readings = _default_readings()
+    for key, expected_hex in GOLDEN_C_BAND_DEFAULT.items():
+        assert readings[key].hex() == expected_hex, f"{key} drifted from the 830c062 baseline"
+
+
+def test_gain_table_is_propagated_to_the_paper_model() -> None:
+    """模型层的表选项必须原样进入 paper 核与 ODE 求解器。"""
+    analytic = RamanGainModel()
+    offsets = np.linspace(0.0, 30e12, 1201)
+    gains = analytic.gain_shape(offsets)
+    model = make_model(
+        "hybrid_raman_paper",
+        CASE,
+        raman_pumps=[_pump()],
+        raman_gain_model="table",
+        raman_gain_table=(offsets, gains),
+    )
+    assert model._raman_gain_model.gain_model == "table"
+    kernel = model.kernel_for(build_path(CASE).fiber_configs[0])
+    solver = kernel._solver_for(100e3)
+    assert solver.gain_model.gain_model == "table"
+    assert np.array_equal(solver.gain_model.table[0], offsets)
+
+
+def test_gain_table_resampling_gaussian_matches_paper_result() -> None:
+    """Gaussian 采样表与解析谱的 paper SNR 差应在插值精度内。"""
+    analytic = _default_readings()
+    offsets = np.linspace(0.0, 30e12, 1201)
+    gains = RamanGainModel().gain_shape(offsets)
+    resampled = _default_readings(raman_gain_model="table", raman_gain_table=(offsets, gains))
+    assert abs(resampled["mean_snr_db"] - analytic["mean_snr_db"]) < 0.01
+    assert abs(resampled["mean_nli_w"] / analytic["mean_nli_w"] - 1.0) < 1e-3
+
+
+def test_solver_accepts_a_table_gain_model() -> None:
+    """``RamanPaperSpanSolver`` 直接接受表格模型，结果与解析谱接近。"""
+    offsets = np.linspace(0.0, 30e12, 1201)
+    gains = RamanGainModel().gain_shape(offsets)
+    table_solver = _solver([_pump()], gain_model=RamanGainModel.from_table(offsets, gains))
+    reference_solver = _solver([_pump()])
+    power = np.full(9, 1e-3)
+    table = table_solver.solve(power)
+    reference = reference_solver.solve(power)
+    assert np.allclose(table.power_out_w, reference.power_out_w, rtol=1e-4)
+    assert np.allclose(table.pump_power_out_w, reference.pump_power_out_w, rtol=1e-4)
+
+
+def test_hybrid_model_metadata_documents_the_gain_table() -> None:
+    """``ModelInfo.options`` 必须列出表入口。"""
+    options = dict(HYBRID_RAMAN_PAPER_MODEL_INFO.options)
+    assert "raman_gain_table" in options
+    assert "table" in options["raman_gain_model"]

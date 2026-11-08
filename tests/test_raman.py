@@ -134,6 +134,120 @@ def test_linear_gain_model_rises_to_cutoff() -> None:
     assert shape[5] == 0.0
 
 
+# ---------------------------------------------------------------------------
+# 表格增益谱
+# ---------------------------------------------------------------------------
+
+
+def _gaussian_table(points: int = 1201, span_hz: float = 30e12):
+    """把解析 Gaussian 采样成表，用于验证表入口。"""
+    model = RamanGainModel()
+    offsets = np.linspace(0.0, span_hz, points)
+    return model, offsets, model.gain_shape(offsets)
+
+
+def test_table_matches_sampled_gaussian() -> None:
+    """Gaussian 采样表与解析 Gaussian 的差应在插值精度内。"""
+    analytic, offsets, gains = _gaussian_table()
+    table = RamanGainModel.from_table(offsets, gains)
+    shifts = np.linspace(1e9, 30e12, 500)
+    # 25 GHz 网格上的线性插值误差约 (h/sigma)^2/8 ~ 2e-5。
+    assert np.allclose(table.gain_shape(shifts), analytic.gain_shape(shifts), rtol=0.0, atol=5e-5)
+    # 表节点上必须精确复现采样值。
+    assert np.allclose(table.gain_shape(offsets), gains, rtol=0.0, atol=1e-12)
+
+    pump = _pump(wavelength_nm=1450.0, power_w=0.15)
+    table_gain = table.on_off_gain_db(C_FREQUENCIES_HZ, [pump], 100e3)
+    analytic_gain = analytic.on_off_gain_db(C_FREQUENCIES_HZ, [pump], 100e3)
+    assert np.allclose(table_gain, analytic_gain, rtol=0.0, atol=5e-4)
+
+
+def test_table_gain_is_zero_outside_the_table() -> None:
+    """表外频移与非正频移的增益必须为零，不做端点外推。"""
+    _, offsets, gains = _gaussian_table()
+    table = RamanGainModel.from_table(offsets, gains)
+    outside = table.gain_shape(np.array([0.0, -1e12, 40e12, 1e15]))
+    assert np.array_equal(outside, np.zeros(4))
+
+
+def test_table_entry_and_named_constructor_agree_bit_for_bit() -> None:
+    """``from_table`` 与 ``gain_model='table'`` 必须构造出同一张表。"""
+    _, offsets, gains = _gaussian_table()
+    named = RamanGainModel(gain_model="table", table=(offsets, gains))
+    factory = RamanGainModel.from_table(offsets, gains)
+    probe = np.linspace(0.0, 32e12, 257)
+    assert np.array_equal(named.gain_shape(probe), factory.gain_shape(probe))
+    assert np.array_equal(named.table[0], factory.table[0])
+    assert np.array_equal(named.table[1], factory.table[1])
+
+
+def test_default_gaussian_shape_is_bit_for_bit_unchanged() -> None:
+    """默认构造仍走解析 Gaussian 分支，数值与显式 ``"gaussian"`` 逐位一致。"""
+    implicit = RamanGainModel()
+    explicit = RamanGainModel(gain_model="gaussian")
+    shifts = np.linspace(0.0, 30e12, 2001)
+    assert np.array_equal(implicit.gain_shape(shifts), explicit.gain_shape(shifts))
+    expected = np.where(
+        shifts > 0,
+        np.exp(-0.5 * ((shifts - 13.2e12) / 2.12e12) ** 2),
+        0.0,
+    )
+    assert np.array_equal(implicit.gain_shape(shifts), expected)
+    pump = _pump(power_w=0.15)
+    bandwidths = np.full(C_FREQUENCIES_HZ.size, 64e9)
+    assert np.array_equal(
+        implicit.on_off_gain(C_FREQUENCIES_HZ, [pump], 100e3),
+        explicit.on_off_gain(C_FREQUENCIES_HZ, [pump], 100e3),
+    )
+    assert np.array_equal(
+        implicit.ase_w(C_FREQUENCIES_HZ, bandwidths, [pump], 100e3),
+        explicit.ase_w(C_FREQUENCIES_HZ, bandwidths, [pump], 100e3),
+    )
+
+
+def test_invalid_gain_tables_are_rejected() -> None:
+    """长度、单调性、符号与有限性错误都必须显式报错。"""
+    offsets = np.linspace(0.0, 20e12, 9)
+    gains = np.linspace(0.0, 1.0, 9)
+
+    with pytest.raises(ValueError, match="same length"):
+        RamanGainModel.from_table(offsets, gains[:-1])
+    with pytest.raises(ValueError, match="strictly increasing"):
+        RamanGainModel.from_table(offsets[::-1], gains)
+    with pytest.raises(ValueError, match="strictly increasing"):
+        RamanGainModel.from_table(np.array([0.0, 1e12, 1e12]), np.array([0.0, 0.5, 1.0]))
+    with pytest.raises(ValueError, match="non-negative"):
+        RamanGainModel.from_table(offsets, -gains)
+    with pytest.raises(ValueError, match="finite"):
+        RamanGainModel.from_table(offsets, np.where(np.arange(9) == 4, np.nan, gains))
+    with pytest.raises(ValueError, match="finite"):
+        RamanGainModel.from_table(offsets, np.where(np.arange(9) == 4, np.inf, gains))
+    with pytest.raises(ValueError, match="non-negative"):
+        RamanGainModel.from_table(np.linspace(-20e12, -1e12, 9), gains)
+    with pytest.raises(ValueError, match="at least two"):
+        RamanGainModel.from_table(np.array([1e12]), np.array([1.0]))
+    with pytest.raises(ValueError, match="one-dimensional"):
+        RamanGainModel.from_table(offsets[:, None], gains)
+    with pytest.raises(ValueError, match="requires table"):
+        RamanGainModel(gain_model="table")
+    with pytest.raises(ValueError, match="only used when"):
+        RamanGainModel(gain_model="gaussian", table=(offsets, gains))
+
+
+def test_lumped_amplifier_accepts_a_table_model() -> None:
+    """表格模型必须能直接替换集总放大器的解析谱。"""
+    analytic, offsets, gains = _gaussian_table()
+    table = RamanGainModel.from_table(offsets, gains)
+    pump = _pump(power_w=0.15)
+    bandwidths = np.full(C_FREQUENCIES_HZ.size, 64e9)
+    expected_gain = RamanAmplifier([pump], 100e3, model=analytic).gain(C_FREQUENCIES_HZ)
+    table_gain = RamanAmplifier([pump], 100e3, model=table).gain(C_FREQUENCIES_HZ)
+    assert np.allclose(table_gain, expected_gain, rtol=1e-4, atol=0.0)
+    expected_ase = RamanAmplifier([pump], 100e3, model=analytic).ase_w(C_FREQUENCIES_HZ, bandwidths)
+    table_ase = RamanAmplifier([pump], 100e3, model=table).ase_w(C_FREQUENCIES_HZ, bandwidths)
+    assert np.allclose(table_ase, expected_ase, rtol=1e-3, atol=0.0)
+
+
 def test_forward_and_backward_pumps_have_same_on_off_gain() -> None:
     """未耗尽集总等效下，FW/BW 的末端 on-off 增益幅度相同。"""
     model = RamanGainModel()
