@@ -154,21 +154,40 @@ def test_error_budget_supports_plain_pcfm_kernels() -> None:
 
 
 def test_error_budget_reads_pump_directions_from_plain_pcfm_config() -> None:
-    """纯 PCFM 的集总拉曼核没有泵状态，预算须回落到模型配置。"""
+    """纯 PCFM 的集总拉曼核没有泵状态，预算须回落到模型配置并标记不可信。"""
     path = build_path(CASE_1)
     power = launch_profile(CASE_1)
-    model = make_model(
-        "pcfm",
-        CASE_1,
-        egn=True,
-        raman_model="lumped",
-        raman_pumps=[_pump(0.2, "backward")],
-    )
+    with pytest.warns(UserWarning, match="lumped"):
+        model = make_model(
+            "pcfm",
+            CASE_1,
+            egn=True,
+            raman_model="lumped",
+            raman_pumps=[_pump(0.2, "backward")],
+        )
     result = model.evaluate_path(path, power)
 
     budget = estimate_h3_error_budget(model, path, power, result)
     assert budget.validity.pump_mode == "backward"
+    # 集总拉曼有泵：点值保留（兼容），但必须逐信道 flag 且扣 confidence。
+    assert bool(np.all(budget.validity.lumped_raman))
+    assert bool(np.all(budget.validity.flagged))
+    assert bool(np.all(budget.validity.confidence <= 0.6))
     assert bool(np.all(np.isfinite(budget.margin_db)))
+    assert any("lumped Raman approximation" in note for note in budget.notes)
+
+
+def test_plain_pcfm_without_pumps_does_not_raise_the_lumped_warning() -> None:
+    """无泵纯 PCFM 不是集总拉曼路径，不得触发 warning 或 flag。"""
+    path = build_path(CASE_1)
+    power = launch_profile(CASE_1)
+    model = make_model("pcfm", CASE_1, egn=True)
+    result = model.evaluate_path(path, power)
+
+    budget = estimate_h3_error_budget(model, path, power, result)
+    assert not model.lumped_raman_active
+    assert not budget.validity.lumped_raman.any()
+    assert not budget.validity.flagged.any()
 
 
 @pytest.mark.parametrize(
@@ -374,9 +393,94 @@ def test_non_converged_pump_invalidates_the_channels() -> None:
 
     budget = estimate_h3_error_budget(model, path, power, result)
     assert bool(np.all(budget.validity.pump_not_converged))
+    assert bool(np.all(budget.validity.raman_not_converged))
     assert not budget.validity.valid.any()
     assert bool(np.all(np.isinf(budget.margin_db)))
     assert bool(np.all(np.isneginf(budget.adjusted_snr_db(result.snr_db))))
+
+
+# ---------------------------------------------------------------------------
+# 收敛保护与集总近似 flag
+# ---------------------------------------------------------------------------
+
+
+def _wideband_case() -> BenchCase:
+    """E+S+C+L 100 GHz 单跨，与第五轮精度矩阵同源。"""
+    low, high = band_edges_hz("E+S+C+L")
+    return BenchCase(
+        name="escl_100GHz_1span",
+        bands="E+S+C+L",
+        num_channels=int(round((high - low) / 100e9)) + 1,
+        channel_spacing_hz=100e9,
+        center_frequency_hz=(low + high) / 2.0,
+        symbol_rate_hz=64e9,
+        span_length_km=100.0,
+        span_count=1,
+        edfa_noise_figure_db=5.5,
+        total_power_dbm=0.0,
+    )
+
+
+def _six_pumps(direction: str) -> list[RamanPumpConfig]:
+    """六泵组的方向翻转。"""
+    spec = (
+        (1340.0, 0.63),
+        (1360.0, 0.63),
+        (1427.0, 0.165),
+        (1445.0, 0.131),
+        (1476.0, 0.125),
+        (1505.0, 0.075),
+    )
+    return [
+        RamanPumpConfig(
+            wavelength_nm=wavelength,
+            power_w=power,
+            direction=direction,  # type: ignore[arg-type]
+            attenuation_db_per_km=0.25,
+        )
+        for wavelength, power in spec
+    ]
+
+
+def test_wideband_multipump_budget_exposes_the_regime_flag() -> None:
+    """E+S+C+L 六泵默认收敛，但预算必须标出宽波段多泵区域。"""
+    case = _wideband_case()
+    path = build_path(case)
+    power = np.full(case.num_channels, 10.0 ** (6.0 / 10.0) * 1e-3)
+    result, budget = make_model(
+        "pcfm_h3_raman", case, raman_pumps=_six_pumps("backward")
+    ).evaluate_path_with_uncertainty(path, power)
+
+    assert bool(np.all(np.isfinite(result.snr_db)))
+    assert bool(np.all(budget.validity.raman_wideband_multipump))
+    assert bool(np.all(budget.validity.flagged))
+    assert not bool(np.any(budget.validity.raman_not_converged))
+    assert any("96-step branch" in note for note in budget.notes)
+
+
+def test_under_resolved_e_s_multipump_is_not_silently_valid() -> None:
+    """显式 24 步的 E+S+C+L 后向解 NaN：预算必须判无效、margin 无穷。"""
+    import warnings
+
+    case = _wideband_case()
+    path = build_path(case)
+    power = np.full(case.num_channels, 10.0 ** (6.0 / 10.0) * 1e-3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = make_model(
+            "pcfm_h3_raman",
+            case,
+            raman_pumps=_six_pumps("backward"),
+            raman_steps=24,
+        )
+        result = model.evaluate_path(path, power)
+
+    budget = estimate_h3_error_budget(model, path, power, result)
+    assert bool(np.all(budget.validity.raman_not_converged))
+    assert not budget.validity.valid.any()
+    assert bool(np.all(np.isinf(budget.margin_db)))
+    assert bool(np.all(budget.validity.raman_wideband_multipump))
+    assert any("marked invalid" in note for note in budget.notes)
 
 
 def test_zero_power_channels_are_inactive_and_do_not_raise_margin() -> None:

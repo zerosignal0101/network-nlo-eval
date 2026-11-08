@@ -21,11 +21,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from network_nlo_eval.benchmarks.cases import build_case, build_path, launch_profile
+from network_nlo_eval.benchmarks.cases import BenchCase, band_edges_hz, build_case, build_path, launch_profile
 from network_nlo_eval.benchmarks.runner import make_model
 from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model, get_model_info
-from network_nlo_eval.models.pcfm_h3_raman import H3_RAMAN_MODEL_INFO
+from network_nlo_eval.models.pcfm_h3_raman import H3_RAMAN_MODEL_INFO, WIDEBAND_MULTIPUMP_RAMAN_STEPS
 from network_nlo_eval.models.raman import RamanGainModel
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, RamanPumpConfig
 
@@ -67,6 +67,28 @@ def _pump(power_w: float = 0.2, direction: str = "backward") -> RamanPumpConfig:
 def _path_result(case, model_name: str, **options):
     """构造模型并跑一次路径。"""
     return make_model(model_name, case, **options).evaluate_path(build_path(case), launch_profile(case))
+
+
+def _wideband_case(bands: str, spacing_hz: float) -> BenchCase:
+    """按波段边界构造与精度矩阵同源的单跨算例。"""
+    low, high = band_edges_hz(bands)
+    return BenchCase(
+        name=f"{bands}_{spacing_hz / 1e9:g}GHz",
+        bands=bands,
+        num_channels=int(round((high - low) / spacing_hz)) + 1,
+        channel_spacing_hz=spacing_hz,
+        center_frequency_hz=(low + high) / 2.0,
+        symbol_rate_hz=64e9,
+        span_length_km=100.0,
+        span_count=1,
+        edfa_noise_figure_db=5.5,
+        total_power_dbm=0.0,
+    )
+
+
+def _six_pumps(direction: str) -> list[RamanPumpConfig]:
+    """六泵组的方向翻转，功率谱形状与 ``SIX_PUMPS`` 相同。"""
+    return [pump.model_copy(update={"direction": direction}) for pump in SIX_PUMPS]
 
 
 # ---------------------------------------------------------------------------
@@ -684,6 +706,91 @@ def test_forward_gap_is_dominated_by_egn_not_by_the_polynomial_fit() -> None:
     paper_nopump = _audit_snr("hybrid_raman_paper", 3, "nopump", nli_form="paper")
     pump_specific = (default - paper) - (h3_nopump - paper_nopump)
     assert abs(pump_specific) < 0.1, f"pump-specific excess {pump_specific:+.3f} dB"
+
+
+# ---------------------------------------------------------------------------
+# 收敛保护：S/E 宽波段多泵的 auto 步数
+# ---------------------------------------------------------------------------
+
+#: E+S+C+L 100 GHz、1 跨，与第五轮精度矩阵的 361 信道配置同源。
+ESCL_CASE = _wideband_case("E+S+C+L", 100e9)
+#: 每信道 6 dBm，与精度矩阵的 E 波段锚点相同。
+ESCL_POWER = np.full(ESCL_CASE.num_channels, 10.0 ** (6.0 / 10.0) * 1e-3)
+
+
+def _escl_result(direction: str, **options):
+    """跑一次 E+S+C+L 六泵单跨。"""
+    return make_model(
+        "pcfm_h3_raman",
+        ESCL_CASE,
+        raman_pumps=_six_pumps(direction),
+        **options,
+    ).evaluate_path(build_path(ESCL_CASE), ESCL_POWER)
+
+
+@pytest.mark.parametrize("direction", ["backward", "forward"])
+def test_e_s_c_l_six_pumps_default_is_finite_and_converged(direction: str) -> None:
+    """E+S+C+L 六泵：默认 auto 必须给出有限、收敛的 SNR（修复前 NaN/大偏差）。"""
+    model = make_model("pcfm_h3_raman", ESCL_CASE, raman_pumps=_six_pumps(direction))
+    result = model.evaluate_path(build_path(ESCL_CASE), ESCL_POWER)
+    kernel = model.kernel_for(build_path(ESCL_CASE).fiber_configs[0])
+
+    assert kernel.raman_steps == WIDEBAND_MULTIPUMP_RAMAN_STEPS
+    assert kernel.wideband_multipump
+    assert kernel.last_raman_converged
+    assert np.all(np.isfinite(result.snr_db))
+    assert np.all(np.asarray(result.spm_noise_w) > 0.0)
+    assert np.all(np.asarray(result.xpm_noise_w) > 0.0)
+
+
+@pytest.mark.parametrize("direction", ["backward", "forward"])
+def test_e_s_c_l_six_pumps_default_matches_the_96_step_reference(direction: str) -> None:
+    """auto 解析到 96 步，逐位等于显式 96，并给 96→192 的实际收敛界。"""
+    default = make_model("pcfm_h3_raman", ESCL_CASE, raman_pumps=_six_pumps(direction))
+    explicit = make_model(
+        "pcfm_h3_raman",
+        ESCL_CASE,
+        raman_pumps=_six_pumps(direction),
+        raman_steps=WIDEBAND_MULTIPUMP_RAMAN_STEPS,
+    )
+    path = build_path(ESCL_CASE)
+    auto_result = default.evaluate_path(path, ESCL_POWER)
+    explicit_result = explicit.evaluate_path(path, ESCL_POWER)
+    _assert_bit_identical(auto_result, explicit_result)
+
+    reference = _escl_result(direction, raman_steps=192)
+    diff = np.abs(np.asarray(auto_result.snr_db) - np.asarray(reference.snr_db))
+    assert np.all(np.isfinite(diff))
+    # 实测收敛界：96 对 192 的逐信道最大差 0.027 dB（后向）/0.079 dB（前向），
+    # 均值 0.007/0.013 dB；这里留一倍余量钉住，不允许回到 24 步的大偏差。
+    assert float(np.max(diff)) < (0.06 if direction == "backward" else 0.12), float(np.max(diff))
+    assert float(np.mean(diff)) < 0.02, float(np.mean(diff))
+
+
+@pytest.mark.parametrize("case_name", ["c_57ch", "cl_152ch"])
+def test_c_and_c_l_multipump_auto_steps_are_unchanged(case_name: str) -> None:
+    """C/C+L 六泵不进入宽波段分支：auto 仍是 24 步，输出逐位等同显式 24。"""
+    case = build_case(case_name)
+    path = build_path(case)
+    power = launch_profile(case)
+    auto = make_model("pcfm_h3_raman", case, raman_pumps=_six_pumps("forward"))
+    explicit = make_model("pcfm_h3_raman", case, raman_pumps=_six_pumps("forward"), raman_steps=24)
+    auto_result = auto.evaluate_path(path, power)
+    explicit_result = explicit.evaluate_path(path, power)
+
+    assert auto.kernel_for(path.fiber_configs[0]).raman_steps == 24
+    assert not auto.kernel_for(path.fiber_configs[0]).wideband_multipump
+    _assert_bit_identical(auto_result, explicit_result)
+
+
+@pytest.mark.parametrize("bands,spacing", [("C", 100e9), ("C+L", 100e9), ("S+C+L", 75e9), ("E+S+C+L", 100e9)])
+def test_reaches_s_band_boundary(bands: str, spacing: float) -> None:
+    """C/C+L 的最高信道恰好落在 195.9 THz，不得被误判为 S/E。"""
+    case = _wideband_case(bands, spacing)
+    model = make_model("pcfm_h3_raman", case, raman_pumps=_six_pumps("backward"))
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    expected = bands in ("S+C+L", "E+S+C+L")
+    assert kernel.wideband_multipump is expected
 
 
 # ---------------------------------------------------------------------------

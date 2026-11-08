@@ -23,6 +23,7 @@ from network_nlo_eval.models.pcfm import (
     XCI_EDGE_MATERIALITY,
     dense_grid_metrics,
 )
+from network_nlo_eval.models.pcfm_h3_raman import WIDEBAND_MULTIPUMP_RAMAN_STEPS
 from network_nlo_eval.network.elements import RamanPumpConfig
 
 
@@ -307,6 +308,120 @@ def test_no_pump_report_is_pump_free() -> None:
     assert base.pump_depletion_max == 0.0 and h3.pump_depletion_max == 0.0
     for name in ("valid", "flagged", "confidence", "xci_gated", "sci_taylor"):
         assert np.array_equal(np.asarray(getattr(base, name)), np.asarray(getattr(h3, name))), name
+
+
+# ---------------------------------------------------------------------------
+# 拉曼收敛 / 宽波段多泵 / 集总近似
+# ---------------------------------------------------------------------------
+
+
+def _wideband_case(bands: str, spacing_hz: float) -> BenchCase:
+    """按波段边界构造与精度矩阵同源的单跨算例。"""
+    low, high = band_edges_hz(bands)
+    return BenchCase(
+        name=f"{bands}_{spacing_hz / 1e9:g}GHz",
+        bands=bands,
+        num_channels=int(round((high - low) / spacing_hz)) + 1,
+        channel_spacing_hz=spacing_hz,
+        center_frequency_hz=(low + high) / 2.0,
+        symbol_rate_hz=64e9,
+        span_length_km=100.0,
+        span_count=1,
+        edfa_noise_figure_db=5.5,
+        total_power_dbm=0.0,
+    )
+
+
+def _six_pumps(direction: str) -> list[RamanPumpConfig]:
+    """六泵组的方向翻转。"""
+    return [pump.model_copy(update={"direction": direction}) for pump in SIX_PUMPS]
+
+
+def test_wideband_multipump_report_exposes_the_extended_steps() -> None:
+    """E+S+C+L 六泵报告必须标出宽波段多泵与 96 步；C+L 不得误报。"""
+    case = _wideband_case("E+S+C+L", 100e9)
+    path = build_path(case)
+    power = np.full(case.num_channels, 10.0 ** (6.0 / 10.0) * 1e-3)
+    model = make_model("pcfm_h3_raman", case, raman_pumps=_six_pumps("backward"))
+    result = model.evaluate_path(path, power)
+
+    report = model.last_span_validity[0]
+    assert report.raman_converged
+    assert report.raman_wideband_multipump
+    assert report.raman_steps == WIDEBAND_MULTIPUMP_RAMAN_STEPS
+    assert bool(np.all(np.isfinite(result.snr_db)))
+
+    cl = build_case("cl_152ch")
+    cl_model = make_model("pcfm_h3_raman", cl, raman_pumps=_six_pumps("backward"))
+    cl_model.evaluate_path(build_path(cl), launch_profile(cl))
+    cl_report = cl_model.last_span_validity[0]
+    assert cl_report.raman_converged
+    assert not cl_report.raman_wideband_multipump
+    assert cl_report.raman_steps == 24
+
+
+def test_non_converged_raman_solve_is_never_reported_valid() -> None:
+    """强制 24 步的 E+S+C+L 后向解会 NaN：报告必须判无效，strict 必须 NaN。"""
+    import warnings
+
+    case = _wideband_case("E+S+C+L", 100e9)
+    path = build_path(case)
+    power = np.full(case.num_channels, 10.0 ** (6.0 / 10.0) * 1e-3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        warn_model = make_model(
+            "pcfm_h3_raman",
+            case,
+            raman_pumps=_six_pumps("backward"),
+            raman_steps=24,
+            validity_mode="warn",
+        )
+        strict_model = make_model(
+            "pcfm_h3_raman",
+            case,
+            raman_pumps=_six_pumps("backward"),
+            raman_steps=24,
+            validity_mode="strict",
+        )
+        warn_result = warn_model.evaluate_path(path, power)
+        strict_result = strict_model.evaluate_path(path, power)
+
+    report = warn_model.last_span_validity[0]
+    assert not report.raman_converged
+    assert not bool(np.any(report.valid))
+    assert bool(np.all(report.flagged))
+    # 点值本身已经不是有限 SNR（RK4 溢出），strict 不能再把它当可用结果。
+    assert bool(np.all(~np.isfinite(warn_result.snr_db)))
+    assert bool(np.all(~np.isfinite(strict_result.snr_db)))
+    assert not bool(np.any(warn_model.last_validity_valid))
+
+
+def test_lumped_raman_with_pumps_is_flagged_on_every_span() -> None:
+    """纯 PCFM + 集总拉曼 + 有泵：点值不变，但逐跨报告必须标记不可信。"""
+    import warnings
+
+    case = build_case("c_57ch")
+    path = build_path(case)
+    power = launch_profile(case)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = make_model(
+            "pcfm",
+            case,
+            raman_model="lumped",
+            raman_pumps=[_pump(0.2, "backward")],
+            validity_mode="warn",
+        )
+        result = model.evaluate_path(path, power)
+
+    assert model.lumped_raman_active
+    assert len(model.last_span_validity) == 10
+    for report in model.last_span_validity:
+        assert report.lumped_raman_approximation
+        assert bool(np.all(report.flagged))
+        assert bool(np.all(report.confidence <= 0.2))
+    # 点值仍是有限、正常的 SNR：本次只加可见性，不改默认数值。
+    assert bool(np.all(np.isfinite(result.snr_db)))
 
 
 # ---------------------------------------------------------------------------
