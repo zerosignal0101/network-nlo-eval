@@ -622,7 +622,9 @@ class SpanValidityReport:
             error; see ``raman_pump_signal_overlap`` for the latter.
         raman_pump_signal_overlap:
             ``True`` when at least one active pump frequency falls inside the
-            occupied signal band of the span.  That configuration is not a
+            occupied signal band of the span (channel centres widened by half
+            the channel bandwidth on each side, plus the kernel's
+            ``pump_signal_overlap_guard_hz``).  That configuration is not a
             physical DRA: a pump inside the data band cannot be separated from
             the signals, so the whole span is outside the model's domain.  It
             invalidates every active channel (``valid=False``,
@@ -638,10 +640,11 @@ class SpanValidityReport:
             all-``False`` otherwise.
         raman_pump_min_offset_hz:
             Smallest distance from an active pump frequency to the occupied
-            signal band ``[min f_i, max f_i]`` (Hz), ``0`` when a pump lies
-            inside, positive when every pump is outside, and ``inf`` without
-            pumps or active channels.  It makes the overlap decision readable
-            without re-deriving the band.
+            signal band *edge*
+            ``[min(f_i - B_i/2) - guard, max(f_i + B_i/2) + guard]`` (Hz),
+            ``0`` when a pump lies inside, positive when every pump is
+            outside, and ``inf`` without pumps or active channels.  It makes
+            the overlap decision readable without re-deriving the band.
         lumped_raman_approximation:
             ``True`` for the pure PCFM kernel with ``raman_model="lumped"``
             and active pumps.  The lumped model multiplies only the span-end

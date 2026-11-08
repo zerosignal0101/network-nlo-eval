@@ -61,9 +61,14 @@ resolves ``span_coherence``, so every span of a link shares it.
 **Pump/signal-band overlap is a hard validity gate**
 
 A pump whose frequency falls inside the occupied signal band
-``[min(f_i), max(f_i)]`` (launched channels, plus
+``[min(f_i - B_i/2), max(f_i + B_i/2)]`` (launched channels, widened on both
+sides by ``pump_signal_overlap_guard_hz``, default
 :data:`PUMP_SIGNAL_OVERLAP_GUARD_HZ`) is not a physical DRA: it pumps the data
-band directly and a WDM cannot separate it from the signals.  The span report
+band directly and a WDM cannot separate it from the signals.  The report
+matches the channel *band edges*, so a pump that sits between the outermost
+channel centre and its half-bandwidth is caught even with the default zero
+guard, which is a deliberate extension of the round-Y centre-interval rule.
+The span report
 sets ``raman_pump_signal_overlap=True``, marks every active channel
 ``raman_pump_overlap_channels`` (and therefore ``valid=False``,
 ``confidence<=0.2``, ``flagged=True``) and emits one ``RuntimeWarning``.  The
@@ -196,50 +201,95 @@ WIDEBAND_MULTIPUMP_RAMAN_STEPS: int = 96
 C_BAND_UPPER_EDGE_HZ: float = 195.9e12
 _WIDEBAND_EDGE_GUARD_HZ: float = 0.1e12
 
-#: Guard band added to each side of the occupied signal spectrum when the
-#: pump/signal overlap is decided (Hz).
+#: Default guard band added to each side of the occupied signal spectrum when
+#: the pump/signal overlap is decided (Hz).
 #:
-#: The occupied band is ``[min(f_i), max(f_i)]`` over the *launched* channel
-#: centres, extended by this guard.  ``0`` keeps the rule literal: the
-#: physical pump linewidth and the half-channel edge of the outermost signals
-#: are not modelled, so a pump needs to be inside the channel-centre interval
-#: (or within a deliberate positive guard) to be flagged.  The value is a
-#: module constant rather than an option because moving it only changes which
-#: configurations are declared non-physical, not any number.
+#: The occupied band is ``[min(f_i - B_i/2), max(f_i + B_i/2)]`` over the
+#: *launched* channels, extended by this guard.  ``0`` keeps the rule literal:
+#: the pump linewidth is not modelled, so only a pump inside the channel band
+#: edges (or within a deliberate positive guard) is flagged.  The value here is
+#: only the default of the model/kernel option; a negative guard shrinks the
+#: band and is allowed as an explicit control.
 PUMP_SIGNAL_OVERLAP_GUARD_HZ: float = 0.0
+
+
+def _occupied_signal_band(
+    f_abs_hz: NDArrayFloat,
+    bandwidths_hz: NDArrayFloat,
+    active_channels: NDArrayBool,
+    guard_hz: float,
+) -> tuple[float, float] | None:
+    """Return the guarded occupied signal band of the launched channels.
+
+    The band is built from the channel *edges*, not the centres:
+    ``[min(f_i - B_i/2) - guard, max(f_i + B_i/2) + guard]``.  Using edges makes
+    the half-bandwidth of the outermost channels part of the occupied spectrum,
+    so a pump between a centre and its edge is not missed.  A positive
+    ``guard_hz`` widens the band (pump linewidth / WDM transition margin), a
+    negative value shrinks it (explicit control).
+
+    Args:
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz), any order.
+        bandwidths_hz: ``(N,)`` channel bandwidths ``B_i`` (Hz), same order.
+        active_channels: ``(N,)`` boolean mask of launched channels.
+        guard_hz: Guard added to each side (Hz), possibly negative.
+
+    Returns
+    -------
+        ``(band_low_hz, band_high_hz)``, or ``None`` when there is no launched
+        channel or the arrays do not share one shape.
+    """
+    centres = np.asarray(f_abs_hz, dtype=np.float64)
+    bandwidths = np.asarray(bandwidths_hz, dtype=np.float64)
+    mask = np.asarray(active_channels, dtype=bool)
+    if (
+        centres.size == 0
+        or mask.shape != centres.shape
+        or bandwidths.shape != centres.shape
+        or not bool(np.any(mask))
+    ):
+        return None
+    guard = float(guard_hz)
+    half_bandwidth = 0.5 * bandwidths[mask]
+    band_low = float(np.min(centres[mask] - half_bandwidth)) - guard
+    band_high = float(np.max(centres[mask] + half_bandwidth)) + guard
+    return band_low, band_high
 
 
 def _pump_signal_overlap(
     pump_frequencies_hz: NDArrayFloat,
     f_abs_hz: NDArrayFloat,
+    bandwidths_hz: NDArrayFloat,
     active_channels: NDArrayBool,
+    guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
 ) -> tuple[bool, float]:
     """Return whether a pump lies inside the occupied signal band, and the offset.
 
-    The band is ``[min(f_i), max(f_i)]`` over the launched channels, widened
-    by :data:`PUMP_SIGNAL_OVERLAP_GUARD_HZ` on both sides.  A pump inside that
+    The band is ``[min(f_i - B_i/2), max(f_i + B_i/2)]`` over the launched
+    channels, widened by ``guard_hz`` on both sides.  A pump inside that
     interval is a non-physical DRA configuration: it pumps the data band
     directly and cannot be separated from the signals by a WDM.  The distance
-    is measured to the interval, so it is ``0`` inside and positive outside;
+    is measured to the band *edge*, so it is ``0`` inside and positive outside;
     the minimum over the active pumps is the reported offset.
 
     Args:
         pump_frequencies_hz: ``(N_p,)`` active pump frequencies (Hz).
         f_abs_hz: ``(N,)`` channel centre frequencies (Hz), any order.
+        bandwidths_hz: ``(N,)`` channel bandwidths ``B_i`` (Hz), same order.
         active_channels: ``(N,)`` boolean mask of launched channels.
+        guard_hz: Guard added to each side of the channel edges (Hz).  ``0``
+            (default) keeps the literal band; a negative value shrinks it.
 
     Returns
     -------
         ``(overlap, min_offset_hz)``.  Both are ``(False, inf)`` when there is
         no active pump or no launched channel.
     """
-    frequencies = np.asarray(f_abs_hz, dtype=np.float64)
-    mask = np.asarray(active_channels, dtype=bool)
     pumps = np.asarray(pump_frequencies_hz, dtype=np.float64)
-    if pumps.size == 0 or frequencies.size == 0 or mask.shape != frequencies.shape or not bool(np.any(mask)):
+    band = _occupied_signal_band(f_abs_hz, bandwidths_hz, active_channels, guard_hz)
+    if pumps.size == 0 or band is None:
         return False, float("inf")
-    band_low = float(np.min(frequencies[mask])) - PUMP_SIGNAL_OVERLAP_GUARD_HZ
-    band_high = float(np.max(frequencies[mask])) + PUMP_SIGNAL_OVERLAP_GUARD_HZ
+    band_low, band_high = band
     # 到闭区间的距离：带内为 0，带外为正。取所有泵的最小值。
     offsets = np.where(
         pumps < band_low,
@@ -444,6 +494,11 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             NLI (8x too low) as a comparison control; ``"per_pol"`` under a
             total-power launch is rejected because it would double-count the
             power.  See :class:`~network_nlo_eval.models.pcfm.PCFMSpanKernel`.
+        pump_signal_overlap_guard_hz: Guard added to each side of the channel
+            band edges when the pump/signal overlap is decided (Hz).
+            ``0`` (default) keeps the literal band; a positive value widens it
+            for the pump linewidth / WDM transition, a negative value shrinks
+            it as an explicit control.  Only the validity report changes.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -464,6 +519,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
         nli_power_convention: str | None = None,
+        pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -473,7 +529,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             ValueError: ``raman_steps`` or ``raman_iterations`` is not positive,
                 or a boolean option is not a ``bool``, or the
                 ``launch_power_convention``/``signal_polarizations``/``nli_power_convention``
-                combination is inconsistent.
+                combination is inconsistent, or the overlap guard is not finite.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
@@ -483,6 +539,11 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        resolved_guard = float(pump_signal_overlap_guard_hz)
+        if not np.isfinite(resolved_guard):
+            raise ValueError(
+                f"pump_signal_overlap_guard_hz must be finite, got {pump_signal_overlap_guard_hz!r}."
+            )
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         resolved_nli = _resolve_nli_convention(nli_power_convention, resolved_convention)
         super().__init__(
@@ -499,6 +560,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             [C_LIGHT / (float(pump.wavelength_nm) * 1e-9) for pump in self._raman_pumps],
             dtype=np.float64,
         )
+        self._pump_signal_overlap_guard_hz = resolved_guard
         self._pump_overlap_warned = False
         self._raman_gain_model = resolve_raman_gain_model(gain_model)
         self._raman_ase = bool(raman_ase)
@@ -542,6 +604,16 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
     def active_pumps(self) -> tuple[RamanPumpConfig, ...]:
         """Active (positive-power) pumps of the span, in configuration order."""
         return tuple(self._raman_pumps)
+
+    @property
+    def pump_signal_overlap_guard_hz(self) -> float:
+        """Guard added to each side of the signal band edges (Hz).
+
+        ``0`` is the default and keeps the literal channel-edge band.  A
+        positive value widens the band for the pump linewidth / WDM transition,
+        a negative one shrinks it.  It only affects the validity report.
+        """
+        return float(self._pump_signal_overlap_guard_hz)
 
     @property
     def wideband_multipump(self) -> bool:
@@ -759,7 +831,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_overlap, min_offset = _pump_signal_overlap(
             self._pump_frequencies_hz,
             self.f_abs_hz,
+            self.b_hz,
             power > 0.0,
+            self._pump_signal_overlap_guard_hz,
         )
         overlap_channels = active & pump_overlap
         if pump_overlap:
@@ -769,11 +843,19 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             if not self._pump_overlap_warned:
                 self._pump_overlap_warned = True
                 wavelengths = ", ".join(f"{float(pump.wavelength_nm):g}" for pump in self._raman_pumps)
-                band_low = float(np.min(self.f_abs_hz[power > 0.0])) / 1e12
-                band_high = float(np.max(self.f_abs_hz[power > 0.0])) / 1e12
+                band = _occupied_signal_band(
+                    self.f_abs_hz,
+                    self.b_hz,
+                    power > 0.0,
+                    self._pump_signal_overlap_guard_hz,
+                )
+                # ``pump_overlap`` 为真时 band 一定存在；写出显式分支只是为了类型收窄。
+                band_low, band_high = band if band is not None else (float("nan"), float("nan"))
                 warnings.warn(
                     "pcfm_h3_raman: at least one Raman pump falls inside the occupied signal "
-                    f"band ({band_low:.3f}-{band_high:.3f} THz; pumps at {wavelengths} nm). "
+                    f"band ({band_low / 1e12:.3f}-{band_high / 1e12:.3f} THz including a "
+                    f"{self._pump_signal_overlap_guard_hz / 1e9:g} GHz guard; pumps at "
+                    f"{wavelengths} nm). "
                     "A pump inside the data band cannot be separated from the signals, so this "
                     "is not a physical DRA configuration. The span is reported invalid by "
                     "validity_report and the error budget; the point NLI/ASE/SNR is unchanged. "
@@ -1067,6 +1149,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "mixed with a per_pol network reference plane; 'per_pol' under a total-power launch is rejected.",
         ),
         (
+            "pump_signal_overlap_guard_hz",
+            "Guard added to each side of the signal channel band edges when deciding whether a pump falls "
+            "inside the occupied band. Default 0 (literal band edges, bit-for-bit the round-Y point values); "
+            "positive widens for pump linewidth / WDM transition, negative shrinks. Only the validity report "
+            "changes, never the point NLI/ASE/SNR.",
+        ),
+        (
             "span_coherence",
             "'pcfm' (default, visibility-weighted coherent NLI accumulation) or 'incoherent' "
             "(power sum, the paper's default epsilon=0; for paper-matched comparison).",
@@ -1155,6 +1244,12 @@ class PCFH3RamanModel(PCFMModel):
             comparison control and also keeps the total-power ASE (a
             deliberately mixed control, not an end-to-end coordinate);
             ``"per_pol"`` under a total-power launch is rejected.
+        pump_signal_overlap_guard_hz: Guard added to each side of the channel
+            band edges when deciding whether a pump falls inside the occupied
+            signal band.  ``0`` (default) keeps the literal band and the round-Y
+            point values; a positive value widens the band for the pump
+            linewidth / WDM transition, a negative one shrinks it.  It only
+            changes the validity report.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -1198,6 +1293,7 @@ class PCFH3RamanModel(PCFMModel):
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
         nli_power_convention: str = "auto",
+        pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
         span_coherence: str = "auto",
         validity_mode: str = "warn",
         resolution: str | None = None,
@@ -1234,6 +1330,11 @@ class PCFH3RamanModel(PCFMModel):
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
+        resolved_guard = float(pump_signal_overlap_guard_hz)
+        if not np.isfinite(resolved_guard):
+            raise ValueError(
+                f"pump_signal_overlap_guard_hz must be finite, got {pump_signal_overlap_guard_hz!r}."
+            )
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         resolved_nli_convention = _resolve_nli_convention(nli_power_convention, resolved_convention)
         if resolved_convention == "total" and int(signal_polarizations) != 1:
@@ -1291,6 +1392,7 @@ class PCFH3RamanModel(PCFMModel):
         self._h3_pump_pump_raman = bool(pump_pump_raman)
         self._launch_power_convention = resolved_convention
         self._nli_power_convention = resolved_nli_convention
+        self._pump_signal_overlap_guard_hz = resolved_guard
         active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
         resolved = str(span_coherence)
         if resolved == "auto":
@@ -1314,6 +1416,16 @@ class PCFH3RamanModel(PCFMModel):
     def nli_power_convention(self, value: str) -> None:
         """Keep the parent ``PCFMModel.__init__`` assignment compatible."""
         self._nli_power_convention = value
+
+    @property
+    def pump_signal_overlap_guard_hz(self) -> float:
+        """Guard added to each side of the signal band edges (Hz).
+
+        ``0`` (default) keeps the literal channel-edge band and the round-Y
+        point values; positive widens the band for the pump linewidth / WDM
+        transition, negative shrinks it.  It only changes the validity report.
+        """
+        return float(self._pump_signal_overlap_guard_hz)
 
     @property
     def ase_polarization_scale(self) -> float:
@@ -1374,6 +1486,7 @@ class PCFH3RamanModel(PCFMModel):
             pump_pump_raman=self._h3_pump_pump_raman,
             launch_power_convention=self._launch_power_convention,
             nli_power_convention=self._nli_power_convention,
+            pump_signal_overlap_guard_hz=self._pump_signal_overlap_guard_hz,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,

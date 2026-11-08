@@ -324,13 +324,14 @@ class ValidityReport:
             solve converged, and invalidating when it did not.  It describes a
             *numerical convergence risk* for pumps outside the signal band.
         raman_pump_signal_overlap: ``(N,)`` boolean, a pump frequency falls
-            inside the occupied signal band.  This is a physical-configuration
-            error, not a convergence risk: the channel is invalid and its
-            margin is infinite.  It is independent of
-            ``raman_wideband_multipump``.
+            inside the occupied signal band (channel band edges, i.e. centre
+            plus half bandwidth, widened by the model's overlap guard).  This
+            is a physical-configuration error, not a convergence risk: the
+            channel is invalid and its margin is infinite.  It is independent
+            of ``raman_wideband_multipump``.
         raman_pump_min_offset_hz: Smallest distance from an active pump to the
-            occupied signal band over the spans (Hz); ``0`` when a pump is
-            inside, ``inf`` without pumps.  Read-only.
+            occupied signal band *edge* over the spans (Hz); ``0`` when a pump
+            is inside, ``inf`` without pumps.  Read-only.
         lumped_raman: The path used the pure PCFM lumped Raman approximation
             with active pumps.  The intra-span profile and pump depletion are
             not modelled, so the point value is not a trustworthy QoT even
