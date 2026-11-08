@@ -169,7 +169,7 @@ from network_nlo_eval.models.pcfm_kernels import (
     _solve_spp_jit,
     r_coefficient_matrix,
 )
-from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel
+from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
@@ -1344,7 +1344,13 @@ PCFM_MODEL_INFO = ModelInfo(
         ),
         (
             "raman_gain_model",
-            "'gaussian' (default) or 'linear' CZ approximation of the Raman gain spectrum.",
+            "'gaussian' (default), 'linear' CZ approximation or 'table' (normalized spectrum given by "
+            "raman_gain_table). An explicit RamanGainModel instance is also accepted.",
+        ),
+        (
+            "raman_gain_table",
+            "(offsets_hz, gains) normalized Raman gain table used when raman_gain_model='table'. "
+            "Linear interpolation, zero outside the table.",
         ),
         (
             "raman_ase",
@@ -2440,7 +2446,10 @@ class PCFMModel(RouteModel):
         raman_pumps: Pumps applied to every span.  Providing this argument
             also enables the lumped model when ``raman_model`` is ``None``.
             When omitted, the pumps of each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"`` or ``"linear"`` Raman gain shape.
+        raman_gain_model: ``"gaussian"``、``"linear"``、``"table"`` 或
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` 实例。
+        raman_gain_table: ``gain_model="table"`` 时的归一化增益表
+            ``(offsets_hz, gains)``。
         raman_ase: Include the distributed Raman ASE before the span EDFA.
         raman_temperature_k: Fibre temperature used by the Raman spontaneous
             emission factor.
@@ -2474,7 +2483,8 @@ class PCFMModel(RouteModel):
         spp_steps: int | str = DEFAULT_SPP_STEPS,
         raman_model: str | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
-        raman_gain_model: str = "gaussian",
+        raman_gain_model: str | RamanGainModel = "gaussian",
+        raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
         raman_temperature_k: float = 300.0,
         raman_peak_gain_coefficient_m_per_w: float = 6e-14,
@@ -2520,8 +2530,9 @@ class PCFMModel(RouteModel):
         self._raman_pumps = None if raman_pumps is None else list(raman_pumps)
         self._raman_enabled = raman_model == "lumped" or (raman_model is None and self._raman_pumps is not None)
         self._raman_ase = bool(raman_ase)
-        self._raman_gain_model = RamanGainModel(
-            gain_model=raman_gain_model,
+        self._raman_gain_model = resolve_raman_gain_model(
+            raman_gain_model,
+            table=raman_gain_table,
             peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
             temperature_k=raman_temperature_k,
         )

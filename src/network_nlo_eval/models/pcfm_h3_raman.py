@@ -117,7 +117,7 @@ from network_nlo_eval.models.pcfm import (
     SpanValidityReport,
     resolve_nli_power_convention,
 )
-from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel
+from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.raman_ode import (
     DEFAULT_FIXED_POINT_ITERATIONS,
     PaperRamanSpanResult,
@@ -253,7 +253,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         b_hz: ``(N,)`` channel bandwidths (Hz).
         fiber_config: Fibre parameters of the span.
         pumps: Pumps applied to the span; only positive-power pumps are used.
-        gain_model: Raman gain spectrum model.
+        gain_model: Raman gain spectrum model, or ``"gaussian"``/``"linear"``
+            to build one.  A table spectrum is built with
+            :meth:`~network_nlo_eval.models.raman.RamanGainModel.from_table`
+            and passed as an instance.
         raman_ase: Expose the newly generated Raman ASE to the route layer.
         raman_steps: RK4 steps of the coarse signal/pump/ASE solve.
         raman_iterations: Fixed-point iterations cap of the backward-pump solve.
@@ -297,7 +300,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         fiber_config: FiberSpanConfig,
         *,
         pumps: Sequence[RamanPumpConfig] | None = None,
-        gain_model: RamanGainModel,
+        gain_model: RamanGainModel | str,
         raman_ase: bool = True,
         raman_steps: int = DEFAULT_H3_RAMAN_STEPS,
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
@@ -337,7 +340,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         )
         self._fiber_config = fiber_config
         self._raman_pumps = _active_pumps(pumps)
-        self._raman_gain_model = gain_model
+        self._raman_gain_model = resolve_raman_gain_model(gain_model)
         self._raman_ase = bool(raman_ase)
         self.raman_steps = int(raman_steps)
         self.raman_iterations = int(raman_iterations)
@@ -684,7 +687,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
         ("raman_pumps", "RamanPumpConfig sequence; omitted means use FiberSpanConfig.raman_pumps."),
-        ("raman_gain_model", "'gaussian' (default) or 'linear'."),
+        ("raman_gain_model", "'gaussian' (default), 'linear' (CZ) or 'table' (normalized table spectrum)."),
+        (
+            "raman_gain_table",
+            "(offsets_hz, gains) normalized gain table used when raman_gain_model='table'. Linear "
+            "interpolation inside the table, zero outside. The table replaces the Gaussian/CZ shape "
+            "for every pump-signal and pump-pump coefficient of the coupled solve.",
+        ),
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
         ("raman_temperature_k", "Fibre temperature of the spontaneous Raman factor. Default 300 K."),
         ("raman_peak_gain_coefficient_m_per_w", "Peak local Raman gain rate before A_eff division. Default 6e-14."),
@@ -759,7 +768,15 @@ class PCFH3RamanModel(PCFMModel):
         spp_steps: PCFM SPP RK4 steps or ``"auto"``. Default ``"auto"``.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
             each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"`` or ``"linear"``.
+        raman_gain_model: ``"gaussian"`` (default), ``"linear"`` (CZ) or
+            ``"table"``; an explicit
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` instance is
+            also accepted.
+        raman_gain_table: ``(offsets_hz, gains)`` normalized gain table used
+            when ``raman_gain_model="table"``.  Linear interpolation inside
+            the table, zero outside.  The same shape replaces the
+            Gaussian/CZ coefficient in the pump-signal and pump-pump blocks of
+            the coupled solve.
         raman_ase: Expose the Raman ASE before the EDFA.
         raman_temperature_k: Fibre temperature (K).
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate.
@@ -822,7 +839,8 @@ class PCFH3RamanModel(PCFMModel):
         cache_spans: bool = True,
         spp_steps: int | str = "auto",
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
-        raman_gain_model: str = "gaussian",
+        raman_gain_model: str | RamanGainModel = "gaussian",
+        raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
         raman_temperature_k: float = 300.0,
         raman_peak_gain_coefficient_m_per_w: float = 6e-14,
@@ -886,6 +904,7 @@ class PCFH3RamanModel(PCFMModel):
             raman_model=None,
             raman_pumps=None,
             raman_gain_model=raman_gain_model,
+            raman_gain_table=raman_gain_table,
             raman_ase=raman_ase,
             raman_temperature_k=raman_temperature_k,
             raman_peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,

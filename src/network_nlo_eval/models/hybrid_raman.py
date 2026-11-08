@@ -70,7 +70,7 @@ from network_nlo_eval.models.buglia2024_closed import (
 from network_nlo_eval.models.dra_common import DRASpanKernelBase
 from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import PCFMModel, PCFMSpanKernel
-from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel
+from network_nlo_eval.models.raman import C_LIGHT, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.raman_ode import (
     DEFAULT_FIXED_POINT_ITERATIONS,
     DEFAULT_PAPER_SPP_STEPS,
@@ -127,7 +127,10 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         b_hz: ``(N,)`` 信道带宽 (Hz)。
         fiber_config: 跨段光纤参数。
         pumps: 本跨使用的泵浦；空列表表示无拉曼（Eq. (3) 的 LA 极限）。
-        gain_model: 拉曼增益谱模型。
+        gain_model: 拉曼增益谱模型，或 ``"gaussian"``/``"linear"`` 字符串；
+            表格谱用
+            :meth:`~network_nlo_eval.models.raman.RamanGainModel.from_table`
+            构造后作为实例传入。
         raman_ase: 是否把新产生的拉曼 ASE 暴露给模型层。
         n_steps: Eq. (2) 的 RK4 步数，也是 Eq. (10) 拟合的采样数。
         n_iterations: BW 泵不动点迭代上限。
@@ -165,7 +168,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         fiber_config: FiberSpanConfig,
         *,
         pumps: Sequence[RamanPumpConfig],
-        gain_model: RamanGainModel,
+        gain_model: RamanGainModel | str,
         raman_ase: bool = True,
         n_steps: int = DEFAULT_PAPER_SPP_STEPS,
         n_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
@@ -185,7 +188,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             b_hz,
             fiber_config,
             pumps=pumps,
-            gain_model=gain_model,
+            gain_model=resolve_raman_gain_model(gain_model),
             raman_ase=raman_ase,
             n_steps=n_steps,
             n_iterations=n_iterations,
@@ -278,7 +281,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         b_hz: ``(N,)`` 信号带宽 (Hz)。
         fiber_config: 跨段光纤参数。
         pumps: 本跨使用的泵浦；空列表表示无拉曼。
-        gain_model: 拉曼增益谱模型。
+        gain_model: 拉曼增益谱模型，或增益谱名字符串；表格谱传实例。
         raman_ase: 是否把新产生的拉曼 ASE 暴露给模型层。
         n_iterations: BW 泵不动点迭代上限。
         include_isrs: 是否计入信道-信道 ISRS。
@@ -297,7 +300,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         fiber_config: FiberSpanConfig,
         *,
         pumps: Sequence[RamanPumpConfig],
-        gain_model: RamanGainModel,
+        gain_model: RamanGainModel | str,
         raman_ase: bool = True,
         n_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
         include_isrs: bool = True,
@@ -312,7 +315,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         kwargs.setdefault("cache_spans", False)
         super().__init__(f_abs_hz, b_hz, fiber_config, **kwargs)  # type: ignore[arg-type]
         self._pumps = list(pumps)
-        self._gain_model = gain_model
+        self._gain_model = resolve_raman_gain_model(gain_model)
         self._raman_ase_enabled = bool(raman_ase)
         self._n_iterations = int(n_iterations)
         self._include_isrs = bool(include_isrs)
@@ -445,7 +448,13 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
     ),
     options=(
         ("raman_pumps", "RamanPumpConfig sequence; omitted means use FiberSpanConfig.raman_pumps."),
-        ("raman_gain_model", "'gaussian' (default) or 'linear'."),
+        ("raman_gain_model", "'gaussian' (default), 'linear' (CZ) or 'table' (normalized table spectrum)."),
+        (
+            "raman_gain_table",
+            "(offsets_hz, gains) normalized gain table used when raman_gain_model='table'. Linear "
+            "interpolation inside the table, zero outside. It replaces the Gaussian/CZ shape for every "
+            "pump-signal and pump-pump coefficient of the coupled ODE.",
+        ),
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
         ("raman_temperature_k", "Fibre temperature used by the spontaneous Raman factor. Default 300 K."),
         ("raman_peak_gain_coefficient_m_per_w", "Peak local Raman gain rate before A_eff division. Default 6e-14."),
@@ -501,7 +510,15 @@ class HybridRamanPaperModel(PCFMModel):
         connections: Optional per-connection grid.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
             each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"`` or ``"linear"``.
+        raman_gain_model: ``"gaussian"`` (default), ``"linear"`` (CZ) or
+            ``"table"``; an explicit
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` instance is
+            also accepted.
+        raman_gain_table: ``(offsets_hz, gains)`` normalized gain table used
+            when ``raman_gain_model="table"``.  Linear interpolation inside
+            the table, zero outside.  It replaces the Gaussian/CZ shape in
+            every pump-signal and pump-pump coefficient of Eq. (2) and in the
+            Raman ASE of Eq. (4).
         raman_ase: Include the Raman ASE before the EDFA.
         raman_temperature_k: Fibre temperature (K).
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate.
@@ -542,7 +559,8 @@ class HybridRamanPaperModel(PCFMModel):
         symbol_rate_hz: float = 50e9,
         connections=None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
-        raman_gain_model: str = "gaussian",
+        raman_gain_model: str | RamanGainModel = "gaussian",
+        raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
         raman_temperature_k: float = 300.0,
         raman_peak_gain_coefficient_m_per_w: float = 6e-14,
@@ -581,6 +599,7 @@ class HybridRamanPaperModel(PCFMModel):
             raman_model=None,
             raman_pumps=None,
             raman_gain_model=raman_gain_model,
+            raman_gain_table=raman_gain_table,
             raman_ase=raman_ase,
             raman_temperature_k=raman_temperature_k,
             raman_peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
