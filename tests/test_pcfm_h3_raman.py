@@ -102,6 +102,65 @@ def test_invalid_egn_is_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 泵浦-泵浦拉曼开关
+# ---------------------------------------------------------------------------
+
+
+def test_pump_pump_raman_option_is_documented_as_default_on() -> None:
+    """模型元数据必须声明该开关，且默认值保持历史行为。"""
+    options = dict(H3_RAMAN_MODEL_INFO.options)
+    assert "pump_pump_raman" in options
+    assert "Default True" in options["pump_pump_raman"]
+    assert make_model("pcfm_h3_raman", CASE_1)._h3_pump_pump_raman is True
+
+
+def test_invalid_pump_pump_raman_is_rejected() -> None:
+    """非布尔的开关必须直接报错，不能被静默 ``bool()`` 掉。"""
+    for value in (1, 0, "on", None):
+        with pytest.raises(ValueError, match="pump_pump_raman"):
+            make_model("pcfm_h3_raman", CASE_1, pump_pump_raman=value)
+
+
+def test_no_pump_pump_pump_off_is_bit_identical_to_h3_pcfm() -> None:
+    """无泵时关掉泵浦-泵浦耦合不得改变 H3 PCFM 路径。"""
+    baseline = _path_result(CASE_1, "pcfm", **H3_OPTIONS)
+    new = _path_result(CASE_1, "pcfm_h3_raman", pump_pump_raman=False)
+    _assert_bit_identical(baseline, new)
+
+
+def test_single_pump_pump_pump_off_is_bit_identical() -> None:
+    """单泵没有泵浦-泵浦对，开关前后必须逐位一致。"""
+    on = _path_result(CASE_1, "pcfm_h3_raman", raman_pumps=[_pump()])
+    off = _path_result(CASE_1, "pcfm_h3_raman", raman_pumps=[_pump()], pump_pump_raman=False)
+    _assert_bit_identical(on, off)
+
+
+def test_c_l_six_pumps_pump_pump_off_changes_pump_output() -> None:
+    """C+L 六泵之间会互相转移功率；关掉后泵浦输出必须改变。"""
+    case = replace(
+        build_case("c_57ch"),
+        name="cl_40ch_1span",
+        bands="C+L",
+        num_channels=40,
+        center_frequency_hz=190.0e12,
+        span_count=1,
+    )
+    path = build_path(case)
+    power = launch_profile(case)
+    fiber = path.fiber_configs[0]
+    on_model = make_model("pcfm_h3_raman", case, raman_pumps=SIX_PUMPS)
+    off_model = make_model("pcfm_h3_raman", case, raman_pumps=SIX_PUMPS, pump_pump_raman=False)
+    on_model.evaluate_path(path, power)
+    off_model.evaluate_path(path, power)
+    pump_on = np.asarray(on_model.kernel_for(fiber).last_pump_power_out_w, dtype=np.float64)
+    pump_off = np.asarray(off_model.kernel_for(fiber).last_pump_power_out_w, dtype=np.float64)
+    assert pump_on.shape == (len(SIX_PUMPS),)
+    assert not np.allclose(pump_on, pump_off, rtol=1e-6)
+    # 泵浦仍被信号耗尽、仍按自身衰减：开关只移除泵浦之间的耦合。
+    assert np.all(pump_on > 0.0) and np.all(pump_off > 0.0)
+
+
+# ---------------------------------------------------------------------------
 # 无泵退化：逐位一致
 # ---------------------------------------------------------------------------
 

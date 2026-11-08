@@ -141,6 +141,10 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         signal_polarizations: ODE 信号状态代表的偏振数，只放大耦合项的驱动
             功率。默认 ``1``（历史每偏振口径，逐位不变）；``2`` 用双偏振
             总功率驱动泵浦耗尽，与物理波形一致。
+        pump_pump_raman: 是否计入泵浦-泵浦拉曼耦合。``True``（默认）保持历史
+            行为；``False`` 只把耦合矩阵的泵浦×泵浦块清零，泵浦仍被信号耗尽、
+            仍按自身衰减演化，泵浦-信号与信号-信号耦合不变。C+L 残差审计的
+            对照口径。
 
     Raises
     ------
@@ -171,6 +175,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
         n_quadrature: int = 24,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
     ) -> None:
         """校验口径并缓存 ``gamma`` 与泵浦平均频率 ``f_hat``。"""
         if nli_form not in ("paper", "integral"):
@@ -188,6 +193,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
             n_quadrature=n_quadrature,
             pump_depletion=pump_depletion,
             signal_polarizations=signal_polarizations,
+            pump_pump_raman=pump_pump_raman,
         )
         self._nli_form = str(nli_form)
         self._spm_exponent = float(spm_coherence_exponent)
@@ -279,6 +285,8 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         pump_depletion: 泵浦是否被信号耗尽；``False`` 是未耗尽对照口径。
         signal_polarizations: ODE 信号状态代表的偏振数（见
             :class:`RamanPaperSpanSolver`）；默认 1 保持旧结果逐位不变。
+        pump_pump_raman: 是否计入泵浦-泵浦拉曼耦合；默认 ``True`` 保持历史
+            行为，``False`` 是 C+L 残差审计的对照口径。
         **kwargs: 透传给 :class:`PCFMSpanKernel`。
     """
 
@@ -295,9 +303,12 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         include_isrs: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
         **kwargs: object,
     ) -> None:
         """构造核并缓存泵浦参数。"""
+        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+            raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         kwargs.setdefault("cache_spans", False)
         super().__init__(f_abs_hz, b_hz, fiber_config, **kwargs)  # type: ignore[arg-type]
         self._pumps = list(pumps)
@@ -307,6 +318,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         self._include_isrs = bool(include_isrs)
         self._pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
+        self._pump_pump_raman = bool(pump_pump_raman)
         self._input_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
@@ -383,6 +395,7 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
                 include_ase=self._raman_ase_enabled,
                 pump_depletion=self._pump_depletion,
                 signal_polarizations=self._signal_polarizations,
+                pump_pump_raman=self._pump_pump_raman,
             )
             self._solver_cache[key] = solver
         return solver
@@ -455,6 +468,13 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
             "drive, bit-for-bit unchanged). 2 drives the coupling with the dual-polarization total signal "
             "power, matching the physical waveform pump-depletion drive.",
         ),
+        (
+            "pump_pump_raman",
+            "Include pump-pump Raman coupling in the coupled ODE. Default True (historical behaviour). "
+            "False zeroes only the pump-pump block: pumps are still depleted by the signals and still "
+            "follow their own attenuation; pump-signal and signal-signal coupling are unchanged. A C+L "
+            "residual-audit control convention, not a more physical default.",
+        ),
     ),
 )
 
@@ -503,6 +523,9 @@ class HybridRamanPaperModel(PCFMModel):
             and keeps the old results bit-for-bit; ``2`` uses the
             dual-polarization total signal power as the coupling drive, which
             is the physical waveform convention.
+        pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
+            ``True`` (default) keeps the historical behaviour; ``False`` is the
+            pump-pump-off control convention of the C+L residual audit.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
@@ -533,6 +556,7 @@ class HybridRamanPaperModel(PCFMModel):
         spp_steps: int = DEFAULT_PAPER_SPP_STEPS,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
         **route_options: object,
     ) -> None:
         """Build the paper model."""
@@ -542,6 +566,8 @@ class HybridRamanPaperModel(PCFMModel):
             raise ValueError(f"nli_form must be one of {NLI_FORMS}, got {nli_form!r}.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+            raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         super().__init__(
             grid,
             ref_fiber_config,
@@ -567,6 +593,7 @@ class HybridRamanPaperModel(PCFMModel):
         self._spm_exponent = float(spm_coherence_exponent)
         self._pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
+        self._pump_pump_raman = bool(pump_pump_raman)
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
 
     def _build_kernel(self, fiber_config: FiberSpanConfig):
@@ -590,6 +617,7 @@ class HybridRamanPaperModel(PCFMModel):
                 spp_steps=self._active_spp_steps,
                 pump_depletion=self._pump_depletion,
                 signal_polarizations=self._signal_polarizations,
+                pump_pump_raman=self._pump_pump_raman,
             )
         return HybridRamanPaperSpanKernel(
             self.f_abs_hz,
@@ -605,6 +633,7 @@ class HybridRamanPaperModel(PCFMModel):
             spm_coherence_exponent=self._spm_exponent,
             pump_depletion=self._pump_depletion,
             signal_polarizations=self._signal_polarizations,
+            pump_pump_raman=self._pump_pump_raman,
         )
 
     def evaluate_path(self, optical_path, power_in_w):

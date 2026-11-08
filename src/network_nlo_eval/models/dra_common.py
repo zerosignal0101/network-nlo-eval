@@ -630,6 +630,10 @@ class DRASpanKernelBase:
             per-polarization drive and keeps the old results bit-for-bit;
             ``2`` drives the coupling with the dual-polarization total signal
             power while the receiver's own power is still multiplied once.
+        pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
+            ``True`` (default) keeps the historical behaviour; ``False`` zeroes
+            only the pump-pump block, leaving pump depletion by the signals and
+            the pump-signal / signal-signal coupling untouched.
     """
 
     #: Human-readable profile kind, used in diagnostics.
@@ -655,6 +659,7 @@ class DRASpanKernelBase:
         n_quadrature: int = DEFAULT_DRA_NLI_QUADRATURE,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
     ) -> None:
         if n_steps < 4:
             raise ValueError("n_steps must be >= 4.")
@@ -664,6 +669,8 @@ class DRASpanKernelBase:
             raise ValueError("n_quadrature must be >= 8.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+            raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
 
         f_abs = np.asarray(f_abs_hz, dtype=np.float64)
         bandwidths = np.asarray(b_hz, dtype=np.float64)
@@ -715,6 +722,7 @@ class DRASpanKernelBase:
         self._n_quadrature = int(n_quadrature)
         self._pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
+        self._pump_pump_raman = bool(pump_pump_raman)
         self._pump_alpha_npm = np.asarray(
             [float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3 for pump in self._pumps],
             dtype=np.float64,
@@ -804,6 +812,7 @@ class DRASpanKernelBase:
                 include_ase=self._raman_ase_enabled,
                 pump_depletion=self._pump_depletion,
                 signal_polarizations=self._signal_polarizations,
+                pump_pump_raman=self._pump_pump_raman,
             )
             self._solver_cache[key] = solver
         return solver

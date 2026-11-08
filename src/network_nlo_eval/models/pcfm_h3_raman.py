@@ -197,6 +197,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             (bit-for-bit unchanged); ``2`` drives the coupling with the
             dual-polarization total signal power, the physical waveform
             convention.
+        pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
+            ``True`` (default) keeps the historical behaviour; ``False`` zeroes
+            only the pump-pump block, leaving pump depletion by the signals,
+            the pump own attenuation, and the pump-signal / signal-signal
+            coupling untouched.  A control convention for the C+L residual
+            audit.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -214,18 +220,22 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         include_isrs: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
 
         Raises
         ------
-            ValueError: ``raman_steps`` or ``raman_iterations`` is not positive.
+            ValueError: ``raman_steps`` or ``raman_iterations`` is not positive,
+                or a boolean option is not a ``bool``.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
+        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+            raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         super().__init__(f_abs_hz, b_hz, fiber_config, **kwargs)  # type: ignore[arg-type]
         self._fiber_config = fiber_config
         self._raman_pumps = _active_pumps(pumps)
@@ -236,6 +246,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.include_isrs = bool(include_isrs)
         self.pump_depletion = bool(pump_depletion)
         self.signal_polarizations = int(signal_polarizations)
+        self.pump_pump_raman = bool(pump_pump_raman)
         if self.signal_polarizations < 1:
             raise ValueError("signal_polarizations must be >= 1.")
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
@@ -315,6 +326,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             include_ase=self._raman_ase,
             pump_depletion=self.pump_depletion,
             signal_polarizations=self.signal_polarizations,
+            pump_pump_raman=self.pump_pump_raman,
         )
         self._solver_cache[key] = solver
         return solver
@@ -593,6 +605,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "power, matching the physical waveform pump-depletion drive.",
         ),
         (
+            "pump_pump_raman",
+            "Include pump-pump Raman coupling in the coupled ODE. Default True (historical behaviour). "
+            "False zeroes only the pump-pump block: pumps are still depleted by the signals and still "
+            "follow their own attenuation; pump-signal and signal-signal coupling are unchanged. A C+L "
+            "residual-audit control convention, not a more physical default.",
+        ),
+        (
             "span_coherence",
             "'pcfm' (default, visibility-weighted coherent NLI accumulation) or 'incoherent' "
             "(power sum, the paper's default epsilon=0; for paper-matched comparison).",
@@ -642,6 +661,9 @@ class PCFH3RamanModel(PCFMModel):
             state.  ``1`` (default) keeps the historical per-polarization
             drive; ``2`` uses the dual-polarization total signal power as the
             coupling drive, matching the physical waveform.
+        pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
+            ``True`` (default) keeps the historical behaviour; ``False`` is the
+            pump-pump-off control convention of the C+L residual audit.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -681,6 +703,7 @@ class PCFH3RamanModel(PCFMModel):
         include_isrs: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
         span_coherence: str = "auto",
         validity_mode: str = "warn",
         **route_options: object,
@@ -695,6 +718,8 @@ class PCFH3RamanModel(PCFMModel):
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+            raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         if span_coherence not in ("auto", "pcfm", "incoherent"):
             raise ValueError(
                 f"span_coherence must be 'auto', 'pcfm' or 'incoherent', got {span_coherence!r}."
@@ -731,6 +756,7 @@ class PCFH3RamanModel(PCFMModel):
         self._h3_include_isrs = bool(include_isrs)
         self._h3_pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
+        self._h3_pump_pump_raman = bool(pump_pump_raman)
         active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
         resolved = str(span_coherence)
         if resolved == "auto":
@@ -764,6 +790,7 @@ class PCFH3RamanModel(PCFMModel):
             include_isrs=self._h3_include_isrs,
             pump_depletion=self._h3_pump_depletion,
             signal_polarizations=self._signal_polarizations,
+            pump_pump_raman=self._h3_pump_pump_raman,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,

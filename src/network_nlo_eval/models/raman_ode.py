@@ -143,10 +143,15 @@ class RamanPaperSpanSolver:
             衰减 ``dP_p/dz = -alpha_p P_p`` 演化；信号仍从泵浦获得增益，泵浦-泵浦
             耦合被关闭。这是一个**对照口径**，用于和采用未耗尽泵浦的波形/物理
             参考比较，不是更物理的默认（真实 DRA 在高信号功率下会发生泵浦耗尽）。
+        pump_pump_raman: 是否计入泵浦-泵浦拉曼耦合。``True``（默认）保持历史
+            行为，六泵 C+L 的泵浦之间会互相转移功率；``False`` 只把耦合矩阵
+            的泵浦×泵浦块清零，泵浦仍被信号耗尽、仍按自身 ``alpha_p`` 衰减，
+            泵浦-信号与信号-信号耦合逐项不变。这是一个**对照口径**：它把
+            “泵浦之间互相搬运功率”从 C+L 残差里隔离出来，不是更物理的默认。
 
     Raises
     ------
-        ValueError: 任一数组形状不匹配或跨长/步数非正。
+        ValueError: 任一数组形状不匹配、跨长/步数非正，或布尔开关不是 ``bool``。
     """
 
     def __init__(
@@ -167,6 +172,7 @@ class RamanPaperSpanSolver:
         include_ase: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
+        pump_pump_raman: bool = True,
     ) -> None:
         """校验参数并构建与 z 无关的耦合矩阵。"""
         if length_m <= 0:
@@ -177,6 +183,8 @@ class RamanPaperSpanSolver:
             raise ValueError("n_iterations must be >= 1.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+            raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
 
         self.signal_frequencies_hz = np.asarray(signal_frequencies_hz, dtype=np.float64)
         self.signal_bandwidths_hz = np.asarray(signal_bandwidths_hz, dtype=np.float64)
@@ -191,6 +199,7 @@ class RamanPaperSpanSolver:
         self.include_ase = bool(include_ase)
         self.pump_depletion = bool(pump_depletion)
         self.signal_polarizations = int(signal_polarizations)
+        self.pump_pump_raman = bool(pump_pump_raman)
 
         n_signal = self.signal_frequencies_hz.size
         if self.signal_bandwidths_hz.shape != (n_signal,):
@@ -289,6 +298,11 @@ class RamanPaperSpanSolver:
         ``pump_depletion=False`` 时把泵浦行（含泵浦-泵浦项）清零：泵浦不再
         从信号或其他泵浦获得/失去功率，只剩自身 ``-alpha_p P_p`` 衰减，而
         信号/泵浦仍通过信号行从泵浦获得增益。这是未耗尽泵浦的对照口径。
+
+        ``pump_pump_raman=False`` 只清零 ``(泵浦, 泵浦)`` 子块。状态向量的
+        顺序是“信号在前、泵浦在后”再按频率降序重排，泵浦槽由
+        ``self._is_pump`` 标出，因此这里用显式掩码而不是行列区间，避免把
+        泵浦-信号项（泵浦行/信号列与信号行/泵浦列）一起误伤。
         """
         delta = np.abs(self._f_hz[:, None] - self._f_hz[None, :])
         shape = self.gain_model.gain_shape(delta)
@@ -302,6 +316,9 @@ class RamanPaperSpanSolver:
         if not self.include_isrs:
             signal_slots = self._signal_slots
             coupling[np.ix_(signal_slots, signal_slots)] = 0.0
+        if not self.pump_pump_raman:
+            pump_slots = np.flatnonzero(self._is_pump)
+            coupling[np.ix_(pump_slots, pump_slots)] = 0.0
         if not self.pump_depletion:
             pump_slots = np.flatnonzero(self._is_pump)
             coupling[pump_slots, :] = 0.0
