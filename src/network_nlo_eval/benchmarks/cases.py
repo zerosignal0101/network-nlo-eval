@@ -29,6 +29,7 @@ __all__ = [
     "BENCH_CASES",
     "POWER_SWEEP_DBM",
     "SMF_100KM",
+    "TILT_REFERENCES",
     "BenchCase",
     "band_edges_hz",
     "build_case",
@@ -36,6 +37,15 @@ __all__ = [
     "grid_for",
     "launch_profile",
 ]
+
+#: 倾斜发射谱的功率锚定口径。
+#:
+#: ``"total"``：保持**总入纤功率**等于同功率平坦谱的总功率，于是不同倾斜度
+#: 之间比较的是“同一台放大器输出、只改谱形”。这是倾斜审计的默认口径。
+#: ``"center"``：保持倾斜直线在**网格中心频率**处穿过标称每信道功率（奇数信道
+#: 时严格等于中间信道功率），总功率随倾斜度增大；15 dB 时总功率比 ``"total"``
+#: 高约 2 dB（离散求和 ``10 log10(mean(10**(x/10)))``，``x`` 在 ±7.5 dB 均匀分布）。
+TILT_REFERENCES: tuple[str, ...] = ("total", "center")
 
 #: 每信道入纤功率扫描区间 (dBm)。覆盖线性区到明显非线性区。
 POWER_SWEEP_DBM: tuple[float, ...] = (-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
@@ -199,16 +209,60 @@ def build_path(case: BenchCase) -> MultiSpanOpticalPath:
     return MultiSpanOpticalPath([fiber] * case.span_count, [edfa] * case.span_count)
 
 
-def launch_profile(case: BenchCase, power_dbm: float | None = None) -> NDArrayFloat:
-    """均匀入纤功率谱 ``(N,)`` (W)。
+def launch_profile(
+    case: BenchCase,
+    power_dbm: float | None = None,
+    *,
+    tilt_db: float = 0.0,
+    tilt_reference: str = "total",
+) -> NDArrayFloat:
+    r"""入纤功率谱 ``(N,)`` (W)，可选线性（dB 域）功率倾斜。
+
+    倾斜在 dB 域按信道序号线性分布，且**功率随频率升高而增大**：
+
+    .. math::
+
+        P_i = P_0 10^{x_i/10}, \\qquad
+        x_i = \\left(\\frac{i}{N-1} - \\frac{1}{2}\\right) \\mathrm{tilt_{dB}},
+
+    因此 ``10 log10(max P / min P)`` 恰为 ``tilt_db``，与
+    :attr:`~network_nlo_eval.models.pcfm.SpanValidityReport.power_tilt_db`
+    的度量一致。频偏方向固定（红端低、蓝端高），调用方无需再猜符号。
 
     Args:
         case: 算例。
-        power_dbm: 每信道功率 (dBm)；``None`` 时取算例的标称每信道功率。
+        power_dbm: 目标每信道功率 (dBm)；``None`` 时取算例的标称每信道功率。
+            它同时是 ``tilt_reference="center"`` 的中心锚定值。
+        tilt_db: 最大/最小功率比 (dB)，必须非负有限。``0`` 时走与旧实现
+            完全相同的 ``np.full`` 分支（逐位不变）。
+        tilt_reference: ``"total"``（默认）把总功率归一到
+            ``N * 10**((power_dbm - 10 log10 N)/10)``；``"center"`` 不归一，
+            让倾斜直线在网格中心频率处等于标称每信道功率。
 
     Returns
     -------
         ``(N,)`` 功率 (W)。
+
+    Raises
+    ------
+        ValueError: ``tilt_db`` 为负/非有限、``tilt_reference`` 非法，或在
+            单信道算例上要求非零倾斜。
     """
     level = case.per_channel_power_dbm if power_dbm is None else power_dbm
-    return np.full(case.num_channels, 1e-3 * 10 ** (level / 10.0), dtype=np.float64)
+    base_w = 1e-3 * 10 ** (level / 10.0)
+    if tilt_reference not in TILT_REFERENCES:
+        raise ValueError(f"tilt_reference must be one of {TILT_REFERENCES}, got {tilt_reference!r}.")
+    if not np.isfinite(tilt_db) or tilt_db < 0.0:
+        raise ValueError(f"tilt_db must be a finite non-negative value, got {tilt_db!r}.")
+    if tilt_db == 0.0:
+        return np.full(case.num_channels, base_w, dtype=np.float64)
+    if case.num_channels < 2:
+        raise ValueError("a non-zero tilt needs at least two channels.")
+
+    # 均匀 dB 步进：端点恰为 ∓tilt/2，中间信道（奇数 N）正好落在 0 dB。
+    offsets_db = np.linspace(-0.5, 0.5, case.num_channels, dtype=np.float64) * float(tilt_db)
+    power = base_w * 10.0 ** (offsets_db / 10.0)
+    if tilt_reference == "total":
+        # 归一化到平坦谱的总功率：倾斜只改谱形，不改链路总功率。
+        power *= (case.num_channels * base_w) / float(np.sum(power))
+    return np.ascontiguousarray(power)

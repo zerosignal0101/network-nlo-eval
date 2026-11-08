@@ -182,6 +182,9 @@ __all__ = [
     "PCFMSpanKernel",
     "SpanValidityReport",
     "resolve_nli_power_convention",
+    "TILT_INFORMATIONAL_KNEE_DB",
+    "TILT_INFORMATIONAL_ZERO_DB",
+    "informational_tilt_confidence",
 ]
 
 #: Number of RK4 steps of the ISRS power-profile integration.
@@ -277,6 +280,63 @@ XCI_EDGE_QUADRATURE_POINTS: int = 24
 #: ISRS tilt, which is reported in ``gain_tilt_db`` but does not flag the
 #: unpumped kernel: the ISRS profile is solved by the model itself.
 POWER_TILT_VALIDITY_DB: float = 15.0
+
+#: Low knee of the *informational* continuous tilt confidence (dB).
+#:
+#: The hard flag above stays at :data:`POWER_TILT_VALIDITY_DB`; this knee only
+#: shapes an additive, non-gating score.  The value comes from the tilt audit
+#: (``scripts/h3_tilt_isrs_audit.py``): between 0 and 10 dB the measured
+#: representation residual of the default H3 fit against its converged form is
+#: below 0.1 dB for both an unpumped launch tilt and a pumped gain tilt, while
+#: at the ~14 dB gain tilt of the C+L six-pump benchmark it reaches 0.15 dB.
+#: Starting the decay at 10 dB therefore gives downstream margin *before* the
+#: hard flag fires, without moving any default value.
+TILT_INFORMATIONAL_KNEE_DB: float = 10.0
+
+#: Tilt at which the informational confidence reaches zero (dB).
+#:
+#: Kept equal to the zero of the hard map (``2 * POWER_TILT_VALIDITY_DB``) so
+#: the two curves share their end point: 30 dB is twice the flag threshold and
+#: no audited configuration comes close to it.
+TILT_INFORMATIONAL_ZERO_DB: float = 2.0 * POWER_TILT_VALIDITY_DB
+
+
+def informational_tilt_confidence(tilt_db: float) -> float:
+    r"""Continuous, non-gating confidence as a function of power/gain tilt.
+
+    The hard validity flag is a step at :data:`POWER_TILT_VALIDITY_DB`; the
+    ``confidence`` field already decays linearly *above* it.  This auxiliary
+    curve additionally decays *below* the threshold, so a network layer can
+    apply a soft margin without changing ``valid``/``flagged``.
+
+    The curve is a cubic smoothstep from :data:`TILT_INFORMATIONAL_KNEE_DB`
+    (score 1) to :data:`TILT_INFORMATIONAL_ZERO_DB` (score 0):
+
+    .. math::
+
+        x = \\mathrm{clip}\\left(\\frac{t - t_{knee}}{t_{zero} - t_{knee}}, 0, 1\\right),
+        \\qquad c = 1 - x^2 (3 - 2x).
+
+    It is monotonically non-increasing and C1 at both ends, so a caller can
+    interpolate it without kinks.  The knee is placed where the audit measures
+    the default H3 fit to be within 0.1 dB of its converged form; it is
+    deliberately *not* a second validity threshold.
+
+    Args:
+        tilt_db: Tilt ``10 log10(max/min)`` in dB.  Values below the knee
+            return 1; values at or above the zero return 0.
+
+    Returns
+    -------
+        Score in ``[0, 1]``.
+    """
+    tilt = float(tilt_db)
+    if not np.isfinite(tilt):
+        return 0.0
+    span = TILT_INFORMATIONAL_ZERO_DB - TILT_INFORMATIONAL_KNEE_DB
+    x = float(np.clip((tilt - TILT_INFORMATIONAL_KNEE_DB) / span, 0.0, 1.0))
+    return float(1.0 - x * x * (3.0 - 2.0 * x))
+
 
 #: Confidence assigned to a channel whose XCI row is corrected by the edge
 #: gate.  The exact island integral makes the value usable, but the channel
@@ -383,6 +443,19 @@ class SpanValidityReport:
             ``(N,)`` score in ``[0, 1]``.  It is a coarse ordering, not a
             calibrated probability: 1 means inside the validated domain,
             ~0.6 means "usable after the fix", ~0.2 means "known wrong".
+        effective_tilt_db:
+            The tilt actually compared against
+            :data:`POWER_TILT_VALIDITY_DB` (dB).  For the base kernel this is
+            ``power_tilt_db``; the H3 Raman kernel uses
+            ``max(power_tilt_db, gain_tilt_db)`` when pumps are active.  It
+            makes the flag decision readable without re-deriving the rule.
+        tilt_confidence_informational:
+            Continuous, **non-gating** tilt score in ``[0, 1]`` from
+            :func:`informational_tilt_confidence`.  It is 1 below
+            :data:`TILT_INFORMATIONAL_KNEE_DB` and decays smoothly to 0 at
+            :data:`TILT_INFORMATIONAL_ZERO_DB`, so a caller can apply a soft
+            margin before the hard flag fires.  It never changes ``valid``,
+            ``flagged`` or ``confidence``.
     """
 
     xci_gated: NDArrayFloat
@@ -402,6 +475,8 @@ class SpanValidityReport:
     flagged: NDArrayFloat
     valid: NDArrayFloat
     confidence: NDArrayFloat
+    effective_tilt_db: float = 0.0
+    tilt_confidence_informational: float = 1.0
 
 
 #: Relative power tolerance under which two span inputs are treated as the
@@ -1920,16 +1995,12 @@ class PCFMSpanKernel:
         tilt_confidence = (
             1.0
             if not tilt_exceeded
-            else float(
-                np.clip(1.0 - (tilt_db - POWER_TILT_VALIDITY_DB) / POWER_TILT_VALIDITY_DB, 0.0, 1.0)
-            )
+            else float(np.clip(1.0 - (tilt_db - POWER_TILT_VALIDITY_DB) / POWER_TILT_VALIDITY_DB, 0.0, 1.0))
         )
 
         # 置信度是逐信道取最弱项：XCI 修正、SCI 分支、功率倾斜。
         xci_confidence = np.ones(self.n_nodes, dtype=np.float64)
-        xci_confidence = np.where(
-            s_below & ~material, XCI_IMMATERIAL_CONFIDENCE, xci_confidence
-        )
+        xci_confidence = np.where(s_below & ~material, XCI_IMMATERIAL_CONFIDENCE, xci_confidence)
         xci_confidence = np.where(
             material,
             np.where(gated, XCI_GATED_CONFIDENCE, XCI_UNCORRECTED_CONFIDENCE),
@@ -1969,6 +2040,8 @@ class PCFMSpanKernel:
             flagged=np.ascontiguousarray(flagged[self.inverse_order]),
             valid=np.ascontiguousarray(valid[self.inverse_order]),
             confidence=np.ascontiguousarray(confidence[self.inverse_order]),
+            effective_tilt_db=float(tilt_db),
+            tilt_confidence_informational=informational_tilt_confidence(tilt_db),
         )
 
     def clear_span_cache(self) -> None:
