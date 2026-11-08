@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import hashlib
+import warnings
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -41,6 +42,10 @@ import numpy as np
 
 from network_nlo_eval.core.types import LinkKey, NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.base import MultiSpanOpticalPath, QoTModel
+from network_nlo_eval.models.power_conventions import (
+    resolve_launch_power_convention,
+    to_convention,
+)
 from network_nlo_eval.models.uncertainty import (
     H3ErrorBudget,
     H3UncertaintyConfig,
@@ -449,7 +454,8 @@ class LinkValidity:
             budget: :func:`~network_nlo_eval.models.uncertainty.estimate_h3_error_budget`
                 的结果。
             link_key: 所属链路键。
-            fingerprint: 占用谱指纹。
+            fingerprint: 占用谱指纹；网络桥使用**模型坐标**的功率谱，
+                这样同一物理链路从不同输入口径进来会得到同一指纹。
             span_count: 跨数；``None`` 时用预算里的 ``validity.span_count``。
 
         Returns
@@ -777,23 +783,62 @@ class H3LinkValidityProvider:
     at ``(link, occupied spectrum, span length)`` granularity.  It never calls
     ``numerical_dra`` and never changes the point SNR.
 
+    ``power_profile_w`` is declared by ``input_power_convention`` (default
+    ``"total"``, the network reference plane).  It is converted **once** to the
+    model's ``launch_power_convention`` before the H3 evaluation, and the cache
+    key / fingerprint use that model-coordinate power, so the same physical
+    link hits the same entry regardless of the caller's coordinate.
+
     Args:
         model: H3 模型（``pcfm`` / ``pcfm_h3_raman``），必须暴露 ``evaluate_path``、
             ``kernel_for`` 与 ``n_nodes``。
+        input_power_convention: ``power_profile_w`` 的功率口径，``"total"``
+            （默认）或 ``"per_pol"``。
         config: 可选误差预算配置。
         cache: 可选缓存；默认新建 :class:`LinkValidityCache`。
+
+    Raises
+    ------
+        ValueError: ``input_power_convention`` 非法。
     """
 
     def __init__(
         self,
         model: QoTModel,
         *,
+        input_power_convention: str = "total",
         config: H3UncertaintyConfig | None = None,
         cache: LinkValidityCache | None = None,
     ) -> None:
         self.model = model
+        self.input_power_convention = resolve_launch_power_convention(input_power_convention)
         self.config = config or H3UncertaintyConfig()
         self.cache = cache if cache is not None else LinkValidityCache()
+        self._warned_convention_mismatch = False
+
+    @property
+    def model_power_convention(self) -> str:
+        """模型入口口径；不声明该属性的旧模型按 ``"total"`` 处理。"""
+        return str(getattr(self.model, "launch_power_convention", "total"))
+
+    def _warn_once_if_mismatched(self) -> None:
+        """口径不同时每个 provider 实例只提示一次。"""
+        if self._warned_convention_mismatch:
+            return
+        source = self.input_power_convention
+        target = self.model_power_convention
+        if source == target:
+            return
+        factor = 0.5 if target == "per_pol" else 2.0
+        direction = "total -> per_pol" if target == "per_pol" else "per_pol -> total"
+        warnings.warn(
+            f"h3 validity provider: caller input_power_convention={source!r} differs from the model "
+            f"launch_power_convention={target!r}; the launch power is scaled by {factor:g} "
+            f"({direction}) before the H3 evaluation and used as the cache key.",
+            UserWarning,
+            stacklevel=2,
+        )
+        self._warned_convention_mismatch = True
 
     def __call__(
         self,
@@ -809,7 +854,8 @@ class H3LinkValidityProvider:
             link_key: 规范化链路键。
             fiber_config: 链路光纤参数。
             edfa_config: 跨段 EDFA 配置。
-            power_profile_w: ``(N,)`` 逐信道入纤功率 (W)。
+            power_profile_w: ``(N,)`` 逐信道入纤功率 (W)，口径为构造时的
+                ``input_power_convention``。
             span_length_m: 跨长 (m)。
 
         Returns
@@ -825,18 +871,20 @@ class H3LinkValidityProvider:
             raise ValueError(
                 f"power_profile_w must have shape ({self.model.n_nodes},), got {power.shape}."
             )
-        cached = self.cache.get(link_key, power, span_length_m)
+        self._warn_once_if_mismatched()
+        power_model = to_convention(power, self.input_power_convention, self.model_power_convention)
+        cached = self.cache.get(link_key, power_model, span_length_m)
         if cached is not None:
             return cached
 
         path = link_optical_path(fiber_config, edfa_config, span_length_m)
-        result = self.model.evaluate_path(path, power)
-        budget = estimate_h3_error_budget(self.model, path, power, result, config=self.config)
+        result = self.model.evaluate_path(path, power_model)
+        budget = estimate_h3_error_budget(self.model, path, power_model, result, config=self.config)
         validity = LinkValidity.from_budget(
             budget,
             link_key=link_key,
-            fingerprint=occupancy_fingerprint(power, span_length_m),
+            fingerprint=occupancy_fingerprint(power_model, span_length_m),
             span_count=result.span_count,
         )
-        self.cache.put(link_key, power, span_length_m, validity)
+        self.cache.put(link_key, power_model, span_length_m, validity)
         return validity

@@ -28,6 +28,10 @@ import numpy as np
 
 from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.base import MultiSpanOpticalPath, PathQoTResult, QoTModel
+from network_nlo_eval.models.power_conventions import (
+    resolve_launch_power_convention,
+    to_convention,
+)
 from network_nlo_eval.models.uncertainty import H3ErrorBudget, H3UncertaintyConfig
 from network_nlo_eval.network.elements import FiberSpanConfig
 
@@ -168,6 +172,13 @@ class TwoTierEvaluator:
         fallback_factory: 无参工厂，返回可用于同一光路的模型；只有
             ``config.enabled`` 为真时才会被调用。
         config: 显式开关与回退预算。
+        launch_power_convention: ``power_in_w`` 的口径，``"total"``（默认）或
+            ``"per_pol"``。H3 与回退模型各自换算到自己的
+            ``launch_power_convention``；两端相同时不做任何算术。
+
+    Raises
+    ------
+        ValueError: ``launch_power_convention`` 非法。
     """
 
     def __init__(
@@ -176,10 +187,12 @@ class TwoTierEvaluator:
         fallback_factory: Callable[[], QoTModel] | None = None,
         *,
         config: TwoTierConfig | None = None,
+        launch_power_convention: str = "total",
     ) -> None:
         self.h3_model = h3_model
         self.fallback_factory = fallback_factory
         self.config = config or TwoTierConfig()
+        self.launch_power_convention = resolve_launch_power_convention(launch_power_convention)
 
     def plan(self, budget: H3ErrorBudget) -> NDArrayBool:
         """Return the channels that a fallback would be run for.
@@ -209,7 +222,8 @@ class TwoTierEvaluator:
 
         Args:
             optical_path: 有序光路。
-            power_in_w: ``(N,)`` 入纤功率 (W)。
+            power_in_w: ``(N,)`` 入纤功率 (W)，口径为构造时的
+                ``launch_power_convention``。
 
         Returns
         -------
@@ -220,7 +234,9 @@ class TwoTierEvaluator:
             ValueError: 启用回退但没有工厂、或 flagged 信道数超过
                 ``max_fallback_channels``、或数值模型返回的长度不一致。
         """
-        result, budget = self.h3_model.evaluate_path_with_uncertainty(optical_path, power_in_w)
+        h3_convention = str(getattr(self.h3_model, "launch_power_convention", "total"))
+        h3_power = to_convention(power_in_w, self.launch_power_convention, h3_convention)
+        result, budget = self.h3_model.evaluate_path_with_uncertainty(optical_path, h3_power)
         flagged = self.plan(budget)
         effective = np.array(budget.adjusted_snr_db(result.snr_db), dtype=np.float64, copy=True)
         fallback_snr = np.full(effective.shape, np.nan, dtype=np.float64)
@@ -257,7 +273,9 @@ class TwoTierEvaluator:
             raise ValueError("fallback is enabled but no fallback_factory was supplied.")
 
         fallback = self.fallback_factory()
-        fallback_result = fallback.evaluate_path(optical_path, power_in_w)
+        fallback_convention = str(getattr(fallback, "launch_power_convention", "total"))
+        fallback_power = to_convention(power_in_w, self.launch_power_convention, fallback_convention)
+        fallback_result = fallback.evaluate_path(optical_path, fallback_power)
         values = np.asarray(fallback_result.snr_db, dtype=np.float64)
         if values.shape != effective.shape:
             raise ValueError(

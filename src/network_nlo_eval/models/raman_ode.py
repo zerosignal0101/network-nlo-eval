@@ -25,6 +25,10 @@ import numpy as np
 
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.pcfm import DEFAULT_SPP_STEPS
+from network_nlo_eval.models.power_conventions import (
+    LAUNCH_POWER_CONVENTIONS,
+    resolve_launch_power_convention,
+)
 from network_nlo_eval.models.raman import (
     C_LIGHT,
     H_PLANCK,
@@ -42,12 +46,6 @@ __all__ = [
     "RamanPaperSpanSolver",
     "resolve_launch_power_convention",
 ]
-
-#: 支持的入纤功率口径。
-#:
-#: ``"total"``：``power_in_w`` 是每信道（双偏振）总功率，历史默认；
-#: ``"per_pol"``：``power_in_w`` 是每偏振功率，物理总功率是它的 2 倍。
-LAUNCH_POWER_CONVENTIONS: tuple[str, ...] = ("total", "per_pol")
 
 #: ODE 默认的 RK4 步数。与 PCFM 的 SPP 采样网格一致（每步取中点与终点）。
 DEFAULT_PAPER_SPP_STEPS: int = DEFAULT_SPP_STEPS
@@ -107,54 +105,6 @@ def _interp_rows(grid: NDArrayFloat, values: NDArrayFloat, query: float) -> NDAr
     span = float(grid[index + 1] - grid[index])
     weight = 0.0 if span <= 0.0 else float((query - grid[index]) / span)
     return (1.0 - weight) * values[index] + weight * values[index + 1]
-
-
-def resolve_launch_power_convention(
-    launch_power_convention: str,
-    signal_polarizations: int,
-) -> str:
-    """校验入纤功率口径与状态偏振数的组合。
-
-    ``signal_polarizations`` 只放大耦合项的**驱动功率**，不放大状态本身。因此
-    只有两种自洽的声明：
-
-    * ``"total"`` + ``signal_polarizations=1``：状态就是每信道总功率，驱动也
-      用总功率，光子预算比值 1。这是历史默认。
-    * ``"per_pol"`` + ``signal_polarizations=2``：状态是每偏振功率，驱动取
-      ``2 * P`` 的双偏振总功率，物理总功率 = 2 × 输入。光子预算（按物理总
-      功率计）比值 1。
-
-    ``"total"`` + ``signal_polarizations=2`` 是把总功率再乘 2 驱动，物理上
-    重复计数；该组合在求解器层保留（历史对照与倍率探针），但调用方必须显式
-    warning，见 :class:`~network_nlo_eval.models.pcfm_h3_raman.PCFH3RamanModel`。
-    ``"per_pol"`` + ``signal_polarizations=1`` 自相矛盾（声明每偏振却没有第二
-    个偏振），直接报错。
-
-    Args:
-        launch_power_convention: ``"total"`` 或 ``"per_pol"``。
-        signal_polarizations: ODE 信号状态代表的偏振数。
-
-    Returns
-    -------
-        规范化后的口径名。
-
-    Raises
-    ------
-        ValueError: 口径非法，或 ``"per_pol"`` 与 ``signal_polarizations`` 不匹配。
-    """
-    convention = str(launch_power_convention)
-    if convention not in LAUNCH_POWER_CONVENTIONS:
-        raise ValueError(
-            f"launch_power_convention must be one of {LAUNCH_POWER_CONVENTIONS}, got {launch_power_convention!r}."
-        )
-    if convention == "per_pol" and int(signal_polarizations) != 2:
-        raise ValueError(
-            "launch_power_convention='per_pol' declares a per-polarization input, so the ODE state "
-            "must be per-polarization: signal_polarizations must be 2, got "
-            f"{int(signal_polarizations)}. Use launch_power_convention='total' for a "
-            "per-channel total-power input."
-        )
-    return convention
 
 
 class RamanPaperSpanSolver:

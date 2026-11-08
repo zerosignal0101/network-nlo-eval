@@ -117,6 +117,12 @@ class MultiBandISRSGN:
     用于快速计算多波段光网络中单跨段或多跨段的传输质量 (QoT)。
     """
 
+    #: 网络层统一查询的功率口径。GN/ECZ 的标称入口一直是每信道双偏振总功率。
+    launch_power_convention = "total"
+
+    #: 本模型新产生 ASE 的偏振缩放。``total`` 坐标下恒为 ``1.0``。
+    ase_polarization_scale = 1.0
+
     def __init__(
         self,
         grid: SpectrumGrid | FlexibleGrid,
