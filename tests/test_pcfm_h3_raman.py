@@ -745,7 +745,7 @@ def test_e_s_c_l_six_pumps_default_is_finite_and_converged(direction: str) -> No
 
 @pytest.mark.parametrize("direction", ["backward", "forward"])
 def test_e_s_c_l_six_pumps_default_matches_the_96_step_reference(direction: str) -> None:
-    """auto 解析到 96 步，逐位等于显式 96，并给 96→192 的实际收敛界。"""
+    """Auto 解析到 96 步，逐位等于显式 96，并给 96→192 的实际收敛界。"""
     default = make_model("pcfm_h3_raman", ESCL_CASE, raman_pumps=_six_pumps(direction))
     explicit = make_model(
         "pcfm_h3_raman",
