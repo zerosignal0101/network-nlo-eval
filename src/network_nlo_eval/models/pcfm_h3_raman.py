@@ -729,8 +729,16 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "with a RamanGainModel instance or a table file path.",
         ),
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
-        ("raman_temperature_k", "Fibre temperature of the spontaneous Raman factor. Default 300 K."),
-        ("raman_peak_gain_coefficient_m_per_w", "Peak local Raman gain rate before A_eff division. Default 6e-14."),
+        (
+            "raman_temperature_k",
+            "Fibre temperature of the spontaneous Raman factor. Default 300 K (None). "
+            "An explicit value overrides a gain table file and warns.",
+        ),
+        (
+            "raman_peak_gain_coefficient_m_per_w",
+            "Peak local Raman gain rate before A_eff division. Default 6e-14 (None). "
+            "An explicit value overrides a gain table file and warns.",
+        ),
         ("raman_steps", "RK4 steps of the coarse solve, or 'auto': 12 backward single-pump, 24 forward/multi-pump."),
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
         ("include_isrs", "Include channel-channel ISRS in the coupled solve. Default True."),
@@ -818,8 +826,13 @@ class PCFH3RamanModel(PCFMModel):
             the coupled solve.  Mutually exclusive with an instance or a file
             path.
         raman_ase: Expose the Raman ASE before the EDFA.
-        raman_temperature_k: Fibre temperature (K).
+        raman_temperature_k: Fibre temperature (K).  ``None`` (default) means
+            300 K; an explicit value is a calibration override and warns for
+            file-backed gain tables, even when it equals 300.0.
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate.
+            ``None`` (default) means ``6e-14``; an explicit value is a
+            calibration override and warns for file-backed gain tables, even
+            when it equals 6e-14.
         raman_steps: RK4 steps of the coarse coupled profile/ASE solve.
         raman_iterations: Backward-pump fixed-point iteration cap.
         include_isrs: Include channel-channel ISRS in the coupled solve.
@@ -888,8 +901,8 @@ class PCFH3RamanModel(PCFMModel):
         raman_gain_model: str | RamanGainModel = "gaussian",
         raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
-        raman_temperature_k: float = 300.0,
-        raman_peak_gain_coefficient_m_per_w: float = 6e-14,
+        raman_temperature_k: float | None = None,
+        raman_peak_gain_coefficient_m_per_w: float | None = None,
         raman_steps: int | str = "auto",
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
         include_isrs: bool = True,

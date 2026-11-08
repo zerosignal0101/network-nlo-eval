@@ -1457,7 +1457,10 @@ PCFM_MODEL_INFO = ModelInfo(
             "'total' (default): power_in_w is the per-channel dual-polarization total power and the "
             "printed 16/27 and 32/27 GN weights apply as-is. 'per_pol': power_in_w is "
             "per-polarization power, so the NLI kernels and the ISRS profile are driven with 2*P and "
-            "the NLI and span-end signal power are halved. Declaring the wrong side scales the NLI by 8.",
+            "the NLI and span-end signal power are halved. Declaring the wrong side scales the NLI by 8. "
+            "plain pcfm has no launch_power_convention and does not scale EDFA/booster ASE, so 'per_pol' "
+            "here is an NLI-only comparison (mixed coordinate) and warns at construction; use "
+            "pcfm_h3_raman(launch_power_convention='per_pol') for an end-to-end per-pol link.",
         ),
     ),
 )
@@ -2579,15 +2582,26 @@ class PCFMModel(RouteModel):
             ``(offsets_hz, gains)``；与实例/文件路径互斥。
         raman_ase: Include the distributed Raman ASE before the span EDFA.
         raman_temperature_k: Fibre temperature used by the Raman spontaneous
-            emission factor.
+            emission factor.  ``None`` (default) means the module default of
+            300 K; passing ``300.0`` explicitly counts as a calibration
+            override and warns when the gain table comes from a file.
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate per
-            watt before division by ``A_eff``.  The default matches the
+            watt before division by ``A_eff``.  ``None`` (default) means the
+            module default of ``6e-14``; the default matches the
             waveform-level ``physics_nlo_eval.RamanPump`` for cross-checking.
+            Explicitly passing ``6e-14`` counts as a calibration override for
+            file-backed gain tables and warns.
         nli_power_convention: ``"total"`` (default) means ``power_in_w`` is the
             per-channel dual-polarization total power and the printed
             ``16/27``/``32/27`` weights apply as-is; ``"per_pol"`` means it is
             per-polarization power, so the kernels are driven with ``2 * P`` and
-            the NLI is halved.  See :class:`PCFMSpanKernel`.
+            the NLI is halved.  See :class:`PCFMSpanKernel`.  ``PCFMModel``
+            itself declares no ``launch_power_convention`` and does not scale
+            the EDFA/booster ASE, so ``"per_pol"`` here is an **NLI-only
+            comparison** (mixed coordinate) and warns at construction.  Use
+            :class:`~network_nlo_eval.models.pcfm_h3_raman.PCFH3RamanModel`
+            with ``launch_power_convention="per_pol"`` for an end-to-end
+            per-polarization link.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
     """
 
@@ -2613,8 +2627,8 @@ class PCFMModel(RouteModel):
         raman_gain_model: str | RamanGainModel = "gaussian",
         raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
-        raman_temperature_k: float = 300.0,
-        raman_peak_gain_coefficient_m_per_w: float = 6e-14,
+        raman_temperature_k: float | None = None,
+        raman_peak_gain_coefficient_m_per_w: float | None = None,
         validity_mode: str = "warn",
         nli_power_convention: str = "total",
         **route_options,
@@ -2642,6 +2656,20 @@ class PCFMModel(RouteModel):
         self.edge_fix = bool(edge_fix)
         self.cache_spans = bool(cache_spans)
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
+        # plain PCFM 没有 launch_power_convention，也不覆盖 ase_polarization_scale：
+        # 声明 per_pol 只把信号/NLI 换到每偏振，EDFA/booster ASE 仍是双偏振总量。
+        # 子类（如 pcfm_h3_raman）用类级属性声明了 launch 口径，不受此 warning 影响。
+        if self.nli_power_convention == "per_pol" and not hasattr(type(self), "launch_power_convention"):
+            warnings.warn(
+                "pcfm: nli_power_convention='per_pol' without a launch_power_convention is an "
+                "NLI-only comparison. The signal and the NLI are per-polarization, but this model "
+                "owns no launch coordinate and does not halve the route-layer ASE "
+                "(ase_polarization_scale stays 1.0), so the SNR is a mixed coordinate, not an "
+                "end-to-end per-pol result. Use pcfm_h3_raman with launch_power_convention='per_pol' "
+                "for an end-to-end per-pol link, or keep nli_power_convention='total'.",
+                UserWarning,
+                stacklevel=2,
+            )
         self.spp_steps = spp_steps
         self.validity_mode = str(validity_mode)
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)

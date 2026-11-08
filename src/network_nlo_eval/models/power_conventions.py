@@ -10,8 +10,8 @@
 同一物理链路在两个坐标下只差一个因子 2，SNR = S/(NLI+ASE) 与坐标无关。
 换算必须集中在模型边界做**唯一一次**，绝不能在网络层与模型层各减半一次。
 
-本模块是叶子模块（只依赖标准库），避免 ``pcfm`` 与 ``raman_ode`` 之间的循环
-导入；:mod:`network_nlo_eval.models.raman_ode` 从本模块导入并重导出
+本模块是叶子模块（依赖标准库与 ``numpy``），避免 ``pcfm`` 与 ``raman_ode``
+之间的循环导入；:mod:`network_nlo_eval.models.raman_ode` 从本模块导入并重导出
 ``LAUNCH_POWER_CONVENTIONS`` / ``resolve_launch_power_convention``，保持既有
 公开 import 路径不变。
 """
@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 from typing import Any
+
+import numpy as np
 
 __all__ = [
     "LAUNCH_POWER_CONVENTIONS",
@@ -132,17 +134,20 @@ def to_convention(power_w: Any, from_convention: str, to_convention: str) -> Any
     """把功率从一种口径换算到另一种口径。
 
     相同口径时**直接返回原对象**，不做复制、不做乘法，保证默认 ``total``
-    路径逐位不变；不同口径时只做一次 ``0.5`` / ``2.0`` 乘法。
+    路径逐位不变；不同口径时只做一次 ``0.5`` / ``2.0`` 乘法。需要换算时
+    序列输入（``list``/``tuple`` 等）先转成 ``float64`` 数组再乘，``ndarray``
+    保持原 ``dtype``，标量保持原类型。
 
     Args:
-        power_w: 功率数组（``numpy.ndarray``）或标量。
+        power_w: 功率数组（``numpy.ndarray``）、序列或标量。
         from_convention: 输入的功率口径。
         to_convention: 目标功率口径。
 
     Returns
     -------
         换算后的功率；``from_convention == to_convention`` 时是 ``power_w``
-        本身（同一对象）。
+        本身（同一对象）。需要换算时 ``list``/``tuple`` 返回
+        ``numpy.ndarray``。
 
     Raises
     ------
@@ -153,4 +158,10 @@ def to_convention(power_w: Any, from_convention: str, to_convention: str) -> Any
     if source == target:
         return power_w
     # 目标坐标相对源坐标的比值：total -> per_pol 是 0.5，反向是 2.0。
-    return power_w * (launch_power_scale(target) / launch_power_scale(source))
+    factor = launch_power_scale(target) / launch_power_scale(source)
+    if isinstance(power_w, np.ndarray) or np.isscalar(power_w):
+        # ndarray 保持 dtype 与逐位结果；标量保持原类型，避免把 float 变成
+        # 0-d 数组而改变调用方的类型假设。
+        return power_w * factor
+    # list 的 ``* float`` 是重复语义（直接抛 TypeError），必须先转数组。
+    return np.asarray(power_w, dtype=np.float64) * factor

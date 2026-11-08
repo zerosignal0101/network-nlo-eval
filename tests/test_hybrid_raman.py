@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -653,6 +655,22 @@ def test_invalid_signal_polarizations_is_rejected() -> None:
         _solver([], signal_polarizations=0)
     with pytest.raises(ValueError, match="signal_polarizations"):
         make_model("hybrid_raman_paper", CASE, signal_polarizations=0)
+
+
+def test_signal_polarizations_two_warns_that_per_pol_is_not_end_to_end() -> None:
+    """Hybrid 没有 launch/ASE 口径，非 1 的偏振数只能是对照，必须告警。"""
+    with pytest.warns(UserWarning, match="does not implement an end-to-end"):
+        make_model("hybrid_raman_paper", CASE, signal_polarizations=2)
+    options = dict(HYBRID_RAMAN_PAPER_MODEL_INFO.options)
+    assert "not end-to-end per_pol" in options["signal_polarizations"]
+
+
+def test_default_signal_polarizations_does_not_warn_about_the_per_pol_gap() -> None:
+    """默认 signal_polarizations=1 不触发该 warning（默认路径静默）。"""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        make_model("hybrid_raman_paper", CASE)
+    assert not [item for item in caught if "end-to-end per-polarization" in str(item.message)]
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,7 @@ DOI:10.1109/JLT.2024.3439999.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 
 import numpy as np
@@ -462,8 +463,16 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
             "RamanGainModel instance or a table file path.",
         ),
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
-        ("raman_temperature_k", "Fibre temperature used by the spontaneous Raman factor. Default 300 K."),
-        ("raman_peak_gain_coefficient_m_per_w", "Peak local Raman gain rate before A_eff division. Default 6e-14."),
+        (
+            "raman_temperature_k",
+            "Fibre temperature used by the spontaneous Raman factor. Default 300 K (None). "
+            "An explicit value overrides a gain table file and warns.",
+        ),
+        (
+            "raman_peak_gain_coefficient_m_per_w",
+            "Peak local Raman gain rate before A_eff division. Default 6e-14 (None). "
+            "An explicit value overrides a gain table file and warns.",
+        ),
         ("include_isrs", "Include inter-channel ISRS in the coupled ODE. Default True."),
         ("fixed_point_iterations", "Maximum BW-pump fixed-point iterations. Default 24."),
         ("nli_form", "'paper' (Eq. 6-9 closed form, default), 'integral' (Eq. 6-8 baseline) or 'pcfm' (legacy)."),
@@ -481,7 +490,9 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
             "signal_polarizations",
             "Polarizations represented by each ODE signal state. Default 1 (historical per-polarization "
             "drive, bit-for-bit unchanged). 2 drives the coupling with the dual-polarization total signal "
-            "power, matching the physical waveform pump-depletion drive.",
+            "power, matching the physical waveform pump-depletion drive. This model declares no "
+            "launch_power_convention and does not scale EDFA/booster ASE, so a value other than 1 is a "
+            "mixed-coordinate comparison control and warns at construction; it is not end-to-end per_pol.",
         ),
         (
             "pump_pump_raman",
@@ -527,8 +538,13 @@ class HybridRamanPaperModel(PCFMModel):
             Raman ASE of Eq. (4).  Mutually exclusive with an instance or a
             file path.
         raman_ase: Include the Raman ASE before the EDFA.
-        raman_temperature_k: Fibre temperature (K).
+        raman_temperature_k: Fibre temperature (K).  ``None`` (default) means
+            300 K; an explicit value is a calibration override and warns for
+            file-backed gain tables, even when it equals 300.0.
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate.
+            ``None`` (default) means ``6e-14``; an explicit value is a
+            calibration override and warns for file-backed gain tables, even
+            when it equals 6e-14.
         include_isrs: Include inter-channel ISRS in the ODE.
         fixed_point_iterations: Maximum BW-pump fixed-point iterations.
         nli_form: ``"paper"`` (default), ``"integral"`` or ``"pcfm"``.
@@ -546,7 +562,11 @@ class HybridRamanPaperModel(PCFMModel):
             state.  ``1`` (default) is the historical per-polarization drive
             and keeps the old results bit-for-bit; ``2`` uses the
             dual-polarization total signal power as the coupling drive, which
-            is the physical waveform convention.
+            is the physical waveform convention.  This model declares **no**
+            ``launch_power_convention`` and does not scale the EDFA/booster
+            ASE, so ``2`` is a pump-depletion comparison control with a mixed
+            coordinate (it warns at construction), not an end-to-end per-pol
+            result.
         pump_pump_raman: Include pump-pump Raman coupling in the coupled ODE.
             ``True`` (default) keeps the historical behaviour; ``False`` is the
             pump-pump-off control convention of the C+L residual audit.
@@ -569,8 +589,8 @@ class HybridRamanPaperModel(PCFMModel):
         raman_gain_model: str | RamanGainModel = "gaussian",
         raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
         raman_ase: bool = True,
-        raman_temperature_k: float = 300.0,
-        raman_peak_gain_coefficient_m_per_w: float = 6e-14,
+        raman_temperature_k: float | None = None,
+        raman_peak_gain_coefficient_m_per_w: float | None = None,
         include_isrs: bool = True,
         fixed_point_iterations: int = DEFAULT_FIXED_POINT_ITERATIONS,
         nli_form: str = "paper",
@@ -591,6 +611,21 @@ class HybridRamanPaperModel(PCFMModel):
             raise ValueError(f"nli_form must be one of {NLI_FORMS}, got {nli_form!r}.")
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
+        if int(signal_polarizations) != 1:
+            # hybrid 没有 launch_power_convention，也继承 route 的
+            # ase_polarization_scale=1.0；signal_polarizations=2 只放大 ODE 驱动，
+            # ASE 仍是双偏振总量，不能当作端到端 per_pol（不要半支持）。
+            warnings.warn(
+                "hybrid_raman_paper does not implement an end-to-end per-polarization coordinate: "
+                f"signal_polarizations={int(signal_polarizations)} only multiplies the coupled-ODE "
+                "drive and no launch_power_convention is declared, so the EDFA/booster ASE stays a "
+                "dual-polarization total (ase_polarization_scale=1.0) and the SNR is a mixed "
+                "coordinate. This is a pump-depletion comparison control, not a per-pol result. "
+                "Use pcfm_h3_raman(signal_polarizations=2, launch_power_convention='per_pol') for "
+                "an end-to-end per-pol link, or keep signal_polarizations=1.",
+                UserWarning,
+                stacklevel=2,
+            )
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         super().__init__(

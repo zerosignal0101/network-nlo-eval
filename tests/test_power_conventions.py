@@ -107,6 +107,38 @@ def test_to_convention_returns_the_same_scalar_object_when_conventions_match() -
     assert to_convention(value, "total", "total") is value
 
 
+@pytest.mark.parametrize(
+    ("from_convention", "to_convention_value", "source", "factor"),
+    [
+        ("total", "per_pol", [1e-3, 2e-3, 0.0], 0.5),
+        ("per_pol", "total", [0.5e-3, 1e-3, 0.0], 2.0),
+    ],
+)
+def test_to_convention_accepts_lists_when_it_has_to_convert(
+    from_convention: str,
+    to_convention_value: str,
+    source: list[float],
+    factor: float,
+) -> None:
+    """``list`` 输入在需要换算时返回 ``ndarray``，而不是抛 ``TypeError``。"""
+    converted = to_convention(source, from_convention, to_convention_value)
+    assert isinstance(converted, np.ndarray)
+    np.testing.assert_array_equal(converted, np.asarray(source, dtype=np.float64) * factor)
+
+
+def test_to_convention_returns_the_same_list_when_conventions_match() -> None:
+    """相同口径下 ``list`` 也原样返回，不做转换。"""
+    value = [1e-3, 2e-3]
+    assert to_convention(value, "total", "total") is value
+
+
+def test_to_convention_keeps_float32_ndarray_dtype() -> None:
+    """``ndarray`` 换算不改变 dtype，避免无意中的精度/内存变化。"""
+    power = np.array([1e-3, 2e-3], dtype=np.float32)
+    converted = to_convention(power, "total", "per_pol")
+    assert converted.dtype == np.float32
+
+
 def test_to_convention_validates_both_endpoints() -> None:
     """源口径与目标口径都做校验。"""
     power = np.array([1e-3])

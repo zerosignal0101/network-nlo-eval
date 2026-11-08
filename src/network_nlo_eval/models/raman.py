@@ -605,8 +605,8 @@ def resolve_raman_gain_model(
     gain_model: str | os.PathLike[str] | RamanGainModel,
     *,
     table: tuple[Sequence[float], Sequence[float]] | None = None,
-    peak_gain_coefficient_m_per_w: float = DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W,
-    temperature_k: float = 300.0,
+    peak_gain_coefficient_m_per_w: float | None = None,
+    temperature_k: float | None = None,
 ) -> RamanGainModel:
     """把模型层的 ``raman_gain_model`` 选项解析成 :class:`RamanGainModel`。
 
@@ -623,9 +623,12 @@ def resolve_raman_gain_model(
         gain_model: ``"gaussian"``、``"linear"``、``"table"``、增益表文件
             路径，或现成实例。
         table: ``(offsets_hz, gains)``，仅 ``"table"`` 使用。
-        peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)。只在
-            ``gain_model`` 是名称或路径且调用方显式给出非默认值时作为覆盖。
-        temperature_k: 光纤温度 (K)。同上。
+        peak_gain_coefficient_m_per_w: 峰值局部增益率系数 (m/W)。``None``
+            表示“调用方没给”，按模型默认值处理；只要不是 ``None`` 就视为
+            显式标定，对表文件路径同样成立——即使数值恰好等于默认的
+            ``6e-14``，也会登记为 override 并发 ``UserWarning``。
+        temperature_k: 光纤温度 (K)。``None`` 的含义同上；显式传 ``300.0``
+            不会被当成“未传”，表文件里的温度会被覆盖并告警。
 
     Returns
     -------
@@ -650,19 +653,24 @@ def resolve_raman_gain_model(
                 "raman_gain_table must not be given together with a Raman gain table file path; "
                 "the table is read from the file."
             )
+        # None 才是“调用方没给”。用值比较会把“显式等于默认值”误判成未给：
+        # 文件里是 310 K / 5e-14 时，调用方传 300.0 / 6e-14 会静默输给文件。
         overrides: dict[str, float] = {}
-        # 模型构造函数的默认值不能覆盖文件标定；只有调用方显式给出非默认值
-        # 时才转成 override（to_model 会 warning 并记录）。
-        if float(peak_gain_coefficient_m_per_w) != DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W:
+        if peak_gain_coefficient_m_per_w is not None:
             overrides["peak_gain_coefficient_m_per_w"] = float(peak_gain_coefficient_m_per_w)
-        if float(temperature_k) != 300.0:
+        if temperature_k is not None:
             overrides["temperature_k"] = float(temperature_k)
         return RamanGainModel.from_file(gain_model, **overrides)
     return RamanGainModel(
         gain_model=gain_model,
         table=table,
-        peak_gain_coefficient_m_per_w=peak_gain_coefficient_m_per_w,
-        temperature_k=temperature_k,
+        # 只有“没传”才回落到历史默认值，保持名称/内存表路径逐位不变。
+        peak_gain_coefficient_m_per_w=(
+            DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W
+            if peak_gain_coefficient_m_per_w is None
+            else peak_gain_coefficient_m_per_w
+        ),
+        temperature_k=300.0 if temperature_k is None else temperature_k,
     )
 
 

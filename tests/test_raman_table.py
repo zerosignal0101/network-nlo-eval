@@ -527,6 +527,64 @@ def test_calibration_override_warns_and_is_recorded(tmp_path: Path) -> None:
         RamanGainModel.from_file(path, strict_calibration_override=True, temperature_k=310.0)
 
 
+def test_explicit_default_calibration_values_override_the_file_and_warn(tmp_path: Path) -> None:
+    """显式传入等于默认值的标定也要覆盖文件并告警，不能静默输给文件。"""
+    path = _write_json(
+        tmp_path / "table.json",
+        _payload(temperature_k=310.0, peak_gain_coefficient_m_per_w=5e-14),
+    )
+    with pytest.warns(UserWarning, match="overriding calibration"):
+        model = resolve_raman_gain_model(
+            path,
+            temperature_k=300.0,
+            peak_gain_coefficient_m_per_w=6e-14,
+        )
+    assert model.temperature_k == 300.0
+    assert model.peak_gain_coefficient_m_per_w == 6e-14
+    assert model.calibration_overrides == {
+        "temperature_k": 300.0,
+        "peak_gain_coefficient_m_per_w": 6e-14,
+    }
+
+
+def test_omitted_calibration_values_keep_the_file_values_without_warning(tmp_path: Path) -> None:
+    """不传（``None``）或显式传 ``None`` 都表示沿用文件标定，不告警。"""
+    path = _write_json(
+        tmp_path / "table.json",
+        _payload(temperature_k=310.0, peak_gain_coefficient_m_per_w=5e-14),
+    )
+    for kwargs in ({}, {"temperature_k": None, "peak_gain_coefficient_m_per_w": None}):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            model = resolve_raman_gain_model(path, **kwargs)
+        assert model.temperature_k == 310.0
+        assert model.peak_gain_coefficient_m_per_w == 5e-14
+        assert model.calibration_overrides == {}
+        assert not [item for item in caught if issubclass(item.category, UserWarning)]
+
+
+def test_model_forwards_an_explicit_default_calibration_override(tmp_path: Path) -> None:
+    """模型层必须把显式默认值继续当作 override，而不是在自己的默认参数处吞掉。"""
+    path = _write_json(
+        tmp_path / "table.json",
+        _payload(temperature_k=310.0, peak_gain_coefficient_m_per_w=5e-14),
+    )
+    with pytest.warns(UserWarning, match="overriding calibration"):
+        model = make_model(
+            "pcfm_h3_raman",
+            CASE_C,
+            raman_gain_model=path,
+            raman_temperature_k=300.0,
+            raman_peak_gain_coefficient_m_per_w=6e-14,
+        )
+    assert model._raman_gain_model.temperature_k == 300.0
+    assert model._raman_gain_model.peak_gain_coefficient_m_per_w == 6e-14
+    assert model._raman_gain_model.calibration_overrides == {
+        "temperature_k": 300.0,
+        "peak_gain_coefficient_m_per_w": 6e-14,
+    }
+
+
 def test_invalid_model_overrides_are_rejected(tmp_path: Path) -> None:
     """未知 override 与 gain_model/table override 必须报错。"""
     path = _write_json(tmp_path / "table.json", _payload())

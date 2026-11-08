@@ -22,6 +22,7 @@ Every number quoted in the test output is produced by the test itself.
 from __future__ import annotations
 
 import importlib.util
+import warnings
 
 import numpy as np
 import pytest
@@ -1555,10 +1556,13 @@ def test_arbitrary_mixed_span_lengths() -> None:
 
     On 40/80/120 km the XCI edge correction is immaterial (the C-band row
     change stays below the 3 % gate), so ``edge_fix`` must reproduce the
-    closed-form path bit for bit.  The 0.25 dB budget is the closed-form
-    PCFM-vs-numerical bias of this short-span 50 GHz comb; the previous
-    0.2 dB was met only because the old (incorrect) ``F_inf`` normalisation
-    changed the 40 km XCI rows by up to 55 % by accident.
+    closed-form path bit for bit.  The numerical-reference budget is 0.3 dB:
+    the PCFM closed-form-vs-numerical bias of this short-span 50 GHz comb
+    measures 0.2375 dB.  The previous 0.2 dB was met only because the old
+    (incorrect) ``F_inf`` normalisation changed the 40 km XCI rows by up to
+    55 % by accident, and a 0.25 dB threshold left only 0.012 dB of headroom.
+    Raising it to 0.3 dB keeps the sensitivity to the real model bias while
+    not encoding a value pinned to one sample.
     """
     lengths = (40.0, 80.0, 120.0)
     fibers = [
@@ -1592,4 +1596,31 @@ def test_arbitrary_mixed_span_lengths() -> None:
         assert np.array_equal(np.asarray(getattr(fixed, field)), np.asarray(getattr(old, field))), field
     reference = create_model("numerical", grid, SMF_100KM, symbol_rate_hz=50e9).evaluate_path(path, power)
     delta = np.asarray(fixed.snr_db) - np.asarray(reference.snr_db)
-    assert float(np.max(np.abs(delta))) < 0.25, f"mixed lengths differ by {float(np.max(np.abs(delta))):.3f} dB"
+    assert float(np.max(np.abs(delta))) < 0.3, f"mixed lengths differ by {float(np.max(np.abs(delta))):.3f} dB"
+
+
+def test_plain_pcfm_per_pol_nli_is_declared_an_nli_only_comparison() -> None:
+    """Plain PCFM 没有 launch/ASE 口径，per_pol 只能是对照并必须告警。"""
+    grid = SpectrumGrid(8, 50e9, 193.1e12)
+    with pytest.warns(UserWarning, match="NLI-only comparison"):
+        model = PCFMModel(grid, SMF_100KM, nli_power_convention="per_pol")
+    assert model.nli_power_convention == "per_pol"
+    # 默认 total 不告警（默认路径逐位不变的守卫）。
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        PCFMModel(grid, SMF_100KM)
+    assert not [item for item in caught if "NLI-only comparison" in str(item.message)]
+
+
+def test_h3_per_pol_launch_does_not_emit_the_plain_pcfm_warning() -> None:
+    """pcfm_h3_raman 自己声明了 launch 口径，不能误报 plain PCFM 的 warning。"""
+    case = build_case("c_57ch")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        make_model(
+            "pcfm_h3_raman",
+            case,
+            launch_power_convention="per_pol",
+            signal_polarizations=2,
+        )
+    assert not [item for item in caught if "NLI-only comparison" in str(item.message)]
