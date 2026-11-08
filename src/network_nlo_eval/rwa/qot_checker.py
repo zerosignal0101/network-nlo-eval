@@ -125,6 +125,8 @@ class ServiceQoT:
             只有 ``mode="soft"`` 会扣它。
         valid: 路径上所有已接入链路是否都判该信道有效。
         invalid_links: 判该信道无效的链路键（按首次出现顺序去重）。
+        dense_grid_overlap: 路径上已接入的链路是否任一是密集栅格。默认
+            ``False``；只有 ``dense_grid_action="reject"`` 会用它扣可用性。
     """
 
     snr_db: float
@@ -132,6 +134,7 @@ class ServiceQoT:
     soft_margin_db: float = 0.0
     valid: bool = True
     invalid_links: tuple[LinkKey, ...] = ()
+    dense_grid_overlap: bool = False
 
     def effective_snr_db(self, policy: LinkValidityPolicy | None = None) -> float:
         """Apply the validity policy to the scalar SNR.
@@ -149,6 +152,7 @@ class ServiceQoT:
                 np.array([self.valid], dtype=bool),
                 np.array([self.margin_db], dtype=np.float64),
                 np.array([self.soft_margin_db], dtype=np.float64),
+                dense_grid_overlap=self.dense_grid_overlap,
             )[0]
         )
 
@@ -246,6 +250,7 @@ def accumulate_service_snr_detail(
     total_soft_margin_db = 0.0
     valid = True
     invalid_links: list[LinkKey] = []
+    dense_grid_overlap = False
 
     for roadm, cache in hops:
         total_spm += cache.spm.item(channel_idx)
@@ -260,6 +265,8 @@ def accumulate_service_snr_detail(
         if validity_of is not None:
             link_validity = validity_of(roadm, cache)
             if link_validity is not None:
+                # 密集栅格是整条占用谱的属性，任一跳越界就整条路径越界。
+                dense_grid_overlap = dense_grid_overlap or bool(link_validity.dense_grid_overlap)
                 if link_validity.channel_valid(channel_idx):
                     total_margin_db += link_validity.margin_at(channel_idx)
                     total_soft_margin_db += link_validity.soft_margin_at(channel_idx)
@@ -296,6 +303,7 @@ def accumulate_service_snr_detail(
         soft_margin_db=total_soft_margin_db,
         valid=valid,
         invalid_links=tuple(invalid_links),
+        dense_grid_overlap=dense_grid_overlap,
     )
 
 
@@ -311,6 +319,8 @@ class QoTValidator:
     :class:`~network_nlo_eval.rwa.validity.LinkValidity`，并按策略修正 SNR。
     默认两者都不给，判定与接入前逐位一致。``mode="soft"`` 只扣倾斜软 margin，
     不改变 ``valid`` / ``flagged``，也不扣 ``margin_db``。
+    ``dense_grid_action="reject"`` 额外把密集栅格信道判为不可用；默认
+    ``"flag"`` 只记录标志，判定不变。
 
     入纤功率口径（任务 O2 / X）：``NetworkState.launch_power_profile_w``、
     ``ServiceRequest.launch_power_w`` 与 provider 的入参都按构造时的

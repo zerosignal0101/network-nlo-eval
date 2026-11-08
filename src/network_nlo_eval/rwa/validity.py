@@ -11,6 +11,9 @@
   不改 ``valid`` / ``flagged``，也不把 informational 分数当成可用性门槛。
   它只扣 :attr:`LinkValidity.soft_margin_db`，不碰 ``margin_db``；``degrade``
   的既有语义因此保持不变。
+* **密集栅格默认只 flag**：``dense_grid_action`` 默认 ``"flag"``，与接入前
+  逐位一致；显式 ``"reject"`` 才把 ``dense_grid_overlap`` 的信道判为无效。
+  它只改可用性，不改点值，也与 ``dense_grid_penalty_db``（降级 margin）正交。
 * **非有限 SNR 永不算合格**：任何启用的模式都会把 ``NaN`` / ``-inf`` 的 SNR 映射为
   ``-inf``。这是 ``NaN < requirement`` 为 ``False`` 那个静默通过缺陷的唯一防线。
 * **状态隔离**：:class:`LinkValidity` 是冻结值对象，内部数组在构造时拷贝并置为
@@ -55,6 +58,7 @@ from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
     "ChannelValidity",
+    "DenseGridAction",
     "H3LinkValidityProvider",
     "InvalidChannelPolicy",
     "LinkValidity",
@@ -164,6 +168,22 @@ class InvalidChannelPolicy(StrEnum):
     SOFT = "soft"
 
 
+class DenseGridAction(StrEnum):
+    """密集栅格重叠（``dense_grid_overlap``）的处理动作。
+
+    Attributes
+    ----------
+        FLAG: 只记录密集栅格标志，不改变任何可用性判定（默认，保持历史行为）。
+        REJECT: 把密集栅格覆盖的信道判为无效。它只做可用性判定，不改变点值
+            SNR；后续按 :class:`InvalidChannelPolicy` 的既有模式落地：``flag``
+            仍然只审计（SNR 不变，但报告的有效性为 ``False``），``reject`` /
+            ``degrade`` / ``soft`` 把该信道压成 ``-inf``。
+    """
+
+    FLAG = "flag"
+    REJECT = "reject"
+
+
 @dataclass(frozen=True)
 class LinkValidityPolicy:
     """网络级有效性接入的显式开关。
@@ -178,17 +198,24 @@ class LinkValidityPolicy:
             缩放它在 ``mode="soft"`` 中实际扣除的量，所以只有显式 opt-in 才会
             改变数值。推荐值见
             :data:`TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED`（1.933 dB）。
+        dense_grid_action: ``"flag"`` / ``"reject"``。默认 ``"flag"``：密集栅格
+            只是标志，可用性与历史逐位一致。``"reject"`` 在策略已启用
+            （``mode != "off"``）时把 ``dense_grid_overlap`` 的信道标为无效。
+            它与 :attr:`~network_nlo_eval.models.uncertainty.H3UncertaintyConfig.dense_grid_penalty_db`
+            正交：penalty 是降级 margin，本动作是可用性判定。
 
     Raises
     ------
-        ValueError: ``mode`` 不是上述五个取值之一，或满量程不是有限非负数。
+        ValueError: ``mode`` 不是上述五个取值之一，``dense_grid_action`` 不是
+            ``"flag"`` / ``"reject"``，或满量程不是有限非负数。
     """
 
     mode: InvalidChannelPolicy | str = InvalidChannelPolicy.OFF
     soft_margin_full_scale_db: float = TILT_SOFT_MARGIN_FULL_DB
+    dense_grid_action: DenseGridAction | str = DenseGridAction.FLAG
 
     def __post_init__(self) -> None:
-        """把字符串归一化成枚举，并拒绝未知策略或非法满量程。"""
+        """把字符串归一化成枚举，并拒绝未知策略、未知密集动作或非法满量程。"""
         try:
             normalized = InvalidChannelPolicy(self.mode)
         except ValueError:
@@ -197,6 +224,14 @@ class LinkValidityPolicy:
                 f"unknown validity policy {self.mode!r}; expected one of {allowed}."
             ) from None
         object.__setattr__(self, "mode", normalized)
+        try:
+            dense_action = DenseGridAction(self.dense_grid_action)
+        except ValueError:
+            allowed = [action.value for action in DenseGridAction]
+            raise ValueError(
+                f"unknown dense grid action {self.dense_grid_action!r}; expected one of {allowed}."
+            ) from None
+        object.__setattr__(self, "dense_grid_action", dense_action)
         scale = float(self.soft_margin_full_scale_db)
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError(
@@ -208,6 +243,48 @@ class LinkValidityPolicy:
     def enabled(self) -> bool:
         """是否启用了有效性接入（``mode != "off"``）。"""
         return self.mode is not InvalidChannelPolicy.OFF
+
+    @property
+    def rejects_dense_grid(self) -> bool:
+        """``dense_grid_action="reject"`` 且策略已启用。"""
+        return self.enabled and self.dense_grid_action is DenseGridAction.REJECT
+
+    def effective_valid(
+        self,
+        valid: NDArrayBool,
+        dense_grid_overlap: bool | NDArrayBool = False,
+    ) -> NDArrayBool:
+        """Return the availability mask this policy actually decides on.
+
+        ``mode="off"`` 与默认的 ``dense_grid_action="flag"`` 都原样返回
+        ``valid``（同一个数组），所以默认路径不做任何算术。只有显式
+        ``dense_grid_action="reject"`` 才会把密集栅格覆盖的信道扣成 ``False``，
+        且只影响可用性，不改变 SNR 点值。
+
+        Args:
+            valid: ``(N,)`` 物理/预算判定给出的有效性。
+            dense_grid_overlap: 该占用谱是否为密集栅格；标量或 ``(N,)`` 数组。
+
+        Returns
+        -------
+            ``(N,)`` 用于策略判定的有效性。
+
+        Raises
+        ------
+            ValueError: ``dense_grid_overlap`` 既不是标量也不是与 ``valid``
+                同形状的一维数组。
+        """
+        values = np.asarray(valid, dtype=bool)
+        if not self.rejects_dense_grid:
+            return values
+        dense = np.asarray(dense_grid_overlap, dtype=bool)
+        if dense.ndim > 1 or dense.shape not in ((), values.shape):
+            raise ValueError(
+                f"dense_grid_overlap must be a scalar or have shape {values.shape}, got {dense.shape}."
+            )
+        if not bool(np.any(dense)):
+            return values
+        return values & ~dense
 
     def scale_soft_margin(self, soft_margin_db: NDArrayFloat) -> NDArrayFloat:
         """Rescale stored default-scale soft margins to this policy's full scale.
@@ -233,6 +310,8 @@ class LinkValidityPolicy:
         valid: NDArrayBool,
         margin_db: NDArrayFloat,
         soft_margin_db: NDArrayFloat | None = None,
+        *,
+        dense_grid_overlap: bool | NDArrayBool = False,
     ) -> NDArrayFloat:
         """Apply the policy to an SNR vector.
 
@@ -245,16 +324,24 @@ class LinkValidityPolicy:
             soft_margin_db: ``(N,)`` 倾斜软 margin (dB)；``None`` 视为全 0。
                 只有 ``mode="soft"`` 会读这个参数，且会先按
                 :attr:`soft_margin_full_scale_db` 缩放。
+            dense_grid_overlap: 该占用谱是否为密集栅格；标量或 ``(N,)``。
+                只有 ``dense_grid_action="reject"`` 会读它，把对应信道的
+                有效性扣成 ``False`` 后交给 ``mode`` 的既有语义；默认
+                ``"flag"`` 时完全不参与。
 
         Returns
         -------
             ``(N,)`` 用于阈值比较的有效 SNR。``off`` 原样返回输入数组。
         """
+        values = np.asarray(snr_db, dtype=np.float64)
+        mode = InvalidChannelPolicy(self.mode)
+        if mode is InvalidChannelPolicy.OFF:
+            return values
         return _effective_snr(
-            np.asarray(snr_db, dtype=np.float64),
-            np.asarray(valid, dtype=bool),
+            values,
+            self.effective_valid(valid, dense_grid_overlap),
             np.asarray(margin_db, dtype=np.float64),
-            InvalidChannelPolicy(self.mode),
+            mode,
             None if soft_margin_db is None else self.scale_soft_margin(soft_margin_db),
         )
 
@@ -364,8 +451,9 @@ class LinkValidity:
         fingerprint: 占用谱指纹，见 :func:`occupancy_fingerprint`。
         link_key: 所属链路键；手工构造的测试对象可以为 ``None``。
         dense_grid_overlap: 占用谱是否为密集栅格（信道间隔小于带宽）。它只是
-            域审计标志（与预算的 ``flagged`` 一致），不改变 ``valid``；需要额外
-            余量时显式使用
+            域审计标志，不改变本报告存储的 ``valid``；``reject`` 要在策略层
+            显式打开（见 :attr:`LinkValidityPolicy.dense_grid_action`）。需要
+            额外余量时显式使用
             :attr:`~network_nlo_eval.models.uncertainty.H3UncertaintyConfig.dense_grid_penalty_db`。
     """
 
@@ -464,6 +552,22 @@ class LinkValidity:
         """该信道的倾斜软 margin (dB)。"""
         return float(self.soft_margin_db[channel_idx])
 
+    def effective_valid(self, policy: LinkValidityPolicy | None = None) -> NDArrayBool:
+        """该报告在给定策略下的可用性。
+
+        与 :attr:`valid` 的区别只在 ``policy.dense_grid_action="reject"``：
+        此时 ``dense_grid_overlap`` 为真的信道返回 ``False``。默认策略
+        （``off`` 或 ``flag`` 动作）原样返回 :attr:`valid`。
+
+        Args:
+            policy: 策略；``None`` 等价于默认 ``LinkValidityPolicy()``。
+
+        Returns
+        -------
+            ``(N,)`` 用于可用性判定的有效标志。
+        """
+        return (policy or LinkValidityPolicy()).effective_valid(self.valid, self.dense_grid_overlap)
+
     def adjusted_snr_db(
         self,
         snr_db: NDArrayFloat,
@@ -486,7 +590,13 @@ class LinkValidity:
         values = np.asarray(snr_db, dtype=np.float64)
         if values.shape != self.valid.shape:
             raise ValueError(f"snr_db shape {values.shape} does not match the report {self.valid.shape}.")
-        return (policy or LinkValidityPolicy()).apply(values, self.valid, self.margin_db, self.soft_margin_db)
+        return (policy or LinkValidityPolicy()).apply(
+            values,
+            self.valid,
+            self.margin_db,
+            self.soft_margin_db,
+            dense_grid_overlap=self.dense_grid_overlap,
+        )
 
     @classmethod
     def from_budget(
@@ -570,11 +680,14 @@ class ChannelValidity:
         valid: ``(N,)`` 该信道在整条路径上是否可用。
         margin_db: ``(N,)`` 路径级加性 margin (dB)。
         soft_margin_db: ``(N,)`` 路径级倾斜软 margin (dB)；无效链路不贡献。
+        dense_grid_overlap: 路径上任一链路是否为密集栅格。``reject`` 作用在
+            整条路径的可用性上，与逐链路报告的关系同 :class:`LinkValidity`。
     """
 
     valid: NDArrayBool
     margin_db: NDArrayFloat
     soft_margin_db: NDArrayFloat | None = None
+    dense_grid_overlap: bool = False
 
     def __post_init__(self) -> None:
         """Copy and freeze the arrays.
@@ -611,6 +724,7 @@ class ChannelValidity:
         object.__setattr__(self, "valid", valid)
         object.__setattr__(self, "margin_db", margin)
         object.__setattr__(self, "soft_margin_db", soft)
+        object.__setattr__(self, "dense_grid_overlap", bool(self.dense_grid_overlap))
 
     @classmethod
     def combine(cls, links: Sequence[LinkValidity], num_channels: int) -> ChannelValidity:
@@ -622,7 +736,7 @@ class ChannelValidity:
 
         Returns
         -------
-            聚合后的逐信道有效性。
+            聚合后的逐信道有效性。``dense_grid_overlap`` 取各链路的逻辑或。
 
         Raises
         ------
@@ -631,6 +745,7 @@ class ChannelValidity:
         valid = np.ones(num_channels, dtype=bool)
         margin = np.zeros(num_channels, dtype=np.float64)
         soft = np.zeros(num_channels, dtype=np.float64)
+        dense = False
         for link in links:
             if link.num_channels != num_channels:
                 raise ValueError(
@@ -639,7 +754,8 @@ class ChannelValidity:
             valid &= link.valid
             margin += np.where(link.valid, np.where(np.isfinite(link.margin_db), link.margin_db, 0.0), 0.0)
             soft += np.where(link.valid, link.soft_margin_db, 0.0)
-        return cls(valid=valid, margin_db=margin, soft_margin_db=soft)
+            dense = dense or bool(link.dense_grid_overlap)
+        return cls(valid=valid, margin_db=margin, soft_margin_db=soft, dense_grid_overlap=dense)
 
     def adjusted_snr_db(
         self,
@@ -663,7 +779,17 @@ class ChannelValidity:
         values = np.asarray(snr_db, dtype=np.float64)
         if values.shape != self.valid.shape:
             raise ValueError(f"snr_db shape {values.shape} does not match the verdict {self.valid.shape}.")
-        return (policy or LinkValidityPolicy()).apply(values, self.valid, self.margin_db, self.soft_margin_db)
+        return (policy or LinkValidityPolicy()).apply(
+            values,
+            self.valid,
+            self.margin_db,
+            self.soft_margin_db,
+            dense_grid_overlap=self.dense_grid_overlap,
+        )
+
+    def effective_valid(self, policy: LinkValidityPolicy | None = None) -> NDArrayBool:
+        """该路径在给定策略下的可用性（``dense_grid_action="reject"`` 时扣密集栅格）。"""
+        return (policy or LinkValidityPolicy()).effective_valid(self.valid, self.dense_grid_overlap)
 
 
 class LinkValidityProvider(Protocol):

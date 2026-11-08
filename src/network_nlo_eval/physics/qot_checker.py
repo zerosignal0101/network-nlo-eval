@@ -52,7 +52,8 @@ def apply_link_validity(
     -------
         新的度数字典；``off`` 时不新增键。启用的模式额外暴露
         ``"valid"`` / ``"margin_db"`` / ``"soft_margin_db"`` 供审计，但不改写
-        输入字典。
+        输入字典。``"valid"`` 是策略口径的可用性：``dense_grid_action="reject"``
+        时密集栅格信道为 ``False``，即使 ``mode="flag"`` 不改 SNR。
 
     Raises
     ------
@@ -66,7 +67,7 @@ def apply_link_validity(
         return dict(metrics)
     adjusted = dict(metrics)
     adjusted["snr"] = validity.adjusted_snr_db(snr, policy)
-    adjusted["valid"] = np.array(validity.valid, dtype=bool, copy=True)
+    adjusted["valid"] = np.array(validity.effective_valid(policy), dtype=bool, copy=True)
     adjusted["margin_db"] = np.array(validity.margin_db, dtype=np.float64, copy=True)
     adjusted["soft_margin_db"] = np.array(
         policy.scale_soft_margin(validity.soft_margin_db), dtype=np.float64, copy=True
