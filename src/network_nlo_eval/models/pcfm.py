@@ -2679,6 +2679,25 @@ class PCFMModel(RouteModel):
             nli_power_convention=self.nli_power_convention,
         )
 
+    @property
+    def physical_power_scale(self) -> float:
+        """Ratio between the physical total power and one ``power_in_w`` entry.
+
+        The auto SPP-step heuristic compares the launch power with a fixed dBm
+        threshold, which only means the same thing in every coordinate if the
+        threshold is expressed in *physical total* power.  Under
+        ``nli_power_convention="per_pol"`` each entry of ``power_in_w`` is one
+        polarization, i.e. half of the physical total, so the peak has to be
+        doubled before it is turned into dBm.  Subclasses whose launch and NLI
+        conventions may disagree override this with the factor that matches
+        their ISRS drive.
+
+        Returns
+        -------
+            ``2.0`` for a per-polarization coordinate, ``1.0`` otherwise.
+        """
+        return 2.0 if self.nli_power_convention == "per_pol" else 1.0
+
     def _reset_validity(self) -> None:
         """Forget the validity state of the previous path."""
         self.last_span_validity = []
@@ -2733,7 +2752,10 @@ class PCFMModel(RouteModel):
         :attr:`last_validity_flagged` and :attr:`last_validity_confidence`.
         """
         if self.spp_steps == "auto":
-            peak_dbm = 10.0 * np.log10(max(float(np.max(power_in_w)), 1e-30) * 1e3)
+            # 阈值是物理总功率的 dBm：per_pol 口径下输入只是单偏振功率，先乘
+            # 倍数再取峰值，否则同一物理链路会被判成低功率而选 12 步。
+            peak_power_w = max(float(np.max(power_in_w)), 1e-30) * self.physical_power_scale
+            peak_dbm = 10.0 * np.log10(peak_power_w * 1e3)
             wanted = 12 if peak_dbm <= 0.0 else DEFAULT_SPP_STEPS
             if wanted != self._active_spp_steps:
                 self._active_spp_steps = wanted

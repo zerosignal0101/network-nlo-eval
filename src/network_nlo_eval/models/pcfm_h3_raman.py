@@ -1007,6 +1007,23 @@ class PCFH3RamanModel(PCFMModel):
             return 0.5
         return 1.0
 
+    @property
+    def physical_power_scale(self) -> float:
+        """Ratio between the physical total power and one ``power_in_w`` entry.
+
+        The launch coordinate is what decides how much physical power one
+        ``power_in_w`` entry carries, so this follows
+        ``launch_power_convention`` and not the NLI convention.  That mirrors
+        :meth:`PCFH3RamanSpanKernel._spp_drive_scale`: the ISRS profile is
+        driven by the physical dual-polarization power even when the NLI
+        kernels are already fed in the total coordinate.
+
+        Returns
+        -------
+            ``2.0`` for a per-polarization launch, ``1.0`` otherwise.
+        """
+        return 2.0 if self._launch_power_convention == "per_pol" else 1.0
+
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFH3RamanSpanKernel:
         """Build the profile-aware kernel of this fibre."""
         if self._h3_raman_pumps is not None:
