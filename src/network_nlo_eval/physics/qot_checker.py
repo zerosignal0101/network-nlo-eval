@@ -68,7 +68,9 @@ def apply_link_validity(
     adjusted["snr"] = validity.adjusted_snr_db(snr, policy)
     adjusted["valid"] = np.array(validity.valid, dtype=bool, copy=True)
     adjusted["margin_db"] = np.array(validity.margin_db, dtype=np.float64, copy=True)
-    adjusted["soft_margin_db"] = np.array(validity.soft_margin_db, dtype=np.float64, copy=True)
+    adjusted["soft_margin_db"] = np.array(
+        policy.scale_soft_margin(validity.soft_margin_db), dtype=np.float64, copy=True
+    )
     return adjusted
 
 

@@ -43,9 +43,16 @@ import numpy as np
 
 from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.base import MultiSpanOpticalPath, PathQoTResult, QoTModel
-from network_nlo_eval.models.pcfm import SCI_X_SERIES_SWITCH, PCFMSpanKernel, _xci_validity_s
+from network_nlo_eval.models.pcfm import (
+    DENSE_GRID_SPACING_RATIO,
+    SCI_X_SERIES_SWITCH,
+    PCFMSpanKernel,
+    _xci_validity_s,
+    dense_grid_metrics,
+)
 
 __all__ = [
+    "DENSE_GRID_SPACING_RATIO",
     "H3_RESIDUAL_TABLE",
     "H3_STATISTICAL_TABLE",
     "H3_STRONG_TILT_RESIDUAL",
@@ -56,6 +63,7 @@ __all__ = [
     "ValidityReport",
     "classify_bandwidth",
     "classify_pump_mode",
+    "dense_grid_metrics",
     "estimate_h3_error_budget",
     "select_residual_entry",
     "span_validity",
@@ -229,6 +237,13 @@ class H3UncertaintyConfig:
         validity_penalty_db: Additive margin at zero confidence, scaled by
             ``1 - confidence``.
         strong_tilt_db: Tilt above which the strong-tilt residual row applies.
+        dense_grid_penalty_db: Additive margin added to every active channel
+            when the comb is a dense grid (channel spacing below the
+            bandwidth).  Defaults to ``0``: the flag is reported but the
+            default margin is not moved.  The fifth-round matrix measured H3
+            optimism of 1.52 dB at 50 GHz and 2.48 dB at 37.5 GHz against a
+            1.41 dB narrow margin, so 1.1 dB covers the observed gap and is the
+            recommended opt-in value.
     """
 
     k_sigma: float = DEFAULT_K_SIGMA
@@ -237,6 +252,7 @@ class H3UncertaintyConfig:
     statistical_scale: float = 1.0
     validity_penalty_db: float = DEFAULT_VALIDITY_PENALTY_DB
     strong_tilt_db: float = DEFAULT_STRONG_TILT_DB
+    dense_grid_penalty_db: float = 0.0
 
     def __post_init__(self) -> None:
         """Reject negative scales; a negative margin has no safety meaning."""
@@ -250,6 +266,8 @@ class H3UncertaintyConfig:
             raise ValueError(f"validity_penalty_db must be >= 0, got {self.validity_penalty_db}.")
         if self.strong_tilt_db < 0.0:
             raise ValueError(f"strong_tilt_db must be >= 0, got {self.strong_tilt_db}.")
+        if self.dense_grid_penalty_db < 0.0:
+            raise ValueError(f"dense_grid_penalty_db must be >= 0, got {self.dense_grid_penalty_db}.")
 
 
 @dataclass(frozen=True)
@@ -311,6 +329,16 @@ class ValidityReport:
             ``flagged`` or ``confidence``; a network layer may map it to an
             additive soft margin.  The default 1 means "no information" and
             produces a zero soft margin.
+        min_channel_spacing_hz: Closest spacing between active channels (Hz);
+            ``inf`` when fewer than two channels are launched.
+        spacing_to_bandwidth: ``min_channel_spacing_hz / max bandwidth``.
+            Below :data:`~network_nlo_eval.models.pcfm.DENSE_GRID_SPACING_RATIO`
+            the closed-form XCI row is outside its non-overlapping derivation
+            domain.
+        dense_grid_overlap: ``True`` when the occupied spectrum is a dense
+            grid.  It ORs into ``flagged`` for every active channel but never
+            changes ``valid`` or the point SNR; the opt-in
+            :attr:`H3UncertaintyConfig.dense_grid_penalty_db` adds margin.
     """
 
     valid: NDArrayBool
@@ -330,6 +358,9 @@ class ValidityReport:
     band_class: str
     span_count: int
     tilt_confidence_informational: float = 1.0
+    min_channel_spacing_hz: float = float("inf")
+    spacing_to_bandwidth: float = float("inf")
+    dense_grid_overlap: bool = False
 
 
 @dataclass(frozen=True)
@@ -341,10 +372,13 @@ class H3ErrorBudget:
         margin = max(bias, 0) + k_sigma * sqrt(sigma_residual**2
                                                 + sigma_statistical**2)
                  + validity_penalty_db * (1 - confidence)
+                 + dense_grid_penalty_db * [dense grid]
 
     ``max(bias, 0)`` makes an optimistic model pay for its bias and keeps a
     pessimistic model conservative instead of letting it buy a smaller margin.
     Invalid channels get ``margin = inf`` so a caller can never accept them.
+    The dense-grid term is zero by default; the flag alone never moves the
+    margin.
 
     Attributes
     ----------
@@ -420,6 +454,17 @@ class H3ErrorBudget:
                 "band_class": self.validity.band_class,
                 "span_count": int(self.validity.span_count),
                 "tilt_confidence_informational": float(self.validity.tilt_confidence_informational),
+                "min_channel_spacing_hz": (
+                    float(self.validity.min_channel_spacing_hz)
+                    if np.isfinite(self.validity.min_channel_spacing_hz)
+                    else None
+                ),
+                "spacing_to_bandwidth": (
+                    float(self.validity.spacing_to_bandwidth)
+                    if np.isfinite(self.validity.spacing_to_bandwidth)
+                    else None
+                ),
+                "dense_grid_overlap": bool(self.validity.dense_grid_overlap),
             },
             "terms": [
                 {
@@ -732,6 +777,18 @@ def estimate_h3_error_budget(
     tilt_class = "strong" if tilt_db >= cfg.strong_tilt_db else "normal"
     strong_tilt = active & (tilt_class == "strong")
 
+    # 密集栅格：相邻矩形谱重叠，闭式 XCI 的非重叠推导不再成立。只标记，
+    # 不改 valid / 点值 SNR；需要额外余量的调用方显式设置
+    # ``dense_grid_penalty_db``。
+    bandwidth_channels = np.asarray(model.channel_bandwidth_hz_channels, dtype=np.float64)
+    min_spacing_hz, spacing_ratio = dense_grid_metrics(
+        np.asarray(model.f_abs_hz, dtype=np.float64),
+        bandwidth_channels,
+        active,
+    )
+    dense_grid = bool(spacing_ratio < DENSE_GRID_SPACING_RATIO)
+    active_bandwidth = bandwidth_channels[active]
+
     # 泵不收敛是硬失效：点的 NLI 不是解出来的，给任何有限 margin 都会误导。
     # ``+inf`` SNR（零噪声）仍是有限模型能给出的理想结果，只排除 NaN 与 -inf。
     snr_values = np.asarray(result.snr_db, dtype=np.float64)
@@ -753,11 +810,12 @@ def estimate_h3_error_budget(
     )
     sigma = np.hypot(residual_sigma, statistical_sigma)
     penalty = cfg.validity_penalty_db * (1.0 - confidence)
-    margin = np.maximum(residual_bias, 0.0) + cfg.k_sigma * sigma + penalty
+    dense_penalty = cfg.dense_grid_penalty_db if dense_grid else 0.0
+    margin = np.maximum(residual_bias, 0.0) + cfg.k_sigma * sigma + penalty + dense_penalty
     margin = np.where(valid, margin, np.inf)
     margin = np.where(active, margin, 0.0)
 
-    flagged = gated | small_x | low_s | strong_tilt | not_converged
+    flagged = gated | small_x | low_s | strong_tilt | not_converged | (dense_grid & active)
     validity = ValidityReport(
         valid=valid,
         active=active,
@@ -776,9 +834,12 @@ def estimate_h3_error_budget(
         band_class=band_class,
         span_count=len(states),
         tilt_confidence_informational=tilt_confidence_informational,
+        min_channel_spacing_hz=float(min_spacing_hz),
+        spacing_to_bandwidth=float(spacing_ratio),
+        dense_grid_overlap=dense_grid,
     )
 
-    terms = (
+    terms = [
         UncertaintyTerm("model_residual_bias", "bias", residual_bias, entry.source, entry.calibrated),
         UncertaintyTerm("model_residual_spread", "spread", residual_sigma, entry.source, entry.calibrated),
         UncertaintyTerm(
@@ -795,7 +856,17 @@ def estimate_h3_error_budget(
             f"confidence-based penalty at {cfg.validity_penalty_db:.2f} dB full scale",
             False,
         ),
-    )
+    ]
+    if dense_penalty > 0.0:
+        terms.append(
+            UncertaintyTerm(
+                "dense_grid_penalty",
+                "penalty",
+                np.where(active, dense_penalty, 0.0),
+                f"opt-in dense-grid penalty at {cfg.dense_grid_penalty_db:.2f} dB full scale",
+                False,
+            )
+        )
     notes = [
         f"operating point: pump_mode={pump_mode}, band_class={band_class}, tilt={tilt_db:.2f} dB",
         f"residual row: {entry.source}",
@@ -810,6 +881,14 @@ def estimate_h3_error_budget(
         notes.append("XCI edge gate corrected at least one channel; confidence reduced")
     if bool(np.any(strong_tilt)):
         notes.append(f"power tilt {tilt_db:.2f} dB exceeds the strong-tilt threshold {cfg.strong_tilt_db:.2f} dB")
+    if dense_grid:
+        notes.append(
+            f"dense grid: channel spacing {min_spacing_hz / 1e9:.2f} GHz is below the "
+            f"{float(np.max(active_bandwidth)) / 1e9:.2f} GHz bandwidth; the closed-form XCI row "
+            "is outside its non-overlapping derivation domain"
+        )
+    if dense_penalty > 0.0:
+        notes.append(f"dense-grid penalty {cfg.dense_grid_penalty_db:.2f} dB applied (opt-in)")
 
     return H3ErrorBudget(
         model=str(getattr(model.info, "name", type(model).__name__)),
@@ -820,6 +899,6 @@ def estimate_h3_error_budget(
         margin_db=margin,
         k_sigma=cfg.k_sigma,
         validity=validity,
-        terms=terms,
+        terms=tuple(terms),
         notes=tuple(notes),
     )

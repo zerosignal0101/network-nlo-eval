@@ -153,7 +153,7 @@ import numpy as np
 from scipy.integrate import IntegrationWarning
 from scipy.special import sici
 
-from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
+from network_nlo_eval.core.types import NDArrayBool, NDArrayComplex, NDArrayFloat
 from network_nlo_eval.models.base import (
     ModelInfo,
     SpanContext,
@@ -182,6 +182,7 @@ from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm,
 from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
+    "DENSE_GRID_SPACING_RATIO",
     "EGN_A_COEFFICIENTS",
     "EGN_PHI_VALUES",
     "NLI_POWER_CONVENTIONS",
@@ -190,6 +191,7 @@ __all__ = [
     "PCFMSpanKernel",
     "RESOLUTION_PROFILES",
     "SpanValidityReport",
+    "dense_grid_metrics",
     "resolve_nli_power_convention",
     "resolve_resolution_profile",
     "TILT_INFORMATIONAL_KNEE_DB",
@@ -427,6 +429,66 @@ SCI_TAYLOR_CONFIDENCE: float = 0.6
 #: Confidence assigned to a channel below the SCI switch without the branch.
 SCI_UNCORRECTED_CONFIDENCE: float = 0.2
 
+#: Channel spacing below this multiple of the occupied channel bandwidth means
+#: neighbouring rectangular spectra overlap.
+#:
+#: Every closed-form kernel in this module derives the XCI row from the
+#: stretched-island integral of two *disjoint* rectangular spectra.  When the
+#: spacing falls below the bandwidth the guard band disappears and the
+#: derivation no longer describes the evaluated comb: the measured H3 optimism
+#: is 1.5 dB at 64 GBaud / 50 GHz (ratio 0.78) and 2.5 dB at 37.5 GHz
+#: (ratio 0.59), while 75 GHz (1.17) and 100 GHz (1.56) stay inside the
+#: narrow-band budget.  The ratio is therefore a *domain* boundary, not a
+#: calibrated margin, and the report only flags it.
+DENSE_GRID_SPACING_RATIO: float = 1.0
+
+
+def dense_grid_metrics(
+    f_abs_hz: NDArrayFloat,
+    bandwidth_hz: NDArrayFloat,
+    active: NDArrayBool | None = None,
+) -> tuple[float, float]:
+    """Return the closest channel spacing and its ratio to the widest channel.
+
+    Only active channels are considered: an unlaunched channel does not
+    overlap anything.  The ratio is ``min spacing / max bandwidth``; values
+    below :data:`DENSE_GRID_SPACING_RATIO` mean adjacent spectra overlap.  A
+    plan with fewer than two active channels (or a zero bandwidth) reports
+    ``inf`` so it can never be mistaken for a dense grid.
+
+    Args:
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz), any order.
+        bandwidth_hz: ``(N,)`` occupied channel bandwidths (Hz).
+        active: Optional ``(N,)`` boolean mask; ``None`` means every channel.
+
+    Returns
+    -------
+        ``(min_spacing_hz, spacing_to_bandwidth)``; both ``inf`` when there is
+        no pair to compare.
+
+    Raises
+    ------
+        ValueError: The arrays are not one-dimensional or differ in shape.
+    """
+    frequencies = np.asarray(f_abs_hz, dtype=np.float64)
+    bandwidths = np.asarray(bandwidth_hz, dtype=np.float64)
+    if frequencies.ndim != 1 or bandwidths.shape != frequencies.shape:
+        raise ValueError(
+            f"f_abs_hz and bandwidth_hz must be one-dimensional and equal, got {frequencies.shape} "
+            f"and {bandwidths.shape}."
+        )
+    mask = np.ones(frequencies.shape, dtype=bool) if active is None else np.asarray(active, dtype=bool)
+    if mask.shape != frequencies.shape:
+        raise ValueError(f"active must have shape {frequencies.shape}, got {mask.shape}.")
+    selected = np.sort(frequencies[mask])
+    if selected.size < 2:
+        return float("inf"), float("inf")
+    min_spacing = float(np.min(np.diff(selected)))
+    max_bandwidth = float(np.max(bandwidths[mask]))
+    if max_bandwidth <= 0.0:
+        return min_spacing, float("inf")
+    return min_spacing, min_spacing / max_bandwidth
+
 
 @dataclass(frozen=True)
 class SpanValidityReport:
@@ -528,6 +590,19 @@ class SpanValidityReport:
             :data:`TILT_INFORMATIONAL_ZERO_DB`, so a caller can apply a soft
             margin before the hard flag fires.  It never changes ``valid``,
             ``flagged`` or ``confidence``.
+        min_channel_spacing_hz:
+            Closest spacing between two active channels (Hz); ``inf`` when the
+            span carries fewer than two active channels.
+        spacing_to_bandwidth:
+            ``min_channel_spacing_hz / max bandwidth`` over the active
+            channels.  A value below :data:`DENSE_GRID_SPACING_RATIO` means
+            adjacent rectangular spectra overlap and the XCI closed form is
+            outside its derivation domain.
+        dense_grid:
+            ``True`` when ``spacing_to_bandwidth`` is below
+            :data:`DENSE_GRID_SPACING_RATIO`.  It is a domain warning only:
+            it ORs into ``flagged`` for every active channel but never changes
+            ``valid``, ``confidence`` or the NLI itself.
     """
 
     xci_gated: NDArrayFloat
@@ -549,6 +624,9 @@ class SpanValidityReport:
     confidence: NDArrayFloat
     effective_tilt_db: float = 0.0
     tilt_confidence_informational: float = 1.0
+    min_channel_spacing_hz: float = float("inf")
+    spacing_to_bandwidth: float = float("inf")
+    dense_grid: bool = False
 
 
 #: Relative power tolerance under which two span inputs are treated as the
@@ -2129,6 +2207,12 @@ class PCFMSpanKernel:
         valid = ~((material & ~gated) | (sci_below & ~sci_taylor) | tilt_exceeded)
         flagged = material | sci_below | tilt_exceeded
 
+        # 密集栅格只是适用域警告：它把相邻矩形谱重叠的事实标出来，但不改
+        # ``valid``（点值仍是模型给出的有限数）和置信度。
+        min_spacing_hz, spacing_ratio = dense_grid_metrics(self.f_abs_hz, self.b_hz, active)
+        dense_grid = bool(spacing_ratio < DENSE_GRID_SPACING_RATIO)
+        flagged = flagged | (dense_grid & active)
+
         # 未占用信道没有可判定的物理量，也不应被 strict 变成 NaN。
         valid = np.where(active, valid, True)
         flagged = np.where(active, flagged, False)
@@ -2154,6 +2238,9 @@ class PCFMSpanKernel:
             confidence=np.ascontiguousarray(confidence[self.inverse_order]),
             effective_tilt_db=float(tilt_db),
             tilt_confidence_informational=informational_tilt_confidence(tilt_db),
+            min_channel_spacing_hz=float(min_spacing_hz),
+            spacing_to_bandwidth=float(spacing_ratio),
+            dense_grid=dense_grid,
         )
 
     def clear_span_cache(self) -> None:

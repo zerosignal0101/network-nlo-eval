@@ -62,6 +62,7 @@ __all__ = [
     "LinkValidityPolicy",
     "LinkValidityProvider",
     "TILT_SOFT_MARGIN_FULL_DB",
+    "TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED",
     "link_optical_path",
     "occupancy_fingerprint",
     "tilt_soft_margin_db",
@@ -79,6 +80,19 @@ __all__ = [
 #: is deliberately small: it is a soft correction and must never compete with
 #: the hard flag, which is what actually gates validity.
 TILT_SOFT_MARGIN_FULL_DB: float = 1.0
+
+#: Recommended full scale of the informational tilt soft margin (dB).
+#:
+#: The fifth-round accuracy matrix measured the H3 residual at the hard-flag
+#: boundary: 0.244 dB at 10 dB tilt, 0.302 dB at 15 dB and 0.302 dB at 20 dB.
+#: At 15 dB the informational curve has lost ``1 - 0.84375 = 0.15625`` of its
+#: confidence, so the default scale produces only 0.156 dB there -- about half
+#: the measured residual.  Covering it requires
+#: ``0.302 / 0.15625 = 1.9328`` dB; 1.933 dB is the first three-decimal value
+#: that is not below the measurement.  The value is a documented
+#: recommendation, not the default: :class:`LinkValidityPolicy` still starts
+#: at :data:`TILT_SOFT_MARGIN_FULL_DB`, so no existing number moves.
+TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED: float = 1.933
 
 
 def tilt_soft_margin_db(
@@ -157,16 +171,24 @@ class LinkValidityPolicy:
     Args:
         mode: ``"off"`` / ``"flag"`` / ``"reject"`` / ``"degrade"`` / ``"soft"``。
             默认 ``"off"``，即完全不接入；其余四种必须由调用方显式写出。
+        soft_margin_full_scale_db: 倾斜软 margin 的满量程 (dB)，默认
+            :data:`TILT_SOFT_MARGIN_FULL_DB`（1.0 dB，连同公式一起保持不变）。
+            ``LinkValidity.soft_margin_db`` 始终按默认满量程存储；本参数按
+            ``soft_margin_full_scale_db / TILT_SOFT_MARGIN_FULL_DB`` 的比例
+            缩放它在 ``mode="soft"`` 中实际扣除的量，所以只有显式 opt-in 才会
+            改变数值。推荐值见
+            :data:`TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED`（1.933 dB）。
 
     Raises
     ------
-        ValueError: ``mode`` 不是上述五个取值之一。
+        ValueError: ``mode`` 不是上述五个取值之一，或满量程不是有限非负数。
     """
 
     mode: InvalidChannelPolicy | str = InvalidChannelPolicy.OFF
+    soft_margin_full_scale_db: float = TILT_SOFT_MARGIN_FULL_DB
 
     def __post_init__(self) -> None:
-        """把字符串归一化成枚举，并拒绝未知策略。"""
+        """把字符串归一化成枚举，并拒绝未知策略或非法满量程。"""
         try:
             normalized = InvalidChannelPolicy(self.mode)
         except ValueError:
@@ -175,11 +197,35 @@ class LinkValidityPolicy:
                 f"unknown validity policy {self.mode!r}; expected one of {allowed}."
             ) from None
         object.__setattr__(self, "mode", normalized)
+        scale = float(self.soft_margin_full_scale_db)
+        if not np.isfinite(scale) or scale < 0.0:
+            raise ValueError(
+                f"soft_margin_full_scale_db must be finite and >= 0, got {self.soft_margin_full_scale_db!r}."
+            )
+        object.__setattr__(self, "soft_margin_full_scale_db", scale)
 
     @property
     def enabled(self) -> bool:
         """是否启用了有效性接入（``mode != "off"``）。"""
         return self.mode is not InvalidChannelPolicy.OFF
+
+    def scale_soft_margin(self, soft_margin_db: NDArrayFloat) -> NDArrayFloat:
+        """Rescale stored default-scale soft margins to this policy's full scale.
+
+        Args:
+            soft_margin_db: ``(N,)`` 软 margin (dB)，按
+                :data:`TILT_SOFT_MARGIN_FULL_DB` 存储。
+
+        Returns
+        -------
+            ``(N,)`` 按比例缩放后的软 margin；满量程为默认值时原样返回输入
+            数组，保证默认路径逐位不变。
+        """
+        values = np.asarray(soft_margin_db, dtype=np.float64)
+        factor = float(self.soft_margin_full_scale_db) / TILT_SOFT_MARGIN_FULL_DB
+        if factor == 1.0:
+            return values
+        return values * factor
 
     def apply(
         self,
@@ -197,7 +243,8 @@ class LinkValidityPolicy:
             valid: ``(N,)`` 有效性标志。
             margin_db: ``(N,)`` 建议 margin (dB)。
             soft_margin_db: ``(N,)`` 倾斜软 margin (dB)；``None`` 视为全 0。
-                只有 ``mode="soft"`` 会读这个参数。
+                只有 ``mode="soft"`` 会读这个参数，且会先按
+                :attr:`soft_margin_full_scale_db` 缩放。
 
         Returns
         -------
@@ -208,7 +255,7 @@ class LinkValidityPolicy:
             np.asarray(valid, dtype=bool),
             np.asarray(margin_db, dtype=np.float64),
             InvalidChannelPolicy(self.mode),
-            None if soft_margin_db is None else np.asarray(soft_margin_db, dtype=np.float64),
+            None if soft_margin_db is None else self.scale_soft_margin(soft_margin_db),
         )
 
 
@@ -308,12 +355,18 @@ class LinkValidity:
             margin；``None`` 等价于全 1（无软 margin）。
         soft_margin_db: 倾斜软 margin (dB)，由
             :func:`tilt_soft_margin_db` 从 ``tilt_confidence_informational``
-            映射；未占用信道为 ``0``。它从不自动生效，只有
-            ``LinkValidityPolicy(mode="soft")`` 才会从 SNR 扣除。
+            按 :data:`TILT_SOFT_MARGIN_FULL_DB` 的默认满量程映射；未占用信道
+            为 ``0``。它从不自动生效，只有 ``LinkValidityPolicy(mode="soft")``
+            才会从 SNR 扣除；策略的 ``soft_margin_full_scale_db`` 会按比例缩放
+            这个存储值（默认 1.0，即不缩放）。
         model: 产生该报告的模型名。
         span_count: 该链路的物理跨数。
         fingerprint: 占用谱指纹，见 :func:`occupancy_fingerprint`。
         link_key: 所属链路键；手工构造的测试对象可以为 ``None``。
+        dense_grid_overlap: 占用谱是否为密集栅格（信道间隔小于带宽）。它只是
+            域审计标志（与预算的 ``flagged`` 一致），不改变 ``valid``；需要额外
+            余量时显式使用
+            :attr:`~network_nlo_eval.models.uncertainty.H3UncertaintyConfig.dense_grid_penalty_db`。
     """
 
     valid: NDArrayBool
@@ -327,6 +380,7 @@ class LinkValidity:
     link_key: LinkKey | None = None
     tilt_confidence_informational: NDArrayFloat | float | None = None
     soft_margin_db: NDArrayFloat | float | None = None
+    dense_grid_overlap: bool = False
 
     def __post_init__(self) -> None:
         """Copy, freeze and validate the per-channel arrays.
@@ -482,6 +536,7 @@ class LinkValidity:
             span_count=int(report.span_count if span_count is None else span_count),
             fingerprint=fingerprint,
             link_key=link_key,
+            dense_grid_overlap=bool(report.dense_grid_overlap),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -498,6 +553,7 @@ class LinkValidity:
             "margin_db": [float(value) if np.isfinite(value) else None for value in self.margin_db],
             "tilt_confidence_informational": [float(value) for value in self.tilt_confidence_informational],
             "soft_margin_db": [float(value) for value in self.soft_margin_db],
+            "dense_grid_overlap": bool(self.dense_grid_overlap),
         }
 
 

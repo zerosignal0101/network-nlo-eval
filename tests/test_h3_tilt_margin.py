@@ -45,6 +45,7 @@ from network_nlo_eval.rwa.qot_checker import (
 )
 from network_nlo_eval.rwa.validity import (
     TILT_SOFT_MARGIN_FULL_DB,
+    TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED,
     ChannelValidity,
     H3LinkValidityProvider,
     InvalidChannelPolicy,
@@ -170,6 +171,31 @@ def test_tilt_soft_margin_handles_scalars_nan_and_bad_scale() -> None:
         tilt_soft_margin_db(0.5, full_scale_db=float("inf"))
 
 
+def test_recommended_full_scale_covers_the_measured_15db_residual() -> None:
+    """推荐满量程 1.933 dB：15 dB 边界的软 margin 不小于实测残差 0.302 dB。
+
+    第五轮矩阵给出的 15 dB 实测残差是 0.302 dB；informational 曲线在 15 dB
+    丢失 0.15625 的置信度，默认 1.0 dB 满量程只能给 0.156 dB。覆盖所需比例
+    0.302 / 0.15625 = 1.9328，推荐值向上取到 1.933。
+    """
+    confidence = informational_tilt_confidence(POWER_TILT_VALIDITY_DB)
+    assert confidence == pytest.approx(0.84375, abs=1e-12)
+    assert TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED >= 0.302 / (1.0 - confidence)
+
+    default_margin = float(tilt_soft_margin_db(confidence))
+    recommended_margin = float(
+        tilt_soft_margin_db(confidence, full_scale_db=TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED)
+    )
+    assert default_margin == pytest.approx(0.15625, abs=1e-12)
+    assert recommended_margin >= 0.302
+    assert recommended_margin == pytest.approx(
+        TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED * (1.0 - confidence), abs=1e-12
+    )
+
+    # 30 dB 处才到满量程，15 dB 只是部分覆盖：这是软 margin 的预期形状。
+    assert recommended_margin < TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED
+
+
 # ---------------------------------------------------------------------------
 # H3 预算 → LinkValidity
 # ---------------------------------------------------------------------------
@@ -278,6 +304,57 @@ def test_soft_mode_requires_an_explicit_opt_in() -> None:
     assert not LinkValidityPolicy().enabled
     with pytest.raises(ValueError, match="unknown validity policy"):
         LinkValidityPolicy(mode="maybe")
+
+
+def test_policy_full_scale_defaults_to_bit_identical_soft_margin() -> None:
+    """满量程默认 1.0：显式 1.0 与省略参数逐位一致，且不影响其他模式。"""
+    report = _validity(4, invalid=(2,), soft_margin_db=0.15625)
+    snr = np.array([20.0, 21.0, 22.0, 23.0])
+
+    default = report.adjusted_snr_db(snr, LinkValidityPolicy(mode="soft"))
+    explicit = report.adjusted_snr_db(
+        snr, LinkValidityPolicy(mode="soft", soft_margin_full_scale_db=TILT_SOFT_MARGIN_FULL_DB)
+    )
+    assert np.array_equal(default, explicit)
+    assert default[[0, 1, 3]] == pytest.approx([20.0 - 0.15625, 21.0 - 0.15625, 23.0 - 0.15625])
+
+    # 满量程只作用于 soft：degrade / reject / flag / off 的数值不受影响。
+    for mode in ("off", "flag", "reject", "degrade"):
+        base = report.adjusted_snr_db(snr, LinkValidityPolicy(mode=mode))
+        scaled = report.adjusted_snr_db(
+            snr, LinkValidityPolicy(mode=mode, soft_margin_full_scale_db=TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED)
+        )
+        assert np.array_equal(base, scaled), mode
+
+
+def test_recommended_policy_full_scale_covers_the_15db_tilt_case() -> None:
+    """端到端：15 dB 倾斜的链路软 margin 在推荐满量程下达到实测残差。"""
+    path = build_path(CASE)
+    model = make_model("pcfm_h3_raman", CASE)
+    power = launch_profile(CASE, tilt_db=POWER_TILT_VALIDITY_DB)
+    result = model.evaluate_path(path, power)
+    budget = estimate_h3_error_budget(model, path, power, result)
+    report = LinkValidity.from_budget(budget)
+    snr = np.asarray(result.snr_db, dtype=np.float64)
+
+    stored = report.soft_margin_at(0)
+    assert stored == pytest.approx(0.15625, abs=1e-9)
+
+    default = report.adjusted_snr_db(snr, LinkValidityPolicy(mode="soft"))
+    recommended = report.adjusted_snr_db(
+        snr,
+        LinkValidityPolicy(mode="soft", soft_margin_full_scale_db=TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED),
+    )
+    assert np.all(snr - default >= 0.15625 - 1e-12)
+    assert np.all(snr - recommended >= 0.302 - 1e-12)
+    assert np.all(recommended <= default)
+
+
+@pytest.mark.parametrize("bad", [-1.0, -1e-9, float("inf"), float("nan")])
+def test_policy_rejects_invalid_full_scale(bad: float) -> None:
+    """负数/非有限满量程没有安全含义，必须明确报错。"""
+    with pytest.raises(ValueError, match="soft_margin_full_scale_db"):
+        LinkValidityPolicy(mode="soft", soft_margin_full_scale_db=bad)
 
 
 # ---------------------------------------------------------------------------

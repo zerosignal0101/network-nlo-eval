@@ -15,10 +15,32 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from network_nlo_eval.benchmarks.cases import build_case, build_path, launch_profile
+from network_nlo_eval.benchmarks.cases import BenchCase, band_edges_hz, build_case, build_path, launch_profile
 from network_nlo_eval.benchmarks.runner import make_model
-from network_nlo_eval.models.pcfm import POWER_TILT_VALIDITY_DB, XCI_EDGE_MATERIALITY
+from network_nlo_eval.models.pcfm import (
+    DENSE_GRID_SPACING_RATIO,
+    POWER_TILT_VALIDITY_DB,
+    XCI_EDGE_MATERIALITY,
+    dense_grid_metrics,
+)
 from network_nlo_eval.network.elements import RamanPumpConfig
+
+
+def _case_with_spacing(spacing_hz: float, power_dbm: float = 6.0) -> BenchCase:
+    """C 波段、64 GBaud、给定栅格间隔的 1 跨算例。"""
+    low, high = band_edges_hz("C")
+    return BenchCase(
+        name=f"dense_{spacing_hz / 1e9:g}",
+        bands="C",
+        num_channels=int(round((high - low) / spacing_hz)) + 1,
+        channel_spacing_hz=spacing_hz,
+        center_frequency_hz=0.5 * (low + high),
+        symbol_rate_hz=64e9,
+        span_length_km=100.0,
+        span_count=1,
+        edfa_noise_figure_db=5.5,
+        total_power_dbm=power_dbm,
+    )
 
 
 def _kernel(case, model_name: str = "pcfm", **options):
@@ -153,6 +175,55 @@ def test_validated_bands_are_not_flagged(case_name: str) -> None:
     # 原始 s 可以低于 switch（最近邻对），但行修正未超过 3 % 的材质门槛。
     assert float(np.max(report.xci_row_correction)) < XCI_EDGE_MATERIALITY
     assert report.power_tilt_db <= POWER_TILT_VALIDITY_DB
+
+
+# ---------------------------------------------------------------------------
+# 密集栅格：必须 flag，但不是硬失效
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("spacing_hz", [37.5e9, 50e9])
+def test_dense_grid_is_flagged_when_spacing_is_below_the_bandwidth(spacing_hz: float) -> None:
+    """64 GBaud 塞进 37.5 / 50 GHz：相邻矩形谱重叠，必须 flag 但不改 valid。"""
+    case = _case_with_spacing(spacing_hz)
+    kernel, length_m, power = _kernel(case)
+    report = kernel.validity_report(length_m, power)
+
+    assert report.dense_grid
+    assert report.spacing_to_bandwidth < DENSE_GRID_SPACING_RATIO
+    assert report.min_channel_spacing_hz == pytest.approx(spacing_hz)
+    assert bool(np.all(report.flagged))
+    # 域警告不是硬失效：点值仍有限，strict 不会丢掉这些信道。
+    assert bool(np.all(report.valid))
+
+
+@pytest.mark.parametrize("spacing_hz", [75e9, 100e9])
+def test_dense_grid_does_not_fire_for_validated_spacings(spacing_hz: float) -> None:
+    """75 / 100 GHz 的 C 栅格在已验证域内，不得误报。"""
+    case = _case_with_spacing(spacing_hz)
+    kernel, length_m, power = _kernel(case)
+    report = kernel.validity_report(length_m, power)
+
+    assert not report.dense_grid
+    assert report.spacing_to_bandwidth > DENSE_GRID_SPACING_RATIO
+    assert report.min_channel_spacing_hz == pytest.approx(spacing_hz)
+    assert not bool(np.any(report.flagged))
+    assert bool(np.all(report.valid))
+
+
+def test_dense_grid_metrics_ignore_inactive_channels_and_bad_shapes() -> None:
+    """未占用信道不参与间距；少于两个活跃信道或非法形状有明确行为。"""
+    spacing, ratio = dense_grid_metrics(np.array([0.0, 50e9, 100e9]), np.full(3, 64e9), np.array([1, 0, 1]))
+    assert spacing == pytest.approx(100e9)
+    assert ratio == pytest.approx(100e9 / 64e9)
+
+    spacing, ratio = dense_grid_metrics(np.array([0.0, 50e9]), np.full(2, 64e9), np.array([1, 0]))
+    assert spacing == float("inf") and ratio == float("inf")
+
+    with pytest.raises(ValueError, match="f_abs_hz"):
+        dense_grid_metrics(np.array([0.0, 1.0]), np.array([1.0]))
+    with pytest.raises(ValueError, match="active"):
+        dense_grid_metrics(np.array([0.0, 1.0]), np.array([1.0, 1.0]), np.array([True]))
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from network_nlo_eval.benchmarks.cases import build_case, build_path, grid_for, launch_profile
+from network_nlo_eval.benchmarks.cases import BenchCase, band_edges_hz, build_case, build_path, grid_for, launch_profile
 from network_nlo_eval.benchmarks.runner import make_model
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
 from network_nlo_eval.models.uncertainty import (
@@ -34,9 +34,28 @@ from network_nlo_eval.models.uncertainty import (
     span_validity,
 )
 from network_nlo_eval.network.elements import EDFAConfig, RamanPumpConfig
+from network_nlo_eval.rwa.validity import LinkValidity
 
 CASE_1 = build_case("scaling_40ch")
 CASE_10 = build_case("c_57ch")
+
+
+def _case_with_spacing(spacing_hz: float, power_dbm: float = 6.0) -> BenchCase:
+    """C 波段、64 GBaud、给定栅格间隔的 1 跨算例。"""
+    low, high = band_edges_hz("C")
+    return BenchCase(
+        name=f"dense_{spacing_hz / 1e9:g}",
+        bands="C",
+        num_channels=int(round((high - low) / spacing_hz)) + 1,
+        channel_spacing_hz=spacing_hz,
+        center_frequency_hz=0.5 * (low + high),
+        symbol_rate_hz=64e9,
+        span_length_km=100.0,
+        span_count=1,
+        edfa_noise_figure_db=5.5,
+        total_power_dbm=power_dbm,
+    )
+
 
 _ARRAY_FIELDS = ("signal_power_w", "spm_noise_w", "xpm_noise_w", "ase_noise_w", "snr_db")
 
@@ -391,6 +410,80 @@ def test_adjusted_snr_and_json_export() -> None:
     assert '"model": "pcfm_h3_raman"' in encoded
     assert len(payload["validity"]["valid"]) == CASE_1.num_channels
     assert len(payload["terms"]) == 4
+    assert payload["validity"]["dense_grid_overlap"] is False
+    assert payload["validity"]["min_channel_spacing_hz"] == pytest.approx(75e9)
+    assert payload["validity"]["spacing_to_bandwidth"] == pytest.approx(75e9 / 64e9)
+
+
+@pytest.mark.parametrize("spacing_hz", [37.5e9, 50e9])
+def test_dense_grid_flags_without_moving_the_default_margin(spacing_hz: float) -> None:
+    """密集栅格只 flag：默认 margin 仍是窄带 1.414 dB，valid 不变。"""
+    case = _case_with_spacing(spacing_hz)
+    path = build_path(case)
+    power = launch_profile(case, 6.0)
+    model = make_model("pcfm_h3_raman", case)
+    result, budget = model.evaluate_path_with_uncertainty(path, power)
+
+    assert budget.validity.dense_grid_overlap
+    assert budget.validity.spacing_to_bandwidth == pytest.approx(spacing_hz / 64e9)
+    assert budget.validity.min_channel_spacing_hz == pytest.approx(spacing_hz)
+    assert bool(np.all(budget.validity.flagged))
+    assert bool(np.all(budget.validity.valid))
+    assert any(note.startswith("dense grid") for note in budget.notes)
+
+    link = LinkValidity.from_budget(budget)
+    assert link.dense_grid_overlap
+    assert link.to_dict()["dense_grid_overlap"] is True
+    assert bool(np.all(link.valid))
+
+
+def test_dense_grid_penalty_is_an_explicit_opt_in() -> None:
+    """1.1 dB 的密集栅格余量只在显式配置时加入，且逐信道相同。"""
+    case = _case_with_spacing(50e9)
+    path = build_path(case)
+    power = launch_profile(case, 6.0)
+    model = make_model("pcfm_h3_raman", case)
+    result = model.evaluate_path(path, power)
+
+    baseline = estimate_h3_error_budget(model, path, power, result)
+    tuned = estimate_h3_error_budget(
+        model,
+        path,
+        power,
+        result,
+        config=H3UncertaintyConfig(dense_grid_penalty_db=1.1),
+    )
+
+    assert len(baseline.terms) == 4
+    assert len(tuned.terms) == 5
+    assert tuned.terms[-1].name == "dense_grid_penalty"
+    assert tuned.margin_db == pytest.approx(baseline.margin_db + 1.1)
+    assert any("dense-grid penalty 1.10 dB applied" in note for note in tuned.notes)
+
+
+@pytest.mark.parametrize("spacing_hz", [75e9, 100e9])
+def test_dense_grid_does_not_fire_or_penalise_validated_spacings(spacing_hz: float) -> None:
+    """75 / 100 GHz 不触发 flag，opt-in 余量也不生效。"""
+    case = _case_with_spacing(spacing_hz)
+    path = build_path(case)
+    power = launch_profile(case, 6.0)
+    model = make_model("pcfm_h3_raman", case)
+    result = model.evaluate_path(path, power)
+
+    baseline = estimate_h3_error_budget(model, path, power, result)
+    tuned = estimate_h3_error_budget(
+        model,
+        path,
+        power,
+        result,
+        config=H3UncertaintyConfig(dense_grid_penalty_db=1.1),
+    )
+
+    assert not baseline.validity.dense_grid_overlap
+    assert baseline.validity.spacing_to_bandwidth > 1.0
+    assert not bool(np.any(baseline.validity.flagged))
+    assert np.array_equal(tuned.margin_db, baseline.margin_db)
+    assert len(tuned.terms) == 4
 
 
 @pytest.mark.parametrize(
@@ -401,6 +494,7 @@ def test_adjusted_snr_and_json_export() -> None:
         {"statistical_scale": -0.1},
         {"validity_penalty_db": -1.0},
         {"strong_tilt_db": -1.0},
+        {"dense_grid_penalty_db": -1.0},
     ],
 )
 def test_negative_config_values_are_rejected(kwargs) -> None:
