@@ -44,6 +44,12 @@ from network_nlo_eval.models.numba_kernels_p1_accel import (
     build_p1_xpm_pair_matrices,
     calc_span_noise_and_power_p1_matvec,
 )
+from network_nlo_eval.models.power_conventions import (
+    ase_polarization_scale as _ase_scale_for_convention,
+)
+from network_nlo_eval.models.power_conventions import (
+    resolve_launch_power_convention,
+)
 from network_nlo_eval.models.route import accumulate_route, apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
@@ -108,19 +114,34 @@ ECZ_MODEL_INFO = ModelInfo(
         ("ode_accel", "'off' | 'cached' | 'matvec'; single-span acceleration tier."),
         ("channel_bandwidth_source", "'symbol_rate' | 'occupied'; per-node B_i definition."),
         ("power_width_mode", "'fixed_power' | 'fixed_psd'; launch-power normalisation."),
+        ("launch_power_convention", "'total' | 'per_pol'; coordinate of power_in_w and outputs."),
     ),
 )
+
 
 class MultiBandISRSGN:
     """多波段 ISRS-GN 模型评估器。
 
     用于快速计算多波段光网络中单跨段或多跨段的传输质量 (QoT)。
+
+    功率坐标由构造参数 ``launch_power_convention`` 决定：
+
+    * ``"total"``（默认）：``power_in_w`` 是每信道双偏振总功率，输出信号、
+      SPM/XPM 与 ASE 也都是总功率坐标。历史路径不做任何乘法，逐位不变。
+    * ``"per_pol"``：``power_in_w`` 是每偏振功率。物理核（SRS 与 NLI）必须由
+      物理总功率 ``2 * P_pol`` 驱动，因为 GN 闭式解的预因子按双偏振总功率
+      推导；出纤信号与 SPM/XPM 再乘 ``0.5`` 回到每偏振坐标。EDFA/ROADM 的增益
+      用同一坐标的入纤功率与 fiber_output 相除（比值与总功率坐标相同），仅
+      新产生的 EDFA/booster ASE 需要 ``ase_polarization_scale=0.5`` 减半。
+
+    两种坐标下 SNR 相同：信号与噪声同比缩放。
     """
 
-    #: 网络层统一查询的功率口径。GN/ECZ 的标称入口一直是每信道双偏振总功率。
+    #: 网络层统一查询的功率口径。默认 ``"total"``；实例可由构造参数覆盖。
     launch_power_convention = "total"
 
-    #: 本模型新产生 ASE 的偏振缩放。``total`` 坐标下恒为 ``1.0``。
+    #: 本模型新产生 ASE 的偏振缩放。``total`` 坐标下恒为 ``1.0``，
+    #: ``per_pol`` 下为 ``0.5``；构造期按口径设置实例属性。
     ase_polarization_scale = 1.0
 
     def __init__(
@@ -133,6 +154,7 @@ class MultiBandISRSGN:
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = CHANNEL_BANDWIDTH_DEFAULT,
         power_width_mode: str = POWER_WIDTH_DEFAULT,
+        launch_power_convention: str | None = None,
     ):
         """初始化 ISRS-GN 评估器。
 
@@ -150,6 +172,14 @@ class MultiBandISRSGN:
             channel_bandwidth_source: 逐信道 ``B_i`` 口径，见
                 :data:`CHANNEL_BANDWIDTH_SOURCES`。
             power_width_mode: 功率归一化口径，见 :data:`POWER_WIDTH_MODES`。
+            launch_power_convention: ``power_in_w`` 与返回值（信号、SPM/XPM、
+                ASE）的功率坐标。``"total"``（基类默认）是每信道双偏振总功率，
+                与历史行为逐位一致；``"per_pol"`` 是每偏振功率，物理核内部
+                按 ``2 * P`` 驱动并减半回每偏振坐标，新产生 ASE 同步乘 ``0.5``。
+                见 :mod:`network_nlo_eval.models.power_conventions`。``None``
+                （默认）继承类属性声明：基类为 ``"total"``，子类可用类属性
+                固定口径；显式传入时校验取值并据此设置
+                :attr:`ase_polarization_scale`。
 
         Raises
         ------
@@ -166,6 +196,18 @@ class MultiBandISRSGN:
             )
         if power_width_mode not in POWER_WIDTH_MODES:
             raise ValueError(f"power_width_mode must be one of {POWER_WIDTH_MODES}, got {power_width_mode!r}.")
+        if launch_power_convention is None:
+            # 继承类属性：基类默认 total；已声明 per_pol 的子类（例如网络级
+            # 测试里的替身）保持自己的口径与 ASE 缩放，不被构造签名覆盖。
+            resolved_convention = resolve_launch_power_convention(type(self).launch_power_convention)
+            resolved_ase_scale = float(type(self).ase_polarization_scale)
+            # 类属性只声明坐标，由子类自己在其 `_calc_span_noise_and_power`
+            # 里完成换算（历史替身的写法）；本类不重复换算。
+            native_conversion = False
+        else:
+            resolved_convention = resolve_launch_power_convention(launch_power_convention)
+            resolved_ase_scale = _ase_scale_for_convention(resolved_convention)
+            native_conversion = True
 
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
@@ -178,6 +220,13 @@ class MultiBandISRSGN:
         self.slots_per_channel = slots_per_channel
         self.channel_bandwidth_source = channel_bandwidth_source
         self.power_width_mode = power_width_mode
+        self.launch_power_convention = resolved_convention
+        #: ``per_pol`` 下新产生 ASE 减半；``total`` 保持 1.0 且不做乘法。
+        self.ase_polarization_scale = resolved_ase_scale
+        #: 是否由本类在核边界做 ``per_pol`` 的 ×2/×0.5 换算。显式传入
+        #: ``launch_power_convention`` 时为 ``True``；``None``（继承类属性）时
+        #: 为 ``False``，把换算留给声明口径的子类实现。
+        self._native_power_conversion = native_conversion
 
         self.connections = list(connections) if connections is not None else None
 
@@ -185,6 +234,22 @@ class MultiBandISRSGN:
         self._p1_xpm_matrices: P1XpmMatrices | None = None
         self._precompute_channel_dependent_properties()
         self._fiber_evaluator_cache: dict[str, MultiBandISRSGN] = {}
+
+    @property
+    def physical_power_scale(self) -> float:
+        """``power_in_w`` 一项对应的物理总功率倍数：原生 ``per_pol`` 为 2.0。
+
+        SRS 与 NLI 闭式解按双偏振总功率推导，因此 ``per_pol`` 坐标下必须先把
+        每偏振功率乘 2 再进核。``total`` 保持 1.0，核不做任何额外乘法，保证
+        历史路径逐位不变。
+
+        只有**显式**传入 ``launch_power_convention="per_pol"`` 的实例才由本类
+        做换算；用类属性声明 ``per_pol`` 的旧子类自行在其单跨核里换算，这里
+        返回 1.0，避免重复乘 2。
+        """
+        if self._native_power_conversion and self.launch_power_convention == "per_pol":
+            return 2.0
+        return 1.0
 
     @property
     def n_nodes(self) -> int:
@@ -466,18 +531,28 @@ class MultiBandISRSGN:
         信道数达到 :data:`MATVEC_MIN_ACTIVE_CHANNELS` 时走矩阵-向量乘，否则落回逐对
         求和。噪声系数不进入本核，也不进入缓存键：ASE 只在放大器一层产生。
 
+        核的输入输出都在评估器的 ``launch_power_convention`` 坐标。``per_pol``
+        时先把入纤功率乘 :attr:`physical_power_scale`（=2）交给按双偏振总功率
+        推导的 SRS/NLI 核，再把出纤信号与 SPM/XPM 减半回每偏振坐标；``total``
+        路径不做任何乘法，逐位保持历史结果。缓存保存的是**核坐标**（物理总
+        功率）的结果，返回前统一换算。
+
         Args:
-            power_in_w: 各信道入纤功率 (W)。
+            power_in_w: 各信道入纤功率 (W)，口径见评估器。
             span_length_m: 跨段长度 (m)。
             n_effective_spans: 有效跨段数，用于 NLI 累积修正。
 
         Returns
         -------
-            出纤功率与 SPM/XPM 噪声，均为与输入不共享内存的新数组。
+            出纤功率与 SPM/XPM 噪声，均为与输入不共享内存的新数组，
+            坐标与评估器一致。
         """
+        power_scale = self.physical_power_scale
+        physical_power_in_w = power_in_w if power_scale == 1.0 else power_in_w * power_scale
+
         if self.ode_accel == "cached":
             cache_key = (
-                power_in_w.tobytes(),
+                physical_power_in_w.tobytes(),
                 float(span_length_m),
                 int(n_effective_spans),
             )
@@ -485,19 +560,19 @@ class MultiBandISRSGN:
             if cached is not None:
                 # 必须返回副本：调用方会原地改动出纤功率数组，交出去会污染缓存。
                 p_out_fiber, s2_spm, s2_xpm = (array.copy() for array in cached)
-                return SpanFiberOutput(p_out_fiber, s2_spm, s2_xpm)
+                return self._span_output_in_convention(p_out_fiber, s2_spm, s2_xpm)
         else:
             cache_key = None
 
-        if self.ode_accel == "matvec" and np.count_nonzero(power_in_w) >= MATVEC_MIN_ACTIVE_CHANNELS:
+        if self.ode_accel == "matvec" and np.count_nonzero(physical_power_in_w) >= MATVEC_MIN_ACTIVE_CHANNELS:
             # matvec 只在活跃信道够多时才有收益，少信道落回逐对求和（二者数值差
             # 在 1e-16 量级，门只影响速度）。
             p_out_fiber, s2_spm, s2_xpm, _ = self._p1_span_matvec(
-                power_in_w, span_length_m, n_effective_spans, self.nf_lin_channels
+                physical_power_in_w, span_length_m, n_effective_spans, self.nf_lin_channels
             )
         else:
             p_out_fiber, s2_spm, s2_xpm, _ = _calc_span_noise_and_power_jit(
-                power_in_w=power_in_w,
+                power_in_w=physical_power_in_w,
                 span_length_m=span_length_m,
                 f_rel_hz=self.f_rel_hz,
                 f_abs_hz=self.f_abs_hz,
@@ -517,6 +592,22 @@ class MultiBandISRSGN:
             )
         if cache_key is not None:
             self._span_cache[cache_key] = (p_out_fiber.copy(), s2_spm.copy(), s2_xpm.copy())
+        return self._span_output_in_convention(p_out_fiber, s2_spm, s2_xpm)
+
+    def _span_output_in_convention(
+        self,
+        p_out_fiber: NDArrayFloat,
+        s2_spm: NDArrayFloat,
+        s2_xpm: NDArrayFloat,
+    ) -> SpanFiberOutput:
+        """把核输出的总功率坐标换算到评估器坐标。
+
+        ``total`` 直接返回、不做乘法（逐位不变）；原生 ``per_pol`` 只乘一次
+        ``0.5``，让信号与 NLI 与每偏振的 ASE 同坐标。类属性声明 ``per_pol``
+        的旧子类自行换算，这里同样直接返回。
+        """
+        if self.physical_power_scale != 1.0:
+            return SpanFiberOutput(p_out_fiber * 0.5, s2_spm * 0.5, s2_xpm * 0.5)
         return SpanFiberOutput(p_out_fiber, s2_spm, s2_xpm)
 
     def span_step(
@@ -550,8 +641,13 @@ class MultiBandISRSGN:
         批量形态只在 ``ode_accel="matvec"`` 下存在；档位不匹配时抛
         ``ValueError``，不静默回落。
 
+        ``per_pol`` 时与串行路径做同样的换算：矩阵-向量乘用 ``2 * P`` 驱动，
+        出纤信号与 SPM/XPM 乘 ``0.5``，新产生 ASE 再按
+        :attr:`ase_polarization_scale` 减半；``total`` 路径不做任何乘法。
+
         Args:
-            power_in_w: ``(B, N)`` 候选入纤功率 (W)。零功率合法：惰性连接仍占槽位。
+            power_in_w: ``(B, N)`` 候选入纤功率 (W)，口径见评估器。零功率合法：
+                惰性连接仍占槽位。
             span_length_m: 跨段长度 (m)。
             edfa_config: (可选) 跨段后 EDFA 配置，语义与串行一致。
             roadm_config: (可选) 跨段后 ROADM 配置，插入损耗处理与串行一致。
@@ -578,6 +674,11 @@ class MultiBandISRSGN:
         if P.ndim != 2 or P.shape[1] != n_conn:
             raise ValueError(f"power_in_w must have shape (B, {n_conn}), got {np.shape(power_in_w)}.")
 
+        # 核按物理总功率推导：per_pol 时先乘 2 进 matvec，出来再减半回每偏振。
+        # total 路径 power_scale == 1.0，不做任何乘法，逐位不变。
+        power_scale = self.physical_power_scale
+        kernel_power = P if power_scale == 1.0 else P * power_scale
+
         if edfa_config is not None and edfa_config.noise_figure_db is not None:
             noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
             if noise_figure_db.ndim == 0:
@@ -591,7 +692,7 @@ class MultiBandISRSGN:
         current_nf_lin = np.asarray(current_nf_lin, dtype=np.float64)
 
         p_out_fiber, s2_spm, s2_xpm, _ = calc_span_noise_and_power_p1_matvec(
-            power_in_w=P,
+            power_in_w=kernel_power,
             span_length_m=float(span_length_m),
             f_rel_hz=self.f_rel_hz,
             f_abs_hz=self.f_abs_hz,
@@ -610,12 +711,17 @@ class MultiBandISRSGN:
             delta_f_co_hz=self.delta_f_co_hz,
             mats=self._p1_xpm_matrices_for(),
         )
+        if power_scale != 1.0:
+            p_out_fiber = p_out_fiber * 0.5
+            s2_spm = s2_spm * 0.5
+            s2_xpm = s2_xpm * 0.5
 
         if edfa_config is None:
             p_out = p_out_fiber
             s2_ase = np.zeros_like(P)
         else:
             if edfa_config.target_gain_db is None:
+                # 增益用同一坐标的入纤功率与 fiber_output 相除，比值与 total 相同。
                 gain = np.divide(P, p_out_fiber, out=np.ones_like(P), where=p_out_fiber > 0)
             else:
                 gain = np.full_like(P, 10 ** (edfa_config.target_gain_db / 10))
@@ -632,6 +738,8 @@ class MultiBandISRSGN:
                 * self.channel_bandwidth_hz_channels
                 * np.maximum(gain - 1, 0)
             )
+            if self.ase_polarization_scale != 1.0:
+                s2_ase = s2_ase * self.ase_polarization_scale
             s2_ase[P <= 0] = 0
 
         if roadm_config:
@@ -647,7 +755,9 @@ class MultiBandISRSGN:
         """返回匹配链路光纤参数的缓存评估器。
 
         逐连接模式下必须把 ``connections`` 一并传给子评估器，否则它会退回遗留
-        分支并读 ``FlexibleGrid.wavelengths``（该属性不存在）。
+        分支并读 ``FlexibleGrid.wavelengths``（该属性不存在）。功率口径同样必须
+        透传：子评估器负责把入纤功率换算成物理总功率驱动核，丢了口径就会把
+        每偏振功率当总功率，NLI 偏小 8 倍。
         """
         key = fiber_config.model_dump_json()
         if key not in self._fiber_evaluator_cache:
@@ -660,6 +770,7 @@ class MultiBandISRSGN:
                 slots_per_channel=self.slots_per_channel,
                 channel_bandwidth_source=self.channel_bandwidth_source,
                 power_width_mode=self.power_width_mode,
+                launch_power_convention=self.launch_power_convention,
             )
         return self._fiber_evaluator_cache[key]
 
@@ -669,8 +780,16 @@ class MultiBandISRSGN:
         路由累积（跨段切分、放大器、ROADM、SNR）由
         :func:`network_nlo_eval.models.route.accumulate_route` 统一实现，本模型只提供
         单跨步进 :meth:`span_step`。换模型不会改变后处理语义。
+
+        ``ase_polarization_scale`` 随口径传入路由层：``per_pol`` 下 ROADM booster
+        新产生的 ASE 也要减半，已累积的 ASE 只随 ``transfer``/``loss`` 缩放。
         """
-        return accumulate_route(self, optical_path, power_in_w)
+        return accumulate_route(
+            self,
+            optical_path,
+            power_in_w,
+            ase_polarization_scale=self.ase_polarization_scale,
+        )
 
 
 # 注册为可选的 QoT 模型实现；构造函数签名即 ``create_model`` 的透传参数。
