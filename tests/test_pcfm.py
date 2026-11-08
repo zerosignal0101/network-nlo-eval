@@ -1525,7 +1525,15 @@ def test_modulation_labels_are_format_agnostic() -> None:
 
 
 def test_arbitrary_mixed_span_lengths() -> None:
-    """Unequal fibre lengths on one path are supported and stay close to numerical."""
+    """Unequal fibre lengths on one path are supported and stay close to numerical.
+
+    On 40/80/120 km the XCI edge correction is immaterial (the C-band row
+    change stays below the 3 % gate), so ``edge_fix`` must reproduce the
+    closed-form path bit for bit.  The 0.25 dB budget is the closed-form
+    PCFM-vs-numerical bias of this short-span 50 GHz comb; the previous
+    0.2 dB was met only because the old (incorrect) ``F_inf`` normalisation
+    changed the 40 km XCI rows by up to 55 % by accident.
+    """
     lengths = (40.0, 80.0, 120.0)
     fibers = [
         SMF_100KM.model_copy(update={"length_km": length, "max_span_length_km": 120.0}) for length in lengths
@@ -1536,14 +1544,26 @@ def test_arbitrary_mixed_span_lengths() -> None:
     )
     grid = SpectrumGrid(8, 50e9, 193.1e12)
     power = np.ones(8) * 1e-3
-    fixed = PCFMModel(
+    model = PCFMModel(
         grid,
         SMF_100KM,
         symbol_rate_hz=50e9,
         poly_degree=3,
         egn=True,
         spp_steps="auto",
+    )
+    fixed = model.evaluate_path(path, power)
+    old = PCFMModel(
+        grid,
+        SMF_100KM,
+        symbol_rate_hz=50e9,
+        poly_degree=3,
+        egn=True,
+        spp_steps="auto",
+        edge_fix=False,
     ).evaluate_path(path, power)
+    for field in ("snr_db", "xpm_noise_w", "spm_noise_w"):
+        assert np.array_equal(np.asarray(getattr(fixed, field)), np.asarray(getattr(old, field))), field
     reference = create_model("numerical", grid, SMF_100KM, symbol_rate_hz=50e9).evaluate_path(path, power)
     delta = np.asarray(fixed.snr_db) - np.asarray(reference.snr_db)
-    assert float(np.max(np.abs(delta))) < 0.2, f"mixed lengths differ by {float(np.max(np.abs(delta))):.3f} dB"
+    assert float(np.max(np.abs(delta))) < 0.25, f"mixed lengths differ by {float(np.max(np.abs(delta))):.3f} dB"
