@@ -258,7 +258,14 @@ def resolve_nli_power_convention(nli_power_convention: str) -> str:
 #: dispersion crossing inside the comb (about 1367 nm on SMF), where the closed
 #: form is 12 dB high.  Pairs below this switch are recomputed from the exact
 #: island integral (see :func:`_xci_edge_weight_matrix`).
-XCI_EDGE_VALIDITY_SWITCH: float = 100.0
+#:
+#: The value is in the same units as the integral's ``s`` (returned by
+#: :func:`_xci_validity_s`).  The previous code compared a half-``s``
+#: diagnostic against 100; the corrected expression returns the full ``s``, so
+#: 200 is the equivalent gate and leaves the gated rows bit-for-bit unchanged
+#: on C / C+L / S+C+L at 40/60/80/100 km and on the E-band comb at 40/100 km
+#: (see ``tests/test_pcfm_xci_norm.py``).
+XCI_EDGE_VALIDITY_SWITCH: float = 200.0
 
 #: Materiality threshold of the XCI edge correction, per CUT row.
 #:
@@ -395,10 +402,13 @@ class SpanValidityReport:
         xci_s_min:
             ``(N,)`` minimum of the dimensionless phase-mismatch parameter
             ``s = 2 pi**2 |beta2_eff| y B_CUT / alpha`` over the interfering
-            channels of the row.  ``inf`` for a row with no valid partner.
-            Values below :data:`XCI_EDGE_VALIDITY_SWITCH` mean the printed
-            asymptotic kernel is outside its derivation domain; the row is
-            only *materially* wrong when ``xci_row_correction`` also exceeds
+            channels of the row.  This is the ``s`` of the exact island
+            integral itself (``4 pi**2 |beta2| y (B_CUT/2) / alpha``), not the
+            half-value that older diagnostics printed.  ``inf`` for a row with
+            no valid partner.  Values below
+            :data:`XCI_EDGE_VALIDITY_SWITCH` mean the printed asymptotic
+            kernel is outside its derivation domain; the row is only
+            *materially* wrong when ``xci_row_correction`` also exceeds
             :data:`XCI_EDGE_MATERIALITY`.  The two conditions differ on the
             validated C/L bands, where many pairs are below the raw switch
             but the exact correction moves the row by <2.3 %.
@@ -1177,12 +1187,16 @@ def _xci_validity_s(
 
     .. math::
 
-        s = 2 \pi^2 |\beta_{2,eff}| y B_{CUT} / \alpha ,
+        s = 4 \pi^2 |\beta_{2,eff}| y (B_{CUT} / 2) / \alpha
+          = 2 \pi^2 |\beta_{2,eff}| y B_{CUT} / \alpha ,
 
-    evaluated at the upper edge ``y = y2`` of the interfering band.  The same
-    expression is used by the edge gate of
-    :func:`_xci_edge_weight_matrix` and by the validity report, so a change of
-    the gate definition cannot silently desynchronise the diagnostic.
+    evaluated at the upper edge ``y = y2`` of the interfering band.  The
+    argument is the half bandwidth, so the coefficient is ``4 pi**2``; this is
+    the same ``s`` that the exact island integral of
+    :func:`_xci_edge_weight_matrix` uses internally (there
+    ``c = 4 pi**2 |beta2|`` multiplies ``y (B_CUT/2)``).  The expression is
+    shared by the edge gate and the validity report, so a change of the gate
+    definition cannot silently desynchronise the diagnostic.
 
     Args:
         beta2_eff_xci: ``(N, N)`` effective dispersion of the pair (s^2/m).
@@ -1195,7 +1209,9 @@ def _xci_validity_s(
     -------
         ``(N, N)`` parameter ``s`` of every pair.
     """
-    return 2.0 * np.pi**2 * np.abs(beta2_eff_xci) * y2_hz * half_b_cut_hz[:, None] / alpha_npm_m
+    # 4 pi**2 而不是 2 pi**2：入参是半带宽 B/2，积分内部同样是
+    # 4 pi**2 |beta2| y (B/2)/alpha。旧实现乘 2 pi**2 只返回真值的一半。
+    return 4.0 * np.pi**2 * np.abs(beta2_eff_xci) * y2_hz * half_b_cut_hz[:, None] / alpha_npm_m
 
 
 def _xci_edge_weight_matrix(
@@ -1278,7 +1294,8 @@ def _xci_edge_weight_matrix(
     half_b = 0.5 * b_hz
     y1 = delta - half_b[None, :]
     y2 = delta + half_b[None, :]
-    # 适用域判据：相位失配相对线宽的量级 s。用干扰信道带上边缘 y2 与 CUT 带宽。
+    # 适用域判据：相位失配相对线宽的量级 s（积分内部口径，非半值）。用干扰
+    # 信道带上边缘 y2 与 CUT 半带宽计算，与 validity 报告共用同一表达式。
     s_edge = _xci_validity_s(beta2_eff_xci, y2, half_b, alpha_npm_m)
     valid = (log_xci != 0.0) & (y1 > 0.0) & (s_edge < validity_switch)
 

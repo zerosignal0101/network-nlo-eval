@@ -43,7 +43,7 @@ import numpy as np
 
 from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
 from network_nlo_eval.models.base import MultiSpanOpticalPath, PathQoTResult, QoTModel
-from network_nlo_eval.models.pcfm import SCI_X_SERIES_SWITCH, PCFMSpanKernel
+from network_nlo_eval.models.pcfm import SCI_X_SERIES_SWITCH, PCFMSpanKernel, _xci_validity_s
 
 __all__ = [
     "H3_RESIDUAL_TABLE",
@@ -79,12 +79,18 @@ DEFAULT_STRONG_TILT_DB: float = 6.0
 #: 6 THz separates the C-band cases (4.3 THz) from C+L / S+C+L (11.4 THz+).
 WIDEBAND_THRESHOLD_HZ: float = 6.0e12
 
-#: Deep-breakdown threshold of the XCI validity parameter.  The materiality
-#: gate of the kernel (``XCI_EDGE_MATERIALITY``) is the authoritative flag;
-#: ``s`` below one is reported as a second, independent warning because there
-#: the asymptotic closed form is qualitatively wrong even if a row happens to
-#: stay below the materiality gate.
-XCI_DEEP_BREAKDOWN_S: float = 1.0
+#: Deep-breakdown threshold of the XCI validity parameter.  The value is in
+#: the units of the exact island integral's ``s`` (the same as the kernel's
+#: ``xci_s_min``).  The materiality gate of the kernel
+#: (``XCI_EDGE_MATERIALITY``) is the authoritative flag; ``s`` below two is
+#: reported as a second, independent warning because there the asymptotic
+#: closed form is qualitatively wrong even if a row happens to stay below the
+#: materiality gate.
+#:
+#: The old diagnostics compared a half-``s`` value against one; doubling both
+#: the returned ``s`` and this constant keeps every flag and confidence value
+#: bit-for-bit identical while making the printed ``s`` physical.
+XCI_DEEP_BREAKDOWN_S: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -530,18 +536,17 @@ def _span_metrics(
     # SCI argument X = pi**2 beta2_eff B**2 L of the closed form.
     x_internal = np.abs(kernel.beta2_eff_sci) * np.pi**2 * bandwidth**2 * float(span_length_m)
 
-    # XCI validity parameter s = 2 pi**2 |beta2_eff| y B_CUT / (2 alpha) of the
-    # stretched-island closed form.  The smallest value over the interfering
-    # channels is the one that decides whether the row is trustworthy.
+    # XCI validity parameter s = 4 pi**2 |beta2_eff| y (B_CUT/2) / alpha of the
+    # stretched-island closed form, i.e. the same value the exact integral uses
+    # internally.  The smallest value over the interfering channels decides
+    # whether the row is trustworthy.
     delta = np.abs(kernel.f_abs_hz[:, None] - kernel.f_abs_hz[None, :])
     y_upper = delta + 0.5 * bandwidth[None, :]
-    s_matrix = (
-        2.0
-        * np.pi**2
-        * np.abs(kernel.beta2_eff_xci)
-        * y_upper
-        * (0.5 * bandwidth[:, None])
-        / kernel.alpha_visibility_npm
+    s_matrix = _xci_validity_s(
+        kernel.beta2_eff_xci,
+        y_upper,
+        0.5 * bandwidth,
+        kernel.alpha_visibility_npm,
     )
     # 只统计闭式核真正处理的非重叠信道对；重叠对的 log 项已被核置零。
     eligible = (kernel.log_xci != 0.0) & ((delta - 0.5 * bandwidth[None, :]) > 0.0)

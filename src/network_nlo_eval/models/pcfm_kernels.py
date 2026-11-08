@@ -77,13 +77,20 @@ J_SERIES_SWITCH: float = 26.0
 #: The closed-form recurrence for the auxiliary functions ``b_p = B_p/X**(p+1)``
 #: divides by ``X**2`` at every step.  Near the zero-dispersion wavelength
 #: ``X`` crosses zero inside an ultra-wideband comb (E band, ~1367 nm on the
-#: SMF benchmark) and the recurrence loses every significant digit: the
-#: channel at the crossing returns a negative kernel two orders of magnitude
-#: too large.  The Taylor coefficients are exact (rational arithmetic) and the
-#: series is converged to 1e-9 at ``|X| = 0.5`` for every polynomial degree
-#: used by the model, so the branch below is used only where the recurrence is
-#: the unstable choice.
-SCI_X_SERIES_SWITCH: float = 0.5
+#: SMF benchmark) and the recurrence loses every significant digit: for
+#: ``poly_degree = 9`` the canonical 75 GHz E+S+C+L grid fails at
+#: ``X = +0.661`` and ``X = -0.608`` (negative kernel, 93x too large), and the
+#: recurrence error is still 138 % at ``|X| = 0.5``.  A switch at 0.5 therefore
+#: does not protect the documented reference order.
+#:
+#: The Taylor coefficients are exact (rational arithmetic).  With 168 terms
+#: (``m_max = 19``) the truncated series differs from the 120-digit reference
+#: by at most 1.8e-16 for ``|X| <= 2`` (the value below) and by 8.8e-11 at
+#: ``|X| = 10``; at ``|X| = 2`` the recurrence is accurate to ~6e-12, so both
+#: branches agree at the switch.  Raising the switch to 2.0 covers every
+#: canonical and dense-grid failure while leaving the recurrence in place for
+#: the large-``|X|`` regime where it is cheap and exact.
+SCI_X_SERIES_SWITCH: float = 2.0
 
 #: Constant of the asymptotic expansion of ``J``,
 #: ``C_r = int_0^1 Si(t)/t dt + int_1^inf [Si(t)-pi/2]/t dt``.
@@ -338,7 +345,7 @@ def _sci_small_x_coefficients(m_max: int, n_terms: int = 0) -> NDArrayFloat:
         b_p(X) = \sum_{j \ge 0} c_{p,j} X^j
 
     with rational arithmetic, so that the truncated series is accurate to
-    double precision for every ``|X| < 0.5``.
+    double precision for every ``|X| <= 2`` (the selected branch switch).
 
     The recurrence of the closed form,
 
