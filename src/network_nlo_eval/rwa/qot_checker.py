@@ -114,12 +114,15 @@ class ServiceQoT:
         snr_db: 沿业务自身路径累积的物理 SNR (dB)；被阻断为 ``-inf``，
             噪声为零为 ``+inf``。
         margin_db: 路径上各链路建议 margin 之和 (dB)，只累计有效链路。
+        soft_margin_db: 路径上各链路倾斜软 margin 之和 (dB)，只累计有效链路；
+            只有 ``mode="soft"`` 会扣它。
         valid: 路径上所有已接入链路是否都判该信道有效。
         invalid_links: 判该信道无效的链路键（按首次出现顺序去重）。
     """
 
     snr_db: float
     margin_db: float = 0.0
+    soft_margin_db: float = 0.0
     valid: bool = True
     invalid_links: tuple[LinkKey, ...] = ()
 
@@ -138,6 +141,7 @@ class ServiceQoT:
                 np.array([self.snr_db], dtype=np.float64),
                 np.array([self.valid], dtype=bool),
                 np.array([self.margin_db], dtype=np.float64),
+                np.array([self.soft_margin_db], dtype=np.float64),
             )[0]
         )
 
@@ -212,7 +216,8 @@ def accumulate_service_snr_detail(
 
     Returns
     -------
-        物理 SNR 与路径级有效性聚合。
+        物理 SNR 与路径级有效性聚合。``margin_db`` 与 ``soft_margin_db`` 都只
+        累计有效链路；前者供 ``degrade``，后者供 ``soft``。
     """
     total_spm = 0.0
     total_xpm = 0.0
@@ -220,6 +225,7 @@ def accumulate_service_snr_detail(
     signal_power = launch_power_w
     total_spans = 0
     total_margin_db = 0.0
+    total_soft_margin_db = 0.0
     valid = True
     invalid_links: list[LinkKey] = []
 
@@ -238,6 +244,7 @@ def accumulate_service_snr_detail(
             if link_validity is not None:
                 if link_validity.channel_valid(channel_idx):
                     total_margin_db += link_validity.margin_at(channel_idx)
+                    total_soft_margin_db += link_validity.soft_margin_at(channel_idx)
                 else:
                     valid = False
                     if link_validity.link_key is not None and link_validity.link_key not in invalid_links:
@@ -264,6 +271,7 @@ def accumulate_service_snr_detail(
     return ServiceQoT(
         snr_db=snr_db,
         margin_db=total_margin_db,
+        soft_margin_db=total_soft_margin_db,
         valid=valid,
         invalid_links=tuple(invalid_links),
     )
@@ -279,7 +287,8 @@ class QoTValidator:
     网络级有效性接入（任务 H）是**可选**的：只有同时给出非 ``off`` 的
     ``validity_policy`` 与 ``validity_provider`` 时才会在链路噪声缓存上附带
     :class:`~network_nlo_eval.rwa.validity.LinkValidity`，并按策略修正 SNR。
-    默认两者都不给，判定与接入前逐位一致。
+    默认两者都不给，判定与接入前逐位一致。``mode="soft"`` 只扣倾斜软 margin，
+    不改变 ``valid`` / ``flagged``，也不扣 ``margin_db``。
     """
 
     def __init__(
@@ -316,7 +325,7 @@ class QoTValidator:
         if not policy.enabled and validity_provider is not None:
             raise ValueError(
                 "validity_provider was given with validity_policy mode='off'; "
-                "choose an explicit mode ('flag', 'reject' or 'degrade') to enable it."
+                "choose an explicit mode ('flag', 'reject', 'degrade' or 'soft') to enable it."
             )
         self.gn_evaluator = gn_evaluator
         self.network_topology = network_topology

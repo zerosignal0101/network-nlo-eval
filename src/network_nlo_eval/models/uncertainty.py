@@ -297,6 +297,14 @@ class ValidityReport:
         pump_mode: ``"none"``, ``"backward"``, ``"forward"`` or ``"mixed"``.
         band_class: ``"narrow"`` or ``"wide"``.
         span_count: Number of physical spans inspected.
+        tilt_confidence_informational: Worst-span informational tilt score in
+            ``[0, 1]``, carried over from
+            :attr:`~network_nlo_eval.models.pcfm.SpanValidityReport.tilt_confidence_informational`.
+            It is a scalar because the tilt describes the whole occupied
+            spectrum, not one channel.  It never contributes to ``valid``,
+            ``flagged`` or ``confidence``; a network layer may map it to an
+            additive soft margin.  The default 1 means "no information" and
+            produces a zero soft margin.
     """
 
     valid: NDArrayBool
@@ -315,6 +323,7 @@ class ValidityReport:
     pump_mode: str
     band_class: str
     span_count: int
+    tilt_confidence_informational: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -404,6 +413,7 @@ class H3ErrorBudget:
                 "pump_mode": self.validity.pump_mode,
                 "band_class": self.validity.band_class,
                 "span_count": int(self.validity.span_count),
+                "tilt_confidence_informational": float(self.validity.tilt_confidence_informational),
             },
             "terms": [
                 {
@@ -695,6 +705,14 @@ def estimate_h3_error_budget(
     band_class = classify_bandwidth(occupied_hz)
     active = (power > 0.0) & (np.asarray(result.signal_power_w, dtype=np.float64) > 0.0)
     tilt_db = _path_tilt_db(states)
+    # 倾斜是整条占用谱的属性，不是某一信道的属性；与 ``confidence`` 一样由最差跨
+    # 决定。模型未记录逐跨报告时退化为 1（不产生软 margin），因此旧调用方逐位不变。
+    span_reports = tuple(getattr(model, "last_span_validity", ()) or ())
+    tilt_confidence_informational = min(
+        (float(report.tilt_confidence_informational) for report in span_reports),
+        default=1.0,
+    )
+    tilt_confidence_informational = float(np.clip(tilt_confidence_informational, 0.0, 1.0))
     tilt_class = "strong" if tilt_db >= cfg.strong_tilt_db else "normal"
     strong_tilt = active & (tilt_class == "strong")
 
@@ -741,6 +759,7 @@ def estimate_h3_error_budget(
         pump_mode=pump_mode,
         band_class=band_class,
         span_count=len(states),
+        tilt_confidence_informational=tilt_confidence_informational,
     )
 
     terms = (

@@ -687,12 +687,18 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
         ("raman_pumps", "RamanPumpConfig sequence; omitted means use FiberSpanConfig.raman_pumps."),
-        ("raman_gain_model", "'gaussian' (default), 'linear' (CZ) or 'table' (normalized table spectrum)."),
+        (
+            "raman_gain_model",
+            "'gaussian' (default), 'linear' (CZ), 'table' (normalized spectrum given by "
+            "raman_gain_table), a .json/.csv Raman gain table file path, or a RamanGainModel instance "
+            "(use RamanGainModel.from_file(path)). Loaded once at construction, never in the hot path.",
+        ),
         (
             "raman_gain_table",
             "(offsets_hz, gains) normalized gain table used when raman_gain_model='table'. Linear "
             "interpolation inside the table, zero outside. The table replaces the Gaussian/CZ shape "
-            "for every pump-signal and pump-pump coefficient of the coupled solve.",
+            "for every pump-signal and pump-pump coefficient of the coupled solve. Mutually exclusive "
+            "with a RamanGainModel instance or a table file path.",
         ),
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
         ("raman_temperature_k", "Fibre temperature of the spontaneous Raman factor. Default 300 K."),
@@ -768,15 +774,16 @@ class PCFH3RamanModel(PCFMModel):
         spp_steps: PCFM SPP RK4 steps or ``"auto"``. Default ``"auto"``.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
             each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"`` (default), ``"linear"`` (CZ) or
-            ``"table"``; an explicit
-            :class:`~network_nlo_eval.models.raman.RamanGainModel` instance is
-            also accepted.
+        raman_gain_model: ``"gaussian"`` (default), ``"linear"`` (CZ),
+            ``"table"``, a ``.json``/``.csv`` gain table path, or an explicit
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` instance
+            (``RamanGainModel.from_file(path)``). Loaded once at construction.
         raman_gain_table: ``(offsets_hz, gains)`` normalized gain table used
             when ``raman_gain_model="table"``.  Linear interpolation inside
             the table, zero outside.  The same shape replaces the
             Gaussian/CZ coefficient in the pump-signal and pump-pump blocks of
-            the coupled solve.
+            the coupled solve.  Mutually exclusive with an instance or a file
+            path.
         raman_ase: Expose the Raman ASE before the EDFA.
         raman_temperature_k: Fibre temperature (K).
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate.
@@ -799,16 +806,22 @@ class PCFH3RamanModel(PCFMModel):
             input is per-polarization power (physical total = 2x) and requires
             ``signal_polarizations=2``; the ODE state and every output stay
             per-polarization, only the Raman coupling drive takes the
-            dual-polarization total.  ``"total"`` with
-            ``signal_polarizations=2`` is retained as the legacy unit-less
-            multiplier and emits a :class:`UserWarning` at construction.
+            dual-polarization total.  With a per-polarization launch the
+            newly generated EDFA and ROADM booster ASE are also halved once
+            (``ase_polarization_scale=0.5``) so that ``signal_power_w``,
+            ``spm_noise_w``, ``xpm_noise_w`` and ``ase_noise_w`` are all
+            per-polarization quantities; ``snr_db`` is coordinate independent.
+            ``"total"`` with ``signal_polarizations=2`` is retained as the
+            legacy unit-less multiplier and emits a :class:`UserWarning` at
+            construction.
         nli_power_convention: Declared power convention of the NLI kernels.
             ``"auto"`` (default) follows ``launch_power_convention``, so a
             per-polarization launch also drives the GN weights with the
             physical total power and returns per-polarization NLI.  ``"total"``
             keeps the pre-audit NLI under a per-polarization launch as a
-            comparison control; ``"per_pol"`` under a total-power launch is
-            rejected.
+            comparison control and also keeps the total-power ASE (a
+            deliberately mixed control, not an end-to-end coordinate);
+            ``"per_pol"`` under a total-power launch is rejected.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -930,6 +943,37 @@ class PCFH3RamanModel(PCFMModel):
         # power-sum convention without changing the PCFM class default.
         self.supports_span_context = self.span_coherence == "pcfm"
 
+    @property
+    def launch_power_convention(self) -> str:
+        """Declared power convention of ``power_in_w`` (``"total"``/``"per_pol"``)."""
+        return self._launch_power_convention
+
+    @property
+    def nli_power_convention(self) -> str:
+        """Resolved power convention of the NLI kernels (``"total"``/``"per_pol"``)."""
+        return self._nli_power_convention
+
+    @nli_power_convention.setter
+    def nli_power_convention(self, value: str) -> None:
+        """Keep the parent ``PCFMModel.__init__`` assignment compatible."""
+        self._nli_power_convention = value
+
+    @property
+    def ase_polarization_scale(self) -> float:
+        """Scale of newly generated EDFA/ROADM ASE for this model's coordinate.
+
+        Only an end-to-end per-polarization model (launch *and* NLI both
+        ``"per_pol"``) returns ``0.5``: its signal and NLI are per-polarization,
+        so the dual-polarization ASE of the shared route layer must be halved
+        once.  The Raman ASE is already produced in the same coordinate by
+        :class:`~network_nlo_eval.models.raman_ode.RamanPaperSpanSolver`, so
+        the route layer never scales ``input_ase_w``.  Any mixed convention
+        keeps the historical total ASE (``1.0``).
+        """
+        if self._launch_power_convention == "per_pol" and self._nli_power_convention == "per_pol":
+            return 0.5
+        return 1.0
+
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFH3RamanSpanKernel:
         """Build the profile-aware kernel of this fibre."""
         if self._h3_raman_pumps is not None:
@@ -1012,6 +1056,7 @@ class PCFH3RamanModel(PCFMModel):
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
             input_ase_w=input_ase_w,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)

@@ -254,13 +254,13 @@ XCI_EDGE_VALIDITY_SWITCH: float = 100.0
 #: Materiality threshold of the XCI edge correction, per CUT row.
 #:
 #: The exact correction is applied to a CUT only when it changes the total XCI
-#: weight of that row by more than this fraction.  C/L rows change by less
-#: than 2.3 % and keep the old, bit-identical path; the E-band rows next to the
-#: zero-dispersion crossing change by up to 91 %.  The threshold is therefore a
-#: physical applicability gate, not a tuning knob: below it the asymptotic
-#: breakdown is below the model's error budget (3 % of the XCI power is
-#: 0.13 dB, inside the C/L XCI error of the closed form against the numerical
-#: reference).
+#: weight of that row by more than this fraction.  C/L/S+C+L rows change by
+#: less than 1.1 % and keep the old, bit-identical path; the E-band rows next
+#: to the zero-dispersion crossing change by up to 91 %.  The threshold is
+#: therefore a physical applicability gate, not a tuning knob: below it the
+#: asymptotic breakdown is below the model's error budget (3 % of the XCI
+#: power is 0.13 dB, inside the C/L XCI error of the closed form against the
+#: numerical reference).
 XCI_EDGE_MATERIALITY: float = 0.03
 
 #: Gauss-Legendre nodes of the exact XCI island integral (per flagged pair).
@@ -1233,9 +1233,9 @@ def _xci_edge_weight_matrix(
                            - 2 e**(-ab) C_1(s) ] ,   s = t/alpha ,
 
     and the corrected kernel is ``K = (pi / F_inf) I`` with
-    ``F_inf = (pi / (2 alpha)) (1 - e**(-ab))**2``.  The ratio to the closed
-    form contains no fitted constant: it is one at ``s -> infinity`` and
-    finite (not divergent) at ``beta2 = 0``.
+    ``F_inf = int_0^inf W dt = (pi / (2 alpha)) (1 - e**(-2 ab))``.  The ratio
+    to the closed form contains no fitted constant: it is one at
+    ``s -> infinity`` and finite (not divergent) at ``beta2 = 0``.
 
     The correction is applied per CUT row and only when it moves the row's
     total XCI weight by more than ``materiality``.  Rows that pass the gate
@@ -1306,13 +1306,17 @@ def _xci_edge_weight_matrix(
     # Gauss-Legendre 权重作用在 [-1, 1] 上，乘以 y 区间的雅可比。
     integral = np.sum(0.5 * (y_hi - y_lo)[:, None] * weights[None, :] * integrand, axis=1)
 
-    f_inf = (1.0 / alpha_npm_m) * 0.5 * np.pi * (1.0 - exp_ab) ** 2
+    # 精确积分的总权重：∫_0^∞ W dt = (π/(2α)) (1 - e^{-2αL})。用
+    # (1 - e^{-αL})² 会在短跨上把修正核放大 (1+e^{-αL})/(1-e^{-αL}) 倍。
+    f_inf = (1.0 / alpha_npm_m) * 0.5 * np.pi * (1.0 - exp_2ab)
     k_corrected = np.pi * integral / f_inf
-    # beta2_eff 恰为零时上面的 1/(c y) 退化；此时积分就是 W(0) B_CUT B_NCH。
+    # beta2_eff 恰为零时上面的 1/(c y) 退化；此时积分就是 W(0) B_CUT B_NCH，
+    # 除以 f_inf 后为 (2 B_CUT B_NCH/α) tanh(αL/2)。
     zero = b_abs == 0.0
     if np.any(zero):
-        w0 = (1.0 - exp_ab) ** 2 / alpha_npm_m**2
-        k_corrected[zero] = 2.0 * b_cut[zero] * b_nch[zero] / alpha_npm_m
+        k_corrected[zero] = (
+            2.0 * b_cut[zero] * b_nch[zero] / alpha_npm_m * (1.0 - exp_ab) / (1.0 + exp_ab)
+        )
 
     k_edge = np.array(k_xci_matrix, dtype=np.float64, copy=True)
     k_edge[rows, cols] = k_corrected
@@ -1419,13 +1423,16 @@ PCFM_MODEL_INFO = ModelInfo(
         ),
         (
             "raman_gain_model",
-            "'gaussian' (default), 'linear' CZ approximation or 'table' (normalized spectrum given by "
-            "raman_gain_table). An explicit RamanGainModel instance is also accepted.",
+            "'gaussian' (default), 'linear' CZ approximation, 'table' (normalized spectrum given by "
+            "raman_gain_table), a .json/.csv Raman gain table file path, or a RamanGainModel instance "
+            "(use RamanGainModel.from_file(path)). The file/instance entry is loaded once at construction "
+            "time, never in the hot path.",
         ),
         (
             "raman_gain_table",
             "(offsets_hz, gains) normalized Raman gain table used when raman_gain_model='table'. "
-            "Linear interpolation, zero outside the table.",
+            "Linear interpolation, zero outside the table. Mutually exclusive with a RamanGainModel "
+            "instance or a table file path.",
         ),
         (
             "raman_ase",
@@ -2519,10 +2526,11 @@ class PCFMModel(RouteModel):
         raman_pumps: Pumps applied to every span.  Providing this argument
             also enables the lumped model when ``raman_model`` is ``None``.
             When omitted, the pumps of each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"``、``"linear"``、``"table"`` 或
-            :class:`~network_nlo_eval.models.raman.RamanGainModel` 实例。
+        raman_gain_model: ``"gaussian"``、``"linear"``、``"table"``、
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` 实例，或
+            ``.json``/``.csv`` 增益表文件路径。文件/实例只在构造期加载一次。
         raman_gain_table: ``gain_model="table"`` 时的归一化增益表
-            ``(offsets_hz, gains)``。
+            ``(offsets_hz, gains)``；与实例/文件路径互斥。
         raman_ase: Include the distributed Raman ASE before the span EDFA.
         raman_temperature_k: Fibre temperature used by the Raman spontaneous
             emission factor.

@@ -448,12 +448,18 @@ HYBRID_RAMAN_PAPER_MODEL_INFO = ModelInfo(
     ),
     options=(
         ("raman_pumps", "RamanPumpConfig sequence; omitted means use FiberSpanConfig.raman_pumps."),
-        ("raman_gain_model", "'gaussian' (default), 'linear' (CZ) or 'table' (normalized table spectrum)."),
+        (
+            "raman_gain_model",
+            "'gaussian' (default), 'linear' (CZ), 'table' (normalized spectrum given by "
+            "raman_gain_table), a .json/.csv Raman gain table file path, or a RamanGainModel instance "
+            "(use RamanGainModel.from_file(path)). Loaded once at construction, never in the hot path.",
+        ),
         (
             "raman_gain_table",
             "(offsets_hz, gains) normalized gain table used when raman_gain_model='table'. Linear "
             "interpolation inside the table, zero outside. It replaces the Gaussian/CZ shape for every "
-            "pump-signal and pump-pump coefficient of the coupled ODE.",
+            "pump-signal and pump-pump coefficient of the coupled ODE. Mutually exclusive with a "
+            "RamanGainModel instance or a table file path.",
         ),
         ("raman_ase", "Expose the newly generated Raman ASE before the EDFA. Default True."),
         ("raman_temperature_k", "Fibre temperature used by the spontaneous Raman factor. Default 300 K."),
@@ -510,15 +516,16 @@ class HybridRamanPaperModel(PCFMModel):
         connections: Optional per-connection grid.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
             each :class:`FiberSpanConfig` are used.
-        raman_gain_model: ``"gaussian"`` (default), ``"linear"`` (CZ) or
-            ``"table"``; an explicit
-            :class:`~network_nlo_eval.models.raman.RamanGainModel` instance is
-            also accepted.
+        raman_gain_model: ``"gaussian"`` (default), ``"linear"`` (CZ),
+            ``"table"``, a ``.json``/``.csv`` gain table path, or an explicit
+            :class:`~network_nlo_eval.models.raman.RamanGainModel` instance
+            (``RamanGainModel.from_file(path)``). Loaded once at construction.
         raman_gain_table: ``(offsets_hz, gains)`` normalized gain table used
             when ``raman_gain_model="table"``.  Linear interpolation inside
             the table, zero outside.  It replaces the Gaussian/CZ shape in
             every pump-signal and pump-pump coefficient of Eq. (2) and in the
-            Raman ASE of Eq. (4).
+            Raman ASE of Eq. (4).  Mutually exclusive with an instance or a
+            file path.
         raman_ase: Include the Raman ASE before the EDFA.
         raman_temperature_k: Fibre temperature (K).
         raman_peak_gain_coefficient_m_per_w: Peak local Raman gain rate.

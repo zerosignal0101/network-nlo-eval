@@ -49,7 +49,9 @@ def apply_link_validity(
 
     Returns
     -------
-        新的度数字典；``off`` 时不新增键。
+        新的度数字典；``off`` 时不新增键。启用的模式额外暴露
+        ``"valid"`` / ``"margin_db"`` / ``"soft_margin_db"`` 供审计，但不改写
+        输入字典。
 
     Raises
     ------
@@ -65,6 +67,7 @@ def apply_link_validity(
     adjusted["snr"] = validity.adjusted_snr_db(snr, policy)
     adjusted["valid"] = np.array(validity.valid, dtype=bool, copy=True)
     adjusted["margin_db"] = np.array(validity.margin_db, dtype=np.float64, copy=True)
+    adjusted["soft_margin_db"] = np.array(validity.soft_margin_db, dtype=np.float64, copy=True)
     return adjusted
 
 

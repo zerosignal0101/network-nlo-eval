@@ -134,37 +134,50 @@ def test_egn_does_not_change_the_two_convention_ratio() -> None:
 def test_control_total_plus_two_is_four_times_below_the_per_pol_kernel() -> None:
     """同一数组下 ``total``+2 与 ``per_pol``+2 只差 NLI 口径的 4 倍。
 
-    ODE 驱动相同（``2 * P/2 = P``），所以信号与 ASE 逐位一致；NLI 在
-    ``per_pol`` 下用 ``2P`` 驱动并减半输出，是旧口径的 ``2**3 / 2 = 4`` 倍。
+    ODE 驱动相同（``2 * P/2 = P``），所以信号逐位一致；NLI 在 ``per_pol``
+    下用 ``2P`` 驱动并减半输出，是旧口径的 ``2**3 / 2 = 4`` 倍。任务 L 之后
+    ``per_pol`` 的 route EDFA ASE 也减半，而 ``total``+2 是显式旧口径，
+    因此路径 ASE 不再逐位相等；Raman ASE 本身仍来自同一 ODE 状态。
     """
     per_pol = _arrays(_evaluate_at(0.5, signal_polarizations=2, launch_power_convention="per_pol"))
     with pytest.warns(UserWarning, match="launch_power_convention"):
         legacy = _arrays(_evaluate_at(0.5, signal_polarizations=2, launch_power_convention="total"))
-    for name in ("signal_power_w", "ase_noise_w"):
-        assert np.array_equal(per_pol[name], legacy[name]), name
+    assert np.array_equal(per_pol["signal_power_w"], legacy["signal_power_w"])
     for name in ("spm_noise_w", "xpm_noise_w"):
         assert np.allclose(per_pol[name], 4.0 * legacy[name], rtol=1e-4), name
+    # EDFA 与泵驱动的 Raman ASE 都由 ``total``+2 的旧口径生成，因此
+    # ``per_pol`` 的路径 ASE 恰为其一半（本算例 Raman 以泵驱动为主）。
+    assert np.allclose(per_pol["ase_noise_w"], 0.5 * legacy["ase_noise_w"], rtol=0.02)
 
 
 # ---------------------------------------------------------------------------
-# 剩余残差：EDFA ASE 口径
+# ASE 每偏振化后的 SNR 一致性
 # ---------------------------------------------------------------------------
 
 
-def test_the_remaining_snr_gap_is_the_edfa_ase_bookkeeping() -> None:
-    """NLI 修好后，SNR 残差只剩 EDFA ASE 未按每偏振减半。
+def test_ase_halving_closes_the_c_band_snr_gap() -> None:
+    """任务 L 后 C 波段 ``total``+1 与 ``per_pol``+2 的 SNR 平均差 <0.01 dB。
 
-    ``route.apply_amplifier_and_roadm`` 的 ASE 是双偏振总量
-    ``NF h nu B (G-1)``，而 ``per_pol`` 的信号与 NLI 都是每偏振量。把 ASE
-    也减半后，两种坐标的逐信道 SNR 在 0.1 dB 内一致；不修 ASE 时残差约
-    -2.4 dB（本算例 ASE 约为 NLI 的 2.7 倍）。
+    ``route`` 的 EDFA ASE 由 ``ase_polarization_scale=0.5`` 进入每偏振坐标；
+    无泵时没有 Raman ASE，剩余逐信道残差（max 约 0.064 dB）来自 PCFM 的
+    ISRS 剖面按半功率积分，不是 ASE 记账。平均差应回到 J 审计预测的
+    +0.001 dB 量级。
     """
     total = _arrays(_evaluate(pumps=None))
     per_pol = _arrays(_evaluate_at(0.5, pumps=None, signal_polarizations=2, launch_power_convention="per_pol"))
-    snr_fixed = 10.0 * np.log10(per_pol["signal_power_w"] / (_nli(per_pol) + 0.5 * per_pol["ase_noise_w"]))
-    assert np.max(np.abs(snr_fixed - total["snr_db"])) < 0.1
-    naive_gap = float(np.mean(per_pol["snr_db"] - total["snr_db"]))
-    assert naive_gap < -1.0
+    gap = per_pol["snr_db"] - total["snr_db"]
+    assert abs(float(np.mean(gap))) < 0.01
+    assert float(np.max(np.abs(gap))) < 0.07
+
+
+def test_ase_arrays_are_half_in_the_per_pol_coordinate_with_pumps() -> None:
+    """有泵时 Raman OE 与 EDFA 都在每偏振坐标，ASE 数组严格减半。"""
+    total = _arrays(_evaluate(signal_polarizations=1, launch_power_convention="total"))
+    per_pol = _arrays(
+        _evaluate_at(0.5, signal_polarizations=2, launch_power_convention="per_pol")
+    )
+    assert np.allclose(per_pol["ase_noise_w"], 0.5 * total["ase_noise_w"], rtol=1e-12)
+    assert float(np.max(np.abs(per_pol["snr_db"] - total["snr_db"]))) < 1e-9
 
 
 # ---------------------------------------------------------------------------
