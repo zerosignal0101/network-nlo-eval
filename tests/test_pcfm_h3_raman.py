@@ -26,6 +26,7 @@ from network_nlo_eval.benchmarks.runner import make_model
 from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model, get_model_info
 from network_nlo_eval.models.pcfm_h3_raman import H3_RAMAN_MODEL_INFO
+from network_nlo_eval.models.raman import RamanGainModel
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, RamanPumpConfig
 
 #: H3 最优配置；无泵逐位一致与所有精度对照都用它。
@@ -415,6 +416,119 @@ def test_c_l_six_pumps_is_not_worse_than_lumped() -> None:
     lumped_error = abs(float(np.mean(lumped.snr_db) - np.mean(paper.snr_db)))
     assert new_error < lumped_error, f"new {new_error:.3f} dB vs lumped {lumped_error:.3f} dB"
     assert new_error < 0.15, f"C+L SNR error {new_error:.3f} dB"
+
+
+# ---------------------------------------------------------------------------
+# 表格增益谱：表入口、C+L 可用性与默认逐位不变
+# ---------------------------------------------------------------------------
+
+#: 默认（Gaussian）C+L 六泵单跨指纹，抓取自基线 ``830c062``。
+#:
+#: 数值以 ``float.hex()`` 保存并按 IEEE-754 位比较：表入口只应新增分支，
+#: 默认路径的任何末位变化都必须让这个测试变红。
+GOLDEN_C_L_DEFAULT = {
+    "mean_snr_db": "0x1.9559b63ce1ebep+4",
+    "mean_nli_w": "0x1.d752067939da0p-18",
+    "mean_ase_w": "0x1.4434a591829c4p-22",
+    "mean_signal_w": "0x1.47ae147ae147ap-9",
+}
+
+
+def _c_l_single_span_case():
+    """C+L 40 信道单跨算例，六泵场景与 ``test_c_l_six_pumps_*`` 共用。"""
+    return replace(
+        build_case("c_57ch"),
+        name="cl_40ch_1span",
+        bands="C+L",
+        num_channels=40,
+        center_frequency_hz=190.0e12,
+        span_count=1,
+    )
+
+
+def _sampled_gaussian_gain_table(points: int = 1201, span_hz: float = 30e12):
+    """把解析 Gaussian 采样成 ``(offsets, gains)``。"""
+    analytic = RamanGainModel()
+    offsets = np.linspace(0.0, span_hz, points)
+    return offsets, analytic.gain_shape(offsets)
+
+
+def _ripple_gain_table(amplitude: float = 0.25, period_hz: float = 1.5e12):
+    """在 Gaussian 表上叠加相对纹波，模拟实测谱的起伏。"""
+    offsets, gains = _sampled_gaussian_gain_table()
+    rippled = gains * (1.0 + amplitude * np.sin(2.0 * np.pi * offsets / period_hz))
+    return offsets, np.maximum(rippled, 0.0)
+
+
+def _c_l_result(**options):
+    """跑一次 C+L 六泵单跨并返回均值读数与泵浦输出。"""
+    case = _c_l_single_span_case()
+    path = build_path(case)
+    model = make_model("pcfm_h3_raman", case, raman_pumps=SIX_PUMPS, **options)
+    result = model.evaluate_path(path, launch_profile(case))
+    nli = np.asarray(result.spm_noise_w) + np.asarray(result.xpm_noise_w)
+    pump_out = np.asarray(model.kernel_for(path.fiber_configs[0]).last_pump_power_out_w, dtype=np.float64)
+    return {
+        "mean_snr_db": float(np.mean(result.snr_db)),
+        "mean_nli_w": float(np.mean(nli)),
+        "mean_ase_w": float(np.mean(result.ase_noise_w)),
+        "mean_signal_w": float(np.mean(result.signal_power_w)),
+        "pump_out_w": pump_out,
+    }
+
+
+def test_default_c_l_six_pump_result_is_bit_for_bit_unchanged() -> None:
+    """表入口不得改变默认 Gaussian 路径的任何一位。"""
+    baseline = _c_l_result()
+    for key, expected_hex in GOLDEN_C_L_DEFAULT.items():
+        assert baseline[key].hex() == expected_hex, f"{key} drifted from the 830c062 baseline"
+
+
+def test_gain_table_resampling_gaussian_matches_analytic_c_l() -> None:
+    """Gaussian 采样表在 C+L 六泵下应复现解析谱的结果。"""
+    offsets, gains = _sampled_gaussian_gain_table()
+    analytic = _c_l_result()
+    resampled = _c_l_result(raman_gain_model="table", raman_gain_table=(offsets, gains))
+    assert abs(resampled["mean_snr_db"] - analytic["mean_snr_db"]) < 0.01
+    assert abs(resampled["mean_nli_w"] / analytic["mean_nli_w"] - 1.0) < 1e-3
+    assert np.allclose(resampled["pump_out_w"], analytic["pump_out_w"], rtol=1e-3)
+
+
+def test_gain_table_ripple_changes_c_l_six_pump_result() -> None:
+    """谱形纹波必须透传到泵浦输出、NLI 与 SNR，而不是被静默忽略。"""
+    offsets, gains = _ripple_gain_table()
+    analytic = _c_l_result()
+    rippled = _c_l_result(raman_gain_model="table", raman_gain_table=(offsets, gains))
+    # 纹波改变泵浦-泵浦能量转移（六泵输出可差到 O(100%)）与泵浦-信号谱形。
+    assert np.max(np.abs(rippled["pump_out_w"] / analytic["pump_out_w"] - 1.0)) > 0.01
+    assert rippled["mean_nli_w"] / analytic["mean_nli_w"] - 1.0 > 0.01
+    assert rippled["mean_snr_db"] < analytic["mean_snr_db"] - 0.05
+
+
+def test_gain_table_option_reaches_the_coupled_solver() -> None:
+    """模型层构造的表格模型必须原样进入核与 ODE 求解器。"""
+    case = _c_l_single_span_case()
+    offsets, gains = _sampled_gaussian_gain_table()
+    model = make_model(
+        "pcfm_h3_raman",
+        case,
+        raman_pumps=SIX_PUMPS,
+        raman_gain_model="table",
+        raman_gain_table=(offsets, gains),
+    )
+    assert model._raman_gain_model.gain_model == "table"
+    kernel = model.kernel_for(build_path(case).fiber_configs[0])
+    solver = kernel._solver_for(100e3)
+    assert solver.gain_model.gain_model == "table"
+    assert np.array_equal(solver.gain_model.table[0], offsets)
+    assert np.array_equal(solver.gain_model.table[1], gains)
+
+
+def test_gain_table_options_are_documented() -> None:
+    """``ModelInfo.options`` 必须列出表入口，CLI/文档才能发现它。"""
+    options = dict(H3_RAMAN_MODEL_INFO.options)
+    assert "raman_gain_table" in options
+    assert "table" in options["raman_gain_model"]
 
 
 # ---------------------------------------------------------------------------
