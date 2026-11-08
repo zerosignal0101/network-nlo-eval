@@ -1,7 +1,7 @@
 """管理网络的动态资源状态，如波长占用和链路功率谱。"""
 
 from dataclasses import dataclass, field
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -16,15 +16,23 @@ from network_nlo_eval.core.types import (
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.simulation.traffic import AllocatedService  # 依赖 ServiceRequest
 
+if TYPE_CHECKING:
+    from network_nlo_eval.rwa.validity import LinkValidity
+
 
 @dataclass
 class LinkNoiseCache:
-    """缓存单条链路上所有信道的噪声方差 (W) 和物理跨段数。"""
+    """缓存单条链路上所有信道的噪声方差 (W) 和物理跨段数。
+
+    ``validity`` 是任务 H 的**可选**网络级有效性报告：``None``（默认）表示未接入，
+    既有数值与判定完全不变；只有显式给出有效性策略时才会被填充。
+    """
 
     spm: NDArrayFloat  # 每信道 SPM 噪声方差 (W)
     xpm: NDArrayFloat  # 每信道 XPM 噪声方差 (W)
     ase: NDArrayFloat  # 每信道 ASE 噪声方差 (W)
     span_count: int  # 链路上的物理跨段数
+    validity: "LinkValidity | None" = None  # 可选的有效性报告（任务 H，默认关闭）
 
 
 @dataclass
