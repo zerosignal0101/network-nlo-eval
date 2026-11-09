@@ -140,6 +140,7 @@ ECZ_COHERENT_MODEL_INFO = ModelInfo(
         ("ode_accel", "'off' | 'cached' | 'matvec'; single-span acceleration tier."),
         ("channel_bandwidth_source", "'symbol_rate' | 'occupied'; per-node B_i definition."),
         ("power_width_mode", "'fixed_power' | 'fixed_psd'; launch-power normalisation."),
+        ("launch_power_convention", "'total' | 'per_pol'; coordinate of power_in_w and outputs."),
     ),
 )
 
@@ -565,6 +566,18 @@ class ECZCoherentModel(MultiBandISRSGN):
     （逐位一致）；差别只在于多跨时给出**逐跨复振幅**，由路由层按 ``|sum a_k|^2``
     相干累加。
 
+    功率坐标由 ``launch_power_convention`` 决定，且**全线只有一套**：
+
+    * ``total``（默认）：入纤功率、三项噪声与复振幅都是每信道双偏振总功率。
+    * ``per_pol``：入纤功率、三项噪声与复振幅都是每偏振功率。基类单跨核在
+      边界做 ``×2`` 驱动 / ``×0.5`` 回每偏振；复振幅取 ``sqrt(spm_noise_w)``，
+      因此在同一坐标下满足 ``|a|**2 == spm_noise_w``。
+
+    跨间相干量（可见度、相干因子、相位斜坡）只依赖光纤色散/衰减/跨长与信道
+    带宽，不含功率，故两种坐标共用同一份缓存；路由层的功率传输因子是同一
+    坐标下的比值，也与坐标无关。唯一要注意的是复振幅的**模**必须与噪声功率
+    同坐标，否则 ``|sum a_k|^2`` 会把 ``0.5`` 漏掉或多乘一次。
+
     Attributes
     ----------
     supports_span_context:
@@ -585,6 +598,7 @@ class ECZCoherentModel(MultiBandISRSGN):
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = "symbol_rate",
         power_width_mode: str = "fixed_power",
+        launch_power_convention: str | None = None,
     ) -> None:
         """初始化模型；物理量由单跨核在构造期自行准备。
 
@@ -597,6 +611,16 @@ class ECZCoherentModel(MultiBandISRSGN):
             slots_per_channel: 每遗留信道占用的槽数。
             channel_bandwidth_source: 逐信道 ``B_i`` 口径。
             power_width_mode: 功率归一化口径。
+            launch_power_convention: ``power_in_w`` 与返回值（信号、SPM/XPM、
+                ASE、NLI 复振幅）的功率坐标。``None``（默认）继承基类行为，
+                即 ``"total"``；``"per_pol"`` 时由基类在单跨核边界做
+                ``×2`` 驱动 / ``×0.5`` 回每偏振，本类只把结果按同一坐标给出
+                复振幅。见
+                :mod:`network_nlo_eval.models.power_conventions`。
+
+        Raises
+        ------
+            ValueError: 口径取值非法（由基类校验）。
         """
         super().__init__(
             grid,
@@ -607,7 +631,11 @@ class ECZCoherentModel(MultiBandISRSGN):
             slots_per_channel=slots_per_channel,
             channel_bandwidth_source=channel_bandwidth_source,
             power_width_mode=power_width_mode,
+            launch_power_convention=launch_power_convention,
         )
+        # 记录**构造入参**而不是解析后的值：``None`` 的语义是"继承类属性"，
+        # 子评估器必须继承同一语义，不能把解析结果固化成显式口径。
+        self._launch_power_convention_option = launch_power_convention
         # 跨间相干量按 (跨数, 跨长) 记忆化：只依赖这两个数与光纤常量，与入纤
         # 功率无关，因此缓存是幂等的。
         self._coherence_cache: dict[tuple[int, float], tuple[NDArrayFloat, ...]] = {}
@@ -618,8 +646,10 @@ class ECZCoherentModel(MultiBandISRSGN):
     def for_fiber(self, fiber_config: FiberSpanConfig) -> ECZCoherentModel:
         """返回匹配链路光纤参数的缓存评估器。
 
-        与冻结基线的差别只在于类型：子评估器必须是本类，否则它没有跨间相干的
-        状态（可见度表、相位斜坡缓存）。
+        与冻结基线的差别只有两处：子评估器必须是本类，否则它没有跨间相干的
+        状态（可见度表、相位斜坡缓存）；功率口径必须一并透传，否则子评估器会
+        退回 ``total``，把每偏振功率当总功率驱动 SRS/NLI 核（NLI 偏小 8 倍），
+        并且交给路由层的复振幅会与噪声功率处于不同坐标。
 
         Args:
             fiber_config: 光纤配置。
@@ -639,6 +669,7 @@ class ECZCoherentModel(MultiBandISRSGN):
                 slots_per_channel=self.slots_per_channel,
                 channel_bandwidth_source=self.channel_bandwidth_source,
                 power_width_mode=self.power_width_mode,
+                launch_power_convention=self._launch_power_convention_option,
             )
         return self._fiber_evaluator_cache[key]  # type: ignore[return-value]
 
@@ -807,6 +838,9 @@ class ECZCoherentModel(MultiBandISRSGN):
             nf_lin=evaluator._resolve_nf(edfa_config),
             f_abs_hz=evaluator.f_abs_hz,
             bandwidth_hz=evaluator.channel_bandwidth_hz_channels,
+            # 新产生的 EDFA ASE 必须与 fiber_output 同坐标：per_pol 时乘 0.5。
+            # 增益用入纤功率与 fiber_output 相除，比值本身与坐标无关。
+            ase_polarization_scale=evaluator.ase_polarization_scale,
         )
         return ElementOutput(
             element.power_out_w,
