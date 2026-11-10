@@ -18,6 +18,10 @@
   ``"flag"``；``raman_auto_under_resolved`` 是 error-budget 警告，只有显式
   ``"reject"`` 才把它升级成可用性判定。该动作与 ``dense_grid_action`` 正交，
   两者可以同时打开。
+* **FWM 未覆盖默认只 flag**：``fwm_action`` 默认 ``"flag"``；``fwm_required``
+  是"模型未覆盖 FWM"的诚实标志，不是失败。只有显式 ``"reject"`` 才把命中
+  低色散/零色散/参考点越界的信道判为不可用。它同样只改可用性，不改点值，
+  并与 ``dense_grid_action`` / ``raman_resolution_action`` 正交。
 * **非有限 SNR 永不算合格**：任何启用的模式都会把 ``NaN`` / ``-inf`` 的 SNR 映射为
   ``-inf``。这是 ``NaN < requirement`` 为 ``False`` 那个静默通过缺陷的唯一防线。
 * **状态隔离**：:class:`LinkValidity` 是冻结值对象，内部数组在构造时拷贝并置为
@@ -63,6 +67,7 @@ from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 __all__ = [
     "ChannelValidity",
     "DenseGridAction",
+    "FwmAction",
     "H3LinkValidityProvider",
     "InvalidChannelPolicy",
     "LinkValidity",
@@ -206,6 +211,29 @@ class RamanResolutionAction(StrEnum):
     REJECT = "reject"
 
 
+class FwmAction(StrEnum):
+    """FWM 未覆盖（``fwm_required``）的处理动作。
+
+    ``fwm_required`` 表示当前占用谱落在闭式 kernel 不覆盖 FWM 的区制（低色散、
+    带内零色散或参考波长越界）。它是诚实的能力边界标志，不是失败。
+
+    Attributes
+    ----------
+        FLAG: 只记录标志，不改变任何可用性判定（默认，保持历史行为）。
+        REJECT: 把 ``fwm_required`` 的信道判为无效。它只做可用性判定，不改变
+            点值 SNR；后续按 :class:`InvalidChannelPolicy` 的既有模式落地：
+            ``flag`` 仍然只审计（SNR 不变，但报告的有效性为 ``False``），
+            ``reject`` / ``degrade`` / ``soft`` 把该信道压成 ``-inf``。
+    """
+
+    FLAG = "flag"
+    REJECT = "reject"
+
+
+#: Accepted values of :attr:`LinkValidity.fwm_validity_mode`.
+_FWM_VALIDITY_MODES: tuple[str, ...] = tuple(action.value for action in FwmAction)
+
+
 @dataclass(frozen=True)
 class LinkValidityPolicy:
     """网络级有效性接入的显式开关。
@@ -229,21 +257,26 @@ class LinkValidityPolicy:
             ``raman_auto_under_resolved`` 只是 error-budget 警告。``"reject"``
             在策略已启用时把这些信道标为无效。它与 ``dense_grid_action``
             正交：两者同时为 ``"reject"`` 时按逻辑或合并，互不覆盖。
+        fwm_action: ``"flag"`` / ``"reject"``。默认 ``"flag"``：
+            ``fwm_required`` 只是"模型未覆盖 FWM"的诚实标志。``"reject"`` 在
+            策略已启用时把这些信道标为无效。它与 ``dense_grid_action`` /
+            ``raman_resolution_action`` 正交，三者同时打开时按逻辑或合并。
 
     Raises
     ------
-        ValueError: ``mode`` 不是上述五个取值之一，``dense_grid_action`` 或
-            ``raman_resolution_action`` 不是 ``"flag"`` / ``"reject"``，或满
-            量程不是有限非负数。
+        ValueError: ``mode`` 不是上述五个取值之一，``dense_grid_action`` /
+            ``raman_resolution_action`` / ``fwm_action`` 不是 ``"flag"`` /
+            ``"reject"``，或满量程不是有限非负数。
     """
 
     mode: InvalidChannelPolicy | str = InvalidChannelPolicy.OFF
     soft_margin_full_scale_db: float = TILT_SOFT_MARGIN_FULL_DB
     dense_grid_action: DenseGridAction | str = DenseGridAction.FLAG
     raman_resolution_action: RamanResolutionAction | str = RamanResolutionAction.FLAG
+    fwm_action: FwmAction | str = FwmAction.FLAG
 
     def __post_init__(self) -> None:
-        """把字符串归一化成枚举，并拒绝未知策略、未知密集动作或非法满量程。"""
+        """把字符串归一化成枚举，并拒绝未知策略、未知动作或非法满量程。"""
         try:
             normalized = InvalidChannelPolicy(self.mode)
         except ValueError:
@@ -269,6 +302,14 @@ class LinkValidityPolicy:
                 f"expected one of {allowed}."
             ) from None
         object.__setattr__(self, "raman_resolution_action", raman_action)
+        try:
+            fwm_action = FwmAction(self.fwm_action)
+        except ValueError:
+            allowed = [action.value for action in FwmAction]
+            raise ValueError(
+                f"unknown FWM action {self.fwm_action!r}; expected one of {allowed}."
+            ) from None
+        object.__setattr__(self, "fwm_action", fwm_action)
         scale = float(self.soft_margin_full_scale_db)
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError(
@@ -290,6 +331,11 @@ class LinkValidityPolicy:
     def rejects_raman_resolution(self) -> bool:
         """``raman_resolution_action="reject"`` 且策略已启用。"""
         return self.enabled and self.raman_resolution_action is RamanResolutionAction.REJECT
+
+    @property
+    def rejects_fwm(self) -> bool:
+        """``fwm_action="reject"`` 且策略已启用。"""
+        return self.enabled and self.fwm_action is FwmAction.REJECT
 
     @staticmethod
     def _flag_mask(flag: bool | NDArrayBool, shape: tuple[int, ...], name: str) -> NDArrayBool:
@@ -319,20 +365,23 @@ class LinkValidityPolicy:
         dense_grid_overlap: bool | NDArrayBool = False,
         *,
         raman_auto_under_resolved: bool | NDArrayBool = False,
+        fwm_required: bool | NDArrayBool = False,
     ) -> NDArrayBool:
         """Return the availability mask this policy actually decides on.
 
-        ``mode="off"``、默认的 ``dense_grid_action="flag"`` 与默认的
-        ``raman_resolution_action="flag"`` 都原样返回 ``valid``（同一个数组），
-        所以默认路径不做任何算术。只有显式 ``"reject"`` 动作才会把对应信道的
-        可用性扣成 ``False``，且只影响可用性，不改变 SNR 点值。两个动作正交：
-        同时打开时按逻辑或合并。
+        ``mode="off"``、默认的 ``dense_grid_action="flag"``、默认的
+        ``raman_resolution_action="flag"`` 与默认的 ``fwm_action="flag"`` 都
+        原样返回 ``valid``（同一个数组），所以默认路径不做任何算术。只有显式
+        ``"reject"`` 动作才会把对应信道的可用性扣成 ``False``，且只影响可用性，
+        不改变 SNR 点值。三个动作正交：同时打开时按逻辑或合并。
 
         Args:
             valid: ``(N,)`` 物理/预算判定给出的有效性。
             dense_grid_overlap: 该占用谱是否为密集栅格；标量或 ``(N,)`` 数组。
             raman_auto_under_resolved: 该占用谱是否命中 auto-Raman 分辨率不足；
                 标量或 ``(N,)`` 数组，默认 ``False`` 时完全不参与运算。
+            fwm_required: 该占用谱是否命中"模型未覆盖 FWM"；标量或 ``(N,)``
+                数组，默认 ``False`` 时完全不参与运算。
 
         Returns
         -------
@@ -344,7 +393,9 @@ class LinkValidityPolicy:
                 数组。
         """
         values = np.asarray(valid, dtype=bool)
-        if not self.rejects_dense_grid and not self.rejects_raman_resolution:
+        if not (
+            self.rejects_dense_grid or self.rejects_raman_resolution or self.rejects_fwm
+        ):
             return values
         effective = values
         if self.rejects_dense_grid:
@@ -357,6 +408,10 @@ class LinkValidityPolicy:
             )
             if bool(np.any(under)):
                 effective = effective & ~under
+        if self.rejects_fwm:
+            fwm = self._flag_mask(fwm_required, values.shape, "fwm_required")
+            if bool(np.any(fwm)):
+                effective = effective & ~fwm
         return effective
 
     def scale_soft_margin(self, soft_margin_db: NDArrayFloat) -> NDArrayFloat:
@@ -386,6 +441,7 @@ class LinkValidityPolicy:
         *,
         dense_grid_overlap: bool | NDArrayBool = False,
         raman_auto_under_resolved: bool | NDArrayBool = False,
+        fwm_required: bool | NDArrayBool = False,
     ) -> NDArrayFloat:
         """Apply the policy to an SNR vector.
 
@@ -405,6 +461,9 @@ class LinkValidityPolicy:
             raman_auto_under_resolved: 该占用谱是否命中 auto-Raman 分辨率不足；
                 标量或 ``(N,)``。只有 ``raman_resolution_action="reject"`` 会读
                 它，默认 ``"flag"`` 时完全不参与。
+            fwm_required: 该占用谱是否命中"模型未覆盖 FWM"；标量或 ``(N,)``。
+                只有 ``fwm_action="reject"`` 会读它，默认 ``"flag"`` 时完全不
+                参与。
 
         Returns
         -------
@@ -420,6 +479,7 @@ class LinkValidityPolicy:
                 valid,
                 dense_grid_overlap,
                 raman_auto_under_resolved=raman_auto_under_resolved,
+                fwm_required=fwm_required,
             ),
             np.asarray(margin_db, dtype=np.float64),
             mode,
@@ -540,6 +600,12 @@ class LinkValidity:
             可选检查发现步数不足）。同样是 error-budget 警告，不改变本报告的
             ``valid`` / margin；``reject`` 要在策略层显式打开（见
             :attr:`LinkValidityPolicy.raman_resolution_action`）。
+        fwm_required: 预算是否报告"模型未覆盖 FWM"（低色散、带内零色散或参考
+            波长越界）。同样只是诚实标志，不改变本报告的 ``valid`` / margin；
+            ``reject`` 要在策略层显式打开（见
+            :attr:`LinkValidityPolicy.fwm_action`）。
+        fwm_reason: ``""`` 或预算给出的 ``+`` 连接原因串。
+        fwm_validity_mode: 预算评估时的 FWM 模式，``"flag"`` 或 ``"reject"``。
     """
 
     valid: NDArrayBool
@@ -555,6 +621,9 @@ class LinkValidity:
     soft_margin_db: NDArrayFloat | float | None = None
     dense_grid_overlap: bool = False
     raman_auto_under_resolved: bool = False
+    fwm_required: bool = False
+    fwm_reason: str = ""
+    fwm_validity_mode: str = "flag"
 
     def __post_init__(self) -> None:
         """Copy, freeze and validate the per-channel arrays.
@@ -566,7 +635,8 @@ class LinkValidity:
         Raises
         ------
             ValueError: 数组形状不一致、不是一维、margin 为负或为 ``NaN``、
-                confidence 越界、可选字段越界或非有限。
+                confidence 越界、可选字段越界或非有限、``fwm_validity_mode``
+                不是 ``"flag"`` / ``"reject"``。
         """
         arrays: dict[str, Any] = {}
         for name, dtype in (
@@ -623,6 +693,13 @@ class LinkValidity:
         object.__setattr__(
             self, "raman_auto_under_resolved", bool(self.raman_auto_under_resolved)
         )
+        object.__setattr__(self, "fwm_required", bool(self.fwm_required))
+        object.__setattr__(self, "fwm_reason", str(self.fwm_reason))
+        if self.fwm_validity_mode not in _FWM_VALIDITY_MODES:
+            raise ValueError(
+                f"fwm_validity_mode must be one of {_FWM_VALIDITY_MODES}, got {self.fwm_validity_mode!r}."
+            )
+        object.__setattr__(self, "fwm_validity_mode", str(self.fwm_validity_mode))
 
     @property
     def num_channels(self) -> int:
@@ -647,8 +724,9 @@ class LinkValidity:
         与 :attr:`valid` 的区别只在显式 ``"reject"`` 动作：
         ``dense_grid_action="reject"`` 时 ``dense_grid_overlap`` 为真的信道返回
         ``False``，``raman_resolution_action="reject"`` 时
-        :attr:`raman_auto_under_resolved` 为真的信道返回 ``False``。默认策略
-        （``off`` 或 ``flag`` 动作）原样返回 :attr:`valid`。
+        :attr:`raman_auto_under_resolved` 为真的信道返回 ``False``，
+        ``fwm_action="reject"`` 时 :attr:`fwm_required` 为真的信道返回 ``False``。
+        默认策略（``off`` 或 ``flag`` 动作）原样返回 :attr:`valid`。
 
         Args:
             policy: 策略；``None`` 等价于默认 ``LinkValidityPolicy()``。
@@ -661,6 +739,7 @@ class LinkValidity:
             self.valid,
             self.dense_grid_overlap,
             raman_auto_under_resolved=self.raman_auto_under_resolved,
+            fwm_required=self.fwm_required,
         )
 
     def adjusted_snr_db(
@@ -692,6 +771,7 @@ class LinkValidity:
             self.soft_margin_db,
             dense_grid_overlap=self.dense_grid_overlap,
             raman_auto_under_resolved=self.raman_auto_under_resolved,
+            fwm_required=self.fwm_required,
         )
 
     @classmethod
@@ -744,6 +824,9 @@ class LinkValidity:
             link_key=link_key,
             dense_grid_overlap=bool(report.dense_grid_overlap),
             raman_auto_under_resolved=bool(report.raman_auto_under_resolved),
+            fwm_required=bool(report.fwm_required),
+            fwm_reason=str(report.fwm_reason),
+            fwm_validity_mode=str(report.fwm_validity_mode),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -762,6 +845,9 @@ class LinkValidity:
             "soft_margin_db": [float(value) for value in self.soft_margin_db],
             "dense_grid_overlap": bool(self.dense_grid_overlap),
             "raman_auto_under_resolved": bool(self.raman_auto_under_resolved),
+            "fwm_required": bool(self.fwm_required),
+            "fwm_reason": str(self.fwm_reason),
+            "fwm_validity_mode": str(self.fwm_validity_mode),
         }
 
 
@@ -783,6 +869,11 @@ class ChannelValidity:
         raman_auto_under_resolved: 路径上任一链路是否命中 auto-Raman 分辨率
             不足（逻辑或）。同样只有 ``raman_resolution_action="reject"`` 才会
             影响可用性。
+        fwm_required: 路径上任一链路是否报告"模型未覆盖 FWM"（逻辑或）。
+            同样只有 ``fwm_action="reject"`` 才会影响可用性。
+        fwm_reason: 各链路原因的 ``+`` 连接合并（按出现顺序去重，空串忽略）。
+        fwm_validity_mode: 各链路模式的保守合并：任一链路 ``"reject"`` 即
+            ``"reject"``，否则 ``"flag"``。
     """
 
     valid: NDArrayBool
@@ -790,6 +881,9 @@ class ChannelValidity:
     soft_margin_db: NDArrayFloat | None = None
     dense_grid_overlap: bool = False
     raman_auto_under_resolved: bool = False
+    fwm_required: bool = False
+    fwm_reason: str = ""
+    fwm_validity_mode: str = "flag"
 
     def __post_init__(self) -> None:
         """Copy and freeze the arrays.
@@ -797,7 +891,8 @@ class ChannelValidity:
         Raises
         ------
             ValueError: 两个必需数组形状不同或不是一维，可选软 margin 形状
-                不匹配或非有限/为负。
+                不匹配或非有限/为负，``fwm_validity_mode`` 不是
+                ``"flag"`` / ``"reject"``。
         """
         valid = np.array(self.valid, dtype=bool, copy=True)
         margin = np.array(self.margin_db, dtype=np.float64, copy=True)
@@ -830,6 +925,13 @@ class ChannelValidity:
         object.__setattr__(
             self, "raman_auto_under_resolved", bool(self.raman_auto_under_resolved)
         )
+        object.__setattr__(self, "fwm_required", bool(self.fwm_required))
+        object.__setattr__(self, "fwm_reason", str(self.fwm_reason))
+        if self.fwm_validity_mode not in _FWM_VALIDITY_MODES:
+            raise ValueError(
+                f"fwm_validity_mode must be one of {_FWM_VALIDITY_MODES}, got {self.fwm_validity_mode!r}."
+            )
+        object.__setattr__(self, "fwm_validity_mode", str(self.fwm_validity_mode))
 
     @classmethod
     def combine(cls, links: Sequence[LinkValidity], num_channels: int) -> ChannelValidity:
@@ -841,8 +943,10 @@ class ChannelValidity:
 
         Returns
         -------
-            聚合后的逐信道有效性。``dense_grid_overlap`` 与
-            ``raman_auto_under_resolved`` 都取各链路的逻辑或。
+            聚合后的逐信道有效性。``dense_grid_overlap``、
+            ``raman_auto_under_resolved`` 与 ``fwm_required`` 都取各链路的
+            逻辑或；``fwm_reason`` 按出现顺序去重合并，``fwm_validity_mode``
+            取最保守值。
 
         Raises
         ------
@@ -853,6 +957,9 @@ class ChannelValidity:
         soft = np.zeros(num_channels, dtype=np.float64)
         dense = False
         raman_under = False
+        fwm_required = False
+        fwm_reasons: list[str] = []
+        fwm_reject = False
         for link in links:
             if link.num_channels != num_channels:
                 raise ValueError(
@@ -863,12 +970,21 @@ class ChannelValidity:
             soft += np.where(link.valid, link.soft_margin_db, 0.0)
             dense = dense or bool(link.dense_grid_overlap)
             raman_under = raman_under or bool(link.raman_auto_under_resolved)
+            fwm_required = fwm_required or bool(link.fwm_required)
+            reason = str(link.fwm_reason or "")
+            for token in reason.split("+") if reason else ():
+                if token and token not in fwm_reasons:
+                    fwm_reasons.append(token)
+            fwm_reject = fwm_reject or link.fwm_validity_mode == FwmAction.REJECT
         return cls(
             valid=valid,
             margin_db=margin,
             soft_margin_db=soft,
             dense_grid_overlap=dense,
             raman_auto_under_resolved=raman_under,
+            fwm_required=fwm_required,
+            fwm_reason="+".join(fwm_reasons),
+            fwm_validity_mode=FwmAction.REJECT if fwm_reject else FwmAction.FLAG,
         )
 
     def adjusted_snr_db(
@@ -900,6 +1016,7 @@ class ChannelValidity:
             self.soft_margin_db,
             dense_grid_overlap=self.dense_grid_overlap,
             raman_auto_under_resolved=self.raman_auto_under_resolved,
+            fwm_required=self.fwm_required,
         )
 
     def effective_valid(self, policy: LinkValidityPolicy | None = None) -> NDArrayBool:
@@ -908,6 +1025,7 @@ class ChannelValidity:
             self.valid,
             self.dense_grid_overlap,
             raman_auto_under_resolved=self.raman_auto_under_resolved,
+            fwm_required=self.fwm_required,
         )
 
 

@@ -130,6 +130,8 @@ class ServiceQoT:
         raman_auto_under_resolved: 路径上已接入的链路是否任一命中 auto-Raman
             分辨率不足。默认 ``False``；只有 ``raman_resolution_action="reject"``
             会用它扣可用性。
+        fwm_required: 路径上已接入的链路是否任一报告"模型未覆盖 FWM"。默认
+            ``False``；只有 ``fwm_action="reject"`` 会用它扣可用性。
     """
 
     snr_db: float
@@ -139,6 +141,7 @@ class ServiceQoT:
     invalid_links: tuple[LinkKey, ...] = ()
     dense_grid_overlap: bool = False
     raman_auto_under_resolved: bool = False
+    fwm_required: bool = False
 
     def effective_snr_db(self, policy: LinkValidityPolicy | None = None) -> float:
         """Apply the validity policy to the scalar SNR.
@@ -158,6 +161,7 @@ class ServiceQoT:
                 np.array([self.soft_margin_db], dtype=np.float64),
                 dense_grid_overlap=self.dense_grid_overlap,
                 raman_auto_under_resolved=self.raman_auto_under_resolved,
+                fwm_required=self.fwm_required,
             )[0]
         )
 
@@ -257,6 +261,7 @@ def accumulate_service_snr_detail(
     invalid_links: list[LinkKey] = []
     dense_grid_overlap = False
     raman_auto_under_resolved = False
+    fwm_required = False
 
     for roadm, cache in hops:
         total_spm += cache.spm.item(channel_idx)
@@ -276,6 +281,7 @@ def accumulate_service_snr_detail(
                 raman_auto_under_resolved = raman_auto_under_resolved or bool(
                     link_validity.raman_auto_under_resolved
                 )
+                fwm_required = fwm_required or bool(link_validity.fwm_required)
                 if link_validity.channel_valid(channel_idx):
                     total_margin_db += link_validity.margin_at(channel_idx)
                     total_soft_margin_db += link_validity.soft_margin_at(channel_idx)
@@ -314,6 +320,7 @@ def accumulate_service_snr_detail(
         invalid_links=tuple(invalid_links),
         dense_grid_overlap=dense_grid_overlap,
         raman_auto_under_resolved=raman_auto_under_resolved,
+        fwm_required=fwm_required,
     )
 
 
