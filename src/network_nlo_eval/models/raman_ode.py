@@ -18,8 +18,11 @@ Eq. (2) 信号/泵浦耦合功率方程，Eq. (4) 信号 ASE 耦合方程。
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import hashlib
+from collections import OrderedDict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -43,12 +46,91 @@ __all__ = [
     "DEFAULT_PAPER_SPP_STEPS",
     "LAUNCH_POWER_CONVENTIONS",
     "PaperRamanSpanResult",
+    "RAMAN_MATRIX_CACHE_MAX_ENTRIES",
     "RamanPaperSpanSolver",
+    "clear_raman_matrix_cache",
+    "raman_matrix_cache_info",
     "resolve_launch_power_convention",
 ]
 
 #: ODE 默认的 RK4 步数。与 PCFM 的 SPP 采样网格一致（每步取中点与终点）。
 DEFAULT_PAPER_SPP_STEPS: int = DEFAULT_SPP_STEPS
+
+#: 模块级拉曼矩阵缓存的上限。一项约
+#: ``2 * (N + N_p)**2 * 8`` 字节（耦合矩阵 + 源矩阵），361 信道六泵约 2.2 MB，
+#: 因此 8 项最多约 18 MB。缓存按 FIFO/LRU 淘汰最久未用的一项。
+RAMAN_MATRIX_CACHE_MAX_ENTRIES: int = 8
+
+#: 缓存键的版本前缀：矩阵构造式变化时递增，避免跨版本误用旧条目。
+_MATRIX_CACHE_VERSION: bytes = b"raman-paper-span-matrices-v1"
+
+
+@dataclass(frozen=True)
+class _CachedMatrices:
+    """一对抗曼矩阵；一旦入缓存即只读，可被多个 solver 共享。"""
+
+    coupling: NDArrayFloat
+    source: NDArrayFloat
+
+
+#: ``key -> 矩阵对``。**不是线程安全的**：并发构造 solver 时两个线程可能各自
+#: 算一遍并互相覆盖条目（结果仍然正确，只是丢一次缓存收益）；淘汰顺序也可能
+#: 交错。求解本身不读这张表，因此热路径不受影响。
+_MATRIX_CACHE: OrderedDict[bytes, _CachedMatrices] = OrderedDict()
+_MATRIX_CACHE_STATS: dict[str, int] = {"hits": 0, "misses": 0}
+
+
+def raman_matrix_cache_info() -> dict[str, int]:
+    """返回模块级拉曼矩阵缓存的统计。
+
+    Returns
+    -------
+        ``{"size", "max_entries", "hits", "misses"}``。``hits``/``misses`` 是进程
+        内累计值，只统计 :class:`RamanPaperSpanSolver` 构造期的查询，求解期
+        不查询缓存。
+    """
+    return {
+        "size": len(_MATRIX_CACHE),
+        "max_entries": RAMAN_MATRIX_CACHE_MAX_ENTRIES,
+        "hits": int(_MATRIX_CACHE_STATS["hits"]),
+        "misses": int(_MATRIX_CACHE_STATS["misses"]),
+    }
+
+
+def clear_raman_matrix_cache() -> None:
+    """清空模块级拉曼矩阵缓存并复位命中/未命中计数。
+
+    进程内缓存会跨模型实例存活，需要干净的计时起点或想释放内存时调用它。
+    """
+    _MATRIX_CACHE.clear()
+    _MATRIX_CACHE_STATS["hits"] = 0
+    _MATRIX_CACHE_STATS["misses"] = 0
+
+
+def _digest_array(digest: Any, tag: bytes, array: NDArrayFloat) -> None:
+    """把数组的 ``tag``/dtype/形状/字节追加进摘要。
+
+    值相等且 dtype/形状相同的数组得到同一摘要；不做任何数值归一化，因此
+    ``+0.0`` 与 ``-0.0`` 会得到不同的键（保守方向：最多多算一次，不会误命中）。
+    """
+    data = np.ascontiguousarray(array)
+    digest.update(tag)
+    digest.update(str(data.dtype).encode())
+    digest.update(str(data.shape).encode())
+    digest.update(data.tobytes())
+
+
+def _digest_scalar(digest: Any, tag: bytes, value: float | int | bool | str) -> None:
+    """把标量追加进摘要；浮点用 ``float64`` 的字节表示，避免 repr 舍入差异。"""
+    digest.update(tag)
+    if isinstance(value, str):
+        digest.update(value.encode())
+    elif isinstance(value, (bool, np.bool_)):
+        digest.update(b"\x01" if bool(value) else b"\x00")
+    elif isinstance(value, int):
+        digest.update(int(value).to_bytes(8, "little", signed=True))
+    else:
+        digest.update(np.float64(value).tobytes())
 
 #: BW 泵不动点迭代的最大次数。0.2 W 泵、40 km 有效长度的基准在 17 次内收敛。
 DEFAULT_FIXED_POINT_ITERATIONS: int = 24
@@ -173,6 +255,52 @@ def _interp_rows(grid: NDArrayFloat, values: NDArrayFloat, query: float) -> NDAr
     span = float(grid[index + 1] - grid[index])
     weight = 0.0 if span <= 0.0 else float((query - grid[index]) / span)
     return (1.0 - weight) * values[index] + weight * values[index + 1]
+
+
+def _digest_gain_model(digest: Any, gain_model: RamanGainModel) -> None:
+    """把增益模型的**参与计算**字段追加进摘要。
+
+    只摘要 ``gain_shape``/``peak_gain_coefficient_m_per_w``/``temperature_k``
+    实际读到的字段；溯源字段（``fiber``/``source``/``note`` 等）不参与计算，
+    因此不进键，两个只有溯源信息不同的模型仍可共享矩阵。
+    """
+    _digest_scalar(digest, b"gain.kind", str(gain_model.gain_model))
+    table = gain_model.table
+    if table is None:
+        digest.update(b"gain.table=none")
+    else:
+        _digest_array(digest, b"gain.table.offsets", table[0])
+        _digest_array(digest, b"gain.table.gains", table[1])
+    _digest_scalar(digest, b"gain.peak", gain_model.peak_gain_coefficient_m_per_w)
+    _digest_scalar(digest, b"gain.df_peak", gain_model.delta_f_peak_hz)
+    _digest_scalar(digest, b"gain.df_sigma", gain_model.delta_f_sigma_hz)
+    _digest_scalar(digest, b"gain.df_cutoff", gain_model.delta_f_cutoff_hz)
+    _digest_scalar(digest, b"gain.temperature", gain_model.temperature_k)
+
+
+def _cached_raman_matrices(
+    key: bytes,
+    builder: Callable[[], tuple[NDArrayFloat, NDArrayFloat]],
+) -> _CachedMatrices:
+    """查缓存；未命中时调用 ``builder`` 并把结果登记为只读条目。
+
+    条目按 LRU 顺序保存，超过 :data:`RAMAN_MATRIX_CACHE_MAX_ENTRIES` 时淘汰
+    最久未用的一项，因此缓存不会随模型/跨长数量无界增长。
+    """
+    entry = _MATRIX_CACHE.get(key)
+    if entry is not None:
+        _MATRIX_CACHE.move_to_end(key)
+        _MATRIX_CACHE_STATS["hits"] += 1
+        return entry
+    _MATRIX_CACHE_STATS["misses"] += 1
+    coupling, source = builder()
+    coupling.setflags(write=False)
+    source.setflags(write=False)
+    entry = _CachedMatrices(coupling=coupling, source=source)
+    _MATRIX_CACHE[key] = entry
+    while len(_MATRIX_CACHE) > RAMAN_MATRIX_CACHE_MAX_ENTRIES:
+        _MATRIX_CACHE.popitem(last=False)
+    return entry
 
 
 class RamanPaperSpanSolver:
@@ -368,6 +496,13 @@ class RamanPaperSpanSolver:
             1.0,
             float(self.signal_polarizations),
         ).astype(np.float64)
+        # RHS 的临时缓冲：每次调用都整体覆盖，调用方只保留返回值，
+        # 因此可以复用而不参与任何跨调用的状态。
+        self._rhs_total = np.empty(self._n_waves, dtype=np.float64)
+        self._rhs_drive = np.empty(self._n_waves, dtype=np.float64)
+        # 驱动因子全为 1（``signal_polarizations=1``）时 ``drive`` 与 ``total``
+        # 逐位相同，乘法可以整段跳过。``np.all`` 只做精确比较，不会误判。
+        self._drive_uniform = bool(np.all(self._drive_scale == 1.0))
 
         # ASE 坐标由 ``launch_power_convention`` 决定：``total``（默认，含历史
         # 的 ``signal_polarizations=2`` 倍率对照）保留 ``2*h*nu*B`` 的双偏振
@@ -390,9 +525,16 @@ class RamanPaperSpanSolver:
         self._alpha_bw = np.ascontiguousarray(self._alpha_npm[self._bw_slots])
         self._b_fwd = np.ascontiguousarray(self._bandwidth_hz[self._fwd_slots])
         self._f_fwd = np.ascontiguousarray(self._f_hz[self._fwd_slots])
+        # 自发源项的标量系数：按原表达式的左结合顺序预算，逐位等价于
+        # ``scale * H * b * f * (S @ drive)`` 的前四个因子。
+        self._ase_source_coeff = (
+            self._ase_source_scale * H_PLANCK * self._b_fwd * self._f_fwd
+        )
 
-        self._coupling = self._build_coupling_matrix()
-        self._source_fwd = np.ascontiguousarray(self._build_source_matrix()[self._fwd_slots, :])
+        matrices = _cached_raman_matrices(self._matrix_cache_key(), self._build_matrices)
+        self._coupling = matrices.coupling
+        self._source = matrices.source
+        self._source_fwd = np.ascontiguousarray(self._source[self._fwd_slots, :])
         self._z_m = np.linspace(0.0, self.length_m, self.n_steps + 1, dtype=np.float64)
         # --- 跨内集中损耗 ---------------------------------------------------
         # 位置/损耗在构造期一次校验，求解期只做乘法。``n_lumped_loss == 0``
@@ -441,6 +583,69 @@ class RamanPaperSpanSolver:
             ]
         else:
             self._bw_initial_segments = [self._bw_initial_total]
+
+        # 反向积分的三处插值（z0/中点/z1）只依赖等距网格，与信号状态无关，
+        # 因此把 ``searchsorted`` 的索引与权重在构造期算一次。权重按
+        # ``_interp_rows`` 完全相同的表达式求值，逐位不变。
+        self._bw_interp_index, self._bw_interp_weight = self._build_backward_interpolation()
+
+    def _matrix_cache_key(self) -> bytes:
+        """与跨长无关的求解器状态的稳定摘要，用作模块级矩阵缓存的键。
+
+        进入摘要的是**排序后**的波集合（``_f_hz``/``_alpha_npm``/``_a_eff_m2``/
+        ``_is_pump``）与波数、增益模型参数、以及会改变矩阵的三个开关。只有
+        ``_f_hz``/``_a_eff_m2``/``_is_pump`` 和增益模型/开关真正进入矩阵；
+        ``b_hz``/``alpha_npm``/偏振口径被一并纳入，使“键相同 ⇒ 两个 solver
+        的跨长无关状态相同”，宁可多算一次也不会误命中。跨长、步数、迭代
+        上限、泵浦功率与集中损耗不进键（它们不改变矩阵）。
+        """
+        digest = hashlib.blake2b(digest_size=16)
+        digest.update(_MATRIX_CACHE_VERSION)
+        _digest_array(digest, b"f_hz", self._f_hz)
+        _digest_array(digest, b"b_hz", self._bandwidth_hz)
+        _digest_array(digest, b"alpha_npm", self._alpha_npm)
+        _digest_array(digest, b"a_eff_m2", self._a_eff_m2)
+        _digest_array(digest, b"is_pump", self._is_pump.astype(np.uint8))
+        _digest_scalar(digest, b"n_signal", int(self._n_signal))
+        _digest_scalar(digest, b"n_pump", int(self._n_pump))
+        _digest_scalar(digest, b"include_isrs", self.include_isrs)
+        _digest_scalar(digest, b"pump_pump_raman", self.pump_pump_raman)
+        _digest_scalar(digest, b"pump_depletion", self.pump_depletion)
+        _digest_scalar(digest, b"signal_polarizations", int(self.signal_polarizations))
+        _digest_scalar(digest, b"launch_power_convention", str(self.launch_power_convention))
+        _digest_gain_model(digest, self.gain_model)
+        return digest.digest()
+
+    def _build_matrices(self) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """构造一对与跨长无关的矩阵（缓存未命中时调用一次）。"""
+        coupling = self._build_coupling_matrix()
+        self._coupling = coupling
+        return coupling, self._build_source_matrix()
+
+    def _build_backward_interpolation(self) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """反向积分 ``(n_steps, 3)`` 的插值索引与权重。
+
+        三列依次对应 ``_integrate_backward`` 每步的 ``z0``（段右端）、中点与
+        ``z1``（段左端）。索引/权重按 :func:`_interp_rows` 完全相同的算式求得，
+        只是提前到构造期一次性向量化计算；求解期不再重复 ``searchsorted``。
+        """
+        n_steps = self.n_steps
+        index = np.zeros((n_steps, 3), dtype=np.int64)
+        weight = np.zeros((n_steps, 3), dtype=np.float64)
+        if self._bw_slots.size == 0 or n_steps == 0:
+            return index, weight
+        grid = self._z_m
+        last = grid.shape[0] - 2
+        z0 = self.length_m - grid[:n_steps]
+        z1 = self.length_m - grid[1 : n_steps + 1]
+        queries = np.column_stack((z0, 0.5 * (z0 + z1), z1))
+        positions = np.searchsorted(grid, queries.ravel()) - 1
+        positions = np.clip(positions, 0, last).reshape(queries.shape)
+        span = grid[positions + 1] - grid[positions]
+        shift = queries - grid[positions]
+        weights = np.zeros(queries.shape, dtype=np.float64)
+        np.divide(shift, span, out=weights, where=span > 0.0)
+        return positions.astype(np.int64), weights
 
     def _build_sample_positions(self) -> NDArrayFloat:
         """``profile_norm`` 每一行的归一化位置 ``z/L``（分段、非等距）。"""
@@ -520,6 +725,11 @@ class RamanPaperSpanSolver:
         kappa[mask] = 1.0 / (-np.expm1(-x[mask]))
         return np.maximum(self._coupling, 0.0) * kappa
 
+    def _scaled_drive(self, total: NDArrayFloat) -> NDArrayFloat:
+        """``total * _drive_scale``，写进复用的实例缓冲（逐元素等价）。"""
+        np.multiply(total, self._drive_scale, out=self._rhs_drive)
+        return self._rhs_drive
+
     def _rhs_forward(
         self,
         power: NDArrayFloat,
@@ -527,25 +737,27 @@ class RamanPaperSpanSolver:
         backward_total: NDArrayFloat,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """正向波（信号与 FW 泵）的右端项。"""
-        total = np.empty(self._n_waves, dtype=np.float64)
-        total[self._fwd_slots] = power + ase
+        # ``total``/``drive`` 只是本次调用的临时量（调用方只保留返回值），
+        # 因此复用实例缓冲；逐元素算式与分配新数组完全相同，运算顺序不变。
+        total = self._rhs_total
+        fwd_slots = self._fwd_slots
+        total[fwd_slots] = power + ase
         total[self._bw_slots] = backward_total
         # 耦合的源功率用总功率（信号槽乘偏振数），接收功率 ``power`` 仍只乘一次。
-        drive = total * self._drive_scale
-        gain_rate = self._coupling @ drive
-        gain_fwd = gain_rate[self._fwd_slots]
-        d_power = power * gain_fwd - self._alpha_fwd * power
+        # ``_drive_uniform``（``signal_polarizations=1``）时驱动就是 ``total``：
+        # 乘 1.0 是逐位恒等变换，跳过它不改变任何一位。
+        drive = total if self._drive_uniform else self._scaled_drive(total)
+        gain_fwd = (self._coupling @ drive)[fwd_slots]
+        alpha_fwd = self._alpha_fwd
+        d_power = power * gain_fwd - alpha_fwd * power
         if not self.include_ase:
             return d_power, np.zeros_like(ase)
         # 自发源项：``total`` 坐标用双偏振状态与 2 个接收偏振；``per_pol``
         # 坐标的 ASE 只有每偏振一份，必须用物理总功率（``drive``）驱动，否则
         # 信号-信号项会因状态减半而低 2 倍。源项系数只在 ``per_pol`` 时降为 1。
-        if self._ase_source_scale == 2.0:
-            ase_drive = total
-        else:
-            ase_drive = drive
-        source = self._ase_source_scale * H_PLANCK * self._b_fwd * self._f_fwd * (self._source_fwd @ ase_drive)
-        d_ase = gain_fwd * ase + source - self._alpha_fwd * ase
+        ase_drive = total if self._ase_source_scale == 2.0 else drive
+        source = self._ase_source_coeff * (self._source_fwd @ ase_drive)
+        d_ase = gain_fwd * ase + source - alpha_fwd * ase
         return d_power, d_ase
 
     def _rhs_backward(
@@ -555,17 +767,18 @@ class RamanPaperSpanSolver:
         forward_total: NDArrayFloat,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """反向泵浦的右端项（以 ``s = L - z`` 为积分变量）。"""
-        total = forward_total.copy()
+        total = self._rhs_total
+        np.copyto(total, forward_total)
         total[self._bw_slots] = power + ase
-        drive = total * self._drive_scale
-        gain_rate = self._coupling @ drive
-        gain_bw = gain_rate[self._bw_slots]
-        d_power = power * gain_bw - self._alpha_bw * power
+        drive = total if self._drive_uniform else self._scaled_drive(total)
+        gain_bw = (self._coupling @ drive)[self._bw_slots]
+        alpha_bw = self._alpha_bw
+        d_power = power * gain_bw - alpha_bw * power
         if not self.include_ase:
             return d_power, np.zeros_like(ase)
         # 反向泵浦的带宽为 0，自发拉曼源项对泵浦 ASE 为零；信号 ASE 的空闲
         # 项由正向积分负责。
-        d_ase = gain_bw * ase - self._alpha_bw * ase
+        d_ase = gain_bw * ase - alpha_bw * ase
         return d_power, d_ase
 
     def _integrate_forward(
@@ -746,12 +959,15 @@ class RamanPaperSpanSolver:
         ase_grid[0] = ase
         for step in range(self.n_steps):
             h = self._z_m[step + 1] - self._z_m[step]
-            z0 = self.length_m - self._z_m[step]
-            z1 = self.length_m - self._z_m[step + 1]
-            z_mid = 0.5 * (z0 + z1)
-            total0 = _interp_rows(self._z_m, forward_total, z0)
-            total_mid = _interp_rows(self._z_m, forward_total, z_mid)
-            total1 = _interp_rows(self._z_m, forward_total, z1)
+            index0, index_mid, index1 = self._bw_interp_index[step]
+            weight0, weight_mid, weight1 = self._bw_interp_weight[step]
+            # 与 ``_interp_rows`` 相同的表达式，只是索引/权重已在构造期算好。
+            total0 = (1.0 - weight0) * forward_total[index0] + weight0 * forward_total[index0 + 1]
+            total_mid = (
+                (1.0 - weight_mid) * forward_total[index_mid]
+                + weight_mid * forward_total[index_mid + 1]
+            )
+            total1 = (1.0 - weight1) * forward_total[index1] + weight1 * forward_total[index1 + 1]
 
             dp1, da1 = self._rhs_backward(power, ase, total0)
             dp2, da2 = self._rhs_backward(power + 0.5 * h * dp1, ase + 0.5 * h * da1, total_mid)
