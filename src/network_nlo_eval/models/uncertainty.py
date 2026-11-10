@@ -375,6 +375,25 @@ class ValidityReport:
             checked spans (``1.0`` when nothing was checked).
         raman_resolution_checked: ``True`` when at least one span ran the
             check against a usable finer solve.
+        min_abs_dispersion_ps_nm_km: Smallest ``|D(lambda)|`` over the occupied
+            channels and the spans of the path (ps/nm/km).  The closed-form
+            kernels carry no FWM term, so this is the distance of the comb from
+            the phase-matched regime.
+        zero_dispersion_in_band: ``True`` when any span has the fibre's
+            zero-dispersion wavelength inside the occupied band.
+        dispersion_reference_in_band: ``True`` only when **every** span's
+            ``reference_wavelength_nm`` lies inside the occupied band.  The
+            kernel takes one ``beta2``/``beta3`` pair at that anchor, so a
+            single out-of-band span makes the dispersion extrapolated on this
+            comb.  It is a separate error source from the missing FWM term.
+        fwm_required: ``True`` when any span reports the low-dispersion /
+            zero-dispersion / out-of-band-anchor regime.  It ORs into
+            ``flagged``; with ``fwm_validity_mode="reject"`` it also clears
+            ``valid``.  It never changes the point NLI/ASE/SNR.
+        fwm_reason: ``""`` or the ``+``-joined union of the span reasons
+            (``zero_dispersion_in_band``, ``low_dispersion``,
+            ``dispersion_reference_out_of_band``).
+        fwm_validity_mode: The mode the spans were evaluated with.
     """
 
     valid: NDArrayBool
@@ -406,6 +425,12 @@ class ValidityReport:
     raman_resolution_check_steps: int = 0
     raman_resolution_change: float = 1.0
     raman_resolution_checked: bool = False
+    min_abs_dispersion_ps_nm_km: float = float("inf")
+    zero_dispersion_in_band: bool = False
+    dispersion_reference_in_band: bool = True
+    fwm_required: bool = False
+    fwm_reason: str = ""
+    fwm_validity_mode: str = "flag"
 
 
 @dataclass(frozen=True)
@@ -854,6 +879,12 @@ def estimate_h3_error_budget(
     resolution_checked = False
     resolution_steps = 0
     resolution_changes: list[float] = []
+    fwm_required_any = False
+    fwm_reasons: list[str] = []
+    fwm_min_dispersion = float("inf")
+    fwm_zero_in_band = False
+    fwm_reference_in_band = True
+    fwm_mode = str(getattr(model, "fwm_validity_mode", "flag"))
     for report in span_reports:
         if not bool(getattr(report, "raman_converged", True)):
             raman_not_converged[:] = True
@@ -883,6 +914,23 @@ def estimate_h3_error_budget(
             resolution_changes.append(float(getattr(report, "raman_resolution_change", 1.0)))
         if bool(getattr(report, "raman_auto_under_resolved", False)):
             auto_under_resolved = True
+        # 低色散 / FWM 适用域是整条链路的属性：任一跨落在该区域，链路预算就
+        # 不能声称模型包含 FWM。字段来自逐跨报告，旧报告没有这些字段时保持默认
+        # （不 flag、不 reject），因此旧调用方逐位不变。
+        reason = str(getattr(report, "fwm_reason", "") or "")
+        for token in reason.split("+") if reason else ():
+            if token and token not in fwm_reasons:
+                fwm_reasons.append(token)
+        fwm_min_dispersion = min(
+            fwm_min_dispersion,
+            float(getattr(report, "min_abs_dispersion_ps_nm_km", float("inf"))),
+        )
+        fwm_zero_in_band = fwm_zero_in_band or bool(getattr(report, "zero_dispersion_in_band", False))
+        fwm_reference_in_band = fwm_reference_in_band and bool(
+            getattr(report, "dispersion_reference_in_band", True)
+        )
+        if bool(getattr(report, "fwm_required", False)):
+            fwm_required_any = True
     resolution_change = max(resolution_changes, default=1.0)
     if not resolution_checked:
         # Nothing was compared: keep the neutral "not checked" values so the
@@ -924,6 +972,11 @@ def estimate_h3_error_budget(
     # 泵在信号带内是物理配置错误（不是收敛问题）：与未收敛一样是硬失效，
     # 对应信道 margin=inf；点值本身仍保留，便于调用方检查。
     valid = active & snr_ok & ~raman_not_converged & ~pump_overlap
+    # 低色散/FWM：默认只 OR 进 flagged。reject 模式按信道把 valid 扣掉，但
+    # NLI/ASE/SNR 与 margin 数值路径都不变（invalid 会拿到 inf margin）。
+    fwm_channels = launched & fwm_required_any
+    if fwm_mode == "reject":
+        valid = valid & ~fwm_channels
     confidence = np.where(strong_tilt, confidence - 0.30, confidence)
     confidence = np.where(not_converged, confidence - 0.40, confidence)
     confidence = np.where(raman_wideband, confidence - 0.15, confidence)
@@ -962,6 +1015,7 @@ def estimate_h3_error_budget(
         | unusable_result
         | (dense_grid & active)
         | (auto_under_resolved & active)
+        | fwm_channels
     )
     validity = ValidityReport(
         valid=valid,
@@ -993,6 +1047,12 @@ def estimate_h3_error_budget(
         raman_resolution_check_steps=int(resolution_steps),
         raman_resolution_change=float(resolution_change),
         raman_resolution_checked=bool(resolution_checked),
+        min_abs_dispersion_ps_nm_km=float(fwm_min_dispersion),
+        zero_dispersion_in_band=bool(fwm_zero_in_band),
+        dispersion_reference_in_band=bool(fwm_reference_in_band),
+        fwm_required=bool(fwm_required_any),
+        fwm_reason="+".join(fwm_reasons),
+        fwm_validity_mode=fwm_mode,
     )
 
     terms = [
@@ -1073,6 +1133,16 @@ def estimate_h3_error_budget(
         )
     if dense_penalty > 0.0:
         notes.append(f"dense-grid penalty {cfg.dense_grid_penalty_db:.2f} dB applied (opt-in)")
+    if fwm_required_any:
+        note = (
+            f"PCFM/H3 do not contain FWM: the occupied band has min |D| = "
+            f"{fwm_min_dispersion:.2f} ps/nm/km (reason: {'+'.join(fwm_reasons)}), so FWM is not "
+            "negligible and low-dispersion band results are reference-only "
+            "(PCFM/H3 未含 FWM，低色散波段结果仅作参考)"
+        )
+        if fwm_mode == "reject":
+            note += "; fwm_validity_mode='reject' clears valid on those channels"
+        notes.append(note)
 
     return H3ErrorBudget(
         model=str(getattr(model.info, "name", type(model).__name__)),

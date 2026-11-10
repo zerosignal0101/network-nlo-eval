@@ -444,6 +444,174 @@ SCI_UNCORRECTED_CONFIDENCE: float = 0.2
 #: calibrated margin, and the report only flags it.
 DENSE_GRID_SPACING_RATIO: float = 1.0
 
+#: Accepted values of ``fwm_validity_mode``.
+#:
+#: ``"flag"`` (default) only ORs ``fwm_required`` into ``flagged`` and writes
+#: an error-budget note; ``"reject"`` additionally clears ``valid`` on the
+#: affected channels.  Neither value ever changes the point NLI/ASE/SNR.
+FWM_VALIDITY_MODES: tuple[str, ...] = ("flag", "reject")
+
+#: Local dispersion magnitude (ps/nm/km) below which the PCFM/H3 closed form
+#: is reported as needing the FWM term it does not carry.
+#:
+#: The kernels contain SPM and XCI only.  The GN double integral behind the
+#: numerical reference also contains the FWM (Bragg-scattering) contribution,
+#: which is phase-matched where ``beta2`` vanishes.  The value is *calibrated*
+#: against that reference by ``scripts/h3_o_band_audit.py``: on the O band the
+#: NLI error grows from +0.4 dB at 4-8 ps/nm/km to -0.8 dB at the zero-
+#: dispersion crossing, so 4.0 ps/nm/km is the magnitude where the missing FWM
+#: term leaves the C-band error budget.  It is a domain boundary, not a tuning
+#: knob: the C/C+L/S+C+L bands stay above it (>= 5.6 ps/nm/km), the O band
+#: does not.  See ``docs``/``H3_TASK_REPORT.md`` for the full table.
+FWM_REQUIRED_MIN_DISPERSION_PS_NM_KM: float = 4.0
+
+#: ``|D|`` below which a channel is treated as sitting on the zero-dispersion
+#: crossing even when the crossing itself falls just outside the occupied
+#: channel centres.  It is a discretisation guard: with 96 GBaud channels at
+#: 100 GHz spacing the nearest centre can be ~0.1 nm from ``lambda0``, which
+#: is already ~0.006 ps/nm/km; a half-ps/nm/km window keeps the sign-change
+#: test robust without widening the physical claim.
+ZERO_DISPERSION_NEAR_PS_NM_KM: float = 0.5
+
+
+@dataclass(frozen=True)
+class DispersionValidity:
+    """Read-only low-dispersion / FWM applicability audit of one span plan.
+
+    The audit depends only on the channel plan, the occupied mask and the
+    fibre's ``D``/``S`` anchor, so it is pure geometry: it never looks at the
+    NLI, the power profile or the Kerr kernel.  ``PCFM``/``H3`` carry no FWM
+    term, so a span where ``beta2`` is small is outside the model's physics.
+
+    Attributes
+    ----------
+        per_channel_dispersion_ps_nm_km:
+            ``(N,)`` ``D(lambda_i) = D_ref + S (lambda_i - lambda_ref)`` at the
+            channel centre, in model order (ps/nm/km).
+        min_abs_dispersion_ps_nm_km:
+            Smallest ``|D|`` over the occupied channels; ``inf`` without an
+            occupied channel.
+        zero_dispersion_in_band:
+            ``True`` when the zero-dispersion wavelength
+            ``lambda0 = lambda_ref - D_ref / S`` falls inside the occupied band
+            edges (or ``|D|`` of an occupied channel is below
+            :data:`ZERO_DISPERSION_NEAR_PS_NM_KM`).  ``False`` for ``S = 0``.
+        dispersion_reference_in_band:
+            ``True`` when the fibre's ``reference_wavelength_nm`` falls inside
+            the occupied band.  The kernel takes a single ``beta2``/``beta3``
+            at that wavelength, so an out-of-band anchor means the dispersion
+            anchor is extrapolated, not measured, on this comb.
+        fwm_required:
+            ``True`` when at least one of the three reasons below applies.
+        fwm_reason:
+            ``""`` or a ``+``-joined combination of
+            ``"zero_dispersion_in_band"``, ``"low_dispersion"`` and
+            ``"dispersion_reference_out_of_band"``.
+    """
+
+    per_channel_dispersion_ps_nm_km: NDArrayFloat
+    min_abs_dispersion_ps_nm_km: float
+    zero_dispersion_in_band: bool
+    dispersion_reference_in_band: bool
+    fwm_required: bool
+    fwm_reason: str
+
+
+def dispersion_validity(
+    f_abs_hz: NDArrayFloat,
+    bandwidth_hz: NDArrayFloat,
+    active: NDArrayBool | None,
+    *,
+    dispersion_parameter_d: float,
+    dispersion_slope_s: float,
+    reference_wavelength_nm: float,
+    min_dispersion_ps_nm_km: float = FWM_REQUIRED_MIN_DISPERSION_PS_NM_KM,
+) -> DispersionValidity:
+    """Audit whether the span sits in the low-dispersion / FWM regime.
+
+    The model is geometry only.  ``D(lambda) = D_ref + S (lambda - lambda_ref)``
+    with ``lambda = c / f``; the reference anchor of the *kernel* is a single
+    ``beta2``/``beta3`` pair taken at ``reference_wavelength_nm``, so the audit
+    reports separately whether that anchor is inside the occupied band.
+
+    Args:
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz), any order.
+        bandwidth_hz: ``(N,)`` occupied channel bandwidths (Hz).
+        active: Optional ``(N,)`` mask of launched channels; ``None`` means all.
+        dispersion_parameter_d: ``D`` at the reference wavelength (ps/nm/km).
+        dispersion_slope_s: ``S`` (ps/nm^2/km); ``0`` disables the crossing test.
+        reference_wavelength_nm: Anchor wavelength of the kernel (nm).
+        min_dispersion_ps_nm_km: Magnitude threshold of the ``low_dispersion``
+            reason (ps/nm/km).
+
+    Returns
+    -------
+        A :class:`DispersionValidity`; the per-channel array is in the input
+        order and ``nan`` for an inactive channel.
+
+    Raises
+    ------
+        ValueError: The arrays are not one-dimensional or differ in shape.
+    """
+    frequencies = np.asarray(f_abs_hz, dtype=np.float64)
+    bandwidths = np.asarray(bandwidth_hz, dtype=np.float64)
+    if frequencies.ndim != 1 or bandwidths.shape != frequencies.shape:
+        raise ValueError(
+            f"f_abs_hz and bandwidth_hz must be one-dimensional and equal, got {frequencies.shape} "
+            f"and {bandwidths.shape}."
+        )
+    mask = np.ones(frequencies.shape, dtype=bool) if active is None else np.asarray(active, dtype=bool)
+    if mask.shape != frequencies.shape:
+        raise ValueError(f"active must have shape {frequencies.shape}, got {mask.shape}.")
+
+    d_ref = float(dispersion_parameter_d)
+    slope = float(dispersion_slope_s)
+    lambda_ref_nm = float(reference_wavelength_nm)
+    lambdas_nm = C_LIGHT / frequencies * 1e9
+    dispersion = d_ref + slope * (lambdas_nm - lambda_ref_nm)
+    per_channel = np.where(mask, dispersion, np.nan)
+
+    if np.any(mask):
+        abs_d = np.abs(dispersion[mask])
+        min_abs = float(np.min(abs_d))
+        # 占用带边界：中心 ± 半个带宽。零色散波长落在其中即说明 beta2 在带内变号。
+        band_low = float(np.min(frequencies[mask] - 0.5 * bandwidths[mask]))
+        band_high = float(np.max(frequencies[mask] + 0.5 * bandwidths[mask]))
+        sign_change = bool(np.any(dispersion[mask] < 0.0) and np.any(dispersion[mask] > 0.0))
+    else:
+        min_abs = float("inf")
+        band_low = band_high = float("nan")
+        sign_change = False
+
+    zero_crossing = False
+    if slope != 0.0:
+        lambda0_nm = lambda_ref_nm - d_ref / slope
+        if lambda0_nm > 0.0:
+            f0_hz = C_LIGHT / (lambda0_nm * 1e-9)
+            zero_crossing = bool(band_low <= f0_hz <= band_high)
+    zero_in_band = bool(
+        zero_crossing or sign_change or (np.isfinite(min_abs) and min_abs <= ZERO_DISPERSION_NEAR_PS_NM_KM)
+    )
+    reference_in_band = bool(np.isfinite(band_low) and band_low <= C_LIGHT / (lambda_ref_nm * 1e-9) <= band_high)
+    low_dispersion = bool(np.isfinite(min_abs) and min_abs < float(min_dispersion_ps_nm_km))
+
+    reasons = []
+    if zero_in_band:
+        reasons.append("zero_dispersion_in_band")
+    if low_dispersion:
+        reasons.append("low_dispersion")
+    if np.isfinite(band_low) and not reference_in_band:
+        reasons.append("dispersion_reference_out_of_band")
+
+    return DispersionValidity(
+        per_channel_dispersion_ps_nm_km=np.ascontiguousarray(per_channel),
+        min_abs_dispersion_ps_nm_km=min_abs,
+        zero_dispersion_in_band=zero_in_band,
+        dispersion_reference_in_band=reference_in_band,
+        fwm_required=bool(reasons),
+        fwm_reason="+".join(reasons),
+    )
+
 
 def dense_grid_metrics(
     f_abs_hz: NDArrayFloat,
@@ -716,6 +884,33 @@ class SpanValidityReport:
             ``True`` only when the check actually ran and the finer solves
             were usable.  It is ``False`` with the default option, at or above
             the maximum step count, and when the finer solve did not converge.
+        min_abs_dispersion_ps_nm_km:
+            Smallest ``|D(lambda)|`` over the occupied channels (ps/nm/km),
+            with ``D(lambda) = D_ref + S (lambda - lambda_ref)`` at the channel
+            centre.  The closed-form kernels carry no FWM term, so this is the
+            distance of the comb from the phase-matched regime.
+        zero_dispersion_in_band:
+            ``True`` when the zero-dispersion wavelength of the fibre falls
+            inside the occupied band edges (or an occupied channel has
+            ``|D| <= ZERO_DISPERSION_NEAR_PS_NM_KM``).
+        dispersion_reference_in_band:
+            ``True`` when ``reference_wavelength_nm`` falls inside the occupied
+            band.  The kernel evaluates a single ``beta2``/``beta3`` pair at
+            that wavelength; an out-of-band anchor means the dispersion used by
+            the closed form is an extrapolation, not a measurement, on this
+            comb.  It is a separate error source from the missing FWM term.
+        fwm_required:
+            ``True`` when the span sits in the low-dispersion / zero-dispersion
+            / out-of-band-anchor regime where FWM cannot be neglected.  With
+            ``fwm_validity_mode="flag"`` (default) it only ORs into
+            ``flagged``; ``"reject"`` also clears ``valid``.  It never changes
+            the point NLI/ASE/SNR.
+        fwm_reason:
+            ``""`` or a ``+``-joined subset of ``"zero_dispersion_in_band"``,
+            ``"low_dispersion"`` and ``"dispersion_reference_out_of_band"``.
+        fwm_validity_mode:
+            The mode this span was evaluated with (``"flag"`` or ``"reject"``),
+            echoed so the report is self-describing.
     """
 
     xci_gated: NDArrayFloat
@@ -762,6 +957,12 @@ class SpanValidityReport:
     raman_resolution_check_steps: int = 0
     raman_resolution_change: float = 1.0
     raman_resolution_checked: bool = False
+    min_abs_dispersion_ps_nm_km: float = float("inf")
+    zero_dispersion_in_band: bool = False
+    dispersion_reference_in_band: bool = True
+    fwm_required: bool = False
+    fwm_reason: str = ""
+    fwm_validity_mode: str = "flag"
 
 
 @dataclass(frozen=True)
@@ -2015,6 +2216,14 @@ PCFM_MODEL_INFO = ModelInfo(
             "number; 'strict' additionally replaces the SNR of invalid channels with NaN.",
         ),
         (
+            "fwm_validity_mode",
+            "'flag' (default) marks spans in the low-dispersion / zero-dispersion / out-of-band-"
+            "anchor regime in the validity report (fwm_required, fwm_reason) without touching any "
+            "number; 'reject' additionally clears 'valid' on those channels. The PCFM kernels carry "
+            "no FWM term, so that regime is outside the model physics. Neither mode changes the "
+            "point NLI/ASE/SNR.",
+        ),
+        (
             "nli_power_convention",
             "'total' (default): power_in_w is the per-channel dual-polarization total power and the "
             "printed 16/27 and 32/27 GN weights apply as-is. 'per_pol': power_in_w is "
@@ -2075,6 +2284,11 @@ class PCFMSpanKernel:
             closed form does not exist.  Rows with any such pair are forced
             through the materiality gate on a dense plan; every other row and
             every other pair stays bit-for-bit unchanged.
+        fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The model
+            carries no FWM term, so a comb near the zero-dispersion point is
+            outside its physics.  ``"flag"`` only ORs ``fwm_required`` into
+            ``flagged`` (point NLI/ASE/SNR and ``valid`` unchanged);
+            ``"reject"`` also clears ``valid`` on the affected channels.
     """
 
     def __init__(
@@ -2092,13 +2306,15 @@ class PCFMSpanKernel:
         nli_power_convention: str = "total",
         xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
         dense_grid_fix: bool = False,
+        fwm_validity_mode: str = "flag",
     ) -> None:
         """Prepare the per-channel constants of the span.
 
         Raises
         ------
             ValueError: The polynomial degree or the integration resolution
-                is not positive, or a lumped loss element is out of the span.
+                is not positive, a lumped loss element is out of the span, or
+                ``fwm_validity_mode`` is not ``"flag"``/``"reject"``.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -2115,6 +2331,15 @@ class PCFMSpanKernel:
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.dense_grid_fix = bool(dense_grid_fix)
+        if fwm_validity_mode not in FWM_VALIDITY_MODES:
+            raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
+        self.fwm_validity_mode = str(fwm_validity_mode)
+        # 色散锚点只依赖光纤，构造期固定；占用带与 |D| 最小值在每次报告时按
+        # active 掩码重算（未占用信道不应影响判定）。
+        self.dispersion_parameter_d = float(fiber_config.dispersion_parameter_d)
+        self.dispersion_slope_s = float(fiber_config.dispersion_slope_s)
+        self.reference_wavelength_nm = float(fiber_config.reference_wavelength_nm)
+
         self.cache_spans = bool(cache_spans)
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # 小 |X| 的 SCI 泰勒系数只依赖多项式阶数；edge_fix=False 时关闭该分支。
@@ -2921,6 +3146,22 @@ class PCFMSpanKernel:
         dense_pairs = np.where(active, dense_pairs, 0.0)
         dense_fraction = np.where(active, dense_fraction, 0.0)
 
+        # 低色散 / FWM 适用域：纯几何判定（信道计划 + 光纤 D/S 锚点）。PCFM/H3
+        # 的闭式核没有 FWM 项，零色散附近 numerical 参考的 FWM 项不可忽略。
+        # 默认只 OR 进 flagged；只有 reject 才清 valid，且两种模式都不碰点值。
+        dispersion_audit = dispersion_validity(
+            self.f_abs_hz,
+            self.b_hz,
+            active,
+            dispersion_parameter_d=self.dispersion_parameter_d,
+            dispersion_slope_s=self.dispersion_slope_s,
+            reference_wavelength_nm=self.reference_wavelength_nm,
+        )
+        if dispersion_audit.fwm_required:
+            flagged = flagged | active
+            if self.fwm_validity_mode == "reject":
+                valid = np.where(active, False, valid)
+
         # 未占用信道没有可判定的物理量，也不应被 strict 变成 NaN。
         valid = np.where(active, valid, True)
         flagged = np.where(active, flagged, False)
@@ -2957,6 +3198,12 @@ class PCFMSpanKernel:
             dense_grid_overlap_correction=np.ascontiguousarray(dense_fraction[self.inverse_order]),
             dense_grid_overlap_pairs=np.ascontiguousarray(dense_pairs[self.inverse_order]),
             raman_pump_overlap_channels=np.zeros(self.n_nodes, dtype=bool),
+            min_abs_dispersion_ps_nm_km=float(dispersion_audit.min_abs_dispersion_ps_nm_km),
+            zero_dispersion_in_band=bool(dispersion_audit.zero_dispersion_in_band),
+            dispersion_reference_in_band=bool(dispersion_audit.dispersion_reference_in_band),
+            fwm_required=bool(dispersion_audit.fwm_required),
+            fwm_reason=str(dispersion_audit.fwm_reason),
+            fwm_validity_mode=str(self.fwm_validity_mode),
         )
 
     def clear_span_cache(self) -> None:
@@ -3469,6 +3716,12 @@ class PCFMModel(RouteModel):
             Only the pairs with ``|f_i - f_j| <= B_j/2`` are touched, and only
             on a dense plan (``min spacing < max bandwidth``); see
             :class:`PCFMSpanKernel`.
+        fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The kernels
+            carry SPM/XCI only, so a comb whose local dispersion reaches the
+            zero-dispersion point (or whose dispersion anchor is outside the
+            band) is outside the model physics.  ``"flag"`` only marks those
+            spans in the validity report; ``"reject"`` also clears ``valid``.
+            Neither mode changes the point NLI/ASE/SNR.
         cache_spans: Memoise the identical spans of one path.
         spp_steps: RK4 steps of the SPP integration, or ``"auto"`` (12 at
             ``<=0 dBm`` per channel, 32 above it).
@@ -3539,6 +3792,7 @@ class PCFMModel(RouteModel):
         nli_power_convention: str = "total",
         resolution: str | None = None,
         dense_grid_fix: bool = False,
+        fwm_validity_mode: str = "flag",
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -3559,6 +3813,8 @@ class PCFMModel(RouteModel):
             raise ValueError(f"raman_model must be None, 'off' or 'lumped', got {raman_model!r}.")
         if validity_mode not in ("warn", "strict"):
             raise ValueError(f"validity_mode must be 'warn' or 'strict', got {validity_mode!r}.")
+        if fwm_validity_mode not in FWM_VALIDITY_MODES:
+            raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         profile = resolve_resolution_profile(resolution)
         quadrature_points = XCI_EDGE_QUADRATURE_POINTS
         if profile is not None:
@@ -3597,6 +3853,7 @@ class PCFMModel(RouteModel):
         self.resolution = None if profile is None else str(resolution)
         self.xci_edge_quadrature_points = int(quadrature_points)
         self.validity_mode = str(validity_mode)
+        self.fwm_validity_mode = str(fwm_validity_mode)
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
@@ -3649,6 +3906,7 @@ class PCFMModel(RouteModel):
             nli_power_convention=self.nli_power_convention,
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
+            fwm_validity_mode=self.fwm_validity_mode,
         )
 
     @property

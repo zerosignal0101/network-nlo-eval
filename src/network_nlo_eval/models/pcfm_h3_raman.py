@@ -704,6 +704,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             missing numba raises ``RuntimeError``.  ``"auto"`` selects numba
             only when it is importable, ``raman_steps >= 24`` and no lumped
             loss is present, and falls back to Python otherwise.
+        fwm_validity_mode: ``"flag"`` (default) or ``"reject"``, forwarded to
+            :class:`PCFMSpanKernel`.  The H3 kernels carry SPM/XCI only, so a
+            low-dispersion comb is outside their physics; ``"reject"`` clears
+            ``valid`` there.  Neither mode changes the point NLI/ASE/SNR.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -730,6 +734,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
         raman_backend: str = "python",
+        fwm_validity_mode: str = "flag",
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -783,6 +788,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             lumped_loss=checked_lumped_loss or None,
             nli_power_convention=resolved_nli,
             dense_grid_fix=bool(dense_grid_fix),
+            fwm_validity_mode=fwm_validity_mode,
             **kwargs,  # type: ignore[arg-type]
         )
         self._fiber_config = fiber_config
@@ -1734,6 +1740,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "number; 'strict' additionally replaces the SNR of invalid channels with NaN.",
         ),
         (
+            "fwm_validity_mode",
+            "'flag' (default) marks low-dispersion / zero-dispersion / out-of-band-anchor spans in "
+            "the validity report (fwm_required, fwm_reason) without touching any number; 'reject' "
+            "additionally clears 'valid' on those channels. The H3 kernels carry SPM/XCI only, so "
+            "that regime is outside the model physics. Neither mode changes NLI/ASE/SNR.",
+        ),
+        (
             "modulation_format_correction",
             "Opt-in Semrau 2019b modulation-format correction of the XCI term. False (default) keeps "
             "every number bit-for-bit. True multiplies the per-span XCI by the 2019b XPM ratio "
@@ -1930,6 +1943,7 @@ class PCFH3RamanModel(PCFMModel):
         validity_mode: str = "warn",
         resolution: str | None = None,
         dense_grid_fix: bool = False,
+        fwm_validity_mode: str = "flag",
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         modulation_format_correction: bool = False,
         excess_kurtosis: float = 0.0,
@@ -2061,6 +2075,7 @@ class PCFH3RamanModel(PCFMModel):
             # 档位已在本类解析过（raman_steps 属于本类），不能再让父类重复解释。
             resolution=None,
             dense_grid_fix=dense_grid_fix,
+            fwm_validity_mode=fwm_validity_mode,
             **route_options,
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
@@ -2204,6 +2219,7 @@ class PCFH3RamanModel(PCFMModel):
             spp_steps=self._active_spp_steps,
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
+            fwm_validity_mode=self.fwm_validity_mode,
         )
         if self._mf_active:
             # 参考核与主核共用同一栅格/光纤/波长，因此 semrau2019 算出的
