@@ -1868,7 +1868,10 @@ class PCFH3RamanModel(PCFMModel):
             attenuators; PCFM 2026 Section IV-D).  Positions must be strictly
             inside ``(0, L)`` of the fibre, the loss must be non-negative, and
             duplicate positions are merged by summing their dB.  ``None``
-            (default) leaves every number bit-for-bit unchanged.  The list is
+            (default) leaves every number bit-for-bit unchanged.  When given it
+            takes precedence over the per-fibre
+            :attr:`~network_nlo_eval.network.elements.FiberSpanConfig.lumped_loss`,
+            which is used only when this argument is ``None`` or empty.  The list is
             forwarded to :class:`PCFH3RamanSpanKernel`, which hands it to the
             base PCFM SPP when the span has no active pump and applies it
             inside the coupled Raman ODE (signal, forward pump, ASE, and the
@@ -2181,7 +2184,17 @@ class PCFH3RamanModel(PCFMModel):
         return sum(int(getattr(kernel, "perf_ode_solves", 0)) for kernel in self._kernel_cache.values())
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFH3RamanSpanKernel:
-        """Build the profile-aware kernel of this fibre."""
+        """Build the profile-aware kernel of this fibre.
+
+        Lumped loss precedence: an explicitly given model-level list
+        (``lumped_loss=`` of :class:`PCFH3RamanModel`) wins over the fibre's own
+        :attr:`~network_nlo_eval.network.elements.FiberSpanConfig.lumped_loss`.
+        The model-level list describes the reference fibre and is shared by
+        every span, so it is the deliberate override; the fibre-level list is
+        the per-link description used when the model does not prescribe one.
+        When neither is given the kernel receives ``None`` and every number is
+        bit-for-bit unchanged.
+        """
         if self._h3_raman_pumps is not None:
             pumps = self._h3_raman_pumps
         else:
@@ -2191,6 +2204,10 @@ class PCFH3RamanModel(PCFMModel):
             steps = _resolve_auto_raman_steps(active, self.f_abs_hz)
         else:
             steps = int(self._h3_raman_steps)
+        if self._lumped_loss:
+            lumped_loss = self._lumped_loss
+        else:
+            lumped_loss = list(fiber_config.lumped_loss)
         kernel = PCFH3RamanSpanKernel(
             self.f_abs_hz,
             self.channel_bandwidth_hz_channels,
@@ -2209,7 +2226,7 @@ class PCFH3RamanModel(PCFMModel):
             launch_power_convention=self._launch_power_convention,
             nli_power_convention=self._nli_power_convention,
             pump_signal_overlap_guard_hz=self._pump_signal_overlap_guard_hz,
-            lumped_loss=self._lumped_loss or None,
+            lumped_loss=lumped_loss or None,
             raman_backend=self._raman_backend,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,

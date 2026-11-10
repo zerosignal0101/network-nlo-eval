@@ -14,6 +14,10 @@
 * **密集栅格默认只 flag**：``dense_grid_action`` 默认 ``"flag"``，与接入前
   逐位一致；显式 ``"reject"`` 才把 ``dense_grid_overlap`` 的信道判为无效。
   它只改可用性，不改点值，也与 ``dense_grid_penalty_db``（降级 margin）正交。
+* **Auto-Raman 分辨率默认只 flag**：``raman_resolution_action`` 默认
+  ``"flag"``；``raman_auto_under_resolved`` 是 error-budget 警告，只有显式
+  ``"reject"`` 才把它升级成可用性判定。该动作与 ``dense_grid_action`` 正交，
+  两者可以同时打开。
 * **非有限 SNR 永不算合格**：任何启用的模式都会把 ``NaN`` / ``-inf`` 的 SNR 映射为
   ``-inf``。这是 ``NaN < requirement`` 为 ``False`` 那个静默通过缺陷的唯一防线。
 * **状态隔离**：:class:`LinkValidity` 是冻结值对象，内部数组在构造时拷贝并置为
@@ -65,6 +69,7 @@ __all__ = [
     "LinkValidityCache",
     "LinkValidityPolicy",
     "LinkValidityProvider",
+    "RamanResolutionAction",
     "TILT_SOFT_MARGIN_FULL_DB",
     "TILT_SOFT_MARGIN_FULL_DB_RECOMMENDED",
     "link_optical_path",
@@ -184,6 +189,23 @@ class DenseGridAction(StrEnum):
     REJECT = "reject"
 
 
+class RamanResolutionAction(StrEnum):
+    """Auto-Raman 分辨率不足（``raman_auto_under_resolved``）的处理动作。
+
+    Attributes
+    ----------
+        FLAG: 只记录标志，不改变任何可用性判定（默认，保持历史行为）。
+        REJECT: 把 ``raman_auto_under_resolved`` 的信道判为无效。它只做可用性
+            判定，不改变点值 SNR；后续按 :class:`InvalidChannelPolicy` 的既有
+            模式落地：``flag`` 仍然只审计（SNR 不变，但报告的有效性为
+            ``False``），``reject`` / ``degrade`` / ``soft`` 把该信道压成
+            ``-inf``。
+    """
+
+    FLAG = "flag"
+    REJECT = "reject"
+
+
 @dataclass(frozen=True)
 class LinkValidityPolicy:
     """网络级有效性接入的显式开关。
@@ -203,16 +225,22 @@ class LinkValidityPolicy:
             （``mode != "off"``）时把 ``dense_grid_overlap`` 的信道标为无效。
             它与 :attr:`~network_nlo_eval.models.uncertainty.H3UncertaintyConfig.dense_grid_penalty_db`
             正交：penalty 是降级 margin，本动作是可用性判定。
+        raman_resolution_action: ``"flag"`` / ``"reject"``。默认 ``"flag"``：
+            ``raman_auto_under_resolved`` 只是 error-budget 警告。``"reject"``
+            在策略已启用时把这些信道标为无效。它与 ``dense_grid_action``
+            正交：两者同时为 ``"reject"`` 时按逻辑或合并，互不覆盖。
 
     Raises
     ------
-        ValueError: ``mode`` 不是上述五个取值之一，``dense_grid_action`` 不是
-            ``"flag"`` / ``"reject"``，或满量程不是有限非负数。
+        ValueError: ``mode`` 不是上述五个取值之一，``dense_grid_action`` 或
+            ``raman_resolution_action`` 不是 ``"flag"`` / ``"reject"``，或满
+            量程不是有限非负数。
     """
 
     mode: InvalidChannelPolicy | str = InvalidChannelPolicy.OFF
     soft_margin_full_scale_db: float = TILT_SOFT_MARGIN_FULL_DB
     dense_grid_action: DenseGridAction | str = DenseGridAction.FLAG
+    raman_resolution_action: RamanResolutionAction | str = RamanResolutionAction.FLAG
 
     def __post_init__(self) -> None:
         """把字符串归一化成枚举，并拒绝未知策略、未知密集动作或非法满量程。"""
@@ -232,6 +260,15 @@ class LinkValidityPolicy:
                 f"unknown dense grid action {self.dense_grid_action!r}; expected one of {allowed}."
             ) from None
         object.__setattr__(self, "dense_grid_action", dense_action)
+        try:
+            raman_action = RamanResolutionAction(self.raman_resolution_action)
+        except ValueError:
+            allowed = [action.value for action in RamanResolutionAction]
+            raise ValueError(
+                f"unknown Raman resolution action {self.raman_resolution_action!r}; "
+                f"expected one of {allowed}."
+            ) from None
+        object.__setattr__(self, "raman_resolution_action", raman_action)
         scale = float(self.soft_margin_full_scale_db)
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError(
@@ -249,21 +286,53 @@ class LinkValidityPolicy:
         """``dense_grid_action="reject"`` 且策略已启用。"""
         return self.enabled and self.dense_grid_action is DenseGridAction.REJECT
 
+    @property
+    def rejects_raman_resolution(self) -> bool:
+        """``raman_resolution_action="reject"`` 且策略已启用。"""
+        return self.enabled and self.raman_resolution_action is RamanResolutionAction.REJECT
+
+    @staticmethod
+    def _flag_mask(flag: bool | NDArrayBool, shape: tuple[int, ...], name: str) -> NDArrayBool:
+        """把标量/逐信道标志归一成可广播的布尔掩码。
+
+        Args:
+            flag: 标量或 ``(N,)`` 数组。
+            shape: ``valid`` 的形状。
+            name: 出错信息里的参数名。
+
+        Returns
+        -------
+            0-d 或 ``(N,)`` 的布尔数组。
+
+        Raises
+        ------
+            ValueError: 既不是标量，也不是与 ``valid`` 同形状的一维数组。
+        """
+        mask = np.asarray(flag, dtype=bool)
+        if mask.ndim > 1 or mask.shape not in ((), shape):
+            raise ValueError(f"{name} must be a scalar or have shape {shape}, got {mask.shape}.")
+        return mask
+
     def effective_valid(
         self,
         valid: NDArrayBool,
         dense_grid_overlap: bool | NDArrayBool = False,
+        *,
+        raman_auto_under_resolved: bool | NDArrayBool = False,
     ) -> NDArrayBool:
         """Return the availability mask this policy actually decides on.
 
-        ``mode="off"`` 与默认的 ``dense_grid_action="flag"`` 都原样返回
-        ``valid``（同一个数组），所以默认路径不做任何算术。只有显式
-        ``dense_grid_action="reject"`` 才会把密集栅格覆盖的信道扣成 ``False``，
-        且只影响可用性，不改变 SNR 点值。
+        ``mode="off"``、默认的 ``dense_grid_action="flag"`` 与默认的
+        ``raman_resolution_action="flag"`` 都原样返回 ``valid``（同一个数组），
+        所以默认路径不做任何算术。只有显式 ``"reject"`` 动作才会把对应信道的
+        可用性扣成 ``False``，且只影响可用性，不改变 SNR 点值。两个动作正交：
+        同时打开时按逻辑或合并。
 
         Args:
             valid: ``(N,)`` 物理/预算判定给出的有效性。
             dense_grid_overlap: 该占用谱是否为密集栅格；标量或 ``(N,)`` 数组。
+            raman_auto_under_resolved: 该占用谱是否命中 auto-Raman 分辨率不足；
+                标量或 ``(N,)`` 数组，默认 ``False`` 时完全不参与运算。
 
         Returns
         -------
@@ -271,20 +340,24 @@ class LinkValidityPolicy:
 
         Raises
         ------
-            ValueError: ``dense_grid_overlap`` 既不是标量也不是与 ``valid``
-                同形状的一维数组。
+            ValueError: 某个标志既不是标量也不是与 ``valid`` 同形状的一维
+                数组。
         """
         values = np.asarray(valid, dtype=bool)
-        if not self.rejects_dense_grid:
+        if not self.rejects_dense_grid and not self.rejects_raman_resolution:
             return values
-        dense = np.asarray(dense_grid_overlap, dtype=bool)
-        if dense.ndim > 1 or dense.shape not in ((), values.shape):
-            raise ValueError(
-                f"dense_grid_overlap must be a scalar or have shape {values.shape}, got {dense.shape}."
+        effective = values
+        if self.rejects_dense_grid:
+            dense = self._flag_mask(dense_grid_overlap, values.shape, "dense_grid_overlap")
+            if bool(np.any(dense)):
+                effective = effective & ~dense
+        if self.rejects_raman_resolution:
+            under = self._flag_mask(
+                raman_auto_under_resolved, values.shape, "raman_auto_under_resolved"
             )
-        if not bool(np.any(dense)):
-            return values
-        return values & ~dense
+            if bool(np.any(under)):
+                effective = effective & ~under
+        return effective
 
     def scale_soft_margin(self, soft_margin_db: NDArrayFloat) -> NDArrayFloat:
         """Rescale stored default-scale soft margins to this policy's full scale.
@@ -312,6 +385,7 @@ class LinkValidityPolicy:
         soft_margin_db: NDArrayFloat | None = None,
         *,
         dense_grid_overlap: bool | NDArrayBool = False,
+        raman_auto_under_resolved: bool | NDArrayBool = False,
     ) -> NDArrayFloat:
         """Apply the policy to an SNR vector.
 
@@ -328,6 +402,9 @@ class LinkValidityPolicy:
                 只有 ``dense_grid_action="reject"`` 会读它，把对应信道的
                 有效性扣成 ``False`` 后交给 ``mode`` 的既有语义；默认
                 ``"flag"`` 时完全不参与。
+            raman_auto_under_resolved: 该占用谱是否命中 auto-Raman 分辨率不足；
+                标量或 ``(N,)``。只有 ``raman_resolution_action="reject"`` 会读
+                它，默认 ``"flag"`` 时完全不参与。
 
         Returns
         -------
@@ -339,7 +416,11 @@ class LinkValidityPolicy:
             return values
         return _effective_snr(
             values,
-            self.effective_valid(valid, dense_grid_overlap),
+            self.effective_valid(
+                valid,
+                dense_grid_overlap,
+                raman_auto_under_resolved=raman_auto_under_resolved,
+            ),
             np.asarray(margin_db, dtype=np.float64),
             mode,
             None if soft_margin_db is None else self.scale_soft_margin(soft_margin_db),
@@ -455,6 +536,10 @@ class LinkValidity:
             显式打开（见 :attr:`LinkValidityPolicy.dense_grid_action`）。需要
             额外余量时显式使用
             :attr:`~network_nlo_eval.models.uncertainty.H3UncertaintyConfig.dense_grid_penalty_db`。
+        raman_auto_under_resolved: auto-Raman 分辨率审计是否命中（任一跨的
+            可选检查发现步数不足）。同样是 error-budget 警告，不改变本报告的
+            ``valid`` / margin；``reject`` 要在策略层显式打开（见
+            :attr:`LinkValidityPolicy.raman_resolution_action`）。
     """
 
     valid: NDArrayBool
@@ -469,6 +554,7 @@ class LinkValidity:
     tilt_confidence_informational: NDArrayFloat | float | None = None
     soft_margin_db: NDArrayFloat | float | None = None
     dense_grid_overlap: bool = False
+    raman_auto_under_resolved: bool = False
 
     def __post_init__(self) -> None:
         """Copy, freeze and validate the per-channel arrays.
@@ -534,6 +620,9 @@ class LinkValidity:
             raise ValueError("soft_margin_db must be finite and non-negative.")
         if int(self.span_count) < 0:
             raise ValueError(f"span_count must be >= 0, got {self.span_count}.")
+        object.__setattr__(
+            self, "raman_auto_under_resolved", bool(self.raman_auto_under_resolved)
+        )
 
     @property
     def num_channels(self) -> int:
@@ -555,8 +644,10 @@ class LinkValidity:
     def effective_valid(self, policy: LinkValidityPolicy | None = None) -> NDArrayBool:
         """该报告在给定策略下的可用性。
 
-        与 :attr:`valid` 的区别只在 ``policy.dense_grid_action="reject"``：
-        此时 ``dense_grid_overlap`` 为真的信道返回 ``False``。默认策略
+        与 :attr:`valid` 的区别只在显式 ``"reject"`` 动作：
+        ``dense_grid_action="reject"`` 时 ``dense_grid_overlap`` 为真的信道返回
+        ``False``，``raman_resolution_action="reject"`` 时
+        :attr:`raman_auto_under_resolved` 为真的信道返回 ``False``。默认策略
         （``off`` 或 ``flag`` 动作）原样返回 :attr:`valid`。
 
         Args:
@@ -566,7 +657,11 @@ class LinkValidity:
         -------
             ``(N,)`` 用于可用性判定的有效标志。
         """
-        return (policy or LinkValidityPolicy()).effective_valid(self.valid, self.dense_grid_overlap)
+        return (policy or LinkValidityPolicy()).effective_valid(
+            self.valid,
+            self.dense_grid_overlap,
+            raman_auto_under_resolved=self.raman_auto_under_resolved,
+        )
 
     def adjusted_snr_db(
         self,
@@ -596,6 +691,7 @@ class LinkValidity:
             self.margin_db,
             self.soft_margin_db,
             dense_grid_overlap=self.dense_grid_overlap,
+            raman_auto_under_resolved=self.raman_auto_under_resolved,
         )
 
     @classmethod
@@ -647,6 +743,7 @@ class LinkValidity:
             fingerprint=fingerprint,
             link_key=link_key,
             dense_grid_overlap=bool(report.dense_grid_overlap),
+            raman_auto_under_resolved=bool(report.raman_auto_under_resolved),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -664,6 +761,7 @@ class LinkValidity:
             "tilt_confidence_informational": [float(value) for value in self.tilt_confidence_informational],
             "soft_margin_db": [float(value) for value in self.soft_margin_db],
             "dense_grid_overlap": bool(self.dense_grid_overlap),
+            "raman_auto_under_resolved": bool(self.raman_auto_under_resolved),
         }
 
 
@@ -682,12 +780,16 @@ class ChannelValidity:
         soft_margin_db: ``(N,)`` 路径级倾斜软 margin (dB)；无效链路不贡献。
         dense_grid_overlap: 路径上任一链路是否为密集栅格。``reject`` 作用在
             整条路径的可用性上，与逐链路报告的关系同 :class:`LinkValidity`。
+        raman_auto_under_resolved: 路径上任一链路是否命中 auto-Raman 分辨率
+            不足（逻辑或）。同样只有 ``raman_resolution_action="reject"`` 才会
+            影响可用性。
     """
 
     valid: NDArrayBool
     margin_db: NDArrayFloat
     soft_margin_db: NDArrayFloat | None = None
     dense_grid_overlap: bool = False
+    raman_auto_under_resolved: bool = False
 
     def __post_init__(self) -> None:
         """Copy and freeze the arrays.
@@ -725,6 +827,9 @@ class ChannelValidity:
         object.__setattr__(self, "margin_db", margin)
         object.__setattr__(self, "soft_margin_db", soft)
         object.__setattr__(self, "dense_grid_overlap", bool(self.dense_grid_overlap))
+        object.__setattr__(
+            self, "raman_auto_under_resolved", bool(self.raman_auto_under_resolved)
+        )
 
     @classmethod
     def combine(cls, links: Sequence[LinkValidity], num_channels: int) -> ChannelValidity:
@@ -736,7 +841,8 @@ class ChannelValidity:
 
         Returns
         -------
-            聚合后的逐信道有效性。``dense_grid_overlap`` 取各链路的逻辑或。
+            聚合后的逐信道有效性。``dense_grid_overlap`` 与
+            ``raman_auto_under_resolved`` 都取各链路的逻辑或。
 
         Raises
         ------
@@ -746,6 +852,7 @@ class ChannelValidity:
         margin = np.zeros(num_channels, dtype=np.float64)
         soft = np.zeros(num_channels, dtype=np.float64)
         dense = False
+        raman_under = False
         for link in links:
             if link.num_channels != num_channels:
                 raise ValueError(
@@ -755,7 +862,14 @@ class ChannelValidity:
             margin += np.where(link.valid, np.where(np.isfinite(link.margin_db), link.margin_db, 0.0), 0.0)
             soft += np.where(link.valid, link.soft_margin_db, 0.0)
             dense = dense or bool(link.dense_grid_overlap)
-        return cls(valid=valid, margin_db=margin, soft_margin_db=soft, dense_grid_overlap=dense)
+            raman_under = raman_under or bool(link.raman_auto_under_resolved)
+        return cls(
+            valid=valid,
+            margin_db=margin,
+            soft_margin_db=soft,
+            dense_grid_overlap=dense,
+            raman_auto_under_resolved=raman_under,
+        )
 
     def adjusted_snr_db(
         self,
@@ -785,11 +899,16 @@ class ChannelValidity:
             self.margin_db,
             self.soft_margin_db,
             dense_grid_overlap=self.dense_grid_overlap,
+            raman_auto_under_resolved=self.raman_auto_under_resolved,
         )
 
     def effective_valid(self, policy: LinkValidityPolicy | None = None) -> NDArrayBool:
-        """该路径在给定策略下的可用性（``dense_grid_action="reject"`` 时扣密集栅格）。"""
-        return (policy or LinkValidityPolicy()).effective_valid(self.valid, self.dense_grid_overlap)
+        """该路径在给定策略下的可用性（``"reject"`` 动作扣对应标志）。"""
+        return (policy or LinkValidityPolicy()).effective_valid(
+            self.valid,
+            self.dense_grid_overlap,
+            raman_auto_under_resolved=self.raman_auto_under_resolved,
+        )
 
 
 class LinkValidityProvider(Protocol):

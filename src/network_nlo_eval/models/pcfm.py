@@ -2254,8 +2254,9 @@ class PCFMSpanKernel:
         egn: Apply the machine-learning correction of Zefreh et al. 2020.
         lumped_loss: Optional list of ``(position_m, loss_db)`` of lumped loss
             elements inside the span.  The paper treats lumped loss in
-            Section IV-D; the framework has no field for it, so it is
-            available at kernel level only.
+            Section IV-D.  The list is forwarded by the model from
+            :attr:`~network_nlo_eval.network.elements.FiberSpanConfig.lumped_loss`;
+            duplicate positions are merged by summing their dB.
         spp_steps: Number of RK4 steps of the power-profile integration.
         edge_fix: Evaluate the exact XCI island integral on the CUT rows whose
             closed-form weight is materially outside its asymptotic validity
@@ -2510,20 +2511,35 @@ class PCFMSpanKernel:
     def _check_lumped_loss(
         lumped_loss: Sequence[tuple[float, float]] | None,
     ) -> list[tuple[float, float]]:
-        """Validate the lumped loss elements of the span."""
+        """Validate, sort and merge the lumped loss elements of the span.
+
+        Duplicate positions are merged by summing their dB: two connectors at
+        the same physical point multiply the power by the product of their
+        transmission factors, which is the sum in dB.  This matches
+        :func:`~network_nlo_eval.models.raman_ode._resolve_lumped_loss`, so the
+        pumped and unpumped paths agree on the same input.
+        """
         if not lumped_loss:
             return []
         checked: list[tuple[float, float]] = []
         for position_m, loss_db in lumped_loss:
             position = float(position_m)
             loss = float(loss_db)
+            if not np.isfinite(position) or not np.isfinite(loss):
+                raise ValueError(f"lumped loss must be finite, got ({position_m!r}, {loss_db!r}).")
             if position <= 0.0:
                 raise ValueError(f"lumped loss position must be positive, got {position}.")
             if loss < 0.0:
                 raise ValueError(f"lumped loss must not be a gain, got {loss} dB.")
             checked.append((position, loss))
         checked.sort(key=lambda item: item[0])
-        return checked
+        merged: list[tuple[float, float]] = []
+        for position, loss in checked:
+            if merged and position == merged[-1][0]:
+                merged[-1] = (position, merged[-1][1] + loss)
+            else:
+                merged.append((position, loss))
+        return merged
 
     def _span_segments(self, span_length_m: float) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
         """Segment lengths, loss factors and step counts of the span.
@@ -3892,7 +3908,13 @@ class PCFMModel(RouteModel):
         )
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFMSpanKernel:
-        """Build the single-span kernel of this fibre."""
+        """Build the single-span kernel of this fibre.
+
+        The fibre-level ``lumped_loss`` (connectors, splices, discrete
+        attenuators) is forwarded to the kernel.  The default empty list maps to
+        ``None``, so a plain :class:`FiberSpanConfig` keeps every number
+        bit-for-bit unchanged.
+        """
         return PCFMSpanKernel(
             self.f_abs_hz,
             self.channel_bandwidth_hz_channels,
@@ -3907,6 +3929,7 @@ class PCFMModel(RouteModel):
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
             fwm_validity_mode=self.fwm_validity_mode,
+            lumped_loss=fiber_config.lumped_loss or None,
         )
 
     @property

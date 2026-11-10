@@ -37,6 +37,39 @@ class FiberSpanConfig(BaseModel):
     effective_area_um2_ref: float = Field(80.0, gt=0, description="参考波长下的有效模面积 A_eff (um^2)")
     aeff_slope_um2_nm: float = Field(0.05, description="有效模面积随波长变化的斜率 (um^2/nm)")
     raman_pumps: list["RamanPumpConfig"] = Field(default_factory=list, description="该链路的分布式拉曼泵")
+    lumped_loss: list[tuple[float, float]] = Field(
+        default_factory=list,
+        description="跨内集中损耗 (position_m, loss_db)：连接器、熔接、集中衰减器",
+    )
+
+    @model_validator(mode="after")
+    def validate_lumped_loss(self) -> "FiberSpanConfig":
+        """校验跨内集中损耗的位置与损耗。
+
+        位置必须有限且严格落在开区间 ``(0, length_km * 1e3)`` 内：``0`` 等价于
+        降低入纤功率、``L`` 等价于跨末额外衰减，两者都不是“跨内”事件。
+        损耗必须有限且非负（衰减器不能放大）。重复位置是允许的——同一物理点
+        的两个连接器由 kernel 按 dB 相加合并。
+
+        Raises
+        ------
+            ValueError: 位置越界/非有限，或损耗为负/非有限。
+        """
+        length_m = float(self.length_km) * 1e3
+        for position_m, loss_db in self.lumped_loss:
+            position = float(position_m)
+            loss = float(loss_db)
+            if not np.isfinite(position):
+                raise ValueError(f"lumped loss position must be finite, got {position_m!r}.")
+            if not np.isfinite(loss):
+                raise ValueError(f"lumped loss must be finite, got {loss_db!r}.")
+            if not 0.0 < position < length_m:
+                raise ValueError(
+                    f"lumped loss position must lie strictly inside (0, {length_m}) m, got {position}."
+                )
+            if loss < 0.0:
+                raise ValueError(f"lumped loss must be non-negative, got {loss} dB.")
+        return self
 
 
 class EDFAConfig(BaseModel):
