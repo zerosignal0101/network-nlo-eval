@@ -42,16 +42,29 @@ from network_nlo_eval.models.raman import (
 from network_nlo_eval.network.elements import RamanPumpConfig
 
 __all__ = [
+    "AUTO_NUMBA_MIN_STEPS",
     "DEFAULT_FIXED_POINT_ITERATIONS",
     "DEFAULT_PAPER_SPP_STEPS",
     "LAUNCH_POWER_CONVENTIONS",
     "PaperRamanSpanResult",
+    "RAMAN_BACKENDS",
     "RAMAN_MATRIX_CACHE_MAX_ENTRIES",
     "RamanPaperSpanSolver",
     "clear_raman_matrix_cache",
+    "numba_available",
     "raman_matrix_cache_info",
     "resolve_launch_power_convention",
+    "resolve_raman_backend",
+    "validate_raman_backend",
 ]
+
+#: Accepted values of the opt-in ``backend`` switch.  ``"auto"`` is never a
+#: default: the model and the solver both default to ``"python"``.
+RAMAN_BACKENDS: tuple[str, ...] = ("python", "numba", "auto")
+
+#: ``"auto"`` selects the JIT backend only from this step count upwards.  Below
+#: it the fixed-point overhead dominates and the Python path is kept.
+AUTO_NUMBA_MIN_STEPS: int = 24
 
 #: ODE 默认的 RK4 步数。与 PCFM 的 SPP 采样网格一致（每步取中点与终点）。
 DEFAULT_PAPER_SPP_STEPS: int = DEFAULT_SPP_STEPS
@@ -105,6 +118,112 @@ def clear_raman_matrix_cache() -> None:
     _MATRIX_CACHE.clear()
     _MATRIX_CACHE_STATS["hits"] = 0
     _MATRIX_CACHE_STATS["misses"] = 0
+
+
+def validate_raman_backend(backend: str) -> str:
+    """校验 ``raman_backend`` 的取值。
+
+    Args:
+        backend: 请求的后端字符串。
+
+    Returns
+    -------
+        原样返回合法的后端名（``"python"``/``"numba"``/``"auto"``）。
+
+    Raises
+    ------
+        ValueError: 取值不在 :data:`RAMAN_BACKENDS` 内。
+    """
+    if not isinstance(backend, str) or backend not in RAMAN_BACKENDS:
+        raise ValueError(
+            f"raman_backend must be one of {RAMAN_BACKENDS}, got {backend!r}."
+        )
+    return backend
+
+
+def numba_available() -> bool:
+    """是否可以在本进程中用 numba 后端（导入 ``raman_numba`` 并探测 ``numba``）。
+
+    探测只在后端为 ``"numba"``/``"auto"`` 时发生：默认 ``"python"`` 路径不会
+    导入 numba，也不会触发任何 JIT 编译。
+    """
+    try:
+        from network_nlo_eval.models import raman_numba
+    except ImportError:
+        return False
+    return bool(raman_numba.NUMBA_AVAILABLE)
+
+
+def resolve_raman_backend(
+    backend: str,
+    *,
+    n_steps: int,
+    n_lumped_loss: int = 0,
+    available: bool | None = None,
+) -> str:
+    """把请求的后端解析成实际使用的 ``"python"`` 或 ``"numba"``。
+
+    ``"auto"`` 只在 numba 可导入、``n_steps >= AUTO_NUMBA_MIN_STEPS`` 且没有
+    集中损耗时选 numba，否则静默退回 python（这是 auto 的定义，不是隐藏的
+    换路径）。显式 ``"numba"`` 不会静默退回：
+
+    * numba 不可导入 -> :class:`RuntimeError`；
+    * 存在集中损耗（``n_lumped_loss > 0``）-> :class:`ValueError`，因为 JIT
+      内核只实现无集中损耗的均匀网格 RK4。
+
+    Args:
+        backend: 已通过 :func:`validate_raman_backend` 的请求值。
+        n_steps: RK4 步数。
+        n_lumped_loss: 跨内集中损耗元素个数。
+        available: 覆盖 numba 可用性判断（测试用）；``None`` 时调用
+            :func:`numba_available`。
+
+    Returns
+    -------
+        ``"python"`` 或 ``"numba"``。
+
+    Raises
+    ------
+        RuntimeError: 显式请求 ``"numba"`` 但本进程无法导入 numba。
+        ValueError: 显式请求 ``"numba"`` 但配置了集中损耗。
+    """
+    validate_raman_backend(backend)
+    if backend == "python":
+        return "python"
+    usable = numba_available() if available is None else bool(available)
+    if backend == "numba":
+        if not usable:
+            raise RuntimeError(
+                "raman_backend='numba' requires numba, which is not importable in this "
+                "environment. Use raman_backend='python' (the default), or 'auto' to fall "
+                "back to Python when numba is unavailable."
+            )
+        if n_lumped_loss:
+            raise ValueError(
+                "raman_backend='numba' does not support lumped_loss: the JIT kernels "
+                "integrate the uniform no-lumped-loss grid only. Remove the lumped loss "
+                "or use raman_backend='python' (the default)."
+            )
+        return "numba"
+    # "auto": numba only for the long uniform-grid solves it actually accelerates.
+    if usable and n_lumped_loss == 0 and int(n_steps) >= AUTO_NUMBA_MIN_STEPS:
+        return "numba"
+    return "python"
+
+
+def _numba_kernels() -> Any:
+    """返回已加载的 ``raman_numba`` 模块；不可用时抛 :class:`RuntimeError`。"""
+    try:
+        from network_nlo_eval.models import raman_numba
+    except ImportError as exc:  # pragma: no cover - numba is a hard dependency.
+        raise RuntimeError(
+            "raman_backend='numba' requires the optional numba kernels, which could not "
+            "be imported."
+        ) from exc
+    if not raman_numba.NUMBA_AVAILABLE:  # pragma: no cover - defensive.
+        raise RuntimeError("raman_backend='numba' requires numba, which is not installed.")
+    return raman_numba
+
 
 
 def _digest_array(digest: Any, tag: bytes, array: NDArrayFloat) -> None:
@@ -377,12 +496,22 @@ class RamanPaperSpanSolver:
             乘 ``10**(-loss_db/10)``；反向泵在 ``s = L - z`` 坐标的同一物理
             位置乘同一因子，固定点迭代因此与损耗点一致。重复位置按 dB 相加
             合并；0 dB 元素保留，仍会切分积分网格。
+        backend: ODE 积分后端（opt-in）。``"python"``（默认）完全走原有的
+            纯 Python RK4 路径，逐位不变，且不会导入或编译 numba；
+            ``"numba"`` 用模块级 ``@njit(cache=True)`` 内核完成无集中损耗的
+            均匀网格前向/反向 RK4，固定点迭代仍在 Python 层，有集中损耗时
+            抛 :class:`ValueError`，numba 不可导入时抛 :class:`RuntimeError`；
+            ``"auto"`` 仅在 numba 可导入、``n_steps >= AUTO_NUMBA_MIN_STEPS``
+            且无集中损耗时选 numba，否则退回 python。数值目标是与 python
+            后端一致到 ULP 级，不是新的物理口径。
 
     Raises
     ------
         ValueError: 任一数组形状不匹配、跨长/步数非正、布尔开关不是 ``bool``；
             口径非法或 ``"per_pol"`` 与 ``signal_polarizations`` 不匹配；
-            集中损耗位置不在 ``(0, L)`` 内或损耗为负。
+            集中损耗位置不在 ``(0, L)`` 内或损耗为负；``backend`` 非法；
+            ``backend="numba"`` 但配置了集中损耗。
+        RuntimeError: ``backend="numba"`` 但本进程无法导入 numba。
     """
 
     def __init__(
@@ -406,6 +535,7 @@ class RamanPaperSpanSolver:
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
         lumped_loss: Sequence[tuple[float, float]] | None = None,
+        backend: str = "python",
     ) -> None:
         """校验参数并构建与 z 无关的耦合矩阵。"""
         if length_m <= 0:
@@ -418,6 +548,8 @@ class RamanPaperSpanSolver:
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
+        # 非法后端尽早报错，避免先花时间构造矩阵再失败。
+        requested_backend = validate_raman_backend(backend)
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
 
         self.signal_frequencies_hz = np.asarray(signal_frequencies_hz, dtype=np.float64)
@@ -588,6 +720,19 @@ class RamanPaperSpanSolver:
         # 因此把 ``searchsorted`` 的索引与权重在构造期算一次。权重按
         # ``_interp_rows`` 完全相同的表达式求值，逐位不变。
         self._bw_interp_index, self._bw_interp_weight = self._build_backward_interpolation()
+
+        # --- 积分后端（opt-in） --------------------------------------------
+        # 默认 "python"：不导入 numba、不编译、数值路径逐位不变。集中损耗在
+        # 上一段已解析，因此这里能对 "numba" 给出明确的 ValueError。
+        self.backend = requested_backend
+        self._resolved_backend = resolve_raman_backend(
+            requested_backend,
+            n_steps=self.n_steps,
+            n_lumped_loss=self.n_lumped_loss,
+        )
+        # 反向内核只需要反向泵对应的几行；361 信道六泵时是 367x367 的 6 行，
+        # 懒构造，默认 python 路径不会分配这份拷贝。
+        self._coupling_bw: NDArrayFloat | None = None
 
     def _matrix_cache_key(self) -> bytes:
         """与跨长无关的求解器状态的稳定摘要，用作模块级矩阵缓存的键。
@@ -980,6 +1125,61 @@ class RamanPaperSpanSolver:
             ase_grid[step + 1] = ase
         return power, ase, power_grid, ase_grid
 
+    # -- opt-in numba backend ------------------------------------------------
+    # 这两个包装函数的返回值与 ``_integrate_forward`` / ``_integrate_backward``
+    # 完全一致；只是把 Python 循环换成 ``raman_numba`` 的编译内核。默认后端
+    # 不会走到这里，``raman_numba`` 也只在第一次调用时导入。
+
+    def _integrate_forward_numba(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        backward_total: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """前向 RK4 的 JIT 版本，返回布局与 :meth:`_integrate_forward` 相同。"""
+        kernels = _numba_kernels()
+        return kernels.rk4_forward(
+            self._coupling,
+            self._fwd_slots,
+            self._bw_slots,
+            self._alpha_fwd,
+            self._source_fwd,
+            self._ase_source_coeff,
+            self._drive_scale,
+            self._z_m,
+            np.ascontiguousarray(power_in),
+            np.ascontiguousarray(ase_in),
+            np.ascontiguousarray(backward_total),
+            self._drive_uniform,
+            float(self._ase_source_scale),
+            self.include_ase,
+        )
+
+    def _integrate_backward_numba(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        forward_total: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """反向 RK4 的 JIT 版本，返回布局与 :meth:`_integrate_backward` 相同。"""
+        kernels = _numba_kernels()
+        if self._coupling_bw is None:
+            self._coupling_bw = np.ascontiguousarray(self._coupling[self._bw_slots, :])
+        return kernels.rk4_backward(
+            self._coupling_bw,
+            self._bw_slots,
+            self._alpha_bw,
+            self._drive_scale,
+            self._z_m,
+            self._bw_interp_index,
+            self._bw_interp_weight,
+            np.ascontiguousarray(power_in),
+            np.ascontiguousarray(ase_in),
+            np.ascontiguousarray(forward_total),
+            self._drive_uniform,
+            self.include_ase,
+        )
+
     def _integrate_backward_segment(
         self,
         power_in: NDArrayFloat,
@@ -1143,6 +1343,92 @@ class RamanPaperSpanSolver:
             power_fw, ase_fw, backward_total
         )
 
+        return self._assemble_uniform_result(
+            power_end=power_end,
+            ase_end=ase_end,
+            samples=samples,
+            power_in=power_in,
+            ase_in=ase_in,
+            backward_total=backward_total,
+            iterations=iterations,
+            converged=converged,
+        )
+
+    def _solve_uniform_numba(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+    ) -> PaperRamanSpanResult:
+        """与 :meth:`_solve_uniform` 相同，只把两次 RK4 调用换成 JIT 内核。
+
+        固定点迭代、松弛、收敛判据和结果组装都留在 Python 层且与
+        :meth:`_solve_uniform` 逐项相同，因此两个后端的差异只来自 RK4 内核
+        本身的浮点末位，而不是控制流。仅在 ``n_lumped_loss == 0`` 且解析出的
+        后端为 ``"numba"`` 时调用。
+        """
+        power_fw, ase_fw = self._initial_forward_state(power_in, ase_in)
+        power_bw = self._p0_w[self._bw_slots].copy()
+        ase_bw = np.zeros_like(power_bw)
+        backward_total = self._bw_initial_total.copy()
+        iterations = 0
+        converged = self._bw_slots.size == 0 or not self.pump_depletion
+
+        if self._bw_slots.size and self.pump_depletion:
+            peak_pump = max(float(np.max(self._pump_power_w, initial=0.0)), 1.0e-30)
+            for iteration in range(self.n_iterations):
+                iterations = iteration + 1
+                power_end, ase_end, power_grid, ase_grid, samples = self._integrate_forward_numba(
+                    power_fw, ase_fw, backward_total
+                )
+                forward_total = np.empty((self.n_steps + 1, self._n_waves), dtype=np.float64)
+                forward_total[:, self._fwd_slots] = power_grid + ase_grid
+                forward_total[:, self._bw_slots] = backward_total
+
+                _, _, power_bw_grid_s, ase_bw_grid_s = self._integrate_backward_numba(
+                    power_bw, ase_bw, forward_total
+                )
+                new_backward = (power_bw_grid_s + ase_bw_grid_s)[::-1]
+                change = float(np.max(np.abs(new_backward - backward_total))) / peak_pump
+                backward_total = (
+                    _FIXED_POINT_RELAXATION * new_backward
+                    + (1.0 - _FIXED_POINT_RELAXATION) * backward_total
+                )
+                if change < _FIXED_POINT_TOLERANCE:
+                    converged = True
+                    break
+
+        power_end, ase_end, _power_grid, _ase_grid, samples = self._integrate_forward_numba(
+            power_fw, ase_fw, backward_total
+        )
+
+        return self._assemble_uniform_result(
+            power_end=power_end,
+            ase_end=ase_end,
+            samples=samples,
+            power_in=power_in,
+            ase_in=ase_in,
+            backward_total=backward_total,
+            iterations=iterations,
+            converged=converged,
+        )
+
+    def _assemble_uniform_result(
+        self,
+        *,
+        power_end: NDArrayFloat,
+        ase_end: NDArrayFloat,
+        samples: NDArrayFloat,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        backward_total: NDArrayFloat,
+        iterations: int,
+        converged: bool,
+    ) -> PaperRamanSpanResult:
+        """把均匀网格积分的末端状态组装成 :class:`PaperRamanSpanResult`。
+
+        纯后处理：两个后端共用，表达式与接入后端开关前的 ``_solve_uniform``
+        末尾逐项相同。
+        """
         signal_mask = self._fwd_is_signal
         signal_columns = np.flatnonzero(signal_mask)
         signal_original = self._fwd_signal_original[signal_columns]
@@ -1217,8 +1503,11 @@ class RamanPaperSpanSolver:
             if ase_in.shape != (self._n_signal,):
                 raise ValueError("signal_ase_in_w must contain one value per signal.")
 
-        # 无集中损耗时走原求解主体，逐位保持接入前的数值。
+        # 无集中损耗时走原求解主体，逐位保持接入前的数值。numba 后端是同一
+        # 控制流的另一份 RK4 内核；默认 "python" 分支与接入前完全相同。
         if self.n_lumped_loss == 0:
+            if self._resolved_backend == "numba":
+                return self._solve_uniform_numba(power_in, ase_in)
             return self._solve_uniform(power_in, ase_in)
 
         power_fw, ase_fw = self._initial_forward_state(power_in, ase_in)

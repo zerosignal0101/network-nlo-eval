@@ -154,6 +154,7 @@ from network_nlo_eval.models.raman_ode import (
     RamanPaperSpanSolver,
     _resolve_lumped_loss,
     resolve_launch_power_convention,
+    validate_raman_backend,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
 from network_nlo_eval.models.semrau2019 import SRS_CR_W_M_HZ, Semrau2019SpanKernel
@@ -694,6 +695,15 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_resolution_tol: Relative tolerance (fraction) above which the
             audit sets ``raman_auto_under_resolved``.  Must be finite and
             positive; default :data:`DEFAULT_RAMAN_RESOLUTION_TOL` (10 %).
+        raman_backend: Integration backend of the coupled ODE.  ``"python"``
+            (default) keeps the historical pure-NumPy RK4 path bit-for-bit and
+            never imports or compiles numba.  ``"numba"`` uses the JIT kernels
+            of :mod:`~network_nlo_eval.models.raman_numba` for the uniform,
+            no-lumped-loss grid and reproduces the Python values to the last
+            bit; a configured ``lumped_loss`` raises ``ValueError`` and a
+            missing numba raises ``RuntimeError``.  ``"auto"`` selects numba
+            only when it is importable, ``raman_steps >= 24`` and no lumped
+            loss is present, and falls back to Python otherwise.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -719,6 +729,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
+        raman_backend: str = "python",
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -729,12 +740,15 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 or a boolean option is not a ``bool``, or the
                 ``launch_power_convention``/``signal_polarizations``/``nli_power_convention``
                 combination is inconsistent, or the overlap guard is not finite,
-                or a lumped loss position is outside ``(0, L)`` of the fibre.
+                or a lumped loss position is outside ``(0, L)`` of the fibre,
+                or ``raman_backend`` is not ``"python"``/``"numba"``/``"auto"``,
+                or ``raman_backend="numba"`` is combined with a lumped loss.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
+        resolved_backend = validate_raman_backend(raman_backend)
         if not isinstance(raman_resolution_check, (bool, np.bool_)):
             raise ValueError(f"raman_resolution_check must be a bool, got {raman_resolution_check!r}.")
         resolved_resolution_tol = float(raman_resolution_tol)
@@ -756,6 +770,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         # 位置上限按光纤长度校验；实际评估的跨长在构造 solver 时还会再校验一次。
         fiber_length_m = float(fiber_config.length_km) * 1e3
         checked_lumped_loss, _, _ = _resolve_lumped_loss(lumped_loss, fiber_length_m)
+        if resolved_backend == "numba" and checked_lumped_loss:
+            raise ValueError(
+                "raman_backend='numba' does not support lumped_loss: the JIT kernels "
+                "integrate the uniform no-lumped-loss grid only. Remove the lumped loss "
+                "or use raman_backend='python' (the default) / 'auto'."
+            )
         super().__init__(
             f_abs_hz,
             b_hz,
@@ -780,6 +800,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.raman_iterations = int(raman_iterations)
         self.raman_resolution_check = bool(raman_resolution_check)
         self.raman_resolution_tol = float(resolved_resolution_tol)
+        # 请求的 ODE 后端；solver 构造时还会按 numba 可用性/步数解析一次。
+        self.raman_backend = resolved_backend
         self.include_isrs = bool(include_isrs)
         self.pump_depletion = bool(pump_depletion)
         self.signal_polarizations = int(signal_polarizations)
@@ -1029,6 +1051,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             pump_pump_raman=self.pump_pump_raman,
             launch_power_convention=self.launch_power_convention,
             lumped_loss=self.lumped_loss or None,
+            backend=self.raman_backend,
         )
 
     def _resolution_solver_for(self, span_length_m: float, n_steps: int) -> RamanPaperSpanSolver:
@@ -1635,6 +1658,15 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ),
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
         (
+            "raman_backend",
+            "Integration backend of the coupled Raman ODE. 'python' (default) keeps the "
+            "pure-NumPy RK4 path bit-for-bit and never imports or compiles numba. 'numba' "
+            "runs the uniform, no-lumped-loss RK4 loops as cached JIT kernels (~2x faster on "
+            "the 361-channel six-pump 96-step solve, bit-identical outputs); it raises "
+            "ValueError with lumped_loss and RuntimeError when numba is missing. 'auto' uses "
+            "numba only when importable and raman_steps >= 24, else Python.",
+        ),
+        (
             "raman_resolution_check",
             "Opt-in read-only resolution audit: solves the span at a finer step count and compares the "
             "normalised signal profile, span gain and new Raman ASE with the solved result. Default False "
@@ -1771,6 +1803,14 @@ class PCFH3RamanModel(PCFMModel):
             keeps every point value bit-for-bit identical.
         raman_resolution_tol: Relative tolerance (fraction) of the audit.
             Default ``0.005``; must be finite and positive.
+        raman_backend: Integration backend of the coupled Raman ODE.
+            ``"python"`` (default) keeps the pure-NumPy RK4 path bit-for-bit
+            and never imports or compiles numba.  ``"numba"`` runs the uniform,
+            no-lumped-loss RK4 loops as ``@njit(cache=True)`` kernels; it
+            reproduces the Python profile, output power, Raman ASE and pump
+            output to the last bit and is about 2x faster on the 361-channel
+            six-pump 96-step solve.  ``"auto"`` uses numba only when it is
+            importable and ``raman_steps >= 24``, else Python.
         include_isrs: Include channel-channel ISRS in the coupled solve.
         pump_depletion: Let the pumps be depleted by the signals. Default
             ``True``; ``False`` freezes the pumps to their own attenuation
@@ -1878,6 +1918,7 @@ class PCFH3RamanModel(PCFMModel):
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
+        raman_backend: str = "python",
         include_isrs: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
@@ -1928,6 +1969,7 @@ class PCFH3RamanModel(PCFMModel):
             raise ValueError(
                 f"raman_resolution_tol must be a finite positive fraction, got {raman_resolution_tol!r}."
             )
+        resolved_backend = validate_raman_backend(raman_backend)
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
@@ -1960,6 +2002,14 @@ class PCFH3RamanModel(PCFMModel):
         # 模型层没有单一跨长，这里只校验“位置为正、损耗非负、有限、排序合并”；
         # 位置上限留给每个 kernel 按各自光纤长度校验。
         self._lumped_loss, _, _ = _resolve_lumped_loss(lumped_loss, float("inf"))
+        # 显式 numba + 集中损耗不能静默换路径：JIT 内核只实现无集中损耗的
+        # 均匀网格积分。auto 在这种情况下按定义退回 python，不会到这里。
+        if resolved_backend == "numba" and self._lumped_loss:
+            raise ValueError(
+                "raman_backend='numba' does not support lumped_loss: the JIT kernels "
+                "integrate the uniform no-lumped-loss grid only. Remove the lumped loss "
+                "or use raman_backend='python' (the default) / 'auto'."
+            )
         if resolved_convention == "total" and int(signal_polarizations) != 1:
             warnings.warn(
                 "pcfm_h3_raman: launch_power_convention='total' with "
@@ -2021,6 +2071,7 @@ class PCFH3RamanModel(PCFMModel):
         self._h3_raman_iterations = int(raman_iterations)
         self._h3_raman_resolution_check = bool(raman_resolution_check)
         self._h3_raman_resolution_tol = float(resolved_resolution_tol)
+        self._raman_backend = resolved_backend
         self._h3_include_isrs = bool(include_isrs)
         self._h3_pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
@@ -2045,6 +2096,11 @@ class PCFH3RamanModel(PCFMModel):
     def launch_power_convention(self) -> str:
         """Declared power convention of ``power_in_w`` (``"total"``/``"per_pol"``)."""
         return self._launch_power_convention
+
+    @property
+    def raman_backend(self) -> str:
+        """Integration backend of the coupled Raman ODE (``python``/``numba``/``auto``)."""
+        return self._raman_backend
 
     @property
     def nli_power_convention(self) -> str:
@@ -2139,6 +2195,7 @@ class PCFH3RamanModel(PCFMModel):
             nli_power_convention=self._nli_power_convention,
             pump_signal_overlap_guard_hz=self._pump_signal_overlap_guard_hz,
             lumped_loss=self._lumped_loss or None,
+            raman_backend=self._raman_backend,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,
