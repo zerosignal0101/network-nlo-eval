@@ -165,9 +165,11 @@ from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
     "DEFAULT_H3_RAMAN_STEPS",
+    "DEFAULT_RAMAN_RESOLUTION_TOL",
     "H3_RAMAN_MODEL_INFO",
     "PCFH3RamanModel",
     "PCFH3RamanSpanKernel",
+    "RAMAN_RESOLUTION_MAX_STEPS",
     "WIDEBAND_MULTIPUMP_RAMAN_STEPS",
 ]
 
@@ -192,6 +194,33 @@ DEFAULT_H3_RAMAN_STEPS: int = 12
 #: reach the S band and keep their historical 12/24-step auto values, so their
 #: numbers are bit-for-bit unchanged.
 WIDEBAND_MULTIPUMP_RAMAN_STEPS: int = 96
+
+#: Upper bound of the opt-in ``raman_resolution_check`` ladder.
+#:
+#: The check doubles the solved step count until it reaches this value.  The
+#: cap keeps the extra work bounded (at most four extra solves per distinct
+#: span) and matches the converged reference of the accuracy matrix
+#: (``raman_steps=192`` is never exceeded in the calibration).
+RAMAN_RESOLUTION_MAX_STEPS: int = 192
+
+#: Relative tolerance of the opt-in ``raman_resolution_check``.
+#:
+#: The check compares the solved profile, span gain and newly generated Raman
+#: ASE with a finer solve.  The value is calibrated on the round-12 matrix
+#: (``H3_TASK_REPORT.md``):
+#:
+#: * C 57ch with one backward pump, 12 -> 192 steps: at most 4.9 % (0.20 dB
+#:   gain), so 0.5 % would raise a false alarm on the validated 12-step C
+#:   default;
+#: * S+C+L 277ch / E+S+C+L 479ch six pumps, 96 -> 192 steps: 0.8 % / 1.4 %
+#:   (0.03 / 0.06 dB), so 0.5 % would also flag the converged 96-step branch;
+#: * C+L 152ch six pumps, 24 -> 48 steps: 18-22 % (0.7-0.9 dB), the AJ failure
+#:   mode.
+#:
+#: ``0.10`` separates the AJ failure mode from both validated defaults with
+#: margin.  It is a fraction of the profile/gain/ASE, not dB; a caller that
+#: wants a stricter audit can pass ``raman_resolution_tol=0.005`` explicitly.
+DEFAULT_RAMAN_RESOLUTION_TOL: float = 0.10
 
 #: Upper edge of the C band (Hz), i.e. the lower edge of the S band.  A comb
 #: with a channel centre above this value occupies S/E spectrum, where the
@@ -352,6 +381,145 @@ def _resolve_auto_raman_steps(
     if _reaches_s_band(f_abs_hz):
         return WIDEBAND_MULTIPUMP_RAMAN_STEPS
     return 24
+
+
+def _profile_sample_positions_u(result: PaperRamanSpanResult) -> NDArrayFloat:
+    """Return the ``z/L`` position of every ``profile_norm`` row.
+
+    The coarse solve samples the midpoint and the end of every RK4 step.  With
+    lumped loss the steps are allocated per segment, so the positions are not
+    uniform and the solver reports them explicitly; without loss they are the
+    historical ``k/(2 n_steps)`` grid.
+
+    Args:
+        result: Result of one coupled solve.
+
+    Returns
+    -------
+        ``(S,)`` normalised positions, strictly increasing.
+    """
+    if result.sample_positions_u is not None:
+        return np.asarray(result.sample_positions_u, dtype=np.float64)
+    n_rows = int(result.profile_norm.shape[0])
+    return np.arange(1, n_rows + 1, dtype=np.float64) / n_rows
+
+
+def _resample_profile_onto(
+    profile: NDArrayFloat,
+    source_positions_u: NDArrayFloat,
+    target_positions_u: NDArrayFloat,
+) -> NDArrayFloat:
+    """Linearly interpolate a ``(S, N)`` profile onto other ``z/L`` positions.
+
+    The finer check solve samples twice per coarse step, so the coarse
+    positions are always inside the fine range (both end at ``z/L = 1``).
+    Linear interpolation is enough: the quantity compared is a *relative*
+    change of the smooth normalised signal profile, not a point value.
+
+    Args:
+        profile: ``(S, N)`` normalised profile of the finer solve.
+        source_positions_u: ``(S,)`` positions of the finer rows.
+        target_positions_u: ``(T,)`` positions to interpolate onto.
+
+    Returns
+    -------
+        ``(T, N)`` resampled profile.
+    """
+    source = np.asarray(source_positions_u, dtype=np.float64)
+    target = np.asarray(target_positions_u, dtype=np.float64)
+    indices = np.searchsorted(source, target, side="right")
+    indices = np.clip(indices, 1, source.size - 1)
+    lower = indices - 1
+    span = source[indices] - source[lower]
+    weight = np.where(span > 0.0, (target - source[lower]) / span, 0.0)
+    return profile[lower] * (1.0 - weight)[:, None] + profile[indices] * weight[:, None]
+
+
+def _relative_vector_change(coarse: NDArrayFloat, fine: NDArrayFloat) -> float:
+    """Largest relative change of two non-negative per-channel vectors.
+
+    The denominator is floored at ``1e-12`` of the largest coarse value so a
+    channel whose coarse entry is exactly zero (e.g. Raman ASE disabled) does
+    not produce a division by zero.  Both vectors must already be restricted to
+    the active channels.
+
+    Args:
+        coarse: ``(N,)`` solved-step result.
+        fine: ``(N,)`` finer-step result.
+
+    Returns
+    -------
+        The maximum relative change over the channels, or ``0`` when empty.
+    """
+    reference = np.asarray(coarse, dtype=np.float64)
+    candidate = np.asarray(fine, dtype=np.float64)
+    if reference.size == 0:
+        return 0.0
+    scale = float(np.max(np.abs(reference)))
+    floor = max(scale * 1.0e-12, np.finfo(np.float64).tiny)
+    return float(np.max(np.abs(candidate - reference) / np.maximum(np.abs(reference), floor)))
+
+
+def _raman_resolution_change(
+    coarse: PaperRamanSpanResult,
+    fine: PaperRamanSpanResult,
+    power_in_internal: NDArrayFloat,
+    active: NDArrayBool,
+) -> float:
+    """Largest relative change between a coarse and a finer Raman solve.
+
+    Three quantities are compared, all read from the same
+    :class:`~network_nlo_eval.models.raman_ode.PaperRamanSpanResult` that drives
+    the NLI profile:
+
+    * the normalised signal profile, interpolated onto the coarse sample
+      positions and divided by that channel's peak;
+    * the span-end gain ``P_out / P_in``;
+    * the newly generated Raman ASE.
+
+    Comparing only the pump output would miss a signal-profile error that the
+    pump solve hides, which is exactly the AJ failure mode.
+
+    Args:
+        coarse: Result at the solved step count.
+        fine: Result at the finer step count.
+        power_in_internal: ``(N,)`` launch power, internal channel order.
+        active: ``(N,)`` boolean mask of launched channels (internal order).
+
+    Returns
+    -------
+        The largest relative change over the active channels (fraction).
+    """
+    columns = np.flatnonzero(np.asarray(active, dtype=bool))
+    if columns.size == 0:
+        return 0.0
+    coarse_profile = np.asarray(coarse.profile_norm, dtype=np.float64)[:, columns]
+    fine_profile = np.asarray(fine.profile_norm, dtype=np.float64)[:, columns]
+    coarse_positions = _profile_sample_positions_u(coarse)
+    fine_positions = _profile_sample_positions_u(fine)
+    if np.array_equal(coarse_positions, fine_positions):
+        resampled = fine_profile
+    else:
+        resampled = _resample_profile_onto(fine_profile, fine_positions, coarse_positions)
+    peaks = np.max(np.abs(coarse_profile), axis=0)
+    usable = peaks > 0.0
+    if np.any(usable):
+        profile_change = float(
+            np.max(np.max(np.abs(resampled[:, usable] - coarse_profile[:, usable]), axis=0) / peaks[usable])
+        )
+    else:
+        profile_change = 0.0
+
+    power = np.asarray(power_in_internal, dtype=np.float64)[columns]
+    coarse_gain = np.asarray(coarse.power_out_w, dtype=np.float64)[columns] / power
+    fine_gain = np.asarray(fine.power_out_w, dtype=np.float64)[columns] / power
+    gain_change = _relative_vector_change(coarse_gain, fine_gain)
+    ase_change = _relative_vector_change(
+        np.asarray(coarse.raman_ase_w, dtype=np.float64)[columns],
+        np.asarray(fine.raman_ase_w, dtype=np.float64)[columns],
+    )
+    return max(profile_change, gain_change, ase_change)
+
 
 #: Fixed-point iterations cap of the backward-pump solve.  The solver stops as
 #: soon as the relative pump change falls below its tolerance, so the cap only
@@ -515,6 +683,15 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             every state is multiplied by ``10**(-loss_db/10)`` at each loss
             position (forward states on the way out, backward pumps in the
             ``s = L - z`` coordinate at the same physical position).
+        raman_resolution_check: Opt-in read-only resolution audit.  When
+            ``True`` the validity report solves the same span at a finer step
+            count and compares the normalised signal profile, the span-end
+            gain and the newly generated Raman ASE with the solved result.
+            ``False`` (default) constructs no extra solver and keeps every
+            point value bit-for-bit identical.
+        raman_resolution_tol: Relative tolerance (fraction) above which the
+            audit sets ``raman_auto_under_resolved``.  Must be finite and
+            positive; default :data:`DEFAULT_RAMAN_RESOLUTION_TOL` (10 %).
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -538,6 +715,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
         dense_grid_fix: bool = False,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
+        raman_resolution_check: bool = False,
+        raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -554,6 +733,13 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
+        if not isinstance(raman_resolution_check, (bool, np.bool_)):
+            raise ValueError(f"raman_resolution_check must be a bool, got {raman_resolution_check!r}.")
+        resolved_resolution_tol = float(raman_resolution_tol)
+        if not np.isfinite(resolved_resolution_tol) or resolved_resolution_tol <= 0.0:
+            raise ValueError(
+                f"raman_resolution_tol must be a finite positive fraction, got {raman_resolution_tol!r}."
+            )
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
             raise ValueError(f"pump_pump_raman must be a bool, got {pump_pump_raman!r}.")
         if int(signal_polarizations) < 1:
@@ -590,6 +776,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self._raman_ase = bool(raman_ase)
         self.raman_steps = int(raman_steps)
         self.raman_iterations = int(raman_iterations)
+        self.raman_resolution_check = bool(raman_resolution_check)
+        self.raman_resolution_tol = float(resolved_resolution_tol)
         self.include_isrs = bool(include_isrs)
         self.pump_depletion = bool(pump_depletion)
         self.signal_polarizations = int(signal_polarizations)
@@ -607,6 +795,15 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         )
         self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
         self._raman_cache: list[tuple[NDArrayFloat, int, PaperRamanSpanResult]] = []
+        # Opt-in resolution audit only.  Both caches stay empty with the
+        # default ``raman_resolution_check=False``, so no extra solver is
+        # constructed on the default path.
+        self._resolution_solver_cache: dict[tuple[int, int], RamanPaperSpanSolver] = {}
+        self._resolution_result_cache: list[tuple[NDArrayFloat, int, int, PaperRamanSpanResult]] = []
+        # Number of coupled ODE solves actually performed by this kernel.  It
+        # is a read-only performance counter: the default path only ever
+        # increments it for the solved-step result.
+        self.perf_ode_solves = 0
         # 泵浦自身衰减系数：耗尽度要相对“无信号时”的泵浦出射功率定义，
         # 否则把 25 dB 的本征损耗误当成耗尽。
         self._pump_alpha_npm: NDArrayFloat | None = None
@@ -684,6 +881,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         """Clear the parent span cache and the coarse-ODE result cache."""
         super().clear_span_cache()
         self._raman_cache.clear()
+        self._resolution_result_cache.clear()
 
     def _solver_for(self, span_length_m: float) -> RamanPaperSpanSolver:
         """Return the coupled-ODE solver of a span length (cached)."""
@@ -691,6 +889,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         solver = self._solver_cache.get(key)
         if solver is not None:
             return solver
+        solver = self._build_solver(span_length_m, self.raman_steps)
+        self._solver_cache[key] = solver
+        return solver
+
+    def _build_solver(self, span_length_m: float, n_steps: int) -> RamanPaperSpanSolver:
+        """Build a coupled-ODE solver for one span length and step count."""
         pump_frequencies = np.asarray(
             [C_LIGHT / (float(pump.wavelength_nm) * 1e-9) for pump in self._raman_pumps],
             dtype=np.float64,
@@ -707,7 +911,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             dtype=np.float64,
         )
         self._pump_alpha_npm = pump_alpha
-        solver = RamanPaperSpanSolver(
+        return RamanPaperSpanSolver(
             self.f_abs_hz,
             self.b_hz,
             self._raman_pumps,
@@ -717,7 +921,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             pump_alpha,
             pump_a_eff,
             self._raman_gain_model,
-            n_steps=self.raman_steps,
+            n_steps=n_steps,
             n_iterations=self.raman_iterations,
             include_isrs=self.include_isrs,
             include_ase=self._raman_ase,
@@ -727,8 +931,104 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             launch_power_convention=self.launch_power_convention,
             lumped_loss=self.lumped_loss or None,
         )
-        self._solver_cache[key] = solver
+
+    def _resolution_solver_for(self, span_length_m: float, n_steps: int) -> RamanPaperSpanSolver:
+        """Return (and cache) the finer solver used by the opt-in audit.
+
+        It is cached separately from :attr:`_solver_cache` because that cache
+        is keyed by span length only.  The audit never touches the solved-step
+        solver, so its entries cannot change the point result.
+        """
+        key = (int(round(span_length_m * 1e6)), int(n_steps))
+        solver = self._resolution_solver_cache.get(key)
+        if solver is None:
+            solver = self._build_solver(span_length_m, int(n_steps))
+            self._resolution_solver_cache[key] = solver
         return solver
+
+    def _resolution_result(
+        self,
+        power_internal: NDArrayFloat,
+        span_length_m: float,
+        n_steps: int,
+    ) -> PaperRamanSpanResult:
+        """Solve and memoise one finer-step result for the resolution audit."""
+        key = int(round(span_length_m * 1e6))
+        for cached_power, cached_key, cached_steps, cached_result in self._resolution_result_cache:
+            if cached_key != key or cached_steps != int(n_steps):
+                continue
+            if np.array_equal(cached_power, power_internal) or np.allclose(
+                cached_power, power_internal, rtol=SPAN_CACHE_RTOL, atol=0.0
+            ):
+                return cached_result
+        solver = self._resolution_solver_for(span_length_m, int(n_steps))
+        self.perf_ode_solves += 1
+        result = solver.solve(power_internal, None)
+        if len(self._resolution_result_cache) >= SPAN_CACHE_MAX_ENTRIES:
+            self._resolution_result_cache.pop(0)
+        self._resolution_result_cache.append(
+            (
+                np.array(power_internal, dtype=np.float64, copy=True),
+                key,
+                int(n_steps),
+                result,
+            )
+        )
+        return result
+
+    def _resolution_audit(
+        self,
+        power_internal: NDArrayFloat,
+        span_length_m: float,
+        coarse: PaperRamanSpanResult,
+        active: NDArrayBool,
+    ) -> tuple[bool, int, float, bool]:
+        """Run the bounded step-doubling audit of one span.
+
+        The ladder compares the solved result with ``2x`` the step count, then
+        ``4x`` and so on up to :data:`RAMAN_RESOLUTION_MAX_STEPS`, always
+        against the *solved* result.  A doubling can look fine while a larger
+        jump does not, so stopping at the first doubling would hide the AJ
+        failure mode.  The full bounded ladder is always walked, so the
+        reported change is the worst one against the finest checked tier, not
+        merely the first value above the tolerance.
+
+        Args:
+            power_internal: ``(N,)`` launch power, internal channel order.
+            span_length_m: Span length (m).
+            coarse: Result at the solved step count.
+            active: ``(N,)`` launched-channel mask, internal order.
+
+        Returns
+        -------
+            ``(under_resolved, check_steps, change, checked)``.  ``checked`` is
+            ``False`` when no finer solve could be compared (cap reached or a
+            finer solve did not converge), which keeps a non-converged control
+            solve from raising a false alarm.
+        """
+        current = int(self.raman_steps)
+        if current >= RAMAN_RESOLUTION_MAX_STEPS:
+            return False, 0, 1.0, False
+        next_steps = min(2 * current, RAMAN_RESOLUTION_MAX_STEPS)
+        checked = False
+        worst_change = 0.0
+        worst_steps = 0
+        while next_steps > current:
+            fine = self._resolution_result(power_internal, span_length_m, next_steps)
+            if not self._raman_solve_is_usable(fine):
+                # A non-converged control solve is not evidence of anything.
+                return False, 0, 1.0, False
+            checked = True
+            change = _raman_resolution_change(coarse, fine, power_internal, active)
+            if change > worst_change:
+                worst_change = change
+                worst_steps = next_steps
+            if next_steps >= RAMAN_RESOLUTION_MAX_STEPS:
+                break
+            next_steps = min(2 * next_steps, RAMAN_RESOLUTION_MAX_STEPS)
+        under_resolved = checked and worst_change > self.raman_resolution_tol
+        return under_resolved, worst_steps, float(worst_change), checked
+
 
     def _raman_result(self, power_internal: NDArrayFloat, span_length_m: float) -> PaperRamanSpanResult:
         """Solve (or reuse) the coarse coupled ODE of one span state.
@@ -748,6 +1048,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             ):
                 return cached_result
         solver = self._solver_for(span_length_m)
+        self.perf_ode_solves += 1
         result = solver.solve(power_internal, None)
         if len(self._raman_cache) >= SPAN_CACHE_MAX_ENTRIES:
             self._raman_cache.pop(0)
@@ -860,6 +1161,24 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
 
         usable = self._raman_solve_is_usable(result)
         active = np.asarray(power_in_w, dtype=np.float64) > 0.0
+        # Opt-in, read-only resolution audit.  It only fills the report fields
+        # below; it never feeds back into the profile, NLI, ASE or SNR.
+        resolution_checked = False
+        resolution_steps = 0
+        resolution_change = 1.0
+        auto_under_resolved = False
+        if self.raman_resolution_check:
+            (
+                auto_under_resolved,
+                resolution_steps,
+                resolution_change,
+                resolution_checked,
+            ) = self._resolution_audit(
+                np.ascontiguousarray(power),
+                float(span_length_m),
+                result,
+                power > 0.0,
+            )
         flagged = np.array(report.flagged, dtype=bool, copy=True)
         valid = np.array(report.valid, dtype=bool, copy=True)
         confidence = np.array(report.confidence, dtype=np.float64, copy=True)
@@ -930,6 +1249,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             lumped_loss_db=np.ascontiguousarray([loss for _, loss in self.lumped_loss], dtype=np.float64),
             lumped_loss_in_ode=bool(self.lumped_loss_in_ode),
             lumped_loss_segments=int(self.lumped_loss_segments),
+            raman_auto_under_resolved=bool(auto_under_resolved),
+            raman_resolution_check_steps=int(resolution_steps),
+            raman_resolution_change=float(resolution_change),
+            raman_resolution_checked=bool(resolution_checked),
         )
 
     def _with_lumped_loss_report(self, report: SpanValidityReport) -> SpanValidityReport:
@@ -1212,6 +1535,18 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "removes the E+S+C+L six-pump NaN/bias; C/C+L auto values are unchanged.",
         ),
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
+        (
+            "raman_resolution_check",
+            "Opt-in read-only resolution audit: solves the span at a finer step count and compares the "
+            "normalised signal profile, span gain and new Raman ASE with the solved result. Default False "
+            "constructs no extra solver and changes no number. Sets raman_auto_under_resolved in the "
+            "validity report and error budget when the relative change exceeds raman_resolution_tol.",
+        ),
+        (
+            "raman_resolution_tol",
+            "Relative (fraction, not dB) tolerance of raman_resolution_check. Default 0.10 (10 %). "
+            "Must be finite and positive.",
+        ),
         ("include_isrs", "Include channel-channel ISRS in the coupled solve. Default True."),
         (
             "pump_depletion",
@@ -1318,6 +1653,11 @@ class PCFH3RamanModel(PCFMModel):
             when it equals 6e-14.
         raman_steps: RK4 steps of the coarse coupled profile/ASE solve.
         raman_iterations: Backward-pump fixed-point iteration cap.
+        raman_resolution_check: Opt-in read-only step-doubling audit of the
+            Raman profile/gain/ASE.  ``False`` (default) adds no solve and
+            keeps every point value bit-for-bit identical.
+        raman_resolution_tol: Relative tolerance (fraction) of the audit.
+            Default ``0.005``; must be finite and positive.
         include_isrs: Include channel-channel ISRS in the coupled solve.
         pump_depletion: Let the pumps be depleted by the signals. Default
             ``True``; ``False`` freezes the pumps to their own attenuation
@@ -1406,6 +1746,8 @@ class PCFH3RamanModel(PCFMModel):
         raman_peak_gain_coefficient_m_per_w: float | None = None,
         raman_steps: int | str = "auto",
         raman_iterations: int = DEFAULT_H3_RAMAN_ITERATIONS,
+        raman_resolution_check: bool = False,
+        raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
         include_isrs: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
@@ -1447,6 +1789,13 @@ class PCFH3RamanModel(PCFMModel):
             quadrature_points = profile.get("xci_quadrature_points", XCI_EDGE_QUADRATURE_POINTS)
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
+        if not isinstance(raman_resolution_check, (bool, np.bool_)):
+            raise ValueError(f"raman_resolution_check must be a bool, got {raman_resolution_check!r}.")
+        resolved_resolution_tol = float(raman_resolution_tol)
+        if not np.isfinite(resolved_resolution_tol) or resolved_resolution_tol <= 0.0:
+            raise ValueError(
+                f"raman_resolution_tol must be a finite positive fraction, got {raman_resolution_tol!r}."
+            )
         if int(signal_polarizations) < 1:
             raise ValueError("signal_polarizations must be >= 1.")
         if not isinstance(pump_pump_raman, (bool, np.bool_)):
@@ -1511,6 +1860,8 @@ class PCFH3RamanModel(PCFMModel):
         self.resolution = None if profile is None else str(resolution)
         self.xci_edge_quadrature_points = int(quadrature_points)
         self._h3_raman_iterations = int(raman_iterations)
+        self._h3_raman_resolution_check = bool(raman_resolution_check)
+        self._h3_raman_resolution_tol = float(resolved_resolution_tol)
         self._h3_include_isrs = bool(include_isrs)
         self._h3_pump_depletion = bool(pump_depletion)
         self._signal_polarizations = int(signal_polarizations)
@@ -1585,6 +1936,16 @@ class PCFH3RamanModel(PCFMModel):
         """
         return 2.0 if self._launch_power_convention == "per_pol" else 1.0
 
+    @property
+    def perf_ode_solves(self) -> int:
+        """Coupled ODE solves actually performed by this model's kernels.
+
+        The opt-in resolution audit increments it once per finer solve; with
+        ``raman_resolution_check=False`` it only counts the solved-step result,
+        so the default path is unchanged.
+        """
+        return sum(int(getattr(kernel, "perf_ode_solves", 0)) for kernel in self._kernel_cache.values())
+
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFH3RamanSpanKernel:
         """Build the profile-aware kernel of this fibre."""
         if self._h3_raman_pumps is not None:
@@ -1605,6 +1966,8 @@ class PCFH3RamanModel(PCFMModel):
             raman_ase=self._h3_raman_ase,
             raman_steps=steps,
             raman_iterations=self._h3_raman_iterations,
+            raman_resolution_check=self._h3_raman_resolution_check,
+            raman_resolution_tol=self._h3_raman_resolution_tol,
             include_isrs=self._h3_include_isrs,
             pump_depletion=self._h3_pump_depletion,
             signal_polarizations=self._signal_polarizations,

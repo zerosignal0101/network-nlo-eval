@@ -364,6 +364,17 @@ class ValidityReport:
             grid.  It ORs into ``flagged`` for every active channel but never
             changes ``valid`` or the point SNR; the opt-in
             :attr:`H3UncertaintyConfig.dense_grid_penalty_db` adds margin.
+        raman_auto_under_resolved: ``True`` when at least one span's opt-in
+            Raman resolution check found the solved step count under-resolved
+            (profile, span gain or Raman ASE moved by more than the tolerance).
+            It ORs into ``flagged`` but never changes ``valid``, ``confidence``
+            or the margin: it is an error-budget warning, not a failure.
+        raman_resolution_check_steps: Finest step count actually compared
+            during the check ladder (``0`` when no span was checked).
+        raman_resolution_change: Largest relative change observed across the
+            checked spans (``1.0`` when nothing was checked).
+        raman_resolution_checked: ``True`` when at least one span ran the
+            check against a usable finer solve.
     """
 
     valid: NDArrayBool
@@ -391,6 +402,10 @@ class ValidityReport:
     spacing_to_bandwidth: float = float("inf")
     dense_grid_overlap: bool = False
     raman_pump_min_offset_hz: float = float("inf")
+    raman_auto_under_resolved: bool = False
+    raman_resolution_check_steps: int = 0
+    raman_resolution_change: float = 1.0
+    raman_resolution_checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -508,6 +523,10 @@ class H3ErrorBudget:
                     if np.isfinite(self.validity.raman_pump_min_offset_hz)
                     else None
                 ),
+                "raman_auto_under_resolved": bool(self.validity.raman_auto_under_resolved),
+                "raman_resolution_check_steps": int(self.validity.raman_resolution_check_steps),
+                "raman_resolution_change": float(self.validity.raman_resolution_change),
+                "raman_resolution_checked": bool(self.validity.raman_resolution_checked),
             },
             "terms": [
                 {
@@ -831,6 +850,10 @@ def estimate_h3_error_budget(
     pump_overlap = np.zeros(n_nodes, dtype=bool)
     pump_min_offset = float("inf")
     lumped_raman = np.zeros(n_nodes, dtype=bool)
+    auto_under_resolved = False
+    resolution_checked = False
+    resolution_steps = 0
+    resolution_changes: list[float] = []
     for report in span_reports:
         if not bool(getattr(report, "raman_converged", True)):
             raman_not_converged[:] = True
@@ -851,6 +874,22 @@ def estimate_h3_error_budget(
             pump_overlap |= launched
         if bool(getattr(report, "lumped_raman_approximation", False)):
             lumped_raman[:] = True
+        if bool(getattr(report, "raman_resolution_checked", False)):
+            resolution_checked = True
+            resolution_steps = max(
+                resolution_steps,
+                int(getattr(report, "raman_resolution_check_steps", 0)),
+            )
+            resolution_changes.append(float(getattr(report, "raman_resolution_change", 1.0)))
+        if bool(getattr(report, "raman_auto_under_resolved", False)):
+            auto_under_resolved = True
+    resolution_change = max(resolution_changes, default=1.0)
+    if not resolution_checked:
+        # Nothing was compared: keep the neutral "not checked" values so the
+        # default report is bit-for-bit the pre-audit report.
+        auto_under_resolved = False
+        resolution_steps = 0
+        resolution_change = 1.0
     raman_not_converged |= not_converged
     if bool(getattr(model, "lumped_raman_active", False)):
         lumped_raman |= launched
@@ -922,6 +961,7 @@ def estimate_h3_error_budget(
         | lumped_raman
         | unusable_result
         | (dense_grid & active)
+        | (auto_under_resolved & active)
     )
     validity = ValidityReport(
         valid=valid,
@@ -949,6 +989,10 @@ def estimate_h3_error_budget(
         spacing_to_bandwidth=float(spacing_ratio),
         dense_grid_overlap=dense_grid,
         raman_pump_min_offset_hz=float(pump_min_offset),
+        raman_auto_under_resolved=bool(auto_under_resolved),
+        raman_resolution_check_steps=int(resolution_steps),
+        raman_resolution_change=float(resolution_change),
+        raman_resolution_checked=bool(resolution_checked),
     )
 
     terms = [
@@ -1013,6 +1057,12 @@ def estimate_h3_error_budget(
         )
     if bool(np.any(gated)):
         notes.append("XCI edge gate corrected at least one channel; confidence reduced")
+    if auto_under_resolved:
+        notes.append(
+            "auto resolution not certified: the solved Raman step count is under-resolved "
+            f"(max relative change {resolution_change:.3g} against {resolution_steps} steps, "
+            "opt-in raman_resolution_tol); margin is unchanged"
+        )
     if bool(np.any(strong_tilt)):
         notes.append(f"power tilt {tilt_db:.2f} dB exceeds the strong-tilt threshold {cfg.strong_tilt_db:.2f} dB")
     if dense_grid:

@@ -698,6 +698,24 @@ class SpanValidityReport:
             Number of integration segments the lumped loss splits the span
             into (``K + 1``); ``1`` without elements.  The coupled ODE
             allocates its RK4 steps proportionally to the segment lengths.
+        raman_auto_under_resolved:
+            ``True`` when the opt-in ``raman_resolution_check`` compared the
+            solved step count with a finer one and the normalised signal
+            profile, the span-end gain or the newly generated Raman ASE moved
+            by more than ``raman_resolution_tol``.  It is a numerical
+            resolution warning only: ``valid``, ``confidence`` and every point
+            value (NLI/ASE/SNR) are left untouched.
+        raman_resolution_check_steps:
+            Finer RK4 step count that produced the largest change during the
+            check ladder (``0`` when no check ran).  Never above
+            :data:`~network_nlo_eval.models.pcfm_h3_raman.RAMAN_RESOLUTION_MAX_STEPS`.
+        raman_resolution_change:
+            Largest relative change seen during the check (fraction, not dB).
+            ``1.0`` is the neutral default for "not checked".
+        raman_resolution_checked:
+            ``True`` only when the check actually ran and the finer solves
+            were usable.  It is ``False`` with the default option, at or above
+            the maximum step count, and when the finer solve did not converge.
     """
 
     xci_gated: NDArrayFloat
@@ -740,6 +758,10 @@ class SpanValidityReport:
     lumped_loss_db: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     lumped_loss_in_ode: bool = False
     lumped_loss_segments: int = 1
+    raman_auto_under_resolved: bool = False
+    raman_resolution_check_steps: int = 0
+    raman_resolution_change: float = 1.0
+    raman_resolution_checked: bool = False
 
 
 @dataclass(frozen=True)
