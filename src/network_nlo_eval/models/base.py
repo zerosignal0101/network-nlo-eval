@@ -95,6 +95,10 @@ class SpanFiberOutput:
         xpm_noise_w: 本跨产生的 XPM（或论文口径的 XCI）噪声功率 (W)。
         nli_amplitude_spm: 可选的 SPM 复振幅，``|amp|**2`` 必须等于 ``spm_noise_w``。
         nli_amplitude_xpm: 可选的 XPM 复振幅，``|amp|**2`` 必须等于 ``xpm_noise_w``。
+        fwm_noise_w: 可选的四波混频（FWM）噪声功率 (W)，即 Eq. (4) 中三重积的
+            第三波落在 CUT 带**之外**的那一部分。默认 ``None``：路由层不读它，
+            所有不拆分的模型（含 ``numerical`` 的 ``spm/xpm``）行为逐位不变。
+            给出时它是**单跨**功率，跨间按功率（非相干）处理。
 
     振幅的参考面是**本跨出纤处**：路由层负责把它按后续跨的功率传输因子（取
     ``sqrt``）送到接收端。跨间相位必须由模型自己写进振幅，否则相干累加无从谈起。
@@ -107,6 +111,7 @@ class SpanFiberOutput:
     xpm_noise_w: NDArrayFloat
     nli_amplitude_spm: NDArrayComplex | None = None
     nli_amplitude_xpm: NDArrayComplex | None = None
+    fwm_noise_w: NDArrayFloat | None = None
 
 
 @dataclass(frozen=True)

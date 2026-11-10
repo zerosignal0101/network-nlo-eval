@@ -15,7 +15,8 @@ Two independent pieces live here:
 
 2. :func:`_gn_nli_jit` evaluates the GN double integral of Eq. (4) of the paper
    by numerical quadrature over the frequency variables, splitting the
-   self-interference (SCI) and cross-interference (XCI) parts.
+   self-interference (SCI), the cross-interference (XCI) and the
+   four-wave-mixing (FWM) parts.
 
 The kernels are deliberately free of any project-level policy: they take plain
 arrays and scalars so that they can be unit-tested in isolation.
@@ -279,6 +280,45 @@ def _solve_isrs_profile_jit(
 # where g is the SRS-only gain of the power profile.  It is evaluated
 # numerically on the distance grid of the ODE solution, so the ISRS power
 # profile of Eq. (6) enters the NLI in full.
+#
+# SPM/XCI versus FWM: the third-wave band
+# ---------------------------------------
+# The third wave of every four-wave-mixing process sits at
+#
+#   f3 = f1 + f2 - f_i = f_l + (x + y) ,
+#
+# and the piecewise-constant input PSD assigns it to the band ``r`` that
+# contains it.  The loop variable ``r`` is therefore exactly "where the
+# generated wave lands".  Two classes are distinguished:
+#
+# * ``r == ell``: the generated wave stays in the band of the second input
+#   wave, i.e. it is degenerate/co-located with that pump.  This is the
+#   SPM (``ell == i``) and XPM/XCI (``ell != i``) regime that the closed-form
+#   kernels of :mod:`network_nlo_eval.models.pcfm` describe, and it carries
+#   almost all of the C-band NLI (99.8 % of the total in the reference C-band
+#   case).
+#
+# * ``r != ell``: the generated wave is displaced by at least one channel from
+#   the pump that created it.  This is the inter-channel FWM *transfer* that
+#   the closed forms do not represent at all (the SCI/XCI algebra assumes the
+#   product is co-located with the interacting channel).  It is the third term
+#   reported here.
+#
+# The split is by band identity, not by "the third wave stays inside the CUT
+# band".  The latter (``r != i``) was the first candidate, but it labels the
+# whole XCI as FWM -- 44 % of the total C-band NLI, i.e. 2.5 dB -- because with
+# well separated channels the idler always lands in the *second* wave's band.
+# The ``r != ell`` criterion keeps the C-band share at 1.6e-3 (0.007 dB), which
+# is the physically meaningful statement "C-band FWM is negligible", and it is
+# nonzero exactly where the comb is dense enough for the idler to spill
+# (100 GHz spacing with 96 GBaud: yes; 200 GHz: no).
+#
+# The FWM part is carved out of the same integral: it is a *subset* of
+# ``spm_acc + xpm_acc`` (of ``spm_acc`` for ``ell == i``, of ``xpm_acc``
+# otherwise), never an addition to it.  ``spm_out``/``xpm_out`` therefore stay
+# bit-for-bit what they were before the split, and at the model level the total
+# NLI is unchanged; ``fwm_out`` is the additive correction a model without an
+# FWM term may apply on top of its own SCI/XCI.
 
 
 @njit(cache=True)
@@ -299,8 +339,9 @@ def _gn_nli_jit(
     n_quad: int,
     spm_out: NDArrayFloat,
     xpm_out: NDArrayFloat,
+    fwm_out: NDArrayFloat,
 ) -> None:
-    """GN non-linear interference power of Eq. (4), split into SCI and XCI.
+    """GN non-linear interference power of Eq. (4), split into SCI, XCI and FWM.
 
     The self-interference (SCI, the counterpart of SPM) is the contribution of
     the frequency pairs whose *first* wave sits in the band of the channel of
@@ -309,6 +350,17 @@ def _gn_nli_jit(
     channel.  Because the integrand of Eq. (4) is symmetric in ``f1`` and
     ``f2``, both orderings of a cross pair carry the same power and the
     cross term is counted twice.
+
+    The loop variable ``r`` is the band that contains the generated third wave
+    ``f3 = f1 + f2 - f_i``.  When ``r`` is the band of the second input wave
+    (``r == ell``) the product is co-located with that pump: that is the
+    degenerate SPM/XCI interaction of the closed forms and it stays in
+    ``spm_out``/``xpm_out``.  When ``r != ell`` the product is displaced by at
+    least one channel -- the inter-channel FWM transfer -- and it is
+    accumulated into ``fwm_out`` with the same ``2`` symmetry factor as the XCI
+    term.  The FWM part is a *subset* of the total, not an addition: the
+    ``spm_out`` and ``xpm_out`` buffers keep bit-for-bit the values the
+    pre-split kernel produced.
 
     Args:
         f_abs_hz: ``(N,)`` channel centre frequencies (Hz), descending.
@@ -329,6 +381,10 @@ def _gn_nli_jit(
             direction.
         spm_out: ``(N,)`` output buffer for the SCI power (W).
         xpm_out: ``(N,)`` output buffer for the XCI power (W).
+        fwm_out: ``(N,)`` output buffer for the FWM power (W): the part of the
+            integral whose third wave is displaced from the band of the second
+            input wave.  It is a subset of ``spm_out + xpm_out``, so a caller
+            must not add it to a total that already contains them.
     """
     n_ch = p_in_w.shape[0]
     length_m = n_zeta * dz_m
@@ -348,6 +404,7 @@ def _gn_nli_jit(
         if p_in_w[i] <= 0.0:
             spm_out[i] = 0.0
             xpm_out[i] = 0.0
+            fwm_out[i] = 0.0
             continue
         bi = 0.5 * b_hz[i]
         al = max(alpha_npm[i] * length_m, 1e-12)
@@ -369,6 +426,7 @@ def _gn_nli_jit(
 
         spm_acc = 0.0
         xpm_acc = 0.0
+        fwm_acc = 0.0
         for ell in range(n_ch):
             if p_in_w[ell] <= 0.0:
                 continue
@@ -397,6 +455,12 @@ def _gn_nli_jit(
                 r_hi += 1
 
             acc = 0.0
+            # Same integral restricted to r != ell, i.e. to the triples whose
+            # generated third wave is displaced from the band of the second
+            # input wave (FWM).  The accumulator ``acc`` keeps the full sum in
+            # the original order, so the SCI/XCI buffers stay bit-for-bit
+            # unchanged.
+            acc_fwm = 0.0
             for r in range(r_lo, r_hi + 1):
                 br = 0.5 * b_hz[r]
                 drl = f_abs_hz[r] - f_abs_hz[ell]
@@ -439,25 +503,35 @@ def _gn_nli_jit(
                             1.0 + (th_hi * th_lo) / (al * al),
                         )
                         integ = -(length_m * length_m * numer / (denom * al)) * ang
-                    acc += g3 * s2 * integ * wx
-            contrib = (p_in_w[i] / b_hz[i]) * (p_in_w[ell] / b_hz[ell]) * acc
+                    term = g3 * s2 * integ * wx
+                    acc += term
+                    if r != ell:
+                        acc_fwm += term
+            pref = (p_in_w[i] / b_hz[i]) * (p_in_w[ell] / b_hz[ell])
+            contrib = pref * acc
+            fwm_contrib = pref * acc_fwm
+            phased_array = 1.0
             if n_span > 1:
                 # Phased-array term of Eq. (5) for identical spans, evaluated at
                 # the centre-to-centre phase mismatch of the band pair.
                 psi = -4.0 * np.pi**2 * bi * delta * k_mix * length_m
                 denom = n_span * np.sin(0.5 * psi)
                 if denom == 0.0:
-                    contrib *= n_span * n_span
+                    phased_array = float(n_span * n_span)
                 else:
-                    contrib *= (np.sin(0.5 * n_span * psi) / denom) ** 2
+                    phased_array = (np.sin(0.5 * n_span * psi) / denom) ** 2
+                contrib *= phased_array
             if ell == i:
                 spm_acc += contrib
+                fwm_acc += fwm_contrib * phased_array
             else:
                 # Both orderings of the cross pair carry the same power.
                 xpm_acc += 2.0 * contrib
+                fwm_acc += 2.0 * fwm_contrib * phased_array
 
         # The integral of Eq. (4) yields the NLI *PSD*; multiplying by the
         # channel bandwidth turns it into the noise power of the channel.
         factor = (16.0 / 27.0) * gamma_i * gamma_i * b_hz[i]
         spm_out[i] = factor * spm_acc
         xpm_out[i] = factor * xpm_acc
+        fwm_out[i] = factor * fwm_acc

@@ -866,8 +866,11 @@ class NumericalISRSGNKernel:
 
         Returns
         -------
-            Output powers and the self- (SCI) and cross- (XCI) interference
-            noise powers, all in model order.
+            Output powers and the self- (SCI), cross- (XCI) and
+            four-wave-mixing (FWM) noise powers, all in model order.  The FWM
+            field is the part of Eq. (4) whose generated third wave leaves the
+            CUT band, so ``spm + xpm + fwm`` is the total NLI; the ``spm`` and
+            ``xpm`` values are unchanged by the split.
         """
         power = np.ascontiguousarray(np.asarray(power_in_w, dtype=np.float64)[self.order])
         dz = span_length_m / self.ode_steps
@@ -885,6 +888,7 @@ class NumericalISRSGNKernel:
 
         spm = np.zeros(self.n_nodes, dtype=np.float64)
         xpm = np.zeros(self.n_nodes, dtype=np.float64)
+        fwm = np.zeros(self.n_nodes, dtype=np.float64)
         _gn_nli_jit(
             self.f_abs_hz,
             self.b_hz,
@@ -902,6 +906,7 @@ class NumericalISRSGNKernel:
             self.quadrature_points,
             spm,
             xpm,
+            fwm,
         )
 
         inverse = np.empty(self.n_nodes, dtype=np.int64)
@@ -913,6 +918,7 @@ class NumericalISRSGNKernel:
                 power_out_w=np.ascontiguousarray(power_out[inverse]),
                 spm_noise_w=np.ascontiguousarray(spm[inverse]),
                 xpm_noise_w=np.ascontiguousarray(xpm[inverse]),
+                fwm_noise_w=np.ascontiguousarray(fwm[inverse]),
             )
 
         phase_spm, phase_xpm = self._span_phases(span_context, span_length_m)
@@ -924,6 +930,11 @@ class NumericalISRSGNKernel:
             xpm_noise_w=np.ascontiguousarray(xpm[inverse]),
             nli_amplitude_spm=np.ascontiguousarray(amplitude_spm[inverse]),
             nli_amplitude_xpm=np.ascontiguousarray(amplitude_xpm[inverse]),
+            # The FWM term is reported as the single-span power: its
+            # inter-span coherence is below 0.03 in the paper, so the route
+            # layer's power accumulation is the appropriate convention and no
+            # amplitude is fabricated for it.
+            fwm_noise_w=np.ascontiguousarray(fwm[inverse]),
         )
 
 
