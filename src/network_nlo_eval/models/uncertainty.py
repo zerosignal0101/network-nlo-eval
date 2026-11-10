@@ -52,6 +52,7 @@ from network_nlo_eval.models.pcfm import (
 )
 
 __all__ = [
+    "DENSE_GRID_PENALTY_SCHEDULE_V4",
     "DENSE_GRID_SPACING_RATIO",
     "H3_RESIDUAL_TABLE",
     "H3_STATISTICAL_TABLE",
@@ -64,6 +65,7 @@ __all__ = [
     "classify_bandwidth",
     "classify_pump_mode",
     "dense_grid_metrics",
+    "dense_grid_schedule_penalty",
     "estimate_h3_error_budget",
     "select_residual_entry",
     "span_validity",
@@ -99,6 +101,33 @@ WIDEBAND_THRESHOLD_HZ: float = 6.0e12
 #: the returned ``s`` and this constant keeps every flag and confidence value
 #: bit-for-bit identical while making the printed ``s`` physical.
 XCI_DEEP_BREAKDOWN_S: float = 2.0
+
+#: Calibrated dense-grid penalty schedule of the v4 audit (opt-in).
+#:
+#: Each entry is ``(spacing_to_bandwidth_upper, penalty_db)`` and the upper
+#: bounds increase strictly.  The penalty is the 0.1 dB ceiling of the largest
+#: ``|H3 - numerical|`` SNR residual measured with ``dense_grid_fix=True`` on
+#: the full C-band matrix (64 GBaud, 100 km/span, 1/5/10 spans, 0/6 dBm):
+#:
+#: * ``0.390625`` (C 25 GHz): 3.571 dB -> 3.6 dB;
+#: * ``0.5859375`` (C 37.5 GHz): 1.988 dB -> 2.0 dB;
+#: * ``0.78125`` (C 50 GHz): 0.546 dB -> 0.6 dB.
+#:
+#: The residual above 4 dB (C 25 GHz with the default, uncorrected kernel:
+#: 6.572 dB) is deliberately *not* covered by any tier: that operating point is
+#: still not trustworthy and must stay flagged rather than be masked by a
+#: penalty.  This table is a safety-margin calibration, **not** a model
+#: correction, and it is never active unless a caller passes it to
+#: :attr:`H3UncertaintyConfig.dense_grid_penalty_schedule`.
+#:
+#: Per the tier lookup (``first ratio <= upper``), ratios below the first upper
+#: bound (grids denser than 25 GHz) also take the 3.6 dB tier.  That reuse is an
+#: extrapolation beyond the measured points, not a validation of such grids.
+DENSE_GRID_PENALTY_SCHEDULE_V4: tuple[tuple[float, float], ...] = (
+    (0.390625, 3.6),
+    (0.5859375, 2.0),
+    (0.78125, 0.6),
+)
 
 
 @dataclass(frozen=True)
@@ -244,6 +273,25 @@ class H3UncertaintyConfig:
             optimism of 1.52 dB at 50 GHz and 2.48 dB at 37.5 GHz against a
             1.41 dB narrow margin, so 1.1 dB covers the observed gap and is the
             recommended opt-in value.
+        dense_grid_penalty_schedule: Optional per-spacing dense-grid penalty
+            schedule, a non-empty sequence of
+            ``(spacing_to_bandwidth_upper, penalty_db)`` pairs sorted by
+            strictly increasing upper bound.  ``None`` (default) keeps the
+            scalar :attr:`dense_grid_penalty_db` path bit-for-bit unchanged.
+            When it is set, every active channel of a dense grid takes the
+            penalty of the first tier whose upper bound is ``>=``
+            :attr:`ValidityReport.spacing_to_bandwidth`; a ratio above the
+            last upper bound reuses the last tier (clamped) and the budget
+            notes that the point is outside the calibrated range.  The
+            schedule **overrides** the scalar.  A schedule is a calibrated
+            safety margin, not a model correction: see
+            :data:`DENSE_GRID_PENALTY_SCHEDULE_V4` for the v4 calibration.
+
+    Raises
+    ------
+        ValueError: A scale or penalty is negative, the schedule is empty, an
+            upper bound is non-finite/non-positive or not strictly increasing,
+            or a schedule penalty is non-finite or negative.
     """
 
     k_sigma: float = DEFAULT_K_SIGMA
@@ -253,6 +301,7 @@ class H3UncertaintyConfig:
     validity_penalty_db: float = DEFAULT_VALIDITY_PENALTY_DB
     strong_tilt_db: float = DEFAULT_STRONG_TILT_DB
     dense_grid_penalty_db: float = 0.0
+    dense_grid_penalty_schedule: tuple[tuple[float, float], ...] | None = None
 
     def __post_init__(self) -> None:
         """Reject negative scales; a negative margin has no safety meaning."""
@@ -268,6 +317,35 @@ class H3UncertaintyConfig:
             raise ValueError(f"strong_tilt_db must be >= 0, got {self.strong_tilt_db}.")
         if self.dense_grid_penalty_db < 0.0:
             raise ValueError(f"dense_grid_penalty_db must be >= 0, got {self.dense_grid_penalty_db}.")
+        schedule = self.dense_grid_penalty_schedule
+        if schedule is not None:
+            if len(schedule) == 0:
+                raise ValueError("dense_grid_penalty_schedule must be None or a non-empty sequence.")
+            previous_upper: float | None = None
+            for index, item in enumerate(schedule):
+                try:
+                    upper, penalty = item
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "each dense_grid_penalty_schedule entry must be a "
+                        f"(spacing_to_bandwidth_upper, penalty_db) pair, got {item!r} at index {index}."
+                    ) from None
+                if not np.isfinite(upper) or upper <= 0.0:
+                    raise ValueError(
+                        "dense_grid_penalty_schedule upper bounds must be finite and > 0, "
+                        f"got {upper!r} at index {index}."
+                    )
+                if not np.isfinite(penalty) or penalty < 0.0:
+                    raise ValueError(
+                        "dense_grid_penalty_schedule penalties must be finite and >= 0, "
+                        f"got {penalty!r} at index {index}."
+                    )
+                if previous_upper is not None and not upper > previous_upper:
+                    raise ValueError(
+                        "dense_grid_penalty_schedule upper bounds must be strictly increasing; "
+                        f"{upper!r} at index {index} does not exceed {previous_upper!r}."
+                    )
+                previous_upper = float(upper)
 
 
 @dataclass(frozen=True)
@@ -363,7 +441,9 @@ class ValidityReport:
         dense_grid_overlap: ``True`` when the occupied spectrum is a dense
             grid.  It ORs into ``flagged`` for every active channel but never
             changes ``valid`` or the point SNR; the opt-in
-            :attr:`H3UncertaintyConfig.dense_grid_penalty_db` adds margin.
+            :attr:`H3UncertaintyConfig.dense_grid_penalty_db` or
+            :attr:`H3UncertaintyConfig.dense_grid_penalty_schedule` adds
+            margin.
         raman_auto_under_resolved: ``True`` when at least one span's opt-in
             Raman resolution check found the solved step count under-resolved
             (profile, span gain or Raman ASE moved by more than the tolerance).
@@ -442,13 +522,16 @@ class H3ErrorBudget:
         margin = max(bias, 0) + k_sigma * sqrt(sigma_residual**2
                                                 + sigma_statistical**2)
                  + validity_penalty_db * (1 - confidence)
-                 + dense_grid_penalty_db * [dense grid]
+                 + dense_grid_penalty(channel) * [dense grid]
 
-    ``max(bias, 0)`` makes an optimistic model pay for its bias and keeps a
-    pessimistic model conservative instead of letting it buy a smaller margin.
-    Invalid channels get ``margin = inf`` so a caller can never accept them.
-    The dense-grid term is zero by default; the flag alone never moves the
-    margin.
+    ``dense_grid_penalty`` is the scalar
+    :attr:`H3UncertaintyConfig.dense_grid_penalty_db`, or the per-channel value
+    of :attr:`H3UncertaintyConfig.dense_grid_penalty_schedule` when that
+    schedule is set (it overrides the scalar).  ``max(bias, 0)`` makes an
+    optimistic model pay for its bias and keeps a pessimistic model
+    conservative instead of letting it buy a smaller margin.  Invalid channels
+    get ``margin = inf`` so a caller can never accept them.  The dense-grid
+    term is zero by default; the flag alone never moves the margin.
 
     Attributes
     ----------
@@ -645,6 +728,43 @@ def select_residual_entry(
             f"no H3 residual row for pump_mode={pump_mode!r}, band_class={band_class!r}; "
             f"available keys: {sorted(H3_RESIDUAL_TABLE)}."
         ) from None
+
+
+def dense_grid_schedule_penalty(
+    schedule: Sequence[tuple[float, float]],
+    spacing_to_bandwidth: float,
+) -> tuple[float, bool]:
+    """Look up the dense-grid penalty of one spacing ratio.
+
+    The first tier whose ``upper`` is at least ``spacing_to_bandwidth`` wins.
+    A ratio above the last upper bound reuses the last tier and reports
+    ``clamped=True`` so the caller can say that the point is outside the
+    calibrated range instead of silently pretending it is covered.  A ratio
+    below the first upper bound also takes the first tier; that is an
+    extrapolation to a denser grid than any calibrated point.
+
+    Args:
+        schedule: Non-empty ``(upper, penalty_db)`` sequence with strictly
+            increasing upper bounds, as validated by
+            :class:`H3UncertaintyConfig`.
+        spacing_to_bandwidth: ``min channel spacing / max bandwidth`` of the
+            active comb (dimensionless).
+
+    Returns
+    -------
+        ``(penalty_db, clamped)``.
+
+    Raises
+    ------
+        ValueError: The schedule is empty.
+    """
+    if not schedule:
+        raise ValueError("dense_grid_schedule_penalty requires a non-empty schedule.")
+    ratio = float(spacing_to_bandwidth)
+    for upper, penalty in schedule:
+        if ratio <= float(upper):
+            return float(penalty), False
+    return float(schedule[-1][1]), True
 
 
 def _span_metrics(
@@ -950,7 +1070,7 @@ def estimate_h3_error_budget(
 
     # 密集栅格：相邻矩形谱重叠，闭式 XCI 的非重叠推导不再成立。只标记，
     # 不改 valid / 点值 SNR；需要额外余量的调用方显式设置
-    # ``dense_grid_penalty_db``。
+    # ``dense_grid_penalty_db`` 或按间距标定的 ``dense_grid_penalty_schedule``。
     bandwidth_channels = np.asarray(model.channel_bandwidth_hz_channels, dtype=np.float64)
     min_spacing_hz, spacing_ratio = dense_grid_metrics(
         np.asarray(model.f_abs_hz, dtype=np.float64),
@@ -997,7 +1117,37 @@ def estimate_h3_error_budget(
     )
     sigma = np.hypot(residual_sigma, statistical_sigma)
     penalty = cfg.validity_penalty_db * (1.0 - confidence)
-    dense_penalty = cfg.dense_grid_penalty_db if dense_grid else 0.0
+    # 密集栅格余量：默认走标量路径，数值与引入 schedule 之前逐位相同。
+    # schedule 非空时按有效性报告的 spacing_to_bandwidth 查表（逐信道数组，
+    # 便于将来按信道比查表），并覆盖标量；超出最后一级时取最后一级（clamped）。
+    schedule = cfg.dense_grid_penalty_schedule
+    schedule_active = bool(dense_grid and schedule is not None)
+    dense_penalty_clamped = False
+    if schedule_active:
+        penalty_value, dense_penalty_clamped = dense_grid_schedule_penalty(schedule, float(spacing_ratio))
+        dense_penalty: float | NDArrayFloat = np.where(active, penalty_value, 0.0)
+        dense_penalty_applied = bool(penalty_value > 0.0)
+        dense_penalty_source = (
+            f"calibrated dense-grid penalty schedule: {penalty_value:.2f} dB at "
+            f"spacing/bandwidth={float(spacing_ratio):.4f}; calibrated safety margin from the v4 "
+            "audit, not a model correction"
+        )
+        dense_penalty_note = (
+            f"calibrated dense-grid penalty schedule {penalty_value:.2f} dB applied at "
+            f"spacing/bandwidth {float(spacing_ratio):.4f} (calibrated safety margin, not a model correction)"
+        )
+        if dense_penalty_clamped:
+            last_upper = float(schedule[-1][0])
+            dense_penalty_note += (
+                f"; spacing/bandwidth {float(spacing_ratio):.4f} is above the last calibrated "
+                f"upper bound {last_upper:.4f}, penalty clamped to the last tier (outside the "
+                "calibrated range, so the residual is not covered)"
+            )
+    else:
+        dense_penalty = cfg.dense_grid_penalty_db if dense_grid else 0.0
+        dense_penalty_applied = bool(dense_penalty > 0.0)
+        dense_penalty_source = f"opt-in dense-grid penalty at {cfg.dense_grid_penalty_db:.2f} dB full scale"
+        dense_penalty_note = f"dense-grid penalty {cfg.dense_grid_penalty_db:.2f} dB applied (opt-in)"
     margin = np.maximum(residual_bias, 0.0) + cfg.k_sigma * sigma + penalty + dense_penalty
     margin = np.where(valid, margin, np.inf)
     margin = np.where(active, margin, 0.0)
@@ -1073,13 +1223,16 @@ def estimate_h3_error_budget(
             False,
         ),
     ]
-    if dense_penalty > 0.0:
+    if dense_penalty_applied:
+        dense_penalty_values = (
+            dense_penalty if isinstance(dense_penalty, np.ndarray) else np.where(active, dense_penalty, 0.0)
+        )
         terms.append(
             UncertaintyTerm(
                 "dense_grid_penalty",
                 "penalty",
-                np.where(active, dense_penalty, 0.0),
-                f"opt-in dense-grid penalty at {cfg.dense_grid_penalty_db:.2f} dB full scale",
+                dense_penalty_values,
+                dense_penalty_source,
                 False,
             )
         )
@@ -1131,8 +1284,8 @@ def estimate_h3_error_budget(
             f"{float(np.max(active_bandwidth)) / 1e9:.2f} GHz bandwidth; the closed-form XCI row "
             "is outside its non-overlapping derivation domain"
         )
-    if dense_penalty > 0.0:
-        notes.append(f"dense-grid penalty {cfg.dense_grid_penalty_db:.2f} dB applied (opt-in)")
+    if dense_penalty_applied or schedule_active:
+        notes.append(dense_penalty_note)
     if fwm_required_any:
         note = (
             f"PCFM/H3 do not contain FWM: the occupied band has min |D| = "
