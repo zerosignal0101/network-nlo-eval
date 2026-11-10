@@ -155,10 +155,10 @@ class ServiceQoT:
                 np.array([self.snr_db], dtype=np.float64),
                 np.array([self.valid], dtype=bool),
                 np.array([self.margin_db], dtype=np.float64),
-            np.array([self.soft_margin_db], dtype=np.float64),
-            dense_grid_overlap=self.dense_grid_overlap,
-            raman_auto_under_resolved=self.raman_auto_under_resolved,
-        )[0]
+                np.array([self.soft_margin_db], dtype=np.float64),
+                dense_grid_overlap=self.dense_grid_overlap,
+                raman_auto_under_resolved=self.raman_auto_under_resolved,
+            )[0]
         )
 
 
