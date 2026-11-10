@@ -684,6 +684,20 @@ class SpanValidityReport:
             ``(N,)`` number of interfering channels that entered the
             overlapping-band integral (``|df| < (B_i+B_j)/2``).  Zero with
             ``dense_grid_fix=False`` and on every non-overlapping grid.
+        lumped_loss_positions_m:
+            ``(K,)`` positions (m) of the lumped loss elements configured on
+            the span, sorted ascending with duplicate positions merged.
+            Empty when the span has none.
+        lumped_loss_db:
+            ``(K,)`` loss of the same elements (dB), non-negative.
+        lumped_loss_in_ode:
+            ``True`` when the coupled Raman ODE applied the lumped loss
+            internally (active pump *and* at least one element).  ``False``
+            without pumps, where the base PCFM SPP carries the same list.
+        lumped_loss_segments:
+            Number of integration segments the lumped loss splits the span
+            into (``K + 1``); ``1`` without elements.  The coupled ODE
+            allocates its RK4 steps proportionally to the segment lengths.
     """
 
     xci_gated: NDArrayFloat
@@ -722,6 +736,10 @@ class SpanValidityReport:
     dense_grid_fix_applied: bool = False
     dense_grid_overlap_correction: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     dense_grid_overlap_pairs: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    lumped_loss_positions_m: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    lumped_loss_db: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    lumped_loss_in_ode: bool = False
+    lumped_loss_segments: int = 1
 
 
 @dataclass(frozen=True)

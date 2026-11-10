@@ -152,6 +152,7 @@ from network_nlo_eval.models.raman_ode import (
     DEFAULT_FIXED_POINT_ITERATIONS,
     PaperRamanSpanResult,
     RamanPaperSpanSolver,
+    _resolve_lumped_loss,
     resolve_launch_power_convention,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
@@ -502,6 +503,18 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         dense_grid_fix: Opt-in overlap-aware XCI correction forwarded to
             :class:`PCFMSpanKernel`.  ``False`` (default) keeps the historic
             numbers bit-for-bit.
+        lumped_loss: Lumped loss elements inside the span
+            (``(position_m, loss_db)``), paper Section IV-D.  Positions must
+            lie strictly inside ``(0, L)``, the loss must be non-negative, and
+            duplicate positions are merged by summing their dB.  ``None``
+            (default) keeps every existing number bit-for-bit.  Without
+            active pumps the list is forwarded unchanged to
+            :class:`~network_nlo_eval.models.pcfm.PCFMSpanKernel`, which
+            already applies it to the ISRS-only SPP.  With active pumps the
+            coupled signal/pump/ASE ODE is integrated segment by segment and
+            every state is multiplied by ``10**(-loss_db/10)`` at each loss
+            position (forward states on the way out, backward pumps in the
+            ``s = L - z`` coordinate at the same physical position).
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -524,6 +537,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         nli_power_convention: str | None = None,
         pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
         dense_grid_fix: bool = False,
+        lumped_loss: Sequence[tuple[float, float]] | None = None,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -533,7 +547,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             ValueError: ``raman_steps`` or ``raman_iterations`` is not positive,
                 or a boolean option is not a ``bool``, or the
                 ``launch_power_convention``/``signal_polarizations``/``nli_power_convention``
-                combination is inconsistent, or the overlap guard is not finite.
+                combination is inconsistent, or the overlap guard is not finite,
+                or a lumped loss position is outside ``(0, L)`` of the fibre.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
@@ -550,10 +565,14 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             )
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         resolved_nli = _resolve_nli_convention(nli_power_convention, resolved_convention)
+        # 位置上限按光纤长度校验；实际评估的跨长在构造 solver 时还会再校验一次。
+        fiber_length_m = float(fiber_config.length_km) * 1e3
+        checked_lumped_loss, _, _ = _resolve_lumped_loss(lumped_loss, fiber_length_m)
         super().__init__(
             f_abs_hz,
             b_hz,
             fiber_config,
+            lumped_loss=checked_lumped_loss or None,
             nli_power_convention=resolved_nli,
             dense_grid_fix=bool(dense_grid_fix),
             **kwargs,  # type: ignore[arg-type]
@@ -632,6 +651,26 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         return bool(self._wideband_multipump)
 
     @property
+    def lumped_loss_in_ode(self) -> bool:
+        """Whether the lumped loss is applied inside the coupled Raman ODE.
+
+        ``True`` only when the span carries at least one lumped loss element
+        *and* at least one active pump.  Without pumps the parent
+        :class:`~network_nlo_eval.models.pcfm.PCFMSpanKernel` applies the same
+        list to its ISRS-only SPP.
+        """
+        return bool(self.active and self.lumped_loss)
+
+    @property
+    def lumped_loss_segments(self) -> int:
+        """Number of integration segments created by the lumped loss.
+
+        ``len(self.lumped_loss) + 1``; ``1`` when no element is configured (the
+        whole span is a single segment).
+        """
+        return len(self.lumped_loss) + 1
+
+    @property
     def last_span_gain(self) -> NDArrayFloat:
         """Net fibre gain of the last evaluated span, model order."""
         return np.ascontiguousarray(self._last_span_gain)
@@ -686,6 +725,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             signal_polarizations=self.signal_polarizations,
             pump_pump_raman=self.pump_pump_raman,
             launch_power_convention=self.launch_power_convention,
+            lumped_loss=self.lumped_loss or None,
         )
         self._solver_cache[key] = solver
         return solver
@@ -808,7 +848,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         """
         report = super().validity_report(span_length_m, power_in_w, power_out_w=power_out_w)
         if not self.active:
-            return report
+            return self._with_lumped_loss_report(report)
         power = np.asarray(power_in_w, dtype=np.float64)[self.order]
         result = self._raman_result(np.ascontiguousarray(power), float(span_length_m))
         if self._pump_alpha_npm is None:
@@ -884,27 +924,75 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raman_pump_signal_overlap=bool(pump_overlap),
             raman_pump_overlap_channels=np.ascontiguousarray(overlap_channels),
             raman_pump_min_offset_hz=float(min_offset),
+            lumped_loss_positions_m=np.ascontiguousarray(
+                [position for position, _ in self.lumped_loss], dtype=np.float64
+            ),
+            lumped_loss_db=np.ascontiguousarray([loss for _, loss in self.lumped_loss], dtype=np.float64),
+            lumped_loss_in_ode=bool(self.lumped_loss_in_ode),
+            lumped_loss_segments=int(self.lumped_loss_segments),
         )
 
-    def _resample_profile(self, profile: NDArrayFloat, span_length_m: float) -> NDArrayFloat:
+    def _with_lumped_loss_report(self, report: SpanValidityReport) -> SpanValidityReport:
+        """Attach the static lumped-loss diagnostics to a pump-free report.
+
+        Without a configured element the report object is returned unchanged,
+        so the pump-free diagnostics of a span that does not use the new option
+        stay identical to :class:`PCFMSpanKernel`.
+        """
+        if not self.lumped_loss:
+            return report
+        return replace(
+            report,
+            lumped_loss_positions_m=np.ascontiguousarray(
+                [position for position, _ in self.lumped_loss], dtype=np.float64
+            ),
+            lumped_loss_db=np.ascontiguousarray([loss for _, loss in self.lumped_loss], dtype=np.float64),
+            lumped_loss_in_ode=False,
+            lumped_loss_segments=int(self.lumped_loss_segments),
+        )
+
+    def _resample_profile(
+        self,
+        profile: NDArrayFloat,
+        span_length_m: float,
+        sample_positions: NDArrayFloat | None = None,
+    ) -> NDArrayFloat:
         """Linearly resample the coarse profile onto the PCFM fit grid.
 
-        The coarse solve samples the profile twice per RK4 step at uniform
-        positions.  The PCFM polynomial fit uses ``self.spp_steps`` samples,
-        which may be a different count; a linear resampling keeps the two
-        independent.  The map is exact when the two step counts coincide.
+        The coarse solve samples the profile twice per RK4 step.  Without
+        lumped loss those positions are uniform and the map is the historical
+        one; with lumped loss the RK4 steps are allocated per segment, so the
+        sample positions are non-uniform and must be passed explicitly.  The
+        PCFM polynomial fit uses ``self.spp_steps`` samples, which may be a
+        different count, so the resampling keeps the two independent.
+
+        Args:
+            profile: ``(S, N)`` normalised profile of the coupled solve.
+            span_length_m: Span length (m).
+            sample_positions: ``(S,)`` normalised ``z/L`` of every row, or
+                ``None`` for the historical uniform ``k/(2*n_steps)`` grid.
+
+        Returns
+        -------
+            ``(S_target, N)`` profile on the PCFM fit grid.
         """
         target = self._sample_positions(span_length_m)
         n_source = profile.shape[0]
-        if target.size == n_source:
-            return np.ascontiguousarray(profile)
-        # The coarse solve samples the profile at the midpoint and the end of
-        # every step; the first sample is at 0.5/n, not at 0.  Add the exact
-        # u=0 value (the normalised profile is 1 there) so that a PCFM grid
-        # with more steps does not extrapolate backwards.
-        source = np.empty(n_source + 1, dtype=np.float64)
-        source[0] = 0.0
-        source[1:] = np.arange(1, n_source + 1, dtype=np.float64) / n_source
+        if sample_positions is None:
+            if target.size == n_source:
+                return np.ascontiguousarray(profile)
+            # The coarse solve samples the profile at the midpoint and the end
+            # of every step; the first sample is at 0.5/n, not at 0.  Add the
+            # exact u=0 value (the normalised profile is 1 there) so that a
+            # PCFM grid with more steps does not extrapolate backwards.
+            source = np.empty(n_source + 1, dtype=np.float64)
+            source[0] = 0.0
+            source[1:] = np.arange(1, n_source + 1, dtype=np.float64) / n_source
+        else:
+            # 分段网格：位置由求解器给出，首点补 u=0（归一化剖面在 0 处为 1）。
+            source = np.concatenate(
+                (np.zeros(1, dtype=np.float64), np.asarray(sample_positions, dtype=np.float64))
+            )
         extended = np.vstack([np.ones((1, profile.shape[1]), dtype=np.float64), profile])
         index = np.searchsorted(source, target, side="right") - 1
         index = np.clip(index, 0, source.size - 2)
@@ -954,7 +1042,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         if not self.active:
             return super()._integrate_spp(power, span_length_m)
         result = self._raman_result(power, span_length_m)
-        return self._resample_profile(result.profile_norm, span_length_m), np.ascontiguousarray(result.power_out_w)
+        return (
+            self._resample_profile(result.profile_norm, span_length_m, result.sample_positions_u),
+            np.ascontiguousarray(result.power_out_w),
+        )
 
     def evaluate(
         self,
@@ -1266,6 +1357,18 @@ class PCFH3RamanModel(PCFMModel):
             point values; a positive value widens the band for the pump
             linewidth / WDM transition, a negative one shrinks it.  It only
             changes the validity report.
+        lumped_loss: Lumped loss elements inside every span, as
+            ``(position_m, loss_db)`` pairs (connectors, splices, discrete
+            attenuators; PCFM 2026 Section IV-D).  Positions must be strictly
+            inside ``(0, L)`` of the fibre, the loss must be non-negative, and
+            duplicate positions are merged by summing their dB.  ``None``
+            (default) leaves every number bit-for-bit unchanged.  The list is
+            forwarded to :class:`PCFH3RamanSpanKernel`, which hands it to the
+            base PCFM SPP when the span has no active pump and applies it
+            inside the coupled Raman ODE (signal, forward pump, ASE, and the
+            backward pump at the same physical ``s = L - z`` position) when it
+            has one.  See also the ``lumped_loss_*`` fields of
+            :meth:`PCFH3RamanSpanKernel.validity_report`.
         span_coherence: ``"auto"`` (default) uses ``"incoherent"`` for pumped
             links and ``"pcfm"`` for unpumped links; ``"pcfm"`` keeps the H3
             visibility-weighted coherent accumulation; ``"incoherent"`` sums
@@ -1314,6 +1417,7 @@ class PCFH3RamanModel(PCFMModel):
         validity_mode: str = "warn",
         resolution: str | None = None,
         dense_grid_fix: bool = False,
+        lumped_loss: Sequence[tuple[float, float]] | None = None,
         **route_options: object,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
@@ -1354,6 +1458,9 @@ class PCFH3RamanModel(PCFMModel):
             )
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         resolved_nli_convention = _resolve_nli_convention(nli_power_convention, resolved_convention)
+        # 模型层没有单一跨长，这里只校验“位置为正、损耗非负、有限、排序合并”；
+        # 位置上限留给每个 kernel 按各自光纤长度校验。
+        self._lumped_loss, _, _ = _resolve_lumped_loss(lumped_loss, float("inf"))
         if resolved_convention == "total" and int(signal_polarizations) != 1:
             warnings.warn(
                 "pcfm_h3_raman: launch_power_convention='total' with "
@@ -1505,6 +1612,7 @@ class PCFH3RamanModel(PCFMModel):
             launch_power_convention=self._launch_power_convention,
             nli_power_convention=self._nli_power_convention,
             pump_signal_overlap_guard_hz=self._pump_signal_overlap_guard_hz,
+            lumped_loss=self._lumped_loss or None,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,

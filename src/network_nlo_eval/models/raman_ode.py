@@ -77,6 +77,10 @@ class PaperRamanSpanResult:
             ``z=L``，BW 泵取 ``z=0``。
         iterations: 实际做的不动点迭代次数。
         converged: 不动点是否在阈值内收敛。
+        sample_positions_u: ``(2*N_seg_steps,)`` ``profile_norm`` 每一行对应的
+            归一化位置 ``z/L``。无集中损耗时为 ``None``，表示等距采样
+            ``k/(2*n_steps)``（``k=1..2*n_steps``）；有集中损耗时各段步数
+            按段长分配，采样位置不再等距，必须用本字段重采样。
     """
 
     profile_norm: NDArrayFloat
@@ -85,6 +89,70 @@ class PaperRamanSpanResult:
     pump_power_out_w: NDArrayFloat
     iterations: int
     converged: bool
+    sample_positions_u: NDArrayFloat | None = None
+
+
+def _resolve_lumped_loss(
+    lumped_loss: Sequence[tuple[float, float]] | None,
+    length_m: float,
+) -> tuple[list[tuple[float, float]], NDArrayFloat, NDArrayFloat]:
+    """校验、排序并合并跨内集中损耗元素。
+
+    位置必须在开区间 ``(0, L)`` 内：``0`` 等价于降低输入功率、``L`` 等价于
+    跨末额外衰减，两者都不属于“跨内”事件，也与
+    :class:`~network_nlo_eval.models.pcfm.PCFMSpanKernel` 的既有语义
+    （位置必须严格小于跨长）保持一致。损耗必须非负且有限。
+
+    重复位置按 dB **相加** 合并：两个位于同一物理点的连接器/熔接，等价于
+    一个总损耗为两者之和的集中损耗（衰减因子相乘，即 dB 相加）。排序按
+    位置升序，数值相同时保持输入顺序，因此合并结果与调用方给出的顺序无关。
+
+    Args:
+        lumped_loss: ``(position_m, loss_db)`` 序列，可为 ``None``。
+        length_m: 跨长 (m)。
+
+    Returns
+    -------
+        ``(merged, positions, factors)``：合并后的 ``(position_m, loss_db)``
+        列表、位置数组 (m) 与功率透射因子 ``10**(-loss_db/10)``。
+
+    Raises
+    ------
+        ValueError: 元素不是二元组、位置/损耗非有限、位置不在 ``(0, L)``、
+            或损耗为负（增益）。
+    """
+    if lumped_loss is None or len(lumped_loss) == 0:
+        empty = np.zeros(0, dtype=np.float64)
+        return [], empty, empty
+    entries: list[tuple[float, float]] = []
+    for item in lumped_loss:
+        try:
+            position_m, loss_db = item
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"lumped_loss entries must be (position_m, loss_db) pairs, got {item!r}."
+            ) from exc
+        position = float(position_m)
+        loss = float(loss_db)
+        if not np.isfinite(position) or not np.isfinite(loss):
+            raise ValueError(f"lumped loss must be finite, got ({position_m!r}, {loss_db!r}).")
+        if position <= 0.0:
+            raise ValueError(f"lumped loss position must be positive, got {position}.")
+        if position >= length_m:
+            raise ValueError(f"lumped loss at {position} m lies outside the span of {length_m} m.")
+        if loss < 0.0:
+            raise ValueError(f"lumped loss must not be a gain, got {loss} dB.")
+        entries.append((position, loss))
+    entries.sort(key=lambda item: item[0])
+    merged: list[tuple[float, float]] = []
+    for position, loss in entries:
+        if merged and position == merged[-1][0]:
+            merged[-1] = (position, merged[-1][1] + loss)
+        else:
+            merged.append((position, loss))
+    positions = np.asarray([item[0] for item in merged], dtype=np.float64)
+    factors = np.asarray([10.0 ** (-item[1] / 10.0) for item in merged], dtype=np.float64)
+    return merged, positions, factors
 
 
 def _interp_rows(grid: NDArrayFloat, values: NDArrayFloat, query: float) -> NDArrayFloat:
@@ -174,11 +242,19 @@ class RamanPaperSpanSolver:
             的泵浦×泵浦块清零，泵浦仍被信号耗尽、仍按自身 ``alpha_p`` 衰减，
             泵浦-信号与信号-信号耦合逐项不变。这是一个**对照口径**：它把
             “泵浦之间互相搬运功率”从 C+L 残差里隔离出来，不是更物理的默认。
+        lumped_loss: 跨内集中损耗（连接器、熔接、集中衰减器），
+            ``(position_m, loss_db)`` 序列，位置必须在开区间 ``(0, L)`` 内、
+            损耗非负。``None``（默认）不改变任何数值路径。给定后 ``[0, L]``
+            按损耗点切段，每段用原有 RK4 积分，段间把信号、ASE 与泵浦状态
+            乘 ``10**(-loss_db/10)``；反向泵在 ``s = L - z`` 坐标的同一物理
+            位置乘同一因子，固定点迭代因此与损耗点一致。重复位置按 dB 相加
+            合并；0 dB 元素保留，仍会切分积分网格。
 
     Raises
     ------
         ValueError: 任一数组形状不匹配、跨长/步数非正、布尔开关不是 ``bool``；
-            口径非法或 ``"per_pol"`` 与 ``signal_polarizations`` 不匹配。
+            口径非法或 ``"per_pol"`` 与 ``signal_polarizations`` 不匹配；
+            集中损耗位置不在 ``(0, L)`` 内或损耗为负。
     """
 
     def __init__(
@@ -201,6 +277,7 @@ class RamanPaperSpanSolver:
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
+        lumped_loss: Sequence[tuple[float, float]] | None = None,
     ) -> None:
         """校验参数并构建与 z 无关的耦合矩阵。"""
         if length_m <= 0:
@@ -317,6 +394,34 @@ class RamanPaperSpanSolver:
         self._coupling = self._build_coupling_matrix()
         self._source_fwd = np.ascontiguousarray(self._build_source_matrix()[self._fwd_slots, :])
         self._z_m = np.linspace(0.0, self.length_m, self.n_steps + 1, dtype=np.float64)
+        # --- 跨内集中损耗 ---------------------------------------------------
+        # 位置/损耗在构造期一次校验，求解期只做乘法。``n_lumped_loss == 0``
+        # 时所有段结构退化为单段 ``[0, L]``，与历史路径逐位一致。
+        self._lumped_loss, self._lumped_loss_positions_m, self._lumped_loss_factors = (
+            _resolve_lumped_loss(lumped_loss, self.length_m)
+        )
+        self.n_lumped_loss = len(self._lumped_loss)
+        if self.n_lumped_loss:
+            edges = np.concatenate(
+                ([0.0], self._lumped_loss_positions_m, [self.length_m])
+            )
+            lengths = np.diff(edges)
+            # 步数按段长分配，保证总步数大致等于 ``n_steps``，且每段至少一步。
+            steps = np.maximum(
+                1,
+                np.round(self.n_steps * lengths / self.length_m).astype(np.int64),
+            )
+            self._z_segments = [
+                np.linspace(float(edges[i]), float(edges[i + 1]), int(steps[i]) + 1, dtype=np.float64)
+                for i in range(steps.size)
+            ]
+            self._n_total_steps = int(steps.sum())
+            self._sample_positions_u = self._build_sample_positions()
+        else:
+            self._z_segments = [self._z_m]
+            self._n_total_steps = self.n_steps
+            # ``None`` 让上层沿用等距采样假设，避免重采样引入末位差异。
+            self._sample_positions_u = None
         # 反向泵浦的初值：在 z=L 注入，向 z=0 指数衰减。
         self._bw_initial_total = np.zeros((self.n_steps + 1, self._bw_slots.size), dtype=np.float64)
         for column, pump_index in enumerate(self._bw_original):
@@ -326,6 +431,43 @@ class RamanPaperSpanSolver:
             self._bw_initial_total[:, column] = self._pump_power_w[pump_index] * np.exp(
                 -alpha * (self.length_m - self._z_m)
             )
+        # 每段的反向泵浦被动剖面。段 i 的泵浦已经穿过所有位置 >= 段右端的
+        # 损耗点，因此乘 ``prod(factors[i:])``；最后一段（z > 最后一个损耗点）
+        # 尚未穿过任何损耗，因子为 1。
+        if self.n_lumped_loss:
+            self._bw_initial_segments = [
+                self._passive_backward_segment(z_nodes, index)
+                for index, z_nodes in enumerate(self._z_segments)
+            ]
+        else:
+            self._bw_initial_segments = [self._bw_initial_total]
+
+    def _build_sample_positions(self) -> NDArrayFloat:
+        """``profile_norm`` 每一行的归一化位置 ``z/L``（分段、非等距）。"""
+        blocks = []
+        for z_nodes in self._z_segments:
+            n_step = z_nodes.size - 1
+            block = np.empty(2 * n_step, dtype=np.float64)
+            block[0::2] = 0.5 * (z_nodes[:-1] + z_nodes[1:])
+            block[1::2] = z_nodes[1:]
+            blocks.append(block / self.length_m)
+        return np.ascontiguousarray(np.concatenate(blocks))
+
+    def _passive_backward_segment(self, z_nodes: NDArrayFloat, segment_index: int) -> NDArrayFloat:
+        """一段内未耗尽反向泵浦的被动剖面（含已穿过的集中损耗）。"""
+        factors = self._lumped_loss_factors[segment_index:]
+        factor = float(np.prod(factors)) if factors.size else 1.0
+        values = np.zeros((z_nodes.size, self._bw_slots.size), dtype=np.float64)
+        for column, pump_index in enumerate(self._bw_original):
+            if pump_index < 0:
+                continue
+            alpha = self._pump_alpha_npm[pump_index]
+            values[:, column] = (
+                self._pump_power_w[pump_index]
+                * np.exp(-alpha * (self.length_m - z_nodes))
+                * factor
+            )
+        return values
 
     def _build_coupling_matrix(self) -> NDArrayFloat:
         """构建 ``(M, M)`` 拉曼耦合矩阵 (1/(W·m))。
@@ -467,6 +609,121 @@ class RamanPaperSpanSolver:
             ase_grid[step + 1] = ase
         return power, ase, power_grid, ase_grid, samples
 
+    def _integrate_forward_segment(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        backward_segment: NDArrayFloat,
+        z_nodes: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """在 ``z_nodes`` 覆盖的单段上做固定步长 RK4 前向积分。
+
+        ``backward_segment`` 与该段网格逐点对齐（``(n+1, n_bw)``），因此每步
+        直接用节点值，不需要跨损耗点插值。段外的损耗由调用方在段间乘法处理。
+
+        Args:
+            power_in: ``(n_fwd,)`` 段首正向状态。
+            ase_in: ``(n_fwd,)`` 段首 ASE 状态。
+            backward_segment: ``(n+1, n_bw)`` 该段的反向泵浦功率 ``P+A``。
+            z_nodes: ``(n+1,)`` 该段递增的 z 节点。
+
+        Returns
+        -------
+            ``(power_end, ase_end, power_grid, ase_grid, power_samples)``。
+        """
+        n_step = z_nodes.size - 1
+        n_fwd = self._fwd_slots.size
+        power = power_in.copy()
+        ase = ase_in.copy()
+        power_grid = np.empty((n_step + 1, n_fwd), dtype=np.float64)
+        ase_grid = np.empty_like(power_grid)
+        samples = np.empty((2 * n_step, n_fwd), dtype=np.float64)
+        power_grid[0] = power
+        ase_grid[0] = ase
+        for step in range(n_step):
+            h = z_nodes[step + 1] - z_nodes[step]
+            bw0 = backward_segment[step]
+            bw1 = backward_segment[step + 1]
+            bw_mid = 0.5 * (bw0 + bw1)
+
+            dp1, da1 = self._rhs_forward(power, ase, bw0)
+            dp2, da2 = self._rhs_forward(power + 0.5 * h * dp1, ase + 0.5 * h * da1, bw_mid)
+            dp3, da3 = self._rhs_forward(power + 0.5 * h * dp2, ase + 0.5 * h * da2, bw_mid)
+            dp4, da4 = self._rhs_forward(power + h * dp3, ase + h * da3, bw1)
+
+            samples[2 * step] = power + 0.5 * h * dp1 + 0.25 * h * (dp2 - dp1)
+            power = power + (h / 6.0) * (dp1 + 2.0 * dp2 + 2.0 * dp3 + dp4)
+            ase = ase + (h / 6.0) * (da1 + 2.0 * da2 + 2.0 * da3 + da4)
+            samples[2 * step + 1] = power
+            power_grid[step + 1] = power
+            ase_grid[step + 1] = ase
+        return power, ase, power_grid, ase_grid, samples
+
+    def _integrate_forward_segments(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        backward_segments: list[NDArrayFloat],
+    ) -> tuple[
+        NDArrayFloat,
+        NDArrayFloat,
+        list[NDArrayFloat],
+        list[NDArrayFloat],
+        NDArrayFloat,
+    ]:
+        """按集中损耗点切段的正向积分。
+
+        每段用 :meth:`_integrate_forward_segment` 积分，进入下一段前把信号与
+        ASE 乘该损耗点的透射因子 ``10**(-loss_db/10)``。损耗因此严格落在
+        段边界上，段内剖面连续。
+
+        Args:
+            power_in: ``(n_fwd,)`` 跨首信号功率。
+            ase_in: ``(n_fwd,)`` 跨首 ASE。
+            backward_segments: 每段的反向泵浦 ``P+A``，与 :attr:`_z_segments`
+                一一对应。
+
+        Returns
+        -------
+            ``(power_end, ase_end, power_segments, ase_segments, samples)``；
+            ``samples`` 是各段中点/终点的拼接，行数 ``2*_n_total_steps``。
+        """
+        power = power_in
+        ase = ase_in
+        power_segments: list[NDArrayFloat] = []
+        ase_segments: list[NDArrayFloat] = []
+        sample_blocks: list[NDArrayFloat] = []
+        for index, z_nodes in enumerate(self._z_segments):
+            if index > 0:
+                factor = float(self._lumped_loss_factors[index - 1])
+                power = power * factor
+                ase = ase * factor
+            power, ase, power_grid, ase_grid, samples = self._integrate_forward_segment(
+                power,
+                ase,
+                backward_segments[index],
+                z_nodes,
+            )
+            power_segments.append(power_grid)
+            ase_segments.append(ase_grid)
+            sample_blocks.append(samples)
+        return power, ase, power_segments, ase_segments, np.vstack(sample_blocks)
+
+    def _forward_total_segments(
+        self,
+        power_segments: list[NDArrayFloat],
+        ase_segments: list[NDArrayFloat],
+        backward_segments: list[NDArrayFloat],
+    ) -> list[NDArrayFloat]:
+        """把每段的正向功率/ASE 与反向泵浦装进 ``(n+1, M)`` 的状态数组。"""
+        totals: list[NDArrayFloat] = []
+        for index, z_nodes in enumerate(self._z_segments):
+            total = np.empty((z_nodes.size, self._n_waves), dtype=np.float64)
+            total[:, self._fwd_slots] = power_segments[index] + ase_segments[index]
+            total[:, self._bw_slots] = backward_segments[index]
+            totals.append(total)
+        return totals
+
     def _integrate_backward(
         self,
         power_in: NDArrayFloat,
@@ -507,6 +764,104 @@ class RamanPaperSpanSolver:
             ase_grid[step + 1] = ase
         return power, ase, power_grid, ase_grid
 
+    def _integrate_backward_segment(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        forward_segment: NDArrayFloat,
+        z_nodes: NDArrayFloat,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """在 ``z_nodes`` 覆盖的单段上做反向泵浦 RK4 积分（``s = L - z``）。
+
+        积分从段右端（``s`` 最小）走到段左端，输出网格与正向一样按 ``z``
+        升序排列：``power_grid[0]`` 对应段左端，``[-1]`` 对应段右端。
+
+        Args:
+            power_in: ``(n_bw,)`` 段右端的反向泵浦功率。
+            ase_in: ``(n_bw,)`` 段右端的反向泵浦 ASE。
+            forward_segment: ``(n+1, M)`` 该段的正向总功率状态。
+            z_nodes: ``(n+1,)`` 该段递增的 z 节点。
+
+        Returns
+        -------
+            ``(power_end, ase_end, power_grid, ase_grid)``，``power_end`` 是段
+            左端的泵浦功率。
+        """
+        n_step = z_nodes.size - 1
+        n_bw = self._bw_slots.size
+        power = power_in.copy()
+        ase = ase_in.copy()
+        power_grid = np.empty((n_step + 1, n_bw), dtype=np.float64)
+        ase_grid = np.empty_like(power_grid)
+        power_grid[n_step] = power
+        ase_grid[n_step] = ase
+        for step in range(n_step, 0, -1):
+            z0 = z_nodes[step]
+            z1 = z_nodes[step - 1]
+            h = z0 - z1
+            z_mid = 0.5 * (z0 + z1)
+            total0 = _interp_rows(z_nodes, forward_segment, z0)
+            total_mid = _interp_rows(z_nodes, forward_segment, z_mid)
+            total1 = _interp_rows(z_nodes, forward_segment, z1)
+
+            dp1, da1 = self._rhs_backward(power, ase, total0)
+            dp2, da2 = self._rhs_backward(power + 0.5 * h * dp1, ase + 0.5 * h * da1, total_mid)
+            dp3, da3 = self._rhs_backward(power + 0.5 * h * dp2, ase + 0.5 * h * da2, total_mid)
+            dp4, da4 = self._rhs_backward(power + h * dp3, ase + h * da3, total1)
+
+            power = power + (h / 6.0) * (dp1 + 2.0 * dp2 + 2.0 * dp3 + dp4)
+            ase = ase + (h / 6.0) * (da1 + 2.0 * da2 + 2.0 * da3 + da4)
+            power_grid[step - 1] = power
+            ase_grid[step - 1] = ase
+        return power, ase, power_grid, ase_grid
+
+    def _integrate_backward_segments(
+        self,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
+        forward_segments: list[NDArrayFloat],
+    ) -> tuple[
+        NDArrayFloat,
+        NDArrayFloat,
+        list[NDArrayFloat],
+        list[NDArrayFloat],
+    ]:
+        """按集中损耗点切段的反向泵浦积分。
+
+        从 ``z=L`` 段开始向 ``z=0`` 走，进入左侧段前把泵浦与 ASE 乘损耗点
+        的透射因子。损耗因此同时作用在泵浦剖面上，固定点迭代的
+        ``backward_total`` 自然包含损耗后的值，不会拖到跨末才应用。
+
+        Args:
+            power_in: ``(n_bw,)`` ``z=L`` 处的反向泵浦功率。
+            ase_in: ``(n_bw,)`` ``z=L`` 处的反向泵浦 ASE。
+            forward_segments: 每段的正向总功率，与 :attr:`_z_segments` 对齐。
+
+        Returns
+        -------
+            ``(power_end, ase_end, power_segments, ase_segments)``，两个列表
+            都按 ``z`` 升序给出各段网格。
+        """
+        power = power_in
+        ase = ase_in
+        n_segments = len(self._z_segments)
+        power_segments: list[NDArrayFloat] = [np.empty((0, 0), dtype=np.float64) for _ in range(n_segments)]
+        ase_segments: list[NDArrayFloat] = [np.empty((0, 0), dtype=np.float64) for _ in range(n_segments)]
+        for index in range(n_segments - 1, -1, -1):
+            power, ase, power_grid, ase_grid = self._integrate_backward_segment(
+                power,
+                ase,
+                forward_segments[index],
+                self._z_segments[index],
+            )
+            power_segments[index] = power_grid
+            ase_segments[index] = ase_grid
+            if index > 0:
+                factor = float(self._lumped_loss_factors[index - 1])
+                power = power * factor
+                ase = ase * factor
+        return power, ase, power_segments, ase_segments
+
     def _initial_forward_state(
         self,
         signal_power_in_w: NDArrayFloat,
@@ -526,43 +881,22 @@ class RamanPaperSpanSolver:
             power[pump_mask] = self._pump_power_w[pump_original]
         return power, ase
 
-    def solve(
+    def _solve_uniform(
         self,
-        signal_power_in_w: NDArrayFloat,
-        signal_ase_in_w: NDArrayFloat | None = None,
+        power_in: NDArrayFloat,
+        ase_in: NDArrayFloat,
     ) -> PaperRamanSpanResult:
-        """求解一跨的信号/泵浦/ASE ODE。
+        """原样保留无集中损耗时的求解路径，保证逐位不变。
 
-        Args:
-            signal_power_in_w: ``(N,)`` 跨首信号功率 (W)。
-            signal_ase_in_w: ``(N,)`` 进入本跨的信号 ASE (W)，``None`` 表示 0。
-            其坐标必须与 ``launch_power_convention`` 一致：``total`` 时是
-            双偏振总 ASE，``per_pol`` 时是每偏振 ASE。返回值
-            :attr:`PaperRamanSpanResult.raman_ase_w` 使用同一坐标。
-
-        Returns
-        -------
-            一跨的剖面、输出功率、新产生 ASE 与泵浦输出。
-
-        Raises
-        ------
-            ValueError: 输入形状不匹配。
+        该函数是接入 ``lumped_loss`` 之前的 ``solve`` 主体；分段实现另走
+        :meth:`solve` 的 ``n_lumped_loss > 0`` 分支。两条路径的 RK4 运算顺序
+        不同（分段反向积分按 z 降序），混用会在默认路径引入 1 ulp 漂移。
         """
-        power_in = np.asarray(signal_power_in_w, dtype=np.float64)
-        if power_in.shape != (self._n_signal,):
-            raise ValueError("signal_power_in_w must contain one value per signal.")
-        ase_in = np.zeros(self._n_signal, dtype=np.float64)
-        if signal_ase_in_w is not None:
-            ase_in = np.asarray(signal_ase_in_w, dtype=np.float64)
-            if ase_in.shape != (self._n_signal,):
-                raise ValueError("signal_ase_in_w must contain one value per signal.")
-
         power_fw, ase_fw = self._initial_forward_state(power_in, ase_in)
         power_bw = self._p0_w[self._bw_slots].copy()
         ase_bw = np.zeros_like(power_bw)
         backward_total = self._bw_initial_total.copy()
         iterations = 0
-        # 未耗尽口径下反向泵不依赖信号，预设指数剖面就是解，无需不动点迭代。
         converged = self._bw_slots.size == 0 or not self.pump_depletion
 
         if self._bw_slots.size and self.pump_depletion:
@@ -589,8 +923,7 @@ class RamanPaperSpanSolver:
                     converged = True
                     break
 
-        # 用最终的反向泵浦剖面再做一次前向积分，使信号剖面与泵浦剖面自洽。
-        power_end, ase_end, power_grid, _ase_grid, samples = self._integrate_forward(
+        power_end, ase_end, _power_grid, _ase_grid, samples = self._integrate_forward(
             power_fw, ase_fw, backward_total
         )
 
@@ -626,7 +959,6 @@ class RamanPaperSpanSolver:
         if forward_pump_original.size:
             pump_out[forward_pump_original] = power_end[pump_columns]
         if self._bw_slots.size:
-            # backward_total 是 P+A；泵浦 ASE 为零，所以反向泵浦功率就是索引 0。
             pump_out[self._bw_original] = backward_total[0]
 
         return PaperRamanSpanResult(
@@ -636,4 +968,133 @@ class RamanPaperSpanSolver:
             pump_power_out_w=pump_out,
             iterations=iterations,
             converged=converged,
+        )
+
+    def solve(
+        self,
+        signal_power_in_w: NDArrayFloat,
+        signal_ase_in_w: NDArrayFloat | None = None,
+    ) -> PaperRamanSpanResult:
+        """求解一跨的信号/泵浦/ASE ODE。
+
+        Args:
+            signal_power_in_w: ``(N,)`` 跨首信号功率 (W)。
+            signal_ase_in_w: ``(N,)`` 进入本跨的信号 ASE (W)，``None`` 表示 0。
+            其坐标必须与 ``launch_power_convention`` 一致：``total`` 时是
+            双偏振总 ASE，``per_pol`` 时是每偏振 ASE。返回值
+            :attr:`PaperRamanSpanResult.raman_ase_w` 使用同一坐标。
+
+        Returns
+        -------
+            一跨的剖面、输出功率、新产生 ASE 与泵浦输出。
+
+        Raises
+        ------
+            ValueError: 输入形状不匹配。
+        """
+        power_in = np.asarray(signal_power_in_w, dtype=np.float64)
+        if power_in.shape != (self._n_signal,):
+            raise ValueError("signal_power_in_w must contain one value per signal.")
+        ase_in = np.zeros(self._n_signal, dtype=np.float64)
+        if signal_ase_in_w is not None:
+            ase_in = np.asarray(signal_ase_in_w, dtype=np.float64)
+            if ase_in.shape != (self._n_signal,):
+                raise ValueError("signal_ase_in_w must contain one value per signal.")
+
+        # 无集中损耗时走原求解主体，逐位保持接入前的数值。
+        if self.n_lumped_loss == 0:
+            return self._solve_uniform(power_in, ase_in)
+
+        power_fw, ase_fw = self._initial_forward_state(power_in, ase_in)
+        power_bw = self._p0_w[self._bw_slots].copy()
+        ase_bw = np.zeros_like(power_bw)
+        backward_segments = [segment.copy() for segment in self._bw_initial_segments]
+        iterations = 0
+        # 未耗尽口径下反向泵不依赖信号，预设指数剖面就是解，无需不动点迭代。
+        # 该剖面已按位置包含集中损耗，因此 ``pump_depletion=False`` 的对照也
+        # 不会把跨内损耗漏掉。
+        converged = self._bw_slots.size == 0 or not self.pump_depletion
+
+        if self._bw_slots.size and self.pump_depletion:
+            peak_pump = max(float(np.max(self._pump_power_w, initial=0.0)), 1.0e-30)
+            for iteration in range(self.n_iterations):
+                iterations = iteration + 1
+                _, _, power_segments, ase_segments, _ = self._integrate_forward_segments(
+                    power_fw, ase_fw, backward_segments
+                )
+                forward_segments = self._forward_total_segments(
+                    power_segments, ase_segments, backward_segments
+                )
+
+                _, _, power_bw_segments, ase_bw_segments = self._integrate_backward_segments(
+                    power_bw, ase_bw, forward_segments
+                )
+                new_backward = [
+                    new_power + new_ase
+                    for new_power, new_ase in zip(power_bw_segments, ase_bw_segments, strict=True)
+                ]
+                change = (
+                    max(
+                        float(np.max(np.abs(new - old)))
+                        for new, old in zip(new_backward, backward_segments, strict=True)
+                    )
+                    / peak_pump
+                )
+                backward_segments = [
+                    _FIXED_POINT_RELAXATION * new + (1.0 - _FIXED_POINT_RELAXATION) * old
+                    for new, old in zip(new_backward, backward_segments, strict=True)
+                ]
+                if change < _FIXED_POINT_TOLERANCE:
+                    converged = True
+                    break
+
+        # 用最终的反向泵浦剖面再做一次前向积分，使信号剖面与泵浦剖面自洽。
+        power_end, ase_end, _power_segments, _ase_segments, samples = self._integrate_forward_segments(
+            power_fw, ase_fw, backward_segments
+        )
+
+        signal_mask = self._fwd_is_signal
+        signal_columns = np.flatnonzero(signal_mask)
+        signal_original = self._fwd_signal_original[signal_columns]
+
+        power_out = np.zeros(self._n_signal, dtype=np.float64)
+        power_out[signal_original] = power_end[signal_columns]
+        ase_out = np.zeros(self._n_signal, dtype=np.float64)
+        ase_out[signal_original] = ase_end[signal_columns]
+
+        profile = np.zeros((2 * self._n_total_steps, self._n_signal), dtype=np.float64)
+        profile[:, signal_original] = samples[:, signal_columns]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            profile_norm = np.where(
+                power_in[None, :] > 0.0,
+                profile / np.where(power_in[None, :] > 0.0, power_in[None, :], 1.0),
+                1.0,
+            )
+
+        fiber_gain = np.divide(
+            power_out,
+            power_in,
+            out=np.ones_like(power_out),
+            where=power_in > 0.0,
+        )
+        raman_ase = np.maximum(ase_out - ase_in * fiber_gain, 0.0)
+
+        pump_out = np.zeros(self._n_pump, dtype=np.float64)
+        pump_columns = np.flatnonzero(~signal_mask)
+        forward_pump_original = self._fwd_pump_original[pump_columns]
+        if forward_pump_original.size:
+            pump_out[forward_pump_original] = power_end[pump_columns]
+        if self._bw_slots.size:
+            # backward_segments[0] 是 P+A；泵浦 ASE 为零，所以 z=0 处的反向
+            # 泵浦功率就是第一段的第一个节点。
+            pump_out[self._bw_original] = backward_segments[0][0]
+
+        return PaperRamanSpanResult(
+            profile_norm=profile_norm,
+            power_out_w=power_out,
+            raman_ase_w=raman_ase,
+            pump_power_out_w=pump_out,
+            iterations=iterations,
+            converged=converged,
+            sample_positions_u=self._sample_positions_u,
         )
