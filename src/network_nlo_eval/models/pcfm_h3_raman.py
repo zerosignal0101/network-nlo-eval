@@ -156,6 +156,8 @@ from network_nlo_eval.models.raman_ode import (
     resolve_launch_power_convention,
 )
 from network_nlo_eval.models.route import apply_amplifier_and_roadm, resolve_noise_figure
+from network_nlo_eval.models.semrau2019 import SRS_CR_W_M_HZ, Semrau2019SpanKernel
+from network_nlo_eval.models.semrau2019_kernels import semrau_span_jit
 from network_nlo_eval.models.uncertainty import (
     H3ErrorBudget,
     H3UncertaintyConfig,
@@ -815,6 +817,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         self.last_raman_iterations = 0
         self.last_raman_converged = True
         self.last_pump_power_out_w: NDArrayFloat | None = None
+        # 2019b 调制格式修正：参考核（semrau2019，egn=True）与单槽比值缓存。
+        # 默认 None，未开启修正时热路径完全不读它们。
+        self._mf_reference: Semrau2019SpanKernel | None = None
+        self._mf_ratio_cache: (
+            tuple[tuple[float, int], NDArrayFloat, NDArrayFloat] | None
+        ) = None
 
     @property
     def active(self) -> bool:
@@ -882,6 +890,97 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         super().clear_span_cache()
         self._raman_cache.clear()
         self._resolution_result_cache.clear()
+
+    # -- 2019b 调制格式修正 -------------------------------------------------
+    def attach_modulation_format_reference(self, reference: Semrau2019SpanKernel) -> None:
+        """Attach the 2019b reference kernel that supplies the XCI ratio.
+
+        The ratio ``XPM(Phi)/XPM(0)`` is taken from the ``semrau2019`` kernel
+        built with the *same* channel plan, fibre and per-span power, so the
+        correction is exactly the 2019b one instead of a re-derivation.  The
+        kernel is only created by the model when
+        ``modulation_format_correction=True``; the default never calls this.
+
+        Args:
+            reference: ``semrau2019`` span kernel built with ``egn=True`` and
+                the requested ``excess_kurtosis``.
+        """
+        if reference.matrices.mat_w.size == 0:
+            raise ValueError("the modulation-format reference kernel must be built with egn=True.")
+        self._mf_reference = reference
+        self._mf_ratio_cache = None
+
+    def modulation_format_ratio(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        n_spans: int,
+    ) -> NDArrayFloat:
+        """Per-channel XCI correction ratio of the 2019b format correction.
+
+        ``r_i = XPM_i(Phi) / XPM_i(0)`` with both terms evaluated by the
+        ``semrau2019`` kernel at the same per-span power profile and the same
+        span count.  It carries both terms of 2019b Eq. (16): the statistical
+        ``1 + 5Phi/(6n)`` factor and the ``(5/3)Phi*pi`` asymptotic term.  For
+        single-channel plans (no XPM) the ratio is exactly 1.
+
+        Args:
+            power_in_w: ``(N,)`` launch power per channel (W), model order.
+            span_length_m: Span length (m).
+            n_spans: Number of spans of the link.
+
+        Returns
+        -------
+            ``(N,)`` ratio, model order; 1 where the reference XPM is zero.
+        """
+        reference = self._mf_reference
+        if reference is None:
+            raise RuntimeError(
+                "modulation format ratio requested without an attached semrau2019 reference kernel."
+            )
+        power = np.ascontiguousarray(np.asarray(power_in_w, dtype=np.float64))
+        key = (float(span_length_m), int(max(1, int(n_spans))))
+        cached = self._mf_ratio_cache
+        if cached is not None and cached[0] == key and np.array_equal(cached[1], power):
+            return cached[2]
+
+        matrices = reference.matrices
+        tail = (
+            reference.alpha_npm,
+            reference.f_rel_hz,
+            reference.b_hz,
+            matrices.spm_u,
+            matrices.spm_v,
+            matrices.spm_coef,
+            matrices.mat_u,
+            matrices.mat_v,
+            matrices.mat_w,
+        )
+        _, _, xpm_reference = semrau_span_jit(
+            power,
+            key[0],
+            key[1],
+            reference.srs_cr_w_m_hz,
+            reference.excess_kurtosis,
+            0.0,
+            True,
+            *tail,
+        )
+        _, _, xpm_gaussian = semrau_span_jit(
+            power,
+            key[0],
+            key[1],
+            reference.srs_cr_w_m_hz,
+            0.0,
+            0.0,
+            True,
+            *tail,
+        )
+        ratio = np.ones_like(power)
+        positive = xpm_gaussian > 0.0
+        ratio[positive] = xpm_reference[positive] / xpm_gaussian[positive]
+        self._mf_ratio_cache = (key, np.array(power, dtype=np.float64, copy=True), ratio)
+        return ratio
 
     def _solver_for(self, span_length_m: float) -> RamanPaperSpanSolver:
         """Return the coupled-ODE solver of a span length (cached)."""
@@ -1602,6 +1701,20 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "'warn' (default) records the per-channel applicability report without touching any "
             "number; 'strict' additionally replaces the SNR of invalid channels with NaN.",
         ),
+        (
+            "modulation_format_correction",
+            "Opt-in Semrau 2019b modulation-format correction of the XCI term. False (default) keeps "
+            "every number bit-for-bit. True multiplies the per-span XCI by the 2019b XPM ratio "
+            "NLI(Phi)/NLI(0) evaluated by the semrau2019 kernel at the same power profile; the SCI "
+            "term is untouched (2019b corrects XPM only). Mutually exclusive with a resolved egn=True.",
+        ),
+        (
+            "excess_kurtosis",
+            "Excess kurtosis Phi of the modulation format (2019b Table I), used only when "
+            "modulation_format_correction=True. Default 0.0 is the identity (Gaussian); the physical "
+            "range is [-2, 100] and negative values are normal for real QAM (16-QAM -0.680, "
+            "64-QAM -0.619, 256-QAM -0.605).",
+        ),
     ),
 )
 
@@ -1718,11 +1831,28 @@ class PCFH3RamanModel(PCFMModel):
             applicability report of every span without changing any value;
             ``"strict"`` additionally sets the SNR of invalid channels to
             ``NaN``.  See :meth:`PCFH3RamanSpanKernel.validity_report`.
+        modulation_format_correction: Opt-in Semrau 2019b modulation-format
+            correction of the XCI term.  ``False`` (default) leaves every
+            number bit-for-bit unchanged.  ``True`` multiplies the per-span
+            XCI by the 2019b XPM ratio ``XPM(Phi)/XPM(0)`` of the
+            ``semrau2019`` kernel evaluated at the same channel plan, fibre
+            and per-span power profile; the SCI term is not touched because
+            2019b corrects XPM only.  Rejected together with a resolved
+            ``egn=True`` (two corrections of the same gap).  See
+            ``H3_TASK_REPORT.md`` for the audit and the residual measurement.
+        excess_kurtosis: Excess kurtosis ``Phi`` of the modulation format
+            (2019b Table I), used only when
+            ``modulation_format_correction=True``.  ``0.0`` (default) is the
+            identity correction.  The physical range is ``[-2, 100]``;
+            negative values are normal for real QAM (16-QAM -0.680,
+            64-QAM -0.619, 256-QAM -0.605).  Non-finite or out-of-range values
+            raise ``ValueError``.
         **route_options: Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
 
     Raises
     ------
-        ValueError: A Raman option or ``egn`` is outside its valid range.
+        ValueError: A Raman option, ``egn``, ``excess_kurtosis`` or the
+            ``modulation_format_correction``/``egn`` combination is invalid.
     """
 
     info = H3_RAMAN_MODEL_INFO
@@ -1760,6 +1890,8 @@ class PCFH3RamanModel(PCFMModel):
         resolution: str | None = None,
         dense_grid_fix: bool = False,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
+        modulation_format_correction: bool = False,
+        excess_kurtosis: float = 0.0,
         **route_options: object,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
@@ -1807,6 +1939,24 @@ class PCFH3RamanModel(PCFMModel):
             )
         resolved_convention = resolve_launch_power_convention(launch_power_convention, signal_polarizations)
         resolved_nli_convention = _resolve_nli_convention(nli_power_convention, resolved_convention)
+        # 2019b 调制格式修正：Φ 必须是有限值，物理范围 [-2, 100]。负值是
+        # 真实 QAM 的常态（16-QAM -0.680、64-QAM -0.619、256-QAM -0.605）；
+        # -2 是超额峭度的理论下界，100 是防止明显非物理输入的工程上界。
+        resolved_kurtosis = float(excess_kurtosis)
+        if not np.isfinite(resolved_kurtosis) or resolved_kurtosis < -2.0 or resolved_kurtosis > 100.0:
+            raise ValueError(
+                "excess_kurtosis must be finite and within [-2, 100], "
+                f"got {excess_kurtosis!r}."
+            )
+        mf_correction = bool(modulation_format_correction)
+        if not mf_correction and resolved_kurtosis != 0.0:
+            warnings.warn(
+                "pcfm_h3_raman: excess_kurtosis is ignored unless "
+                "modulation_format_correction=True. Pass modulation_format_correction=True to apply "
+                "the Semrau 2019b correction.",
+                UserWarning,
+                stacklevel=2,
+            )
         # 模型层没有单一跨长，这里只校验“位置为正、损耗非负、有限、排序合并”；
         # 位置上限留给每个 kernel 按各自光纤长度校验。
         self._lumped_loss, _, _ = _resolve_lumped_loss(lumped_loss, float("inf"))
@@ -1831,6 +1981,15 @@ class PCFH3RamanModel(PCFMModel):
         # model nor the reference fibre declares pumps.
         pump_source = raman_pumps or ref_fiber_config.raman_pumps
         resolved_egn = _resolve_egn(egn, pump_source)
+        # 两套调制格式修正不能叠加：Zefreh 2020 的 rho 与 Semrau 2019b 的 Phi
+        # 修的是同一个"高斯假设缺口"，同时开启会把同一个缺口修正两次。
+        if mf_correction and resolved_kurtosis != 0.0 and resolved_egn:
+            raise ValueError(
+                "pcfm_h3_raman: modulation_format_correction=True cannot be combined with the "
+                "Zefreh 2020 EGN correction (egn resolved to True); both correct the same "
+                "Gaussian-assumption gap. Pass egn=False to use the Semrau 2019b correction, or "
+                "leave modulation_format_correction=False to keep the EGN correction."
+            )
         super().__init__(
             grid,
             ref_fiber_config,
@@ -1869,6 +2028,10 @@ class PCFH3RamanModel(PCFMModel):
         self._launch_power_convention = resolved_convention
         self._nli_power_convention = resolved_nli_convention
         self._pump_signal_overlap_guard_hz = resolved_guard
+        # 只有 Phi > 0 时才真正进入修正分支：Phi = 0 是恒等修正，必须逐位不变。
+        self._modulation_format_correction = mf_correction
+        self._excess_kurtosis = resolved_kurtosis
+        self._mf_active = mf_correction and resolved_kurtosis != 0.0
         active_pumps = list(self._h3_raman_pumps or ref_fiber_config.raman_pumps or [])
         resolved = str(span_coherence)
         if resolved == "auto":
@@ -1957,7 +2120,7 @@ class PCFH3RamanModel(PCFMModel):
             steps = _resolve_auto_raman_steps(active, self.f_abs_hz)
         else:
             steps = int(self._h3_raman_steps)
-        return PCFH3RamanSpanKernel(
+        kernel = PCFH3RamanSpanKernel(
             self.f_abs_hz,
             self.channel_bandwidth_hz_channels,
             fiber_config,
@@ -1985,6 +2148,22 @@ class PCFH3RamanModel(PCFMModel):
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
         )
+        if self._mf_active:
+            # 参考核与主核共用同一栅格/光纤/波长，因此 semrau2019 算出的
+            # XPM 比值就是"同一功率剖面下"的 2019b 修正比例。
+            kernel.attach_modulation_format_reference(
+                Semrau2019SpanKernel(
+                    fiber_config=fiber_config,
+                    lambdas_m=self.lambdas_m,
+                    f_rel_hz=self.f_rel_hz,
+                    b_hz=self.channel_bandwidth_hz_channels,
+                    band_center_hz=self.band_center_hz,
+                    egn=True,
+                    excess_kurtosis=self._excess_kurtosis,
+                    srs_cr_w_m_hz=SRS_CR_W_M_HZ,
+                )
+            )
+        return kernel
 
     def span_step(
         self,
@@ -2021,6 +2200,17 @@ class PCFH3RamanModel(PCFMModel):
             beta2_accum_ps2=self._beta2_accum_ps2,
             span_context=span_context,
         )
+        if self._mf_active:
+            # 2019b 只修正 XPM/XCI：SCI 保持原值，XCI 乘参考核的逐信道比值。
+            # 振幅按 sqrt(ratio) 缩放，保证 |amp|^2 仍等于 xpm_noise_w。
+            n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
+            ratio = kernel.modulation_format_ratio(power_in_w, span_length_m, n_spans)
+            amplitude_xpm = fiber_output.nli_amplitude_xpm
+            fiber_output = replace(
+                fiber_output,
+                xpm_noise_w=fiber_output.xpm_noise_w * ratio,
+                nli_amplitude_xpm=None if amplitude_xpm is None else amplitude_xpm * np.sqrt(ratio),
+            )
         self._record_span_validity(kernel, power_in_w, fiber_output.power_out_w, span_length_m)
         input_ase_w = kernel.last_raman_ase_w if (self._h3_raman_ase and kernel.active) else None
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
