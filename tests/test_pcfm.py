@@ -628,6 +628,7 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
         "poly_degree",
         "egn",
         "edge_fix",
+        "dense_grid_fix",
         "cache_spans",
         "spp_steps",
         "resolution",

@@ -499,6 +499,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             ``0`` (default) keeps the literal band; a positive value widens it
             for the pump linewidth / WDM transition, a negative value shrinks
             it as an explicit control.  Only the validity report changes.
+        dense_grid_fix: Opt-in overlap-aware XCI correction forwarded to
+            :class:`PCFMSpanKernel`.  ``False`` (default) keeps the historic
+            numbers bit-for-bit.
         **kwargs: Forwarded to :class:`PCFMSpanKernel`.
     """
 
@@ -520,6 +523,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         launch_power_convention: str = "total",
         nli_power_convention: str | None = None,
         pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
+        dense_grid_fix: bool = False,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -551,6 +555,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             b_hz,
             fiber_config,
             nli_power_convention=resolved_nli,
+            dense_grid_fix=bool(dense_grid_fix),
             **kwargs,  # type: ignore[arg-type]
         )
         self._fiber_config = fiber_config
@@ -1068,6 +1073,12 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "active pump is forward, on otherwise. True/False force the legacy setting.",
         ),
         ("edge_fix", "PCFM zero-dispersion edge fix. Default True."),
+        (
+            "dense_grid_fix",
+            "Opt-in overlap-aware XCI correction: exact integral on the actual band for pairs whose "
+            "interfering band crosses the CUT centre. Default False keeps every number bit-for-bit "
+            "identical.",
+        ),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
         (
@@ -1187,6 +1198,11 @@ class PCFH3RamanModel(PCFMModel):
             pump is forward and enables it otherwise; ``True``/``False`` force
             the legacy behaviour.  See the module docstring for the rationale.
         edge_fix: PCFM edge fix. Default True.
+        dense_grid_fix: Opt-in overlap-aware XCI correction.  ``False``
+            (default) keeps the historic numbers bit-for-bit; ``True`` replaces
+            the XCI weight of pairs whose interfering band crosses the CUT
+            centre with the exact integral on the actual band.  The H3 kernel
+            forwards it unchanged to :class:`PCFMSpanKernel`.
         cache_spans: Memoise identical spans. Default True.
         spp_steps: PCFM SPP RK4 steps or ``"auto"``. Default ``"auto"``.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
@@ -1297,6 +1313,7 @@ class PCFH3RamanModel(PCFMModel):
         span_coherence: str = "auto",
         validity_mode: str = "warn",
         resolution: str | None = None,
+        dense_grid_fix: bool = False,
         **route_options: object,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
@@ -1378,6 +1395,7 @@ class PCFH3RamanModel(PCFMModel):
             validity_mode=validity_mode,
             # 档位已在本类解析过（raman_steps 属于本类），不能再让父类重复解释。
             resolution=None,
+            dense_grid_fix=dense_grid_fix,
             **route_options,
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
@@ -1494,6 +1512,7 @@ class PCFH3RamanModel(PCFMModel):
             cache_spans=self.cache_spans,
             spp_steps=self._active_spp_steps,
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
+            dense_grid_fix=self.dense_grid_fix,
         )
 
     def span_step(

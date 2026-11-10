@@ -671,6 +671,19 @@ class SpanValidityReport:
         sci_taylor_fraction:
             Fraction of active channels that take the small-``X`` SCI Taylor
             branch.  ``0`` means the branch is irrelevant on this plan.
+        dense_grid_fix_applied:
+            ``True`` when the opt-in ``dense_grid_fix`` actually replaced at
+            least one CUT row of this span by the exact overlapping-band XCI
+            integral.  Always ``False`` with the default ``dense_grid_fix=False``.
+        dense_grid_overlap_correction:
+            ``(N,)`` relative change of the CUT row's total XCI weight produced
+            by the overlapping-band integral, before the materiality gate.
+            Zero where no pair overlaps (``|df| < (B_i+B_j)/2``) and everywhere with
+            ``dense_grid_fix=False``.
+        dense_grid_overlap_pairs:
+            ``(N,)`` number of interfering channels that entered the
+            overlapping-band integral (``|df| < (B_i+B_j)/2``).  Zero with
+            ``dense_grid_fix=False`` and on every non-overlapping grid.
     """
 
     xci_gated: NDArrayFloat
@@ -706,6 +719,9 @@ class SpanValidityReport:
     xci_overlap_weight_fraction: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     min_guard_hz: float = float("inf")
     sci_taylor_fraction: float = 0.0
+    dense_grid_fix_applied: bool = False
+    dense_grid_overlap_correction: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    dense_grid_overlap_pairs: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
 
 
 @dataclass(frozen=True)
@@ -759,6 +775,15 @@ class DenseGridDiagnostics:
             全信道、全采样点的 RMS 残差；无功率时为 ``None``。
         spp_fit_residual_rel_rms:
             ``rms(residual) / rms(profile)``，无量纲；无功率时为 ``None``。
+        dense_grid_fix_applied:
+            ``True`` 当 opt-in ``dense_grid_fix`` 至少替换了一行 CUT 权重。
+            默认关闭时恒为 ``False``。
+        dense_grid_overlap_correction:
+            ``(N,)`` 重叠带精确积分对每一行 XCI 总权重的相对改变（未过材质
+            门槛）；默认关闭时全零。
+        dense_grid_overlap_pairs:
+            ``(N,)`` 进入重叠带积分的干扰信道数（``|df| < (B_i+B_j)/2``）；默认
+            关闭时全零，非重叠栅格也为零。
     """
 
     span_length_m: float
@@ -778,6 +803,9 @@ class DenseGridDiagnostics:
     spp_fit_residual_max: float | None = None
     spp_fit_residual_rms: float | None = None
     spp_fit_residual_rel_rms: float | None = None
+    dense_grid_fix_applied: bool = False
+    dense_grid_overlap_correction: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
+    dense_grid_overlap_pairs: NDArrayFloat = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
 
 
 #: Relative power tolerance under which two span inputs are treated as the
@@ -1637,6 +1665,187 @@ def _xci_edge_weight_matrix(
     return w_edge, gated, fraction
 
 
+def _xci_overlap_weight_matrix(
+    w_base: NDArrayFloat,
+    gamma_xci: NDArrayFloat,
+    beta2_eff_xci: NDArrayFloat,
+    f_abs_hz: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    alpha_npm_m: float,
+    length_m: float,
+    materiality: float = XCI_EDGE_MATERIALITY,
+    n_quad: int = XCI_EDGE_QUADRATURE_POINTS,
+    force_rows: NDArrayBool | None = None,
+) -> tuple[NDArrayFloat, NDArrayBool, NDArrayFloat, NDArrayFloat]:
+    r"""Replace the XCI weight of overlapping channel pairs by the exact band integral.
+
+    The printed Eq. (24) and the exact island integral of
+    :func:`_xci_edge_weight_matrix` are derived for two *disjoint*
+    rectangular spectra, ``|f_i - f_j| >= (B_i + B_j) / 2``.  A dense comb
+    violates that condition even when the interfering band has not yet
+    crossed the CUT centre: at 50 GHz spacing with 64 GHz occupied bandwidth
+    the two rectangles already overlap by 14 GHz, while
+    ``y1 = |f_i - f_j| - B_j/2`` is still positive.  The closed form then
+    evaluates its logarithmic factor outside the derivation domain and the
+    XCI island no longer starts at ``y1``; the pair is silently kept with a
+    weight that is too optimistic.
+
+    This function integrates the overlapping-band contribution on the folded
+    absolute-frequency axis: the integral starts at zero frequency difference
+    (plus the negative half when ``y1 < 0``) and ends at ``y2``.  The GN
+    weight ``W`` is even and its antiderivative ``F`` is odd, so the
+    ``1/y`` singularity at ``y = 0`` is removable and the limit is
+
+    .. code-block:: text
+
+        lim_{y -> 0} 2 F(c y B_CUT / 2) / (c y) = W(0) B_CUT ,
+        c = 4 pi**2 |beta2_eff| .
+
+    The integral is therefore split at ``y = 0`` and evaluated with the same
+    Gauss-Legendre rule as the edge integral; the nodes never sample
+    ``y = 0`` and the small-``s`` expansion of the bracket guards the
+    removable singularity.  The corrected kernel is ``K = pi I / F_inf`` with
+    ``F_inf = int_0^inf W dt``, exactly as in the edge integral, so the two
+    corrections share their normalisation.
+
+    Only pairs that fail the disjointness condition are touched.  Rows whose
+    relative change stays below ``materiality`` keep the old weights bit for
+    bit, unless they are in ``force_rows`` (the dense-grid opt-in).  Every
+    other entry of ``w_base`` is copied unchanged.
+
+    Args:
+        w_base: ``(N, N)`` XCI weight matrix currently in use (closed form or
+            edge-corrected).  Entries of the corrected pairs are replaced.
+        gamma_xci: ``(N, N)`` nonlinear coefficient of the pair.
+        beta2_eff_xci: ``(N, N)`` effective dispersion of the pair (s^2/m).
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz).
+        b_hz: ``(N,)`` channel bandwidths (Hz).
+        alpha_npm_m: Fibre power attenuation (Np/m).
+        length_m: Span length (m).
+        materiality: Row-level relative change above which the correction is
+            applied.
+        n_quad: Gauss-Legendre nodes per half interval.
+        force_rows: Optional ``(N,)`` boolean mask of CUT rows that take the
+            correction even below ``materiality``.  Set by the kernel when the
+            plan is a dense grid and ``dense_grid_fix=True``.
+
+    Returns
+    -------
+        ``(w_out, gated, fraction, pairs)``: the corrected matrix, the mask of
+        the CUT rows actually replaced, the relative row change before gating,
+        and the number of overlapping pairs per row that entered the exact
+        integral.
+    """
+    n_ch = f_abs_hz.size
+    delta = np.abs(f_abs_hz[:, None] - f_abs_hz[None, :])
+    half_b = 0.5 * b_hz
+    y1 = delta - half_b[None, :]
+    y2 = delta + half_b[None, :]
+    off_diagonal = ~np.eye(n_ch, dtype=bool)
+    # 真正的矩形谱重叠条件是 |Δf| < (B_i + B_j)/2；它比闭式核的
+    # log_xci 掩码 (|Δf| > B_j/2) 更严格。只修 |Δf| < B_j/2 的“跨中心”
+    # 对会漏掉 37.5/50 GHz 这类“边带已重叠、中心尚未跨过”的主缺口。
+    overlap = (delta < (half_b[:, None] + half_b[None, :])) & (y2 > 0.0) & off_diagonal
+
+    w_out = np.array(w_base, dtype=np.float64, copy=True)
+    gated = np.zeros(n_ch, dtype=bool)
+    fraction = np.zeros(n_ch, dtype=np.float64)
+    pairs = overlap.sum(axis=1).astype(np.float64)
+    rows, cols = np.nonzero(overlap)
+    if rows.size == 0:
+        return w_out, gated, fraction, pairs
+
+    b_abs = np.abs(beta2_eff_xci[rows, cols])
+    b_cut = b_hz[rows]
+    b_nch = b_hz[cols]
+    y_lo = y1[rows, cols]
+    y_hi = y2[rows, cols]
+    c_mix = 4.0 * np.pi**2 * b_abs
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_quad))  # type: ignore[no-untyped-call]
+
+    ab = alpha_npm_m * float(length_m)
+    exp_ab = float(np.exp(-ab))
+    exp_2ab = float(np.exp(-2.0 * ab))
+    # 查表覆盖两侧半区间上最大的 |s|；超出的尾部由类的渐近展开处理。
+    extreme_y = np.maximum(np.abs(y_lo), np.abs(y_hi))
+    max_s = float(np.max(np.abs(c_mix * extreme_y * (0.5 * b_cut) / alpha_npm_m)))
+    table = _LorentzianAntiderivative(alpha_npm_m, float(length_m), 1, max_s)
+
+    # W(0) * B_CUT：y -> 0 时被积函数的极限。
+    limit = (1.0 - exp_ab) ** 2 / alpha_npm_m**2 * b_cut
+
+    def _integrand(
+        y: NDArrayFloat,
+        c: NDArrayFloat,
+        b_cut_band: NDArrayFloat,
+        limit_band: NDArrayFloat,
+    ) -> NDArrayFloat:
+        """Integrand ``2 F(c y b/2)/(alpha c y)`` with its ``y -> 0`` limit."""
+        s = c * y * (0.5 * b_cut_band) / alpha_npm_m
+        small = np.abs(s) < 1.0e-4
+        bracket = (1.0 + exp_2ab) * np.arctan(s) - 2.0 * exp_ab * table.C(1, s)
+        bracket = np.where(small, (1.0 - exp_ab) ** 2 * s, bracket)
+        denominator = alpha_npm_m * c * y
+        zero = denominator == 0.0
+        safe = np.where(zero, 1.0, denominator)
+        return np.where(zero, np.broadcast_to(limit_band[:, None], y.shape), 2.0 * bracket / safe)
+
+    integral = np.zeros(rows.size, dtype=np.float64)
+    # 负半区间 [y1, 0]：y<0 时 s<0，F 为奇函数，被积函数仍为正。
+    negative = y_lo < 0.0
+    if np.any(negative):
+        low = y_lo[negative]
+        jacobian = 0.5 * (0.0 - low)
+        y = jacobian[:, None] * nodes[None, :] + 0.5 * low[:, None]
+        integral[negative] += np.sum(
+            jacobian[:, None]
+            * weights[None, :]
+            * _integrand(
+                y,
+                c_mix[negative, None],
+                b_cut[negative, None],
+                limit[negative],
+            ),
+            axis=1,
+        )
+    # 正半区间 [0, y2]。
+    jacobian = 0.5 * y_hi
+    y = jacobian[:, None] * nodes[None, :] + jacobian[:, None]
+    integral += np.sum(
+        jacobian[:, None] * weights[None, :] * _integrand(y, c_mix[:, None], b_cut[:, None], limit),
+        axis=1,
+    )
+
+    f_inf = (1.0 / alpha_npm_m) * 0.5 * np.pi * (1.0 - exp_2ab)
+    k_corrected = np.pi * integral / f_inf
+    # beta2_eff = 0：c -> 0，积分退化为 W(0) B_CUT B_NCH。
+    zero_beta = b_abs == 0.0
+    if np.any(zero_beta):
+        k_corrected[zero_beta] = (
+            2.0
+            * b_cut[zero_beta]
+            * b_nch[zero_beta]
+            / alpha_npm_m
+            * (1.0 - exp_ab)
+            / (1.0 + exp_ab)
+        )
+
+    w_candidate = np.array(w_base, dtype=np.float64, copy=True)
+    w_candidate[rows, cols] = gamma_xci[rows, cols] ** 2 * k_corrected
+    delta_row = np.abs(w_candidate - w_base).sum(axis=1)
+    scale = w_base.sum(axis=1)
+    fraction = np.divide(delta_row, scale, out=np.zeros_like(scale), where=scale > 0.0)
+    # 整行闭式权重为零（所有对都被闭式掩掉）时任何新增权重都是 100% 修正。
+    fraction = np.where((scale <= 0.0) & (delta_row > 0.0), np.inf, fraction)
+    gated = fraction > materiality
+    rows_with_pair = np.zeros(n_ch, dtype=bool)
+    rows_with_pair[rows] = True
+    if force_rows is not None:
+        gated = gated | (np.asarray(force_rows, dtype=bool) & rows_with_pair)
+    w_out[gated, :] = w_candidate[gated, :]
+    return w_out, gated, fraction, pairs
+
+
 def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     """Compute the frequency-resolved inter-span coherent factor ``R``.
 
@@ -1711,6 +1920,12 @@ PCFM_MODEL_INFO = ModelInfo(
             "edge_fix",
             "Evaluates the exact XCI island integral where the closed form leaves its validity domain "
             "(zero-dispersion edge); stabilises the SCI kernel at small X. Default True.",
+        ),
+        (
+            "dense_grid_fix",
+            "Opt-in: replaces the XCI weight of pairs whose rectangular spectra overlap "
+            "(y1 = |df| - B_j/2 <= 0) by the exact integral on the actual band, including y < 0. "
+            "Default False keeps every number bit-for-bit identical.",
         ),
         (
             "cache_spans",
@@ -1813,6 +2028,13 @@ class PCFMSpanKernel:
             ``docs/h3-pareto-report.md`` shows 12 nodes already reproduce the
             64-node result to 1e-11, so :data:`RESOLUTION_PROFILES` may lower
             it without moving any number.
+        dense_grid_fix: Opt-in overlap-aware XCI correction (default ``False``).
+            When ``True`` and the plan is dense, the pairs whose interfering
+            spectra overlap (``|df| < (B_i+B_j)/2``) are integrated over
+            the actual rectangular band, including the ``y < 0`` half where the
+            closed form does not exist.  Rows with any such pair are forced
+            through the materiality gate on a dense plan; every other row and
+            every other pair stays bit-for-bit unchanged.
     """
 
     def __init__(
@@ -1829,6 +2051,7 @@ class PCFMSpanKernel:
         cache_spans: bool = True,
         nli_power_convention: str = "total",
         xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
+        dense_grid_fix: bool = False,
     ) -> None:
         """Prepare the per-channel constants of the span.
 
@@ -1851,6 +2074,7 @@ class PCFMSpanKernel:
         self.symbol_rate_hz = float(symbol_rate_hz)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
+        self.dense_grid_fix = bool(dense_grid_fix)
         self.cache_spans = bool(cache_spans)
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # 小 |X| 的 SCI 泰勒系数只依赖多项式阶数；edge_fix=False 时关闭该分支。
@@ -1860,6 +2084,8 @@ class PCFMSpanKernel:
         )
         # XCI 适用域修正按跨长惰性计算并缓存；键为跨长（微米取整）。
         self._xci_edge_cache: dict[int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        # 密集栅格重叠对修正的缓存；只在 dense_grid_fix=True 时填充。
+        self._xci_dense_cache: dict[int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
         # 诊断层的静态量（s、行修正、X）只依赖光纤与跨长，按跨长缓存。
         self._xci_validity_cache: dict[
             int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]
@@ -1884,6 +2110,10 @@ class PCFMSpanKernel:
         self.b_hz = np.ascontiguousarray(bandwidths[self.order])
         self.n_nodes = int(self.f_abs_hz.shape[0])
         self.lambdas_m = C_LIGHT / self.f_abs_hz
+        # 计划级密集栅格判定：只在 dense_grid_fix=True 时用作行级强制开关，
+        # 默认路径不读取它。与 validity_report 的 dense_grid 同一判据。
+        _, _spacing_ratio = dense_grid_metrics(self.f_abs_hz, self.b_hz)
+        self.dense_grid_plan = bool(_spacing_ratio < DENSE_GRID_SPACING_RATIO)
 
         if fiber_config.use_attenuation_polynomial:
             self.alpha_npm = _calc_fiber_attenuation_npm(
@@ -2126,12 +2356,16 @@ class PCFMSpanKernel:
     def _xci_weight_matrix(self, span_length_m: float) -> NDArrayFloat:
         """Return the XCI weight matrix of a span length.
 
-        Without ``edge_fix`` this is the printed Eq. (24) matrix.  With the
-        fix, the CUT rows whose closed-form XCI leaves its asymptotic validity
-        domain are replaced by the exact island integral; see
-        :func:`_xci_edge_weight_matrix`.  The corrected matrix depends on the
-        span length (through ``alpha L`` and the island phase), so it is
-        cached per span length.
+        Without ``edge_fix`` and ``dense_grid_fix`` this is the printed
+        Eq. (24) matrix.  With ``edge_fix``, the CUT rows whose closed-form XCI
+        leaves its asymptotic validity domain are replaced by the exact island
+        integral; see :func:`_xci_edge_weight_matrix`.  With
+        ``dense_grid_fix=True`` (opt-in, default ``False``) the pairs whose
+        rectangular spectra overlap are additionally replaced by
+        the exact integral on the actual band, including ``y < 0``; see
+        :func:`_xci_overlap_weight_matrix`.  Both corrections depend on the
+        span length (through ``alpha L`` and the island phase), so the matrix
+        is cached per span length.
 
         Args:
             span_length_m: Span length (m).
@@ -2140,16 +2374,45 @@ class PCFMSpanKernel:
         -------
             ``(N, N)`` XCI weight matrix, internal channel order.
         """
-        if not self.edge_fix:
+        if not self.edge_fix and not self.dense_grid_fix:
             return self.w_xci
         key = int(round(span_length_m * 1e6))
-        cached = self._xci_edge_cache.get(key)
-        if cached is not None:
-            return cached[0]
-        w_edge, gated, fraction = _xci_edge_weight_matrix(
-            self.w_xci,
-            self.k_xci_matrix,
-            self.log_xci,
+        if not self.dense_grid_fix:
+            cached = self._xci_edge_cache.get(key)
+            if cached is not None:
+                return cached[0]
+        else:
+            cached_dense = self._xci_dense_cache.get(key)
+            if cached_dense is not None:
+                return cached_dense[0]
+
+        if self.edge_fix:
+            cached = self._xci_edge_cache.get(key)
+            if cached is None:
+                w_edge, gated, fraction = _xci_edge_weight_matrix(
+                    self.w_xci,
+                    self.k_xci_matrix,
+                    self.log_xci,
+                    self.gamma_xci,
+                    self.beta2_eff_xci,
+                    self.f_abs_hz,
+                    self.b_hz,
+                    self.alpha_visibility_npm,
+                    float(span_length_m),
+                    n_quad=self.xci_edge_quadrature_points,
+                )
+                self._xci_edge_cache[key] = (w_edge, gated, fraction)
+            else:
+                w_edge = cached[0]
+        else:
+            w_edge = self.w_xci
+
+        if not self.dense_grid_fix:
+            return w_edge
+
+        force_rows = np.full(self.n_nodes, self.dense_grid_plan, dtype=bool)
+        w_dense, dense_gated, dense_fraction, dense_pairs = _xci_overlap_weight_matrix(
+            w_edge,
             self.gamma_xci,
             self.beta2_eff_xci,
             self.f_abs_hz,
@@ -2157,9 +2420,10 @@ class PCFMSpanKernel:
             self.alpha_visibility_npm,
             float(span_length_m),
             n_quad=self.xci_edge_quadrature_points,
+            force_rows=force_rows,
         )
-        self._xci_edge_cache[key] = (w_edge, gated, fraction)
-        return w_edge
+        self._xci_dense_cache[key] = (w_dense, dense_gated, dense_fraction, dense_pairs)
+        return w_dense
 
     def xci_edge_audit(self, span_length_m: float) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Return the CUT-row gate and the relative correction of the XCI edge fix.
@@ -2180,6 +2444,41 @@ class PCFMSpanKernel:
         key = int(round(span_length_m * 1e6))
         _, gated, fraction = self._xci_edge_cache[key]
         return gated, fraction
+
+    def xci_dense_overlap_audit(
+        self,
+        span_length_m: float,
+    ) -> tuple[NDArrayBool, NDArrayFloat, NDArrayFloat]:
+        """Return the overlap-correction audit of the dense-grid XCI fix.
+
+        Args:
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``(gated, fraction, pairs)``: the mask of CUT rows replaced by the
+            exact overlapping-band integral, the relative row change before
+            gating, and the number of overlapping pairs per row.  All arrays
+            are ``(N,)`` in the internal channel order and all-zero without
+            ``dense_grid_fix``.
+        """
+        zeros = np.zeros(self.n_nodes, dtype=np.float64)
+        if not self.dense_grid_fix:
+            return np.zeros(self.n_nodes, dtype=bool), zeros, zeros
+        self._xci_weight_matrix(span_length_m)
+        key = int(round(span_length_m * 1e6))
+        _, gated, fraction, pairs = self._xci_dense_cache[key]
+        return gated, fraction, pairs
+
+    @property
+    def dense_grid_fix_applies(self) -> bool:
+        """Whether the plan itself is dense enough for the overlap fix to act.
+
+        It is the plan-level ``dense_grid`` flag ANDed with the opt-in.  The
+        per-span diagnostic ``dense_grid_fix_applied`` additionally requires
+        that at least one CUT row was actually replaced.
+        """
+        return bool(self.dense_grid_fix and self.dense_grid_plan)
 
     def _xci_validity_metrics(
         self,
@@ -2373,6 +2672,18 @@ class PCFMSpanKernel:
             )
             gated = np.zeros(self.n_nodes, dtype=bool)
 
+        if self.dense_grid_fix:
+            # 触发缓存后再读重叠对审计；默认关闭时不进入该分支。
+            self._xci_weight_matrix(length_m)
+            dense_gated, dense_correction, dense_pairs = self.xci_dense_overlap_audit(length_m)
+            dense_applied = bool(np.any(dense_gated))
+        else:
+            dense_applied = False
+            dense_correction = np.zeros(self.n_nodes, dtype=np.float64)
+            dense_pairs = np.zeros(self.n_nodes, dtype=np.float64)
+        dense_correction = np.where(active, dense_correction, 0.0)
+        dense_pairs = np.where(active, dense_pairs, 0.0)
+
         fit_residual = None
         fit_max = None
         fit_rms = None
@@ -2407,6 +2718,9 @@ class PCFMSpanKernel:
             spp_fit_residual_max=fit_max,
             spp_fit_residual_rms=fit_rms,
             spp_fit_residual_rel_rms=fit_rel_rms,
+            dense_grid_fix_applied=dense_applied,
+            dense_grid_overlap_correction=np.ascontiguousarray(dense_correction[inverse]),
+            dense_grid_overlap_pairs=np.ascontiguousarray(dense_pairs[inverse]),
         )
 
     def _validity_tilt_db(self, power_tilt_db: float, gain_tilt_db: float) -> float:
@@ -2554,6 +2868,19 @@ class PCFMSpanKernel:
             float(np.count_nonzero(sci_taylor & active)) / float(n_active) if n_active else 0.0
         )
 
+        # 密集栅格重叠对修正（opt-in）：默认关闭时三个字段全为零，且不进入
+        # 新分支。``applied`` 要求至少一行真的被替换。
+        if self.dense_grid_fix:
+            dense_gated, dense_fraction, dense_pairs = self.xci_dense_overlap_audit(span_length_m)
+            dense_applied = bool(np.any(dense_gated))
+        else:
+            dense_gated = np.zeros(self.n_nodes, dtype=bool)
+            dense_fraction = np.zeros(self.n_nodes, dtype=np.float64)
+            dense_pairs = np.zeros(self.n_nodes, dtype=np.float64)
+            dense_applied = False
+        dense_pairs = np.where(active, dense_pairs, 0.0)
+        dense_fraction = np.where(active, dense_fraction, 0.0)
+
         # 未占用信道没有可判定的物理量，也不应被 strict 变成 NaN。
         valid = np.where(active, valid, True)
         flagged = np.where(active, flagged, False)
@@ -2586,6 +2913,9 @@ class PCFMSpanKernel:
             xci_overlap_weight_fraction=np.ascontiguousarray(overlap_fraction[self.inverse_order]),
             min_guard_hz=min_guard_hz,
             sci_taylor_fraction=sci_taylor_fraction,
+            dense_grid_fix_applied=dense_applied,
+            dense_grid_overlap_correction=np.ascontiguousarray(dense_fraction[self.inverse_order]),
+            dense_grid_overlap_pairs=np.ascontiguousarray(dense_pairs[self.inverse_order]),
             raman_pump_overlap_channels=np.zeros(self.n_nodes, dtype=bool),
         )
 
@@ -3092,6 +3422,13 @@ class PCFMModel(RouteModel):
         edge_fix: Evaluate the exact XCI island integral where the closed form
             leaves its validity domain, and stabilise the SCI kernel at small
             ``X``.  See :class:`PCFMSpanKernel`.
+        dense_grid_fix: Opt-in overlap-aware XCI correction.  ``False``
+            (default) keeps every number bit-for-bit unchanged; ``True``
+            replaces the XCI weight of the pairs whose interfering band
+            rectangular spectra overlap by the exact integral on the folded band.
+            Only the pairs with ``|f_i - f_j| <= B_j/2`` are touched, and only
+            on a dense plan (``min spacing < max bandwidth``); see
+            :class:`PCFMSpanKernel`.
         cache_spans: Memoise the identical spans of one path.
         spp_steps: RK4 steps of the SPP integration, or ``"auto"`` (12 at
             ``<=0 dBm`` per channel, 32 above it).
@@ -3161,6 +3498,7 @@ class PCFMModel(RouteModel):
         validity_mode: str = "warn",
         nli_power_convention: str = "total",
         resolution: str | None = None,
+        dense_grid_fix: bool = False,
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -3198,6 +3536,7 @@ class PCFMModel(RouteModel):
         self.poly_degree = int(poly_degree)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
+        self.dense_grid_fix = bool(dense_grid_fix)
         self.cache_spans = bool(cache_spans)
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # plain PCFM 没有 launch_power_convention，也不覆盖 ase_polarization_scale：
@@ -3269,6 +3608,7 @@ class PCFMModel(RouteModel):
             spp_steps=self._active_spp_steps,
             nli_power_convention=self.nli_power_convention,
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
+            dense_grid_fix=self.dense_grid_fix,
         )
 
     @property
