@@ -138,6 +138,7 @@ from network_nlo_eval.models.base import (
 )
 from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import (
+    NLI_FALLBACK_MODES,
     SPAN_CACHE_MAX_ENTRIES,
     SPAN_CACHE_RTOL,
     XCI_EDGE_QUADRATURE_POINTS,
@@ -704,6 +705,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             missing numba raises ``RuntimeError``.  ``"auto"`` selects numba
             only when it is importable, ``raman_steps >= 24`` and no lumped
             loss is present, and falls back to Python otherwise.
+        nli_fallback: ``None`` (default) or ``"numerical"``, forwarded to
+            :class:`PCFMSpanKernel`.  The numerical kernel models the *signal*
+            ISRS/attenuation profile only, so it cannot represent a coupled
+            signal/pump span: an active pump is rejected with ``ValueError`` at
+            construction instead of silently mixing two different physics.
+            Without active pumps the unpumped parent path is used unchanged.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``, forwarded to
             :class:`PCFMSpanKernel`.  The H3 kernels carry SPM/XCI only, so a
             low-dispersion comb is outside their physics; ``"reject"`` clears
@@ -735,6 +742,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
         raman_backend: str = "python",
         fwm_validity_mode: str = "flag",
+        nli_fallback: str | None = None,
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -747,12 +755,26 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 combination is inconsistent, or the overlap guard is not finite,
                 or a lumped loss position is outside ``(0, L)`` of the fibre,
                 or ``raman_backend`` is not ``"python"``/``"numba"``/``"auto"``,
-                or ``raman_backend="numba"`` is combined with a lumped loss.
+                or ``raman_backend="numba"`` is combined with a lumped loss,
+                or ``nli_fallback`` is invalid or combined with an active pump.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
         if int(raman_iterations) < 1:
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
+        if nli_fallback not in NLI_FALLBACK_MODES:
+            raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback is not None:
+            # numerical ISRS-GN 只有信号剖面，没有耦合的泵浦/信号演化；用它替换
+            # 有泵跨的 NLI 会静默混用两套物理，所以构造期直接拒绝。
+            pumped = _active_pumps(pumps) or _active_pumps(fiber_config.raman_pumps)
+            if pumped:
+                raise ValueError(
+                    "nli_fallback='numerical' is not available on a pumped span: the numerical "
+                    "ISRS-GN kernel solves the signal power profile only and does not represent the "
+                    "coupled signal/pump evolution of the H3 Raman span. Remove the pumps or use the "
+                    "unpumped pcfm_h3_raman path."
+                )
         resolved_backend = validate_raman_backend(raman_backend)
         if not isinstance(raman_resolution_check, (bool, np.bool_)):
             raise ValueError(f"raman_resolution_check must be a bool, got {raman_resolution_check!r}.")
@@ -789,6 +811,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             nli_power_convention=resolved_nli,
             dense_grid_fix=bool(dense_grid_fix),
             fwm_validity_mode=fwm_validity_mode,
+            nli_fallback=nli_fallback,
             **kwargs,  # type: ignore[arg-type]
         )
         self._fiber_config = fiber_config
@@ -1747,6 +1770,16 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "that regime is outside the model physics. Neither mode changes NLI/ASE/SNR.",
         ),
         (
+            "nli_fallback",
+            "Opt-in reference fallback. None (default) keeps every number bit-for-bit closed form and "
+            "never imports the numerical kernel. 'numerical' replaces the SCI/XCI of the flagged spans "
+            "(dense plan or low-dispersion / FWM regime) by the spm+xpm of the numerical ISRS-GN "
+            "kernel, which already carries the FWM average; the closed form is replaced, never "
+            "corrected. Accuracy is the reference's, the cost is runtime, paid only on flagged spans. "
+            "Rejected with ValueError on a link with active pumps, because the numerical kernel "
+            "models the signal profile only and cannot represent the coupled signal/pump evolution.",
+        ),
+        (
             "modulation_format_correction",
             "Opt-in Semrau 2019b modulation-format correction of the XCI term. False (default) keeps "
             "every number bit-for-bit. True multiplies the per-span XCI by the 2019b XPM ratio "
@@ -1787,6 +1820,14 @@ class PCFH3RamanModel(PCFMModel):
             the XCI weight of pairs whose interfering band crosses the CUT
             centre with the exact integral on the actual band.  The H3 kernel
             forwards it unchanged to :class:`PCFMSpanKernel`.
+        nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
+            fallback forwarded to :class:`PCFMSpanKernel`: the SCI/XCI of the
+            flagged spans (dense plan or low-dispersion / FWM regime) is
+            replaced by the numerical ISRS-GN ``spm + xpm``, which already
+            contains the FWM average.  With no pump the unpumped parent path is
+            used; with an active pump the construction fails with
+            ``ValueError``, because the numerical kernel does not model the
+            coupled signal/pump profile.
         cache_spans: Memoise identical spans. Default True.
         spp_steps: PCFM SPP RK4 steps or ``"auto"``. Default ``"auto"``.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
@@ -1947,6 +1988,7 @@ class PCFH3RamanModel(PCFMModel):
         resolution: str | None = None,
         dense_grid_fix: bool = False,
         fwm_validity_mode: str = "flag",
+        nli_fallback: str | None = None,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         modulation_format_correction: bool = False,
         excess_kurtosis: float = 0.0,
@@ -2048,6 +2090,17 @@ class PCFH3RamanModel(PCFMModel):
         # model nor the reference fibre declares pumps.
         pump_source = raman_pumps or ref_fiber_config.raman_pumps
         resolved_egn = _resolve_egn(egn, pump_source)
+        if nli_fallback not in NLI_FALLBACK_MODES:
+            raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback is not None and any(float(pump.power_w) > 0.0 for pump in (pump_source or ())):
+            # 数值回退核没有耦合的泵浦/信号剖面；有泵链路必须显式失败，不能
+            # 用闭式 H3 的泵浦收益配上 numerical 的无泵 NLI。
+            raise ValueError(
+                "pcfm_h3_raman: nli_fallback='numerical' is not available when the link has active "
+                "pumps. The numerical ISRS-GN kernel solves the signal power profile only, so it "
+                "cannot represent the coupled signal/pump span of H3. Remove the pumps, or use the "
+                "unpumped pcfm / pcfm_h3_raman path (nli_fallback=None)."
+            )
         # 两套调制格式修正不能叠加：Zefreh 2020 的 rho 与 Semrau 2019b 的 Phi
         # 修的是同一个"高斯假设缺口"，同时开启会把同一个缺口修正两次。
         if mf_correction and resolved_kurtosis != 0.0 and resolved_egn:
@@ -2079,6 +2132,7 @@ class PCFH3RamanModel(PCFMModel):
             resolution=None,
             dense_grid_fix=dense_grid_fix,
             fwm_validity_mode=fwm_validity_mode,
+            nli_fallback=nli_fallback,
             **route_options,
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
@@ -2237,6 +2291,7 @@ class PCFH3RamanModel(PCFMModel):
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
             fwm_validity_mode=self.fwm_validity_mode,
+            nli_fallback=self.nli_fallback,
         )
         if self._mf_active:
             # 参考核与主核共用同一栅格/光纤/波长，因此 semrau2019 算出的

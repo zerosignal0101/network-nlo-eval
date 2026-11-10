@@ -640,6 +640,7 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
         "validity_mode",
         "fwm_validity_mode",
         "nli_power_convention",
+        "nli_fallback",
     ]
     assert PCFM_MODEL_INFO == info
 

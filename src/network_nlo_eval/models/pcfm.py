@@ -145,6 +145,7 @@ length, and the link-level factor is only exact in the equal-span case.
 
 from __future__ import annotations
 
+import time
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
@@ -450,6 +451,19 @@ DENSE_GRID_SPACING_RATIO: float = 1.0
 #: an error-budget note; ``"reject"`` additionally clears ``valid`` on the
 #: affected channels.  Neither value ever changes the point NLI/ASE/SNR.
 FWM_VALIDITY_MODES: tuple[str, ...] = ("flag", "reject")
+
+#: Accepted values of ``nli_fallback``.
+#:
+#: ``None`` (default) never imports, constructs or evaluates the numerical
+#: kernel, so every number stays bit-for-bit the closed-form result.
+#: ``"numerical"`` replaces the SCI/XCI noise powers of the *flagged* spans
+#: (dense plan or low-dispersion / FWM regime) by the ``spm + xpm`` output of
+#: :class:`~network_nlo_eval.models.numerical.NumericalISRSGNKernel`.  That
+#: kernel already carries the FWM contribution as part of its double integral,
+#: which is exactly the term the closed form cannot add without double
+#: counting (task AT).  Accuracy is the numerical reference's; the price is
+#: runtime, and it is paid only on the spans that need it.
+NLI_FALLBACK_MODES: tuple[str | None, ...] = (None, "numerical")
 
 #: Local dispersion magnitude (ps/nm/km) below which the PCFM/H3 closed form
 #: is reported as needing the FWM term it does not carry.
@@ -2233,6 +2247,17 @@ PCFM_MODEL_INFO = ModelInfo(
             "here is an NLI-only comparison (mixed coordinate) and warns at construction; use "
             "pcfm_h3_raman(launch_power_convention='per_pol') for an end-to-end per-pol link.",
         ),
+        (
+            "nli_fallback",
+            "Opt-in reference fallback. None (default) never imports or constructs the numerical "
+            "kernel and stays bit-for-bit closed form. 'numerical' replaces the SCI/XCI of the spans "
+            "the validity audit flags (dense plan, or low-dispersion / zero-dispersion / out-of-band "
+            "anchor) by the spm+xpm of the numerical ISRS-GN kernel, which already contains the FWM "
+            "average; the closed form is replaced, never corrected, because adding a FWM subset to "
+            "the PCFM XCI double counts it. Accuracy is the numerical reference's, the cost is "
+            "runtime and is paid only on the flagged spans (C 100 GHz and C+L 75 GHz never trigger). "
+            "Rejected together with lumped_loss, which the numerical kernel does not model.",
+        ),
     ),
 )
 
@@ -2290,6 +2315,25 @@ class PCFMSpanKernel:
             outside its physics.  ``"flag"`` only ORs ``fwm_required`` into
             ``flagged`` (point NLI/ASE/SNR and ``valid`` unchanged);
             ``"reject"`` also clears ``valid`` on the affected channels.
+        nli_fallback: ``None`` (default) or ``"numerical"``.  ``None`` never
+            imports nor constructs the numerical kernel and leaves every
+            number bit-for-bit unchanged.  ``"numerical"`` replaces the
+            ``spm_noise_w``/``xpm_noise_w`` of the spans that the applicability
+            audit flags (dense plan, i.e. ``dense_grid_plan``, or
+            ``dispersion_validity(...).fwm_required``) by the ``spm + xpm``
+            part of :class:`~network_nlo_eval.models.numerical.NumericalISRSGNKernel`,
+            driven with the physical dual-polarization total power.  The
+            closed-form SCI/XCI is *replaced*, not corrected, because the
+            numerical double integral already contains the FWM average: adding
+            a FWM subset on top of the PCFM XCI double counts it (task AT).
+            The span output power, the ASE and the EDFA/ROADM handling stay
+            the PCFM ones.  A dense C grid (37.5/25 GHz) and a low-dispersion
+            O band trigger it; C 100 GHz and C+L 75 GHz do not.  With
+            ``nli_power_convention="per_pol"`` the fallback is driven by
+            ``2 * P`` and halved back, exactly like the closed form.  The
+            numerical result is cached per ``(span length, power)``, so a
+            transparent link pays the double integral once.  Lumped loss is
+            rejected because the numerical kernel does not model it.
     """
 
     def __init__(
@@ -2308,14 +2352,18 @@ class PCFMSpanKernel:
         xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
         dense_grid_fix: bool = False,
         fwm_validity_mode: str = "flag",
+        nli_fallback: str | None = None,
     ) -> None:
         """Prepare the per-channel constants of the span.
 
         Raises
         ------
             ValueError: The polynomial degree or the integration resolution
-                is not positive, a lumped loss element is out of the span, or
-                ``fwm_validity_mode`` is not ``"flag"``/``"reject"``.
+                is not positive, a lumped loss element is out of the span,
+                ``fwm_validity_mode`` is not ``"flag"``/``"reject"``, or
+                ``nli_fallback`` is not ``None``/``"numerical"`` (or is
+                combined with a lumped loss, which the numerical kernel does
+                not model).
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -2323,6 +2371,14 @@ class PCFMSpanKernel:
             raise ValueError(f"spp_steps must be >= 1, got {spp_steps}.")
         if int(xci_edge_quadrature_points) < 2:
             raise ValueError(f"xci_edge_quadrature_points must be >= 2, got {xci_edge_quadrature_points}.")
+        if nli_fallback not in NLI_FALLBACK_MODES:
+            raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback is not None and lumped_loss:
+            raise ValueError(
+                "nli_fallback='numerical' cannot be combined with lumped_loss: the numerical "
+                "ISRS-GN kernel has no lumped-loss treatment, so the fallback would silently "
+                "evaluate a different fibre than the closed form."
+            )
 
         self.poly_degree = int(poly_degree)
         self.n_poly = self.poly_degree + 1
@@ -2335,6 +2391,17 @@ class PCFMSpanKernel:
         if fwm_validity_mode not in FWM_VALIDITY_MODES:
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         self.fwm_validity_mode = str(fwm_validity_mode)
+        self.nli_fallback = nli_fallback
+        # 数值回退：核按需构造（默认路径永不 import/构造 numerical），结果按
+        # (跨长, 功率) 缓存，诊断字段在每次 evaluate 时重置。
+        self._fiber_config = fiber_config
+        self._fallback_kernel = None
+        self._fallback_cache: dict[tuple[int, bytes], tuple[NDArrayFloat, NDArrayFloat]] = {}
+        self._fwm_required_cache: dict[bytes, bool] = {}
+        self.last_nli_fallback_applied = False
+        self.last_fallback_nli_w: NDArrayFloat | None = None
+        self.fallback_evaluations = 0
+        self.fallback_seconds = 0.0
         # 色散锚点只依赖光纤，构造期固定；占用带与 |D| 最小值在每次报告时按
         # active 掩码重算（未占用信道不应影响判定）。
         self.dispersion_parameter_d = float(fiber_config.dispersion_parameter_d)
@@ -3598,6 +3665,140 @@ class PCFMSpanKernel:
             np.ascontiguousarray(factor_xpm[self.inverse_order]),
         )
 
+    # -- numerical NLI fallback ------------------------------------------
+    def _nli_fallback_trigger(self, active: NDArrayBool) -> bool:
+        """Whether this span plan is flagged by the applicability audit.
+
+        The two triggers are the ones the report already exposes: a dense plan
+        (``min spacing < max bandwidth``, where the disjoint-rectangle XCI
+        derivation breaks) and the low-dispersion / zero-dispersion /
+        out-of-band-anchor regime of :func:`dispersion_validity`, where the
+        omitted FWM term matters.  ``dispersion_validity`` only depends on the
+        occupied mask, so its answer is cached per mask.
+
+        Args:
+            active: ``(N,)`` boolean mask of launched channels, internal order.
+
+        Returns
+        -------
+            ``True`` when the fallback has to replace the closed-form NLI.
+        """
+        if self.dense_grid_plan:
+            return True
+        key = np.ascontiguousarray(active, dtype=bool).tobytes()
+        cached = self._fwm_required_cache.get(key)
+        if cached is None:
+            cached = bool(
+                dispersion_validity(
+                    self.f_abs_hz,
+                    self.b_hz,
+                    active,
+                    dispersion_parameter_d=self.dispersion_parameter_d,
+                    dispersion_slope_s=self.dispersion_slope_s,
+                    reference_wavelength_nm=self.reference_wavelength_nm,
+                ).fwm_required
+            )
+            self._fwm_required_cache[key] = cached
+        return cached
+
+    def _numerical_kernel(self):
+        """Return the lazily built numerical ISRS-GN kernel of this span.
+
+        The kernel is built on the *internal* (descending-frequency) channel
+        order, so its outputs come back in that same order and need no
+        permutation.  It is only constructed when the fallback actually fires:
+        the default ``nli_fallback=None`` path never imports
+        :mod:`network_nlo_eval.models.numerical`.
+        """
+        kernel = self._fallback_kernel
+        if kernel is None:
+            from network_nlo_eval.models.numerical import NumericalISRSGNKernel
+
+            kernel = NumericalISRSGNKernel(self.f_abs_hz, self.b_hz, self._fiber_config)
+            self._fallback_kernel = kernel
+        return kernel
+
+    def _fallback_nli(
+        self,
+        power: NDArrayFloat,
+        span_length_m: float,
+    ) -> tuple[NDArrayFloat, NDArrayFloat]:
+        """Numerical ``(spm, xpm)`` noise powers of one span, internal order.
+
+        The result is cached per ``(span length, power)``: a transparent link
+        repeats the same span input, so the double integral is paid once per
+        distinct span state.  The returned arrays are the model's physical
+        total-power values; the caller applies the coordinate conversion.
+
+        Args:
+            power: ``(N,)`` launch power per channel (W), internal order.
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``(spm, xpm)`` in W, internal order, total-power coordinate.
+        """
+        key = (int(round(float(span_length_m) * 1e6)), np.ascontiguousarray(power).tobytes())
+        cached = self._fallback_cache.get(key)
+        if cached is not None:
+            return cached
+        kernel = self._numerical_kernel()
+        started = time.perf_counter()
+        output = kernel.evaluate(power, float(span_length_m))
+        elapsed = time.perf_counter() - started
+        result = (
+            np.ascontiguousarray(output.spm_noise_w),
+            np.ascontiguousarray(output.xpm_noise_w),
+        )
+        self._fallback_cache[key] = result
+        self.fallback_evaluations += 1
+        self.fallback_seconds += elapsed
+        return result
+
+    def _maybe_nli_fallback(
+        self,
+        power: NDArrayFloat,
+        span_length_m: float,
+        active: NDArrayBool,
+    ) -> tuple[NDArrayFloat, NDArrayFloat] | None:
+        """Closed-form NLI replaced by the numerical one on flagged spans.
+
+        Args:
+            power: ``(N,)`` launch power per channel (W), internal order.
+            span_length_m: Span length (m).
+            active: ``(N,)`` boolean mask of launched channels.
+
+        Returns
+        -------
+            ``None`` when the fallback is off or the plan is not flagged (the
+            closed-form values are kept untouched), else the ``(spm, xpm)``
+            replacement in the NLI power coordinate of this kernel
+            (``"per_pol"`` halves it, exactly like the closed form).
+        """
+        self.last_nli_fallback_applied = False
+        self.last_fallback_nli_w = None
+        if self.nli_fallback is None:
+            return None
+        if not self._nli_fallback_trigger(active):
+            return None
+
+        # per_pol 输入是每偏振功率，numerical 核必须用物理总功率驱动；输出
+        # 再按与闭式相同的 0.5 规则回到每偏振坐标。
+        drive = 2.0 * power if self.nli_power_convention == "per_pol" else power
+        spm, xpm = self._fallback_nli(drive, span_length_m)
+        if self.nli_power_convention == "per_pol":
+            spm = 0.5 * spm
+            xpm = 0.5 * xpm
+        spm = np.where(active, spm, 0.0)
+        xpm = np.where(active, xpm, 0.0)
+        self.last_nli_fallback_applied = True
+        # 诊断口径固定为 model order + total 坐标，与 nli_power_convention 无关。
+        total = spm + xpm
+        if self.nli_power_convention == "per_pol":
+            total = 2.0 * total
+        self.last_fallback_nli_w = np.ascontiguousarray(total[self.inverse_order])
+        return spm, xpm
+
     # -- kernel protocol -------------------------------------------------
     def evaluate(
         self,
@@ -3683,6 +3884,11 @@ class PCFMSpanKernel:
             # 输出回到每偏振坐标：信号与 ASE 都是每偏振量，NLI 也必须除 2。
             spm = 0.5 * spm
             xpm = 0.5 * xpm
+        # 参考回退（opt-in）：flagged span 的 NLI 整段换成 numerical 的 SPM+XPM。
+        # 默认 None 时这一步只写两个诊断字段，闭式结果逐位不变。
+        fallback = self._maybe_nli_fallback(power, span_length_m, active)
+        if fallback is not None:
+            spm, xpm = fallback
 
         inverse = self.inverse_order
         n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
@@ -3738,6 +3944,17 @@ class PCFMModel(RouteModel):
             band) is outside the model physics.  ``"flag"`` only marks those
             spans in the validity report; ``"reject"`` also clears ``valid``.
             Neither mode changes the point NLI/ASE/SNR.
+        nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
+            fallback: on the spans the applicability audit flags (dense plan
+            or low-dispersion / FWM regime) the closed-form SCI/XCI is
+            *replaced* by the ``spm + xpm`` output of the numerical ISRS-GN
+            kernel.  The numerical double integral already contains the FWM
+            average, so this is the honest alternative to adding a FWM subset
+            on top of the PCFM XCI (which double counts it, task AT).  Accuracy
+            is the reference's, the price is runtime, and both are paid only on
+            the flagged spans: C 100 GHz and C+L 75 GHz never trigger it, and
+            ``None`` keeps every number bit-for-bit unchanged without importing
+            the numerical module.  See :class:`PCFMSpanKernel`.
         cache_spans: Memoise the identical spans of one path.
         spp_steps: RK4 steps of the SPP integration, or ``"auto"`` (12 at
             ``<=0 dBm`` per channel, 32 above it).
@@ -3809,6 +4026,7 @@ class PCFMModel(RouteModel):
         resolution: str | None = None,
         dense_grid_fix: bool = False,
         fwm_validity_mode: str = "flag",
+        nli_fallback: str | None = None,
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -3818,8 +4036,9 @@ class PCFMModel(RouteModel):
             ValueError: ``poly_degree`` is negative, ``spp_steps`` is invalid,
                 the Raman options are inconsistent, ``validity_mode`` is not
                 ``"warn"``/``"strict"``, ``nli_power_convention`` is unknown,
-                or ``resolution`` is unknown or conflicts with an explicit
-                ``spp_steps``.
+                ``resolution`` is unknown or conflicts with an explicit
+                ``spp_steps``, or ``nli_fallback`` is not
+                ``None``/``"numerical"``.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -3831,6 +4050,8 @@ class PCFMModel(RouteModel):
             raise ValueError(f"validity_mode must be 'warn' or 'strict', got {validity_mode!r}.")
         if fwm_validity_mode not in FWM_VALIDITY_MODES:
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
+        if nli_fallback not in NLI_FALLBACK_MODES:
+            raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
         profile = resolve_resolution_profile(resolution)
         quadrature_points = XCI_EDGE_QUADRATURE_POINTS
         if profile is not None:
@@ -3870,6 +4091,7 @@ class PCFMModel(RouteModel):
         self.xci_edge_quadrature_points = int(quadrature_points)
         self.validity_mode = str(validity_mode)
         self.fwm_validity_mode = str(fwm_validity_mode)
+        self.nli_fallback = nli_fallback
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
@@ -3929,6 +4151,7 @@ class PCFMModel(RouteModel):
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
             fwm_validity_mode=self.fwm_validity_mode,
+            nli_fallback=self.nli_fallback,
             lumped_loss=fiber_config.lumped_loss or None,
         )
 
@@ -3994,6 +4217,50 @@ class PCFMModel(RouteModel):
             ``2.0`` for a per-polarization coordinate, ``1.0`` otherwise.
         """
         return 2.0 if self.nli_power_convention == "per_pol" else 1.0
+
+    @property
+    def last_nli_fallback_applied(self) -> bool:
+        """Whether any span of the last path replaced its NLI numerically.
+
+        Aggregated over the kernels of the path; ``False`` with the default
+        ``nli_fallback=None``.
+        """
+        return any(bool(getattr(kernel, "last_nli_fallback_applied", False)) for kernel in self._kernel_cache.values())
+
+    @property
+    def last_fallback_nli_w(self) -> NDArrayFloat | None:
+        """``(N,)`` numerical NLI of the last flagged span, model order, total power.
+
+        ``None`` when the fallback did not fire.  The value is the replacement
+        itself (``spm + xpm`` in the dual-polarization coordinate), so the
+        cost/benefit of the fallback can be read without re-evaluating.
+        """
+        for kernel in self._kernel_cache.values():
+            values = getattr(kernel, "last_fallback_nli_w", None)
+            if values is not None:
+                return np.asarray(values, dtype=np.float64)
+        return None
+
+    @property
+    def fallback_evaluations(self) -> int:
+        """Number of numerical double integrals actually paid by this model."""
+        return sum(int(getattr(kernel, "fallback_evaluations", 0)) for kernel in self._kernel_cache.values())
+
+    @property
+    def fallback_seconds(self) -> float:
+        """Wall time (s) spent inside the numerical fallback kernel."""
+        return sum(float(getattr(kernel, "fallback_seconds", 0.0)) for kernel in self._kernel_cache.values())
+
+    def _reset_nli_fallback(self) -> None:
+        """Forget the per-span fallback verdict of the previous path.
+
+        ``fallback_evaluations``/``fallback_seconds`` are cumulative counters
+        and are deliberately kept: they measure the cost of the whole session,
+        while the verdict and the NLI snapshot describe the last path.
+        """
+        for kernel in self._kernel_cache.values():
+            kernel.last_nli_fallback_applied = False
+            kernel.last_fallback_nli_w = None
 
     def _reset_validity(self) -> None:
         """Forget the validity state of the previous path."""
@@ -4070,6 +4337,7 @@ class PCFMModel(RouteModel):
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
         self._reset_validity()
+        self._reset_nli_fallback()
         for kernel in self._kernel_cache.values():
             clear = getattr(kernel, "clear_span_cache", None)
             if clear is not None:
