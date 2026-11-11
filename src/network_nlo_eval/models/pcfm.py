@@ -461,7 +461,38 @@ FWM_VALIDITY_MODES: tuple[str, ...] = ("flag", "reject")
 #: that accumulates as ``sum_k P_k`` across spans.  The split is only
 #: meaningful together with ``dense_grid_fwm_fix=True``; on a non-dense plan
 #: no triple exists and both values are bit-for-bit identical.
-FWM_COHERENCE_MODES: tuple[str, ...] = ("xci", "incoherent")
+#:
+#: ``"auto"`` picks between the two per span plan: it resolves to
+#: ``"incoherent"`` only when ``dense_grid_fwm_fix=True``, the plan is dense
+#: and :data:`FWM_AUTO_RATIO_THRESHOLD` is reached; everywhere else it is
+#: bit-for-bit ``"xci"``.  See :func:`resolve_fwm_coherence_mode`.
+FWM_COHERENCE_MODES: tuple[str, ...] = ("xci", "incoherent", "auto")
+
+#: Grid metric above which ``dense_grid_fwm_coherence="auto"`` splits the
+#: displaced-third-wave term out of the XCI amplitude.
+#:
+#: The metric is ``max(B_hz) / min_spacing``: how much wider the occupied
+#: channel is than the tightest gap between two neighbouring centres.  The
+#: inter-span XCI visibility is built from the *disjoint-rectangle* phase
+#: mismatch, which degenerates when neighbouring spectra overlap; the deeper
+#: the overlap, the less the FWM term the XCI amplitude carries looks like the
+#: multi-span coherent sum, so the additive (power) accumulation wins.
+#:
+#: Calibration (C band, 64 GBaud, 100 km, NF 5.5 dB, NLI max|Δ| vs the
+#: repository ``numerical`` reference, task BE data):
+#:
+#: ``B/s`` 1.28 (50 GHz): xci 0.103 dB, incoherent 0.120 dB -> keep xci;
+#: ``B/s`` 1.71 (37.5 GHz): xci 0.178 dB, incoherent 0.161 dB -> split;
+#: ``B/s`` 2.56 (25 GHz): xci 0.504 dB, incoherent 0.397 dB -> split.
+#:
+#: The boundary therefore lies between 1.28 and 1.71.  A finer sweep
+#: (``scripts/h3_fwm_coherence_auto_audit.py --spacing-ghz 56 45 40 32``,
+#: 5/10 spans, 6 dBm) places the crossover inside ``(1.42, 1.60)``: at 1.42
+#: ``"xci"`` wins by 0.009-0.010 dB, at 1.60 ``"incoherent"`` wins by
+#: 0.006 dB.  1.5 is the round value inside that measured transition band, and
+#: it is a calibration of the overlap regime, not a per-case switch: the same
+#: value applies to every comb because only the plan geometry enters.
+FWM_AUTO_RATIO_THRESHOLD: float = 1.5
 
 #: Accepted values of ``nli_fallback``.
 #:
@@ -695,6 +726,95 @@ def dense_grid_metrics(
     if max_bandwidth <= 0.0:
         return min_spacing, float("inf")
     return min_spacing, min_spacing / max_bandwidth
+
+
+def fwm_coherence_ratio(
+    f_abs_hz: NDArrayFloat,
+    bandwidth_hz: NDArrayFloat,
+    active: NDArrayBool | None = None,
+) -> float:
+    """Return ``max(B) / min_spacing`` of a channel plan.
+
+    It is the inverse of :func:`dense_grid_metrics`' ratio and is the metric
+    :data:`FWM_AUTO_RATIO_THRESHOLD` is calibrated against: values above one
+    mean neighbouring spectra overlap, and the larger the value the stronger
+    the overlap.  ``dense_grid_fwm_coherence="auto"`` uses it to decide
+    whether the displaced-third-wave term may leave the coherent XCI
+    amplitude (see :func:`resolve_fwm_coherence_mode`).
+
+    A plan with fewer than two active channels, or with two centres at the
+    same frequency, reports ``inf``: it can never reach the threshold, so the
+    auto mode stays on ``"xci"``.
+
+    Args:
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz), any order.
+        bandwidth_hz: ``(N,)`` occupied channel bandwidths (Hz).
+        active: Optional ``(N,)`` boolean mask; ``None`` means every channel.
+
+    Returns
+    -------
+        The dimensionless ratio; ``inf`` when there is no comparable pair.
+
+    Raises
+    ------
+        ValueError: The arrays are not one-dimensional or differ in shape.
+    """
+    frequencies = np.asarray(f_abs_hz, dtype=np.float64)
+    bandwidths = np.asarray(bandwidth_hz, dtype=np.float64)
+    if frequencies.ndim != 1 or bandwidths.shape != frequencies.shape:
+        raise ValueError(
+            f"f_abs_hz and bandwidth_hz must be one-dimensional and equal, got {frequencies.shape} "
+            f"and {bandwidths.shape}."
+        )
+    mask = np.ones(frequencies.shape, dtype=bool) if active is None else np.asarray(active, dtype=bool)
+    if mask.shape != frequencies.shape:
+        raise ValueError(f"active must have shape {frequencies.shape}, got {mask.shape}.")
+    selected = np.sort(frequencies[mask])
+    if selected.size < 2:
+        return float("inf")
+    spacing = np.diff(selected)
+    positive = spacing[spacing > 0.0]
+    if positive.size == 0:
+        return float("inf")
+    return float(np.max(bandwidths[mask])) / float(np.min(positive))
+
+
+def resolve_fwm_coherence_mode(
+    mode: str,
+    ratio: float,
+    *,
+    fwm_fix_applies: bool,
+) -> str:
+    """Resolve ``dense_grid_fwm_coherence`` to the mode actually applied.
+
+    ``"xci"`` and ``"incoherent"`` are returned unchanged.  ``"auto"`` returns
+    ``"incoherent"`` only when the displaced-third-wave term is actually built
+    (``dense_grid_fwm_fix=True`` on a dense plan, i.e. ``fwm_fix_applies``)
+    *and* the plan ratio reaches :data:`FWM_AUTO_RATIO_THRESHOLD`; otherwise
+    it returns ``"xci"``, so non-dense plans, plans without the opt-in and
+    single-channel plans stay bit-for-bit on the historical path.
+
+    Args:
+        mode: One of :data:`FWM_COHERENCE_MODES`.
+        ratio: :func:`fwm_coherence_ratio` of the channel plan.
+        fwm_fix_applies: ``dense_grid_fwm_fix`` ANDed with the plan-level
+            ``dense_grid`` flag.
+
+    Returns
+    -------
+        ``"xci"`` or ``"incoherent"``.
+
+    Raises
+    ------
+        ValueError: ``mode`` is not one of :data:`FWM_COHERENCE_MODES`.
+    """
+    if mode not in FWM_COHERENCE_MODES:
+        raise ValueError(f"dense_grid_fwm_coherence must be one of {FWM_COHERENCE_MODES}, got {mode!r}.")
+    if mode != "auto":
+        return str(mode)
+    if fwm_fix_applies and float(ratio) >= FWM_AUTO_RATIO_THRESHOLD:
+        return "incoherent"
+    return "xci"
 
 
 @dataclass(frozen=True)
@@ -2421,7 +2541,9 @@ PCFM_MODEL_INFO = ModelInfo(
             "dense_grid_fwm_coherence",
             "How the dense-grid FWM term accumulates across spans: 'xci' (default) keeps it inside "
             "the XCI complex amplitude; 'incoherent' splits it out of xpm and power-accumulates it "
-            "in the route layer. Only acts with dense_grid_fwm_fix=True on a dense plan.",
+            "in the route layer; 'auto' picks 'incoherent' only when dense_grid_fwm_fix=True on a "
+            "dense plan whose max(bandwidth)/min(spacing) reaches 1.5 (C 25/37.5 GHz), and 'xci' "
+            "elsewhere (C 50 GHz, non-dense). Only acts with dense_grid_fwm_fix=True on a dense plan.",
         ),
         (
             "cache_spans",
@@ -2582,15 +2704,18 @@ class PCFMSpanKernel:
             so it inherits the XCI visibility; the numerical reference instead
             power-accumulates it, which is exact for the near-incoherent FWM
             average but is an approximation here.
-        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``.
-            ``"xci"`` keeps the displaced-third-wave term inside ``xpm``, so it
-            inherits the XCI inter-span phase (the historical behaviour).  On a
-            dense plan with ``dense_grid_fwm_fix=True``, ``"incoherent"``
-            removes the term from ``xpm`` and returns it as
+        dense_grid_fwm_coherence: ``"xci"`` (default), ``"incoherent"`` or
+            ``"auto"``.  ``"xci"`` keeps the displaced-third-wave term inside
+            ``xpm``, so it inherits the XCI inter-span phase (the historical
+            behaviour).  On a dense plan with ``dense_grid_fwm_fix=True``,
+            ``"incoherent"`` removes the term from ``xpm`` and returns it as
             :attr:`SpanFiberOutput.fwm_noise_w`; the route layer accumulates it
-            as a power across spans and adds it back to the path XPM.  One
-            span, every non-dense plan and the default value stay bit-for-bit
-            unchanged.
+            as a power across spans and adds it back to the path XPM.
+            ``"auto"`` selects between the two from the plan geometry alone
+            (``max(B)/min_spacing >=`` :data:`FWM_AUTO_RATIO_THRESHOLD`, see
+            :func:`resolve_fwm_coherence_mode`) and falls back to ``"xci"``
+            everywhere the split cannot act.  One span, every non-dense plan
+            and the default value stay bit-for-bit unchanged.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The model
             carries no FWM term, so a comb near the zero-dispersion point is
             outside its physics.  ``"flag"`` only ORs ``fwm_required`` into
@@ -2775,6 +2900,14 @@ class PCFMSpanKernel:
         # 默认路径不读取它。与 validity_report 的 dense_grid 同一判据。
         _, _spacing_ratio = dense_grid_metrics(self.f_abs_hz, self.b_hz)
         self.dense_grid_plan = bool(_spacing_ratio < DENSE_GRID_SPACING_RATIO)
+        # FWM 相干口径按计划几何解析一次：auto 只看 max(B)/min_spacing 与计划
+        # 是否密集，与算例名、功率、跨数无关。解析结果在 evaluate 里只读。
+        self.fwm_coherence_ratio = fwm_coherence_ratio(self.f_abs_hz, self.b_hz)
+        self.fwm_coherence_mode = resolve_fwm_coherence_mode(
+            self.dense_grid_fwm_coherence,
+            self.fwm_coherence_ratio,
+            fwm_fix_applies=self.dense_grid_fwm_fix and self.dense_grid_plan,
+        )
 
         if fiber_config.use_attenuation_polynomial:
             self.alpha_npm = _calc_fiber_attenuation_npm(
@@ -4315,7 +4448,7 @@ class PCFMSpanKernel:
                 )
                 accumulated = np.bincount(i_idx, weights=values, minlength=self.n_nodes)
                 fwm_noise = np.where(active, (32.0 / 27.0) * psd * self.b_hz * accumulated, 0.0)
-                if self.dense_grid_fwm_coherence == "incoherent":
+                if self.fwm_coherence_mode == "incoherent":
                     # 拆出：xpm 不含该项，路由层按跨间功率累加。
                     fwm_split = fwm_noise
                 else:
@@ -4549,15 +4682,18 @@ class PCFMModel(RouteModel):
             ``nli_fallback_trigger="audit"``; the combination is allowed with
             ``nli_fallback_trigger="fwm_only"`` because the trigger sets are
             disjoint.
-        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``.
-            ``"xci"`` keeps the displaced-third-wave term inside the XCI
-            complex amplitude, so it inherits the inter-span XCI visibility.
-            On a dense plan with ``dense_grid_fwm_fix=True``, ``"incoherent"``
-            splits the term out of ``xpm`` and lets the route layer accumulate
-            it as a power across spans (task BE audit: the FWM average is
-            near-incoherent, and the split removes the 10-span residual growth
-            of the densest C grids).  One span, non-dense plans and the default
-            value stay bit-for-bit unchanged.
+        dense_grid_fwm_coherence: ``"xci"`` (default), ``"incoherent"`` or
+            ``"auto"``.  ``"xci"`` keeps the displaced-third-wave term inside
+            the XCI complex amplitude, so it inherits the inter-span XCI
+            visibility.  On a dense plan with ``dense_grid_fwm_fix=True``,
+            ``"incoherent"`` splits the term out of ``xpm`` and lets the route
+            layer accumulate it as a power across spans (task BE audit: the FWM
+            average is near-incoherent, and the split removes the 10-span
+            residual growth of the densest C grids).  ``"auto"`` chooses per
+            plan from ``max(B)/min_spacing`` (:func:`resolve_fwm_coherence_mode`)
+            and is bit-for-bit ``"xci"`` wherever the split cannot act.  One
+            span, non-dense plans and the default value stay bit-for-bit
+            unchanged.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The kernels
             carry SPM/XCI only, so a comb whose local dispersion reaches the
             zero-dispersion point (or whose dispersion anchor is outside the
@@ -4730,6 +4866,20 @@ class PCFMModel(RouteModel):
         self.dense_grid_fwm_fix = bool(dense_grid_fwm_fix)
         self.dense_grid_fwm_coherence = str(dense_grid_fwm_coherence)
         self.cache_spans = bool(cache_spans)
+        # 计划级 FWM 相干口径：与核构建时用同一纯函数、同一输入（全信道计划），
+        # 所以路由层读到的 additive 声明与实际拆出的物理项永远一致。
+        self.dense_grid_plan = bool(
+            dense_grid_metrics(self.f_abs_hz, self.channel_bandwidth_hz_channels)[1]
+            < DENSE_GRID_SPACING_RATIO
+        )
+        self.fwm_coherence_ratio = fwm_coherence_ratio(
+            self.f_abs_hz, self.channel_bandwidth_hz_channels
+        )
+        self.fwm_coherence_mode = resolve_fwm_coherence_mode(
+            self.dense_grid_fwm_coherence,
+            self.fwm_coherence_ratio,
+            fwm_fix_applies=self.dense_grid_fwm_fix and self.dense_grid_plan,
+        )
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # plain PCFM 没有 launch_power_convention，也不覆盖 ase_polarization_scale：
         # 声明 per_pol 只把信号/NLI 换到每偏振，EDFA/booster ASE 仍是双偏振总量。
@@ -4891,14 +5041,17 @@ class PCFMModel(RouteModel):
     def fwm_noise_is_additive(self) -> bool:
         """Whether ``span_step`` hands the route layer a *split* FWM power.
 
-        ``True`` only for ``dense_grid_fwm_fix=True`` with
-        ``dense_grid_fwm_coherence="incoherent"``: the kernel removes the
-        displaced-third-wave term from ``xpm_noise_w`` and returns it as
-        ``fwm_noise_w``, so the route layer must accumulate it as a power and
-        add it back to the path XPM exactly once.  The default ``"xci"``
-        returns ``False`` and keeps the historical single-array convention.
+        ``True`` when the kernel removes the displaced-third-wave term from
+        ``xpm_noise_w`` and returns it as ``fwm_noise_w``, so the route layer
+        must accumulate it as a power and add it back to the path XPM exactly
+        once.  That is the *resolved* mode (``fwm_coherence_mode``), not the
+        requested one: ``dense_grid_fwm_coherence="auto"`` on a plan that stays
+        with ``"xci"`` (50 GHz C, non-dense, no ``dense_grid_fwm_fix``) reports
+        ``False``, otherwise the route layer would look for a split term that
+        the kernel never produced.  The default ``"xci"`` also returns
+        ``False`` and keeps the historical single-array convention.
         """
-        return bool(self.dense_grid_fwm_fix and self.dense_grid_fwm_coherence == "incoherent")
+        return bool(self.dense_grid_fwm_fix and self.fwm_coherence_mode == "incoherent")
 
     @property
     def physical_power_scale(self) -> float:

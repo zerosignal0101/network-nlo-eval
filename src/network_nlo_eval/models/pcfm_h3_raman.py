@@ -684,11 +684,13 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             and with ``nli_fallback="numerical"`` under
             ``nli_fallback_trigger="audit"``; allowed with
             ``nli_fallback_trigger="fwm_only"``.
-        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``,
-            forwarded to :class:`PCFMSpanKernel`.  ``"incoherent"`` splits the
-            FWM term out of ``xpm`` and lets the route layer power-accumulate
-            it across spans; only acts with ``dense_grid_fwm_fix=True`` on a
-            dense plan, and the default keeps every number bit-for-bit intact.
+        dense_grid_fwm_coherence: ``"xci"`` (default), ``"incoherent"`` or
+            ``"auto"``, forwarded to :class:`PCFMSpanKernel`.  ``"incoherent"``
+            splits the FWM term out of ``xpm`` and lets the route layer
+            power-accumulate it across spans; ``"auto"`` selects it from
+            ``max(bandwidth)/min(spacing)`` and falls back to ``"xci"``.  Only
+            acts with ``dense_grid_fwm_fix=True`` on a dense plan, and the
+            default keeps every number bit-for-bit intact.
         lumped_loss: Lumped loss elements inside the span
             (``(position_m, loss_db)``), paper Section IV-D.  Positions must
             lie strictly inside ``(0, L)``, the loss must be non-negative, and
@@ -1687,7 +1689,9 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "dense_grid_fwm_coherence",
             "How the dense-grid FWM term accumulates across spans: 'xci' (default) keeps it in the "
             "XCI complex amplitude; 'incoherent' splits it out of xpm and power-accumulates it in "
-            "the route layer. Only acts with dense_grid_fwm_fix=True on a dense plan.",
+            "the route layer; 'auto' picks 'incoherent' only when dense_grid_fwm_fix=True on a "
+            "dense plan whose max(bandwidth)/min(spacing) reaches 1.5 (C 25/37.5 GHz), and 'xci' "
+            "elsewhere (C 50 GHz, non-dense). Only acts with dense_grid_fwm_fix=True on a dense plan.",
         ),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
@@ -1882,11 +1886,13 @@ class PCFH3RamanModel(PCFMModel):
             with ``nli_fallback="numerical"`` under
             ``nli_fallback_trigger="audit"``; allowed with
             ``nli_fallback_trigger="fwm_only"``.
-        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``,
-            forwarded to :class:`PCFMSpanKernel`.  ``"incoherent"`` splits the
-            FWM term out of ``xpm`` and lets the route layer power-accumulate
-            it across spans; only acts with ``dense_grid_fwm_fix=True`` on a
-            dense plan, and the default keeps every number bit-for-bit intact.
+        dense_grid_fwm_coherence: ``"xci"`` (default), ``"incoherent"`` or
+            ``"auto"``, forwarded to :class:`PCFMSpanKernel`.  ``"incoherent"``
+            splits the FWM term out of ``xpm`` and lets the route layer
+            power-accumulate it across spans; ``"auto"`` selects it from
+            ``max(bandwidth)/min(spacing)`` and falls back to ``"xci"``.  Only
+            acts with ``dense_grid_fwm_fix=True`` on a dense plan, and the
+            default keeps every number bit-for-bit intact.
         nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
             fallback forwarded to :class:`PCFMSpanKernel`: the SCI/XCI of the
             flagged spans (dense plan or low-dispersion / FWM regime) is
