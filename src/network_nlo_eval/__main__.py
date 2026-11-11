@@ -117,6 +117,18 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
         "dual-polarization total). Converted once to the model convention inside QoTValidator."
     ),
 )
+@click.option(
+    "--nli-fallback",
+    "nli_fallback",
+    type=click.Choice(["none", "numerical"]),
+    default="none",
+    show_default=True,
+    help=(
+        "Opt-in NLI reference fallback: 'numerical' replaces the closed-form NLI on the spans the "
+        "applicability audit flags. 'none' passes nothing to the model, so the default path stays "
+        "bit-for-bit unchanged and no numerical kernel is built."
+    ),
+)
 def simulate(
     topology_file: Path,
     service_num: int,
@@ -130,6 +142,7 @@ def simulate(
     slot_width_ghz: float | None,
     qot_model: str,
     launch_power_convention: str,
+    nli_fallback: str,
 ) -> None:
     """Run a dynamic RWA simulation."""
     click.echo(f"Starting simulation with topology: {topology_file}")
@@ -154,14 +167,27 @@ def simulate(
     )
 
     # 物理层快速评估模型：由注册表选择，默认 ECZ。
+    # ``--nli-fallback`` 只在用户显式选择时进入构造参数：默认 ``none`` 不传，
+    # 模型自己决定默认语义（``nli_fallback=None``，构造 numerical 核的路径不触发）。
+    model_options: dict[str, object] = {}
+    if nli_fallback != "none":
+        model_options["nli_fallback"] = nli_fallback
     try:
         gn_evaluator = create_model(
             qot_model,
             spectrum_grid,
             network_topology.get_default_fiber_config(),
+            **model_options,
         )
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
+    except TypeError as exc:
+        # 不接受该选项的模型（例如 ECZ）必须明确失败，不能吞掉用户的选择。
+        raise click.ClickException(
+            f"QoT model {qot_model!r} does not accept --nli-fallback {nli_fallback!r}: {exc}. "
+            "Only models with an explicit 'nli_fallback' option support it; see "
+            "'network-nlo-eval models'."
+        ) from exc
 
     # QoT 验证器
     qot_validator = QoTValidator(

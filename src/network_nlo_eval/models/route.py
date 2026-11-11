@@ -535,6 +535,50 @@ class RouteModel:
             if connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
         ]
 
+    def roadm_blocks_node(self, roadm_config: ROADMConfig, node_index: int) -> bool:
+        """判断单个节点是否被该 ROADM 阻断。
+
+        这是 :meth:`blocked_nodes` 的逐节点版本，语义完全相同（``blocked_slots``
+        优先，否则把 ``blocked_channels`` 按 ``slots_per_channel`` 展开），区别只在
+        不物化整张阻断表。网络层（``QoTValidator``）逐节点查询阻断，每次重建整表
+        会让一条路径的判定退化成 ``O(N**2)`` 次槽展开。
+
+        Args:
+            roadm_config: 该节点的 ROADM 配置。
+            node_index: 节点（遗留模式为信道，逐连接模式为连接）下标。
+
+        Returns
+        -------
+            被阻断为 ``True``。
+
+        Raises
+        ------
+            ValueError: 逐连接模式下需要展开 ``blocked_channels`` 却没有
+                ``slots_per_channel``。
+        """
+        from network_nlo_eval.network.slots import connection_overlaps_slots
+
+        if self.connections is None:
+            return node_index in roadm_config.blocked_channels
+        if node_index >= len(self.connections):
+            return False
+
+        blocked_slots = set(roadm_config.blocked_slots)
+        if roadm_config.blocked_channels:
+            if not self.slots_per_channel:
+                raise ValueError(
+                    "Per-connection mode needs slots_per_channel "
+                    "(channel_spacing_hz / slot_width_hz) to expand ROADM "
+                    "blocked_channels into slots. Construct the evaluator with "
+                    "slots_per_channel=..., or use blocked_slots."
+                )
+            for channel_index in roadm_config.blocked_channels:
+                blocked_slots.update(
+                    range(channel_index * self.slots_per_channel, (channel_index + 1) * self.slots_per_channel)
+                )
+        conn = self.connections[node_index]
+        return connection_overlaps_slots(conn.first_slot, conn.n_slots, blocked_slots)
+
     # --- 核 ---------------------------------------------------------------
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         """构造该光纤参数下的单跨核。子类必须实现。"""

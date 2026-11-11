@@ -181,7 +181,7 @@ from network_nlo_eval.models.pcfm_kernels import (
 )
 from network_nlo_eval.models.raman import RamanAmplifier, RamanGainModel, resolve_raman_gain_model
 from network_nlo_eval.models.route import RouteModel, apply_amplifier_and_roadm, resolve_noise_figure
-from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, RamanPumpConfig, ROADMConfig
 
 __all__ = [
     "DENSE_GRID_SPACING_RATIO",
@@ -4248,8 +4248,157 @@ class PCFMSpanKernel:
         )
 
 
+class _PCFMNetworkView:
+    """单根光纤的 PCFM 网络视图（``QoTValidator`` 的 ``gn_evaluator`` 契约）。
+
+    ``QoTValidator`` 与 :func:`network_nlo_eval.rwa.link_noise.assemble_link_noise`
+    只需要两个接口：``for_fiber(fiber_config)`` 返回的评估器，以及它的
+    ``_calc_span_noise_and_power(...)``。:class:`PCFMModel` 的物理状态是**逐路径**
+    的，所以本视图不复制模型、不重建核，只把父模型的 :meth:`PCFMModel.span_step`
+    包装成网络层契约，并在每次单跨调用前把跨间相干状态复位到第一跨。
+
+    两个硬约束：
+
+    * 网络层按"整跨 × N + 余段"各自独立求值（:func:`assemble_link_noise`），
+      每跨都是**第一跨**。因此 ``_span_index`` 与 ``_beta2_accum_ps2`` 必须在调用
+      前复位；否则 EGN 的 rho 会读到上一条链路累积的色散，跨间相位也会带进来。
+      逐跨相干累加仍由路由层（``evaluate_path``）负责，不在这里做。
+    * ``span_step`` 不接受 ROADM；``roadm_config`` 非 ``None`` 时明确报错，
+      不静默忽略（那会把 ROADM 损耗与 booster ASE 从链路里漏掉）。
+
+    Args:
+        parent: 提供物理核、逐节点数组与阻断判定的 :class:`PCFMModel`。
+        fiber_config: 本视图绑定的光纤参数。
+    """
+
+    def __init__(self, parent: PCFMModel, fiber_config: FiberSpanConfig) -> None:
+        """绑定父模型与光纤参数；不构造核、不触碰模型状态。"""
+        self._parent = parent
+        self.fiber_config = fiber_config
+
+    @property
+    def parent(self) -> PCFMModel:
+        """被包装的父模型。"""
+        return self._parent
+
+    @property
+    def n_nodes(self) -> int:
+        """节点数，与父模型一致（遗留模式为信道数，逐连接模式为连接数）。"""
+        return self._parent.n_nodes
+
+    @property
+    def f_abs_hz(self) -> NDArrayFloat:
+        """``(N,)`` 节点中心绝对频率 (Hz)，与父模型同一份数组。"""
+        return self._parent.f_abs_hz
+
+    @property
+    def channel_bandwidth_hz_channels(self) -> NDArrayFloat:
+        """``(N,)`` 逐节点信道带宽 ``B_i`` (Hz)，与父模型一致。"""
+        return self._parent.channel_bandwidth_hz_channels
+
+    @property
+    def ase_polarization_scale(self) -> float:
+        """父模型新产生 ASE 的偏振缩放（``total`` 为 1.0，端到端 ``per_pol`` 为 0.5）。"""
+        return float(getattr(self._parent, "ase_polarization_scale", 1.0))
+
+    @property
+    def launch_power_convention(self) -> str:
+        """父模型声明的功率口径；父模型没有声明时按网络参考面 ``"total"``。"""
+        return str(getattr(self._parent, "launch_power_convention", "total"))
+
+    @property
+    def connections(self) -> Sequence[object] | None:
+        """灵活栅格的连接列表（遗留模式为 ``None``），与父模型同一份。"""
+        return getattr(self._parent, "connections", None)
+
+    @property
+    def slots_per_channel(self) -> int | None:
+        """每个遗留信道占用的槽数；与父模型一致，不再二次推断。"""
+        return getattr(self._parent, "slots_per_channel", None)
+
+    @property
+    def channel_bandwidth_source(self) -> str:
+        """逐信道 ``B_i`` 的取值口径，与父模型一致。"""
+        return str(getattr(self._parent, "channel_bandwidth_source", "symbol_rate"))
+
+    def power_width_scale(self) -> NDArrayFloat:
+        """``fixed_psd`` 口径下的逐节点功率缩放，直接取父模型的定义。"""
+        return self._parent.power_width_scale()
+
+    def roadm_blocks_node(self, roadm_config: ROADMConfig, node_index: int) -> bool:
+        """单节点阻断判定，直接取父模型的定义。"""
+        return self._parent.roadm_blocks_node(roadm_config, node_index)
+
+    def _reset_span_state(self) -> None:
+        """把父模型复位到"第一跨"状态，并丢掉上一跨的诊断报告。
+
+        ``_span_index`` 与 ``_beta2_accum_ps2`` 是 EGN 与跨间相位的输入；网络层
+        每次只算一跨，必须从零开始。``_reset_validity`` 让 ``last_span_validity``
+        只保留本跨，避免长时间仿真把每条链路的报告都留在内存里。
+        """
+        self._parent._span_index = 0
+        self._parent._beta2_accum_ps2 = np.zeros(self._parent.n_nodes, dtype=np.float64)
+        self._parent._reset_validity()
+
+    def _calc_span_noise_and_power(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        roadm_config: ROADMConfig | None = None,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+        """单跨的功率、SPM/XPM 与 ASE，坐标与父模型的 ``launch_power_convention`` 一致。
+
+        Args:
+            power_in_w: ``(N,)`` 入纤功率 (W)，口径见 :attr:`launch_power_convention`。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: 跨段后的 EDFA 配置。
+            roadm_config: 跨段后的 ROADM 配置。父模型的 ``span_step`` 不处理 ROADM，
+                非 ``None`` 时明确报错而不是静默丢掉损耗与 booster ASE。
+            n_effective_spans: 有效跨段数。网络层只支持单跨（``1``）；整跨的
+                ``N`` 倍由 :func:`~network_nlo_eval.rwa.link_noise.assemble_link_noise`
+                在外层做，传其他值直接报错。
+
+        Returns
+        -------
+            ``(power_out_w, spm_noise_w, xpm_noise_w, ase_noise_w)``，均为 ``(N,)``。
+
+        Raises
+        ------
+            ValueError: 给了 ROADM，或 ``n_effective_spans`` 不是 1。
+        """
+        if roadm_config is not None:
+            raise ValueError(
+                "pcfm network view: _calc_span_noise_and_power does not support roadm_config; "
+                "PCFMModel.span_step handles the fibre and the EDFA only. Apply the ROADM in the "
+                "route layer (evaluate_path) or call span_step directly."
+            )
+        if int(n_effective_spans) != 1:
+            raise ValueError(
+                "pcfm network view: only n_effective_spans=1 is supported; the full-span repeat is "
+                f"assembled by the caller, got n_effective_spans={n_effective_spans!r}."
+            )
+        self._reset_span_state()
+        self._parent._sync_auto_spp_steps(np.asarray(power_in_w, dtype=np.float64))
+        element = self._parent.span_step(
+            self.fiber_config,
+            edfa_config,
+            np.asarray(power_in_w, dtype=np.float64),
+            float(span_length_m),
+        )
+        return element.power_out_w, element.spm_noise_w, element.xpm_noise_w, element.ase_noise_w
+
+
 class PCFMModel(RouteModel):
     """Polynomial closed-form model (SCI + XCI) with a polynomial SPP fit.
+
+    Network use: :meth:`for_fiber` returns a lightweight view that satisfies the
+    ``QoTValidator`` single-span contract (``_calc_span_noise_and_power``) without
+    copying the model or rebuilding the kernel.  The path-level coherent
+    accumulation stays in :meth:`evaluate_path`; the network view evaluates every
+    span as the first span of a link, which is what
+    :func:`~network_nlo_eval.rwa.link_noise.assemble_link_noise` assumes.
 
     Args:
         grid: Spectrum grid (legacy ``SpectrumGrid`` or ``FlexibleGrid``).
@@ -4479,6 +4628,9 @@ class PCFMModel(RouteModel):
             peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
             temperature_k=raman_temperature_k,
         )
+        # 网络视图按光纤 JSON 记忆化：视图本身不持有物理状态，只是父模型在该光纤
+        # 下的 ``QoTValidator`` 契约外壳。
+        self._fiber_view_cache: dict[str, _PCFMNetworkView] = {}
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFMSpanKernel:
         """Build the single-span kernel of this fibre.
@@ -4506,6 +4658,28 @@ class PCFMModel(RouteModel):
             nli_fallback=self.nli_fallback,
             lumped_loss=fiber_config.lumped_loss or None,
         )
+
+    def for_fiber(self, fiber_config: FiberSpanConfig) -> _PCFMNetworkView:
+        """返回绑定该光纤的网络视图（``QoTValidator`` 的单跨契约）。
+
+        视图本身不复制模型、不重建核：物理仍走父模型的 :meth:`span_step`，单跨调用
+        前把跨间相干状态复位到第一跨（见 :class:`_PCFMNetworkView`）。缓存键是
+        ``FiberSpanConfig.model_dump_json()``，与 :meth:`kernel_for` 的键一致，
+        因此同一光纤总拿到同一个视图，不同光纤拿到不同视图。
+
+        Args:
+            fiber_config: 链路的光纤参数。
+
+        Returns
+        -------
+            绑定该光纤的 :class:`_PCFMNetworkView`。
+        """
+        key = fiber_config.model_dump_json()
+        view = self._fiber_view_cache.get(key)
+        if view is None:
+            view = _PCFMNetworkView(self, fiber_config)
+            self._fiber_view_cache[key] = view
+        return view
 
     @property
     def raman_pumps(self) -> list[RamanPumpConfig]:
@@ -4690,6 +4864,35 @@ class PCFMModel(RouteModel):
         self.last_validity_flagged |= report.flagged
         np.minimum(self.last_validity_confidence, report.confidence, out=self.last_validity_confidence)
 
+    def _sync_auto_spp_steps(self, power_in_w: NDArrayFloat) -> None:
+        """Resolve the ``"auto"`` SPP step count from the peak physical power.
+
+        ``spp_steps="auto"`` is a resolution decision, not a per-span one, so it
+        must be taken by every entry point that evaluates a span: the path entry
+        :meth:`evaluate_path` and the network view of :meth:`for_fiber`.  Both
+        call this helper, so a network result and the equivalent one-span path
+        are evaluated with the same step count.  What ``power_in_w`` is in
+        physical total power is decided by :attr:`physical_power_scale`, never by
+        the NLI convention.
+
+        Changing the step count invalidates the kernels: ``spp_steps`` is baked
+        into them at construction.
+
+        Args:
+            power_in_w: ``(N,)`` launch power of the span, in the model's
+                declared coordinate.
+        """
+        if self.spp_steps != "auto":
+            return
+        # 阈值是物理总功率的 dBm：per_pol 口径下输入只是单偏振功率，先乘
+        # 倍数再取峰值，否则同一物理链路会被判成低功率而选 12 步。
+        peak_power_w = max(float(np.max(power_in_w)), 1e-30) * self.physical_power_scale
+        peak_dbm = 10.0 * np.log10(peak_power_w * 1e3)
+        wanted = 12 if peak_dbm <= 0.0 else DEFAULT_SPP_STEPS
+        if wanted != self._active_spp_steps:
+            self._active_spp_steps = wanted
+            self._kernel_cache.clear()
+
     def evaluate_path(self, optical_path, power_in_w):
         """Evaluate a path, resetting the EGN context and the span memoisation.
 
@@ -4705,15 +4908,7 @@ class PCFMModel(RouteModel):
         the report in :attr:`last_validity_valid`,
         :attr:`last_validity_flagged` and :attr:`last_validity_confidence`.
         """
-        if self.spp_steps == "auto":
-            # 阈值是物理总功率的 dBm：per_pol 口径下输入只是单偏振功率，先乘
-            # 倍数再取峰值，否则同一物理链路会被判成低功率而选 12 步。
-            peak_power_w = max(float(np.max(power_in_w)), 1e-30) * self.physical_power_scale
-            peak_dbm = 10.0 * np.log10(peak_power_w * 1e3)
-            wanted = 12 if peak_dbm <= 0.0 else DEFAULT_SPP_STEPS
-            if wanted != self._active_spp_steps:
-                self._active_spp_steps = wanted
-                self._kernel_cache.clear()
+        self._sync_auto_spp_steps(power_in_w)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
         self._reset_validity()
