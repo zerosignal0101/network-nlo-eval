@@ -358,6 +358,11 @@ class QoTValidator:
     已知口径且不匹配的缓存会触发重算并替换，绝不把 ``total`` 与 ``per_pol``
     的噪声混在一条路径里。``None``（旧缓存）按既有行为直接复用，下次写入时
     补上口径。
+
+    跨间相干装配（任务 BI）是**可选**的：``coherent_assembly=True`` 把请求透传给
+    :func:`~network_nlo_eval.rwa.link_noise.assemble_link_noise`，由模型能力
+    （``supports_span_context``）决定是否真的按 ``|sum a_k|^2`` 相加。默认
+    ``False`` 与接入前逐位一致。
     """
 
     def __init__(
@@ -370,6 +375,7 @@ class QoTValidator:
         launch_power_convention: str = "total",
         validity_policy: LinkValidityPolicy | None = None,
         validity_provider: LinkValidityProvider | None = None,
+        coherent_assembly: bool = False,
     ):
         """初始化验证器。
 
@@ -384,6 +390,15 @@ class QoTValidator:
             validity_policy: 可选的有效性策略。默认 ``"off"``。
             validity_provider: 可选的有效性提供者。策略非 ``off`` 时必填；
                 策略为 ``off`` 时给出会报错，避免"配了但没生效"的死配置。
+            coherent_assembly: 链路噪声缓存的跨间相干装配开关，默认 ``False``
+                （逐位保持"整跨 × N + 余段"的功率装配）。``True`` 时把
+                ``coherent=True`` 透传给
+                :func:`~network_nlo_eval.rwa.link_noise.assemble_link_noise`：
+                只有声明 ``supports_span_context`` 的评估器会把各跨 NLI 复振幅
+                按 ``|sum a_k|^2`` 相加；冻结基线 ``ecz`` 与有活跃泵的
+                ``pcfm_h3_raman`` 仍走功率路径，结果与 ``False`` 逐位相同。
+                该开关**只**影响链路噪声缓存，不改变有效性、功率口径与
+                ``accumulate_service_snr_detail`` 的 SPM 跨数惩罚。
 
         Raises
         ------
@@ -442,6 +457,9 @@ class QoTValidator:
                 )
         self.validity_policy = policy
         self.validity_provider = validity_provider
+        #: 跨间相干装配请求。``False``（默认）逐位保持历史功率装配；
+        #: ``True`` 只是请求，模型能力（``supports_span_context``）决定是否生效。
+        self.coherent_assembly = bool(coherent_assembly)
         #: 最近一次 ``verify_allocation`` 里每条受影响链路的有效性报告。
         #: 每次调用开头清空，因此不会把上一次的状态带到下一次。
         self.last_link_validity: dict[LinkKey, LinkValidity] = {}
@@ -598,7 +616,8 @@ class QoTValidator:
         ``power_profile`` 按验证器构造时声明的口径解释，进入 provider /
         ``assemble_link_noise`` 前换算到评估器口径（默认 ``total``，此时
         ``to_convention`` 返回原数组，不做算术）。写出的缓存总是带上
-        ``eval_power_convention`` 标签。
+        ``eval_power_convention`` 标签。``coherent_assembly`` 只透传给装配器，
+        不参与口径换算，也不改变有效性报告。
         """
         u, v = link_key
         fiber_config = self.network_topology.get_fiber_config(u, v)
@@ -635,6 +654,7 @@ class QoTValidator:
             num_channels=self.num_nodes,
             validity=validity,
             launch_power_convention=self.eval_power_convention,
+            coherent=self.coherent_assembly,
         )
 
     def _get_or_calc_noise_cache(

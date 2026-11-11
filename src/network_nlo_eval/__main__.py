@@ -118,6 +118,18 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
     ),
 )
 @click.option(
+    "--coherent-assembly",
+    "coherent_assembly",
+    is_flag=True,
+    default=False,
+    help=(
+        "Request coherent span-to-span NLI assembly for the network link-noise cache "
+        "(default: off). The switch is a request, not a guarantee: only models that emit "
+        "inter-span coherent NLI amplitudes honour it. Frozen baselines (ecz) and a pumped "
+        "pcfm_h3_raman keep the power-only 'full span x N' path without raising."
+    ),
+)
+@click.option(
     "--nli-fallback",
     "nli_fallback",
     type=click.Choice(["none", "numerical"]),
@@ -156,6 +168,7 @@ def simulate(
     slot_width_ghz: float | None,
     qot_model: str,
     launch_power_convention: str,
+    coherent_assembly: bool,
     nli_fallback: str,
     nli_fallback_trigger: str,
 ) -> None:
@@ -215,12 +228,17 @@ def simulate(
             "'network-nlo-eval models'."
         ) from exc
 
-    # QoT 验证器
+    # QoT 验证器。``--coherent-assembly`` 默认关闭：关闭时不传该参数，构造调用与
+    # 接入前逐字相同；模型能力（``supports_span_context``）决定请求是否生效。
+    validator_options: dict[str, object] = {}
+    if coherent_assembly:
+        validator_options["coherent_assembly"] = True
     qot_validator = QoTValidator(
         gn_evaluator=gn_evaluator,
         network_topology=network_topology,
         spectrum_grid=spectrum_grid,
         launch_power_convention=launch_power_convention,
+        **validator_options,
     )
 
     # 路径计算缓存
