@@ -154,7 +154,7 @@ import numpy as np
 from scipy.integrate import IntegrationWarning
 from scipy.special import sici
 
-from network_nlo_eval.core.types import NDArrayBool, NDArrayComplex, NDArrayFloat
+from network_nlo_eval.core.types import NDArrayBool, NDArrayComplex, NDArrayFloat, NDArrayInt
 from network_nlo_eval.models.base import (
     ModelInfo,
     SpanContext,
@@ -2101,6 +2101,210 @@ def _xci_overlap_weight_matrix(
     return w_out, gated, fraction, pairs
 
 
+def _fwm_displaced_weight_terms(
+    gamma_xci: NDArrayFloat,
+    beta2_eff_xci: NDArrayFloat,
+    f_abs_hz: NDArrayFloat,
+    b_hz: NDArrayFloat,
+    alpha_npm_m: float,
+    length_m: float,
+    n_quad: int = XCI_EDGE_QUADRATURE_POINTS,
+    min_relative_weight: float = 1.0e-9,
+) -> tuple[NDArrayInt, NDArrayInt, NDArrayInt, NDArrayFloat]:
+    r"""Displaced-third-wave (FWM/MCI) weight of every channel triple.
+
+    The closed-form XCI of Eq. (24) — and the two exact repairs above — integrate
+    the GN kernel over the *second* input band only, implicitly assuming that the
+    generated third wave is co-located with that pump (``r == ell``).  The GN
+    double integral of Eq. (4) also contains the triples whose product lands in a
+    *different* band (``r != ell``): the inter-channel four-wave mixing / MCI
+    transfer that no PCFM term represents.  This helper evaluates those triples
+    with the same Lorentzian antiderivative and the same Gauss-Legendre rule as
+    :func:`_xci_overlap_weight_matrix`.
+
+    For a CUT ``i`` the integral is
+
+    .. code-block:: text
+
+        K(i, ell, r) = (pi / F_inf) *
+            int_{y_lo}^{y_hi} dy [F(c (d+y) x_hi(y)) - F(c (d+y) x_lo(y))]
+                                 / (c (d + y)) ,
+
+        c = 4 pi**2 |beta2_eff(i, ell)| ,   d = f_ell - f_i ,
+
+        y_lo = max(-B_ell/2, f_r - f_ell - B_r/2 - B_i/2)
+        y_hi = min( B_ell/2, f_r - f_ell + B_r/2 + B_i/2)
+        x_lo(y) = max(-B_i/2, f_r - f_ell - B_r/2 - y)
+        x_hi(y) = min( B_i/2, f_r - f_ell + B_r/2 - y)
+
+    i.e. ``x`` runs over the CUT band, ``y`` over the pump band, and the
+    ``(x, y)`` pair is restricted to the products that land inside band ``r``.
+    The ``y`` integral is split where ``d + y = 0`` because the integrand has a
+    removable singularity there; its limit is ``W(0) (x_hi - x_lo)`` with
+    ``W(0) = (1 - e^{-alpha L})**2 / alpha**2``, exactly as in
+    :func:`_xci_overlap_weight_matrix`.
+
+    Summing ``r`` over *all* bands (including ``r == ell``) reproduces the exact
+    full-band XCI integral; the ``r == ell`` part is the one the closed form
+    already models (to 0.3 % on the pairwise kernel), so only the ``r != ell``
+    triples are returned here.  When ``ell == i`` the two input waves are both in
+    the CUT band, which the numerical reference counts once instead of twice, so
+    the weight is halved.
+
+    Args:
+        gamma_xci: ``(N, N)`` nonlinear coefficient of the pump pair.
+        beta2_eff_xci: ``(N, N)`` effective dispersion of the pump pair
+            (s^2/m).
+        f_abs_hz: ``(N,)`` channel centre frequencies (Hz), internal order.
+        b_hz: ``(N,)`` channel bandwidths (Hz).
+        alpha_npm_m: Fibre power attenuation (Np/m).
+        length_m: Span length (m).
+        n_quad: Gauss-Legendre nodes per ``y`` interval.
+        min_relative_weight: Triples whose ``gamma**2 K`` is below this
+            fraction of the largest weight are dropped.  They are physically
+            negligible and only cost memory.
+
+    Returns
+    -------
+        ``(i_idx, ell_idx, r_idx, weight)``: the triple indices and the
+        ``(n_triples,)`` weight ``gamma(i, ell)**2 K(i, ell, r)``.  All arrays
+        are empty when no triple can reach another band (sparse comb).
+    """
+    n_ch = int(f_abs_hz.size)
+    empty_int = np.zeros(0, dtype=np.int_)
+    empty_float = np.zeros(0, dtype=np.float64)
+    if n_ch < 2:
+        return empty_int, empty_int, empty_int, empty_float
+
+    bi = 0.5 * np.asarray(b_hz, dtype=np.float64)
+    c_pair = 4.0 * np.pi**2 * np.abs(np.asarray(beta2_eff_xci, dtype=np.float64))
+    gamma2 = np.asarray(gamma_xci, dtype=np.float64) ** 2
+
+    ab = alpha_npm_m * float(length_m)
+    exp_ab = float(np.exp(-ab))
+    exp_2ab = float(np.exp(-2.0 * ab))
+    f_inf = (1.0 / alpha_npm_m) * 0.5 * np.pi * (1.0 - exp_2ab)
+    # W(0)：y -> 0 时可去奇点的极限，与重叠对积分共用同一表达式。
+    w_zero = (1.0 - exp_ab) ** 2 / alpha_npm_m**2
+    exp_ab_sq = (1.0 - exp_ab) ** 2
+
+    # (ell, r) 候选对：|f_r - f_ell| 小于三倍最大半带宽时才有可能落带。
+    # 这个窗口与 CUT 无关，先建一次，再对每个 i 用精确条件过滤。
+    max_half_b = float(np.max(bi)) if bi.size else 0.0
+    reach_all = 3.0 * max_half_b
+    ell_parts: list[NDArrayInt] = []
+    r_parts: list[NDArrayInt] = []
+    for ell in range(n_ch):
+        offsets = f_abs_hz - f_abs_hz[ell]
+        window = np.nonzero(np.abs(offsets) <= reach_all)[0]
+        window = window[window != ell]
+        if window.size:
+            ell_parts.append(np.full(window.size, ell, dtype=np.int_))
+            r_parts.append(window.astype(np.int_))
+    if not ell_parts:
+        return empty_int, empty_int, empty_int, empty_float
+    pair_ell = np.concatenate(ell_parts)
+    pair_r = np.concatenate(r_parts)
+
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_quad))  # type: ignore[no-untyped-call]
+    # 查表覆盖所有 (i, ell, r) 上最大的 |s|；超出的尾部由类的渐近展开处理。
+    max_offset = float(np.max(np.abs(f_abs_hz[:, None] - f_abs_hz[None, :]))) + max_half_b
+    max_s = float(np.max(c_pair) * max_offset * max_half_b / alpha_npm_m) * 1.5
+    table = _LorentzianAntiderivative(alpha_npm_m, float(length_m), 1, max_s)
+
+    def _antiderivative(t: NDArrayFloat) -> NDArrayFloat:
+        """``F(t) = int_0^t W d(rho)`` with the small-``s`` Taylor branch."""
+        s = t / alpha_npm_m
+        small = np.abs(s) < 1.0e-4
+        bracket = (1.0 + exp_2ab) * np.arctan(s) - 2.0 * exp_ab * table.C(1, s)
+        bracket = np.where(small, exp_ab_sq * s, bracket)
+        return bracket / alpha_npm_m
+
+    i_parts: list[NDArrayInt] = []
+    ell_out: list[NDArrayFloat] = []
+    r_out: list[NDArrayFloat] = []
+    w_parts: list[NDArrayFloat] = []
+
+    for i in range(n_ch):
+        if bi[i] <= 0.0:
+            continue
+        d_ell = f_abs_hz[pair_ell] - f_abs_hz[i]
+        drl = f_abs_hz[pair_r] - f_abs_hz[pair_ell]
+        y_lo = np.maximum(-bi[pair_ell], drl - bi[pair_r] - bi[i])
+        y_hi = np.minimum(bi[pair_ell], drl + bi[pair_r] + bi[i])
+        # 精确可落带条件；ell == i（两个输入波同带）也保留，权重按参考模型减半。
+        keep = y_hi > y_lo
+        if not np.any(keep):
+            continue
+        ell = pair_ell[keep]
+        r = pair_r[keep]
+        lo = y_lo[keep]
+        hi = y_hi[keep]
+        d = d_ell[keep]
+        dr = drl[keep]
+        c = c_pair[i, ell]
+
+        # y 积分在三个折点处拆开：x_lo 的下界切换、x_hi 的上界切换，以及
+        # d + y = 0 的可去奇点。折点不拆时 Gauss-Legendre 只能收敛到 ~2-5%；
+        # 拆开后每个子区间上 x 的约束固定，被积函数光滑。
+        kink_lo = dr - bi[r] + bi[i]
+        kink_hi = dr + bi[r] - bi[i]
+        kink_zero = -d
+        cuts = np.stack(
+            [
+                lo,
+                np.clip(kink_lo, lo, hi),
+                np.clip(kink_hi, lo, hi),
+                np.clip(kink_zero, lo, hi),
+                hi,
+            ],
+            axis=1,
+        )
+        cuts.sort(axis=1)
+        integral = np.zeros(ell.size, dtype=np.float64)
+        for segment in range(cuts.shape[1] - 1):
+            start = cuts[:, segment]
+            stop = cuts[:, segment + 1]
+            active = stop > start
+            if not np.any(active):
+                continue
+            jacobian = 0.5 * (stop[active] - start[active])
+            y = start[active, None] + jacobian[:, None] * (nodes[None, :] + 1.0)
+            offset = y + d[active, None]
+            x_lo = np.maximum(-bi[i], dr[active, None] - bi[r[active], None] - y)
+            x_hi = np.minimum(bi[i], dr[active, None] + bi[r[active], None] - y)
+            c_y = c[active, None] * offset
+            zero = c_y == 0.0
+            safe = np.where(zero, 1.0, c_y)
+            values = (_antiderivative(c_y * x_hi) - _antiderivative(c_y * x_lo)) / safe
+            values = np.where(zero, w_zero * (x_hi - x_lo), values)
+            integral[active] += jacobian * np.sum(weights[None, :] * values, axis=1)
+
+        k_pair = np.pi * integral / f_inf
+        w = gamma2[i, ell] * k_pair
+        # ell == i：两个输入波同带，参考模型只计一次（xpm 计两次）。
+        same_band = ell == i
+        if np.any(same_band):
+            w[same_band] *= 0.5
+        valid = np.isfinite(w) & (w > 0.0)
+        if not np.any(valid):
+            continue
+        i_parts.append(np.full(np.count_nonzero(valid), i, dtype=np.int_))
+        ell_out.append(ell[valid].astype(np.float64))
+        r_out.append(r[valid].astype(np.float64))
+        w_parts.append(w[valid])
+
+    if not i_parts:
+        return empty_int, empty_int, empty_int, empty_float
+    i_idx = np.concatenate(i_parts)
+    ell_idx = np.concatenate(ell_out).astype(np.int_)
+    r_idx = np.concatenate(r_out).astype(np.int_)
+    weight = np.concatenate(w_parts)
+    floor = min_relative_weight * float(np.max(weight))
+    keep = weight >= floor
+    return i_idx[keep], ell_idx[keep], r_idx[keep], weight[keep]
+
+
 def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     """Compute the frequency-resolved inter-span coherent factor ``R``.
 
@@ -2181,6 +2385,13 @@ PCFM_MODEL_INFO = ModelInfo(
             "Opt-in: replaces the XCI weight of pairs whose rectangular spectra overlap "
             "(y1 = |df| - B_j/2 <= 0) by the exact integral on the actual band, including y < 0. "
             "Default False keeps every number bit-for-bit identical.",
+        ),
+        (
+            "dense_grid_fwm_fix",
+            "Opt-in: adds the displaced-third-wave (FWM/MCI) triples (third wave outside the "
+            "second pump band) on a dense plan, using the same quadrature as the XCI repair. "
+            "Default False keeps every number bit-for-bit identical. Mutually exclusive with "
+            "dense_grid_fix and nli_fallback='numerical'.",
         ),
         (
             "cache_spans",
@@ -2310,6 +2521,26 @@ class PCFMSpanKernel:
             closed form does not exist.  Rows with any such pair are forced
             through the materiality gate on a dense plan; every other row and
             every other pair stays bit-for-bit unchanged.
+        dense_grid_fwm_fix: Opt-in displaced-third-wave (FWM/MCI) correction
+            (default ``False``).  When ``True`` and the plan is dense, the
+            triples whose generated third wave lands outside the second pump's
+            band (``r != ell``) are integrated with the same Lorentzian
+            antiderivative and Gauss-Legendre rule as the XCI overlap repair,
+            and their power is added to the XCI.  The closed-form XCI of
+            Eq. (24) only represents the co-located (``r == ell``) part, so this
+            is a disjoint term, not a double count; it is the PCFM counterpart
+            of the ``fwm`` subset of the numerical ISRS-GN reference, but it is
+            evaluated from the model's own dispersion/band/profile constants
+            and never reads the numerical output.  Every non-dense plan and
+            every sparse comb produce no triple and stay bit-for-bit unchanged.
+            Cannot be combined with ``dense_grid_fix`` (that repair already
+            supplies the missing energy on the overlapping rows, so adding the
+            triple term would double count it) nor with
+            ``nli_fallback="numerical"`` (the fallback replaces the NLI
+            wholesale).  The term is added before the inter-span phase factor,
+            so it inherits the XCI visibility; the numerical reference instead
+            power-accumulates it, which is exact for the near-incoherent FWM
+            average but is an approximation here.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The model
             carries no FWM term, so a comb near the zero-dispersion point is
             outside its physics.  ``"flag"`` only ORs ``fwm_required`` into
@@ -2351,6 +2582,7 @@ class PCFMSpanKernel:
         nli_power_convention: str = "total",
         xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
         dense_grid_fix: bool = False,
+        dense_grid_fwm_fix: bool = False,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
     ) -> None:
@@ -2379,6 +2611,17 @@ class PCFMSpanKernel:
                 "ISRS-GN kernel has no lumped-loss treatment, so the fallback would silently "
                 "evaluate a different fibre than the closed form."
             )
+        if dense_grid_fwm_fix and dense_grid_fix:
+            raise ValueError(
+                "dense_grid_fwm_fix=True cannot be combined with dense_grid_fix=True: the "
+                "overlap repair of the XCI rows already supplies the energy that the displaced "
+                "triples would add, so enabling both double counts it (task BB audit)."
+            )
+        if dense_grid_fwm_fix and nli_fallback is not None:
+            raise ValueError(
+                "dense_grid_fwm_fix=True cannot be combined with nli_fallback='numerical': the "
+                "fallback replaces spm/xpm wholesale and already contains the FWM average."
+            )
 
         self.poly_degree = int(poly_degree)
         self.n_poly = self.poly_degree + 1
@@ -2388,6 +2631,7 @@ class PCFMSpanKernel:
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.dense_grid_fix = bool(dense_grid_fix)
+        self.dense_grid_fwm_fix = bool(dense_grid_fwm_fix)
         if fwm_validity_mode not in FWM_VALIDITY_MODES:
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         self.fwm_validity_mode = str(fwm_validity_mode)
@@ -2419,6 +2663,12 @@ class PCFMSpanKernel:
         self._xci_edge_cache: dict[int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
         # 密集栅格重叠对修正的缓存；只在 dense_grid_fix=True 时填充。
         self._xci_dense_cache: dict[int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]] = {}
+        # 位移第三波（FWM/MCI）三元组的权重缓存；只在 dense_grid_fwm_fix=True
+        # 且计划为密集栅格时填充。None 表示该计划没有可达三元组。
+        self._fwm_weight_cache: (
+            dict[int, tuple[NDArrayInt, NDArrayInt, NDArrayInt, NDArrayFloat] | None]
+        ) = {}
+        self.last_dense_fwm_fix_applied = False
         # 诊断层的静态量（s、行修正、X）只依赖光纤与跨长，按跨长缓存。
         self._xci_validity_cache: dict[
             int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]
@@ -2817,6 +3067,68 @@ class PCFMSpanKernel:
         key = int(round(span_length_m * 1e6))
         _, gated, fraction, pairs = self._xci_dense_cache[key]
         return gated, fraction, pairs
+
+    def _dense_fwm_weight_terms(
+        self,
+        span_length_m: float,
+    ) -> tuple[NDArrayInt, NDArrayInt, NDArrayInt, NDArrayFloat] | None:
+        """Weight of the displaced-third-wave triples of a span length.
+
+        Only built when ``dense_grid_fwm_fix=True`` and the plan is dense
+        (``min spacing < max bandwidth``).  On any other plan the result is
+        ``None`` and the caller leaves the XCI untouched, so the default and
+        every sparse comb stay bit-for-bit identical.
+
+        Args:
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``(i, ell, r, weight)`` or ``None`` when no triple can reach a
+            different band.  Cached per span length.
+        """
+        if not self.dense_grid_fwm_fix or not self.dense_grid_plan:
+            return None
+        key = int(round(span_length_m * 1e6))
+        if key in self._fwm_weight_cache:
+            return self._fwm_weight_cache[key]
+        terms = _fwm_displaced_weight_terms(
+            self.gamma_xci,
+            self.beta2_eff_xci,
+            self.f_abs_hz,
+            self.b_hz,
+            self.alpha_visibility_npm,
+            float(span_length_m),
+            n_quad=self.xci_edge_quadrature_points,
+        )
+        result: tuple[NDArrayInt, NDArrayInt, NDArrayInt, NDArrayFloat] | None = (
+            None if terms[0].size == 0 else terms
+        )
+        self._fwm_weight_cache[key] = result
+        return result
+
+    def dense_fwm_fix_diagnostics(self, span_length_m: float) -> dict[str, float]:
+        """Read-only summary of the opt-in displaced-third-wave term.
+
+        Args:
+            span_length_m: Span length (m).
+
+        Returns
+        -------
+            ``{"triples", "weight_sum", "ell_eq_i_share"}``.  All zeros when
+            the term does not apply.
+        """
+        terms = self._dense_fwm_weight_terms(span_length_m)
+        if terms is None:
+            return {"triples": 0.0, "weight_sum": 0.0, "ell_eq_i_share": 0.0}
+        i_idx, ell_idx, _r_idx, weight = terms
+        total = float(np.sum(weight))
+        same_band = float(np.sum(weight[ell_idx == i_idx]))
+        return {
+            "triples": float(weight.size),
+            "weight_sum": total,
+            "ell_eq_i_share": same_band / total if total > 0.0 else 0.0,
+        }
 
     @property
     def dense_grid_fix_applies(self) -> bool:
@@ -3880,6 +4192,25 @@ class PCFMSpanKernel:
 
         spm = np.where(active, g_sci * self.b_hz, 0.0)
         xpm = np.where(active, g_xci * self.b_hz, 0.0)
+        # 位移第三波（FWM/MCI）：opt-in，且仅在密集计划上非零。闭式 XCI 只覆盖
+        # 第三波与第二个泵同带的 (r == ell) 部分，这里补上 r != ell 的三元组。
+        self.last_dense_fwm_fix_applied = False
+        if self.dense_grid_fwm_fix:
+            fwm_terms = self._dense_fwm_weight_terms(span_length_m)
+            if fwm_terms is not None:
+                i_idx, ell_idx, r_idx, weight = fwm_terms
+                values = (
+                    psd[ell_idx]
+                    * psd[r_idx]
+                    * q_int[ell_idx]
+                    * rho_nch[ell_idx]
+                    * rho_nch[r_idx]
+                    * weight
+                )
+                accumulated = np.bincount(i_idx, weights=values, minlength=self.n_nodes)
+                fwm_noise = (32.0 / 27.0) * psd * self.b_hz * accumulated
+                xpm = xpm + np.where(active, fwm_noise, 0.0)
+                self.last_dense_fwm_fix_applied = True
         if self.nli_power_convention == "per_pol":
             # 输出回到每偏振坐标：信号与 ASE 都是每偏振量，NLI 也必须除 2。
             spm = 0.5 * spm
@@ -3938,6 +4269,13 @@ class PCFMModel(RouteModel):
             Only the pairs with ``|f_i - f_j| <= B_j/2`` are touched, and only
             on a dense plan (``min spacing < max bandwidth``); see
             :class:`PCFMSpanKernel`.
+        dense_grid_fwm_fix: Opt-in displaced-third-wave (FWM/MCI) term
+            (default ``False``).  On a dense plan the triples whose generated
+            third wave lands outside the second pump band are integrated with
+            the same quadrature as the XCI repair and added to the XCI; see
+            :class:`PCFMSpanKernel`.  Non-dense plans and the default path stay
+            bit-for-bit unchanged.  Mutually exclusive with ``dense_grid_fix``
+            and ``nli_fallback="numerical"``.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The kernels
             carry SPM/XCI only, so a comb whose local dispersion reaches the
             zero-dispersion point (or whose dispersion anchor is outside the
@@ -4025,6 +4363,7 @@ class PCFMModel(RouteModel):
         nli_power_convention: str = "total",
         resolution: str | None = None,
         dense_grid_fix: bool = False,
+        dense_grid_fwm_fix: bool = False,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         **route_options,
@@ -4052,6 +4391,17 @@ class PCFMModel(RouteModel):
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         if nli_fallback not in NLI_FALLBACK_MODES:
             raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if dense_grid_fwm_fix and dense_grid_fix:
+            raise ValueError(
+                "dense_grid_fwm_fix=True cannot be combined with dense_grid_fix=True: the "
+                "overlap repair of the XCI rows already supplies the energy that the displaced "
+                "triples would add, so enabling both double counts it (task BB audit)."
+            )
+        if dense_grid_fwm_fix and nli_fallback is not None:
+            raise ValueError(
+                "dense_grid_fwm_fix=True cannot be combined with nli_fallback='numerical': the "
+                "fallback replaces spm/xpm wholesale and already contains the FWM average."
+            )
         profile = resolve_resolution_profile(resolution)
         quadrature_points = XCI_EDGE_QUADRATURE_POINTS
         if profile is not None:
@@ -4070,6 +4420,7 @@ class PCFMModel(RouteModel):
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
         self.dense_grid_fix = bool(dense_grid_fix)
+        self.dense_grid_fwm_fix = bool(dense_grid_fwm_fix)
         self.cache_spans = bool(cache_spans)
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # plain PCFM 没有 launch_power_convention，也不覆盖 ase_polarization_scale：
@@ -4150,6 +4501,7 @@ class PCFMModel(RouteModel):
             nli_power_convention=self.nli_power_convention,
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
+            dense_grid_fwm_fix=self.dense_grid_fwm_fix,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
             lumped_loss=fiber_config.lumped_loss or None,
@@ -4226,6 +4578,34 @@ class PCFMModel(RouteModel):
         ``nli_fallback=None``.
         """
         return any(bool(getattr(kernel, "last_nli_fallback_applied", False)) for kernel in self._kernel_cache.values())
+
+    @property
+    def last_dense_fwm_fix_applied(self) -> bool:
+        """Whether any span of the last path added the displaced-third-wave term.
+
+        Aggregated over the kernels of the path; always ``False`` with the
+        default ``dense_grid_fwm_fix=False`` and on a non-dense plan.
+        """
+        return any(
+            bool(getattr(kernel, "last_dense_fwm_fix_applied", False))
+            for kernel in self._kernel_cache.values()
+        )
+
+    def dense_fwm_fix_diagnostics(self, span_length_m: float | None = None) -> dict[str, float]:
+        """Read-only summary of the opt-in FWM/MCI term of the reference fibre.
+
+        Args:
+            span_length_m: Span length (m); ``None`` uses the reference fibre.
+
+        Returns
+        -------
+            ``{"triples", "weight_sum", "ell_eq_i_share"}``; all zeros when the
+            term does not apply.
+        """
+        length_m = float(
+            self.ref_fiber_config.length_km * 1.0e3 if span_length_m is None else span_length_m
+        )
+        return self.kernel_for(self.ref_fiber_config).dense_fwm_fix_diagnostics(length_m)
 
     @property
     def last_fallback_nli_w(self) -> NDArrayFloat | None:

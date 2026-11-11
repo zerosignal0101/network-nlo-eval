@@ -675,6 +675,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         dense_grid_fix: Opt-in overlap-aware XCI correction forwarded to
             :class:`PCFMSpanKernel`.  ``False`` (default) keeps the historic
             numbers bit-for-bit.
+        dense_grid_fwm_fix: Opt-in displaced-third-wave (FWM/MCI) term
+            forwarded to :class:`PCFMSpanKernel`.  It is added to the XCI on a
+            dense plan, uses the model's own quadrature and constants (never
+            the numerical reference), and leaves every non-dense plan
+            bit-for-bit unchanged.  Mutually exclusive with ``dense_grid_fix``
+            and ``nli_fallback="numerical"``.
         lumped_loss: Lumped loss elements inside the span
             (``(position_m, loss_db)``), paper Section IV-D.  Positions must
             lie strictly inside ``(0, L)``, the loss must be non-negative, and
@@ -737,6 +743,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         nli_power_convention: str | None = None,
         pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
         dense_grid_fix: bool = False,
+        dense_grid_fwm_fix: bool = False,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
@@ -810,6 +817,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             lumped_loss=checked_lumped_loss or None,
             nli_power_convention=resolved_nli,
             dense_grid_fix=bool(dense_grid_fix),
+            dense_grid_fwm_fix=bool(dense_grid_fwm_fix),
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
             **kwargs,  # type: ignore[arg-type]
@@ -1644,6 +1652,13 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "interfering band crosses the CUT centre. Default False keeps every number bit-for-bit "
             "identical.",
         ),
+        (
+            "dense_grid_fwm_fix",
+            "Opt-in displaced-third-wave (FWM/MCI) term on a dense plan: adds the triples whose "
+            "third wave lands outside the second pump band, using the PCFM's own quadrature. "
+            "Default False keeps every number bit-for-bit identical. Mutually exclusive with "
+            "dense_grid_fix and nli_fallback='numerical'.",
+        ),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
         (
@@ -1820,6 +1835,12 @@ class PCFH3RamanModel(PCFMModel):
             the XCI weight of pairs whose interfering band crosses the CUT
             centre with the exact integral on the actual band.  The H3 kernel
             forwards it unchanged to :class:`PCFMSpanKernel`.
+        dense_grid_fwm_fix: Opt-in displaced-third-wave (FWM/MCI) term, forwarded
+            to :class:`PCFMSpanKernel`.  ``False`` (default) keeps every number
+            bit-for-bit; on a dense plan ``True`` adds the triples whose third
+            wave lands outside the second pump band, evaluated with the PCFM's
+            own quadrature.  Mutually exclusive with ``dense_grid_fix`` and
+            ``nli_fallback="numerical"``.
         nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
             fallback forwarded to :class:`PCFMSpanKernel`: the SCI/XCI of the
             flagged spans (dense plan or low-dispersion / FWM regime) is
@@ -1987,6 +2008,7 @@ class PCFH3RamanModel(PCFMModel):
         validity_mode: str = "warn",
         resolution: str | None = None,
         dense_grid_fix: bool = False,
+        dense_grid_fwm_fix: bool = False,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
@@ -2131,6 +2153,7 @@ class PCFH3RamanModel(PCFMModel):
             # 档位已在本类解析过（raman_steps 属于本类），不能再让父类重复解释。
             resolution=None,
             dense_grid_fix=dense_grid_fix,
+            dense_grid_fwm_fix=dense_grid_fwm_fix,
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
             **route_options,
@@ -2290,6 +2313,7 @@ class PCFH3RamanModel(PCFMModel):
             spp_steps=self._active_spp_steps,
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
+            dense_grid_fwm_fix=self.dense_grid_fwm_fix,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
         )
