@@ -341,6 +341,17 @@ XCI_EDGE_MATERIALITY: float = 0.03
 #: Gauss-Legendre nodes of the exact XCI island integral (per flagged pair).
 XCI_EDGE_QUADRATURE_POINTS: int = 24
 
+#: Gauss-Legendre nodes per ``y`` interval of the displaced-third-wave (FWM/MCI)
+#: triple integral of :func:`_fwm_displaced_weight_terms`.
+#:
+#: Deliberately a separate knob from :data:`XCI_EDGE_QUADRATURE_POINTS`: the
+#: XCI edge/overlap repairs are already converged (12 nodes, 1e-11), while the
+#: FWM triple integrand still moves by 1-2 % between 24 and 192 nodes on the
+#: densest C grids.  Coupling the two would silently change the XCI rows, so
+#: this one only acts on the opt-in ``dense_grid_fwm_fix`` term.  Default 24
+#: keeps every existing number bit-for-bit unchanged.
+FWM_QUADRATURE_POINTS: int = 24
+
 #: Channel-power tilt above which the span is reported as outside the
 #: validated operating range.
 #:
@@ -2252,7 +2263,7 @@ def _fwm_displaced_weight_terms(
     b_hz: NDArrayFloat,
     alpha_npm_m: float,
     length_m: float,
-    n_quad: int = XCI_EDGE_QUADRATURE_POINTS,
+    n_quad: int = FWM_QUADRATURE_POINTS,
     min_relative_weight: float = 1.0e-9,
 ) -> tuple[NDArrayInt, NDArrayInt, NDArrayInt, NDArrayFloat]:
     r"""Displaced-third-wave (FWM/MCI) weight of every channel triple.
@@ -2303,7 +2314,9 @@ def _fwm_displaced_weight_terms(
         b_hz: ``(N,)`` channel bandwidths (Hz).
         alpha_npm_m: Fibre power attenuation (Np/m).
         length_m: Span length (m).
-        n_quad: Gauss-Legendre nodes per ``y`` interval.
+        n_quad: Gauss-Legendre nodes per ``y`` interval.  This is the FWM knob
+            (:data:`FWM_QUADRATURE_POINTS`), independent of the XCI edge /
+            overlap quadrature: the two integrals have different smoothness.
         min_relative_weight: Triples whose ``gamma**2 K`` is below this
             fraction of the largest weight are dropped.  They are physically
             negligible and only cost memory.
@@ -2547,6 +2560,13 @@ PCFM_MODEL_INFO = ModelInfo(
             "elsewhere (C 50 GHz, non-dense). Only acts with dense_grid_fwm_fix=True on a dense plan.",
         ),
         (
+            "fwm_quadrature_points",
+            "Gauss-Legendre nodes per y interval of the opt-in displaced-third-wave (FWM/MCI) "
+            "triple integral. Default 24 keeps every number bit-for-bit identical. Independent of "
+            "the XCI edge/overlap quadrature: raising it must not move the XCI rows. Only read with "
+            "dense_grid_fwm_fix=True on a dense plan.",
+        ),
+        (
             "cache_spans",
             "Memoises the SPP/kernels of identical spans inside one path. Default True.",
         ),
@@ -2678,6 +2698,13 @@ class PCFMSpanKernel:
             ``docs/h3-pareto-report.md`` shows 12 nodes already reproduce the
             64-node result to 1e-11, so :data:`RESOLUTION_PROFILES` may lower
             it without moving any number.
+        fwm_quadrature_points: Gauss-Legendre nodes per ``y`` interval of the
+            opt-in displaced-third-wave (FWM/MCI) triple integral.  Defaults to
+            :data:`FWM_QUADRATURE_POINTS` (24).  Independent of
+            ``xci_edge_quadrature_points`` on purpose: raising it must not
+            move the XCI edge/overlap rows.  Only read when
+            ``dense_grid_fwm_fix=True`` on a dense plan, so every other path
+            stays bit-for-bit unchanged.
         dense_grid_fix: Opt-in overlap-aware XCI correction (default ``False``).
             When ``True`` and the plan is dense, the pairs whose interfering
             spectra overlap (``|df| < (B_i+B_j)/2``) are integrated over
@@ -2769,6 +2796,7 @@ class PCFMSpanKernel:
         cache_spans: bool = True,
         nli_power_convention: str = "total",
         xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
+        fwm_quadrature_points: int = FWM_QUADRATURE_POINTS,
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
         dense_grid_fwm_coherence: str = "xci",
@@ -2793,6 +2821,8 @@ class PCFMSpanKernel:
             raise ValueError(f"spp_steps must be >= 1, got {spp_steps}.")
         if int(xci_edge_quadrature_points) < 2:
             raise ValueError(f"xci_edge_quadrature_points must be >= 2, got {xci_edge_quadrature_points}.")
+        if int(fwm_quadrature_points) < 2:
+            raise ValueError(f"fwm_quadrature_points must be >= 2, got {fwm_quadrature_points}.")
         if nli_fallback not in NLI_FALLBACK_MODES:
             raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
         if nli_fallback_trigger not in NLI_FALLBACK_TRIGGERS:
@@ -2829,6 +2859,7 @@ class PCFMSpanKernel:
         self.n_poly = self.poly_degree + 1
         self.spp_steps = int(spp_steps)
         self.xci_edge_quadrature_points = int(xci_edge_quadrature_points)
+        self.fwm_quadrature_points = int(fwm_quadrature_points)
         self.symbol_rate_hz = float(symbol_rate_hz)
         self.egn = bool(egn)
         self.edge_fix = bool(edge_fix)
@@ -3311,7 +3342,7 @@ class PCFMSpanKernel:
             self.b_hz,
             self.alpha_visibility_npm,
             float(span_length_m),
-            n_quad=self.xci_edge_quadrature_points,
+            n_quad=self.fwm_quadrature_points,
         )
         result: tuple[NDArrayInt, NDArrayInt, NDArrayInt, NDArrayFloat] | None = (
             None if terms[0].size == 0 else terms
@@ -4750,6 +4781,14 @@ class PCFMModel(RouteModel):
             and is bit-for-bit ``"xci"`` wherever the split cannot act.  One
             span, non-dense plans and the default value stay bit-for-bit
             unchanged.
+        fwm_quadrature_points: Gauss-Legendre nodes per ``y`` interval of the
+            opt-in displaced-third-wave (FWM/MCI) triple integral.  Default
+            :data:`FWM_QUADRATURE_POINTS` (24) keeps every number bit-for-bit
+            identical.  It is deliberately independent of the XCI edge/overlap
+            quadrature (``xci_edge_quadrature_points``), which is already
+            converged at 12 nodes: raising this knob only refines the FWM term
+            and leaves the XCI rows untouched.  Read only with
+            ``dense_grid_fwm_fix=True`` on a dense plan.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The kernels
             carry SPM/XCI only, so a comb whose local dispersion reaches the
             zero-dispersion point (or whose dispersion anchor is outside the
@@ -4850,6 +4889,7 @@ class PCFMModel(RouteModel):
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
         dense_grid_fwm_coherence: str = "xci",
+        fwm_quadrature_points: int = FWM_QUADRATURE_POINTS,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
@@ -4901,6 +4941,8 @@ class PCFMModel(RouteModel):
                 "dense_grid_fwm_coherence must be one of "
                 f"{FWM_COHERENCE_MODES}, got {dense_grid_fwm_coherence!r}."
             )
+        if int(fwm_quadrature_points) < 2:
+            raise ValueError(f"fwm_quadrature_points must be >= 2, got {fwm_quadrature_points}.")
         profile = resolve_resolution_profile(resolution)
         quadrature_points = XCI_EDGE_QUADRATURE_POINTS
         if profile is not None:
@@ -4954,6 +4996,7 @@ class PCFMModel(RouteModel):
         self.spp_steps = spp_steps
         self.resolution = None if profile is None else str(resolution)
         self.xci_edge_quadrature_points = int(quadrature_points)
+        self.fwm_quadrature_points = int(fwm_quadrature_points)
         self.validity_mode = str(validity_mode)
         self.fwm_validity_mode = str(fwm_validity_mode)
         self.nli_fallback = nli_fallback
@@ -5021,6 +5064,7 @@ class PCFMModel(RouteModel):
             dense_grid_fix=self.dense_grid_fix,
             dense_grid_fwm_fix=self.dense_grid_fwm_fix,
             dense_grid_fwm_coherence=self.dense_grid_fwm_coherence,
+            fwm_quadrature_points=self.fwm_quadrature_points,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
             nli_fallback_trigger=self.nli_fallback_trigger,

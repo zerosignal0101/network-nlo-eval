@@ -631,6 +631,7 @@ def test_model_is_registered_with_the_expected_metadata() -> None:
         "dense_grid_fix",
         "dense_grid_fwm_fix",
         "dense_grid_fwm_coherence",
+        "fwm_quadrature_points",
         "cache_spans",
         "spp_steps",
         "resolution",

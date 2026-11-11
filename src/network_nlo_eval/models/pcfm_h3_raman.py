@@ -138,6 +138,7 @@ from network_nlo_eval.models.base import (
 )
 from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import (
+    FWM_QUADRATURE_POINTS,
     NLI_FALLBACK_MODES,
     NLI_FALLBACK_TRIGGERS,
     SPAN_CACHE_MAX_ENTRIES,
@@ -691,6 +692,13 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             ``max(bandwidth)/min(spacing)`` and falls back to ``"xci"``.  Only
             acts with ``dense_grid_fwm_fix=True`` on a dense plan, and the
             default keeps every number bit-for-bit intact.
+        fwm_quadrature_points: Gauss-Legendre nodes per ``y`` interval of the
+            displaced-third-wave triple integral, forwarded to
+            :class:`PCFMSpanKernel`.  Default
+            :data:`~network_nlo_eval.models.pcfm.FWM_QUADRATURE_POINTS` (24)
+            keeps every number bit-for-bit identical.  Independent of the XCI
+            edge/overlap quadrature; only read with
+            ``dense_grid_fwm_fix=True`` on a dense plan.
         lumped_loss: Lumped loss elements inside the span
             (``(position_m, loss_db)``), paper Section IV-D.  Positions must
             lie strictly inside ``(0, L)``, the loss must be non-negative, and
@@ -761,6 +769,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
         dense_grid_fwm_coherence: str = "xci",
+        fwm_quadrature_points: int = FWM_QUADRATURE_POINTS,
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
@@ -842,6 +851,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             dense_grid_fix=bool(dense_grid_fix),
             dense_grid_fwm_fix=bool(dense_grid_fwm_fix),
             dense_grid_fwm_coherence=dense_grid_fwm_coherence,
+            fwm_quadrature_points=fwm_quadrature_points,
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
             nli_fallback_trigger=nli_fallback_trigger,
@@ -1694,6 +1704,12 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "elsewhere (C 50 GHz, non-dense). Only acts with dense_grid_fwm_fix=True on a dense plan.",
         ),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
+        (
+            "fwm_quadrature_points",
+            "Gauss-Legendre nodes per y interval of the opt-in displaced-third-wave (FWM/MCI) "
+            "triple integral. Default 24 keeps every number bit-for-bit identical. Independent of "
+            "the XCI edge/overlap quadrature; only read with dense_grid_fwm_fix=True on a dense plan.",
+        ),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
         (
             "resolution",
@@ -1893,6 +1909,13 @@ class PCFH3RamanModel(PCFMModel):
             ``max(bandwidth)/min(spacing)`` and falls back to ``"xci"``.  Only
             acts with ``dense_grid_fwm_fix=True`` on a dense plan, and the
             default keeps every number bit-for-bit intact.
+        fwm_quadrature_points: Gauss-Legendre nodes per ``y`` interval of the
+            displaced-third-wave (FWM/MCI) triple integral, forwarded to
+            :class:`PCFMSpanKernel`.  Default
+            :data:`~network_nlo_eval.models.pcfm.FWM_QUADRATURE_POINTS` (24)
+            keeps every number bit-for-bit identical.  Independent of the XCI
+            edge/overlap quadrature; read only with
+            ``dense_grid_fwm_fix=True`` on a dense plan.
         nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
             fallback forwarded to :class:`PCFMSpanKernel`: the SCI/XCI of the
             flagged spans (dense plan or low-dispersion / FWM regime) is
@@ -2069,6 +2092,7 @@ class PCFH3RamanModel(PCFMModel):
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
         dense_grid_fwm_coherence: str = "xci",
+        fwm_quadrature_points: int = FWM_QUADRATURE_POINTS,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
@@ -2220,6 +2244,7 @@ class PCFH3RamanModel(PCFMModel):
             dense_grid_fix=dense_grid_fix,
             dense_grid_fwm_fix=dense_grid_fwm_fix,
             dense_grid_fwm_coherence=dense_grid_fwm_coherence,
+            fwm_quadrature_points=fwm_quadrature_points,
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
             nli_fallback_trigger=nli_fallback_trigger,
@@ -2382,6 +2407,7 @@ class PCFH3RamanModel(PCFMModel):
             dense_grid_fix=self.dense_grid_fix,
             dense_grid_fwm_fix=self.dense_grid_fwm_fix,
             dense_grid_fwm_coherence=self.dense_grid_fwm_coherence,
+            fwm_quadrature_points=self.fwm_quadrature_points,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
             nli_fallback_trigger=self.nli_fallback_trigger,
