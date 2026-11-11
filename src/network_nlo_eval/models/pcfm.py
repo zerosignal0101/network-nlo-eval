@@ -156,6 +156,7 @@ from scipy.special import sici
 
 from network_nlo_eval.core.types import NDArrayBool, NDArrayComplex, NDArrayFloat, NDArrayInt
 from network_nlo_eval.models.base import (
+    ElementOutput,
     ModelInfo,
     SpanContext,
     SpanFiberOutput,
@@ -4555,6 +4556,22 @@ class _PCFMNetworkView:
         return str(getattr(self._parent, "launch_power_convention", "total"))
 
     @property
+    def supports_span_context(self) -> bool:
+        """父模型是否给出跨间相干 NLI 复振幅。
+
+        网络层（``assemble_link_noise(coherent=True)``）用它判断能否按
+        ``|sum a_k|^2`` 装配。有活跃泵的 ``pcfm_h3_raman`` 把 ``span_coherence``
+        解析成 ``"incoherent"``，父模型因此为 ``False``，网络层保持原来的功率
+        路径。默认模型（无泵）为 ``True``。
+        """
+        return bool(getattr(self._parent, "supports_span_context", False))
+
+    @property
+    def fwm_noise_is_additive(self) -> bool:
+        """拆出的 FWM 项是否为独立加项（与父模型的声明一致）。"""
+        return bool(getattr(self._parent, "fwm_noise_is_additive", False))
+
+    @property
     def connections(self) -> Sequence[object] | None:
         """灵活栅格的连接列表（遗留模式为 ``None``），与父模型同一份。"""
         return getattr(self._parent, "connections", None)
@@ -4642,6 +4659,45 @@ class _PCFMNetworkView:
             # dense_grid_fwm_coherence="xci" 的单跨口径一致。
             xpm = xpm + element.fwm_noise_w
         return element.power_out_w, element.spm_noise_w, xpm, element.ase_noise_w
+
+    def _calc_span_output_with_context(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        span_context: SpanContext | None,
+    ) -> ElementOutput:
+        """单跨完整输出，按 ``span_context`` 给出跨间相干 NLI 复振幅。
+
+        与 :meth:`_calc_span_noise_and_power` 的区别是**不**把每跨复位成"第一
+        跨"：相干装配必须让 ``_span_index`` 与累计色散沿链路推进，否则 EGN 的
+        ``rho`` 与相位斜坡都会读错。因此只在 ``span_index == 0``（即链路的第
+        一跨）复位一次。``span_context`` 为 ``None`` 时退回逐跨独立的功率口径，
+        与 :meth:`_calc_span_noise_and_power` 逐位相同。
+
+        Args:
+            power_in_w: 入纤功率 (W)，口径同父模型。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: 跨段后的 EDFA 配置。
+            span_context: 本跨在链路里的位置。
+
+        Returns
+        -------
+            本跨的 :class:`ElementOutput`；多跨时带 NLI 复振幅，拆出的 FWM
+            项保持 additive 语义由调用方按功率累加。
+        """
+        power = np.asarray(power_in_w, dtype=np.float64)
+        if span_context is None or int(span_context.span_index) == 0:
+            # 没有位置信息、或这是链路的第一跨：复位到"第一跨"状态。
+            self._reset_span_state()
+            self._parent._sync_auto_spp_steps(power)
+        return self._parent.span_step(
+            self.fiber_config,
+            edfa_config,
+            power,
+            float(span_length_m),
+            span_context,
+        )
 
 
 class PCFMModel(RouteModel):

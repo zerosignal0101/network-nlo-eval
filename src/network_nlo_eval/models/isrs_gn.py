@@ -27,6 +27,7 @@ from network_nlo_eval.models.base import (
     ModelInfo,
     MultiSpanOpticalPath,
     PathQoTResult,
+    SpanContext,
     SpanFiberOutput,
     register_model,
 )
@@ -623,6 +624,37 @@ class MultiBandISRSGN:
             power_in_w, span_length_m, edfa_config, None, n_effective_spans=1
         )
         return ElementOutput(p_out, spm, xpm, ase)
+
+    def _calc_span_output_with_context(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        span_context: SpanContext | None,
+    ) -> ElementOutput:
+        """单跨的完整输出，供网络层按跨装配。
+
+        基类没有跨间相干状态，``span_context`` 被忽略，返回纯功率口径。需要复
+        振幅的模型（如 :class:`~network_nlo_eval.models.ecz.ECZCoherentModel`）
+        覆盖本方法。与 :meth:`span_step` 的差别只有"不需要传光纤配置"：本方法
+        在 ``for_fiber`` 返回的子评估器上调用，光纤已经绑定。
+
+        Args:
+            power_in_w: 各信道入纤功率 (W)，口径同评估器。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: 跨段后的 EDFA 配置。
+            span_context: 本跨在链路里的位置；基类忽略。
+
+        Returns
+        -------
+            本跨的 :class:`ElementOutput`；基类不含 NLI 复振幅。
+        """
+        del span_context  # 基类没有跨间相位，显式丢弃而不是静默读一半。
+        p_out, spm, xpm, ase = self._calc_span_noise_and_power(
+            power_in_w, span_length_m, edfa_config, None, n_effective_spans=1
+        )
+        return ElementOutput(p_out, spm, xpm, ase)
+
 
     def calc_span_noise_and_power_batch(
         self,

@@ -829,26 +829,48 @@ class ECZCoherentModel(MultiBandISRSGN):
             出跨功率与三项噪声；多跨时附带 NLI 复振幅。
         """
         evaluator = self.for_fiber(fiber_config)
-        fiber_output = evaluator.span_fiber_output(power_in_w, span_length_m, 1, span_context)
-        element = apply_amplifier_and_roadm(
+        return evaluator._calc_span_output_with_context(
+            power_in_w,
+            span_length_m,
+            edfa_config,
+            span_context,
+        )
+
+    def _calc_span_output_with_context(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        span_context: SpanContext | None,
+    ) -> ElementOutput:
+        """单跨完整输出（含跨间相干振幅），不需要重复传光纤配置。
+
+        与 :meth:`span_step` 是同一套算术：``span_step`` 先 ``for_fiber`` 取到本
+        评估器，再委托到这里。网络层（``assemble_link_noise``）已经持有本评估器
+        并知道光纤，因此可以直接调用，避免为每跨重建一次光纤键。
+
+        Args:
+            power_in_w: 入纤功率 (W)。
+            span_length_m: 跨段长度 (m)。
+            edfa_config: 跨段放大器配置。
+            span_context: 本跨在链路里的位置；``None`` 或单跨时退回功率口径。
+
+        Returns
+        -------
+            出跨功率与三项噪声；多跨时附带 NLI 复振幅。
+        """
+        fiber_output = self.span_fiber_output(power_in_w, span_length_m, 1, span_context)
+        return apply_amplifier_and_roadm(
             power_in_w=power_in_w,
             fiber_output=fiber_output,
             edfa_config=edfa_config,
             roadm_config=None,
-            nf_lin=evaluator._resolve_nf(edfa_config),
-            f_abs_hz=evaluator.f_abs_hz,
-            bandwidth_hz=evaluator.channel_bandwidth_hz_channels,
+            nf_lin=self._resolve_nf(edfa_config),
+            f_abs_hz=self.f_abs_hz,
+            bandwidth_hz=self.channel_bandwidth_hz_channels,
             # 新产生的 EDFA ASE 必须与 fiber_output 同坐标：per_pol 时乘 0.5。
             # 增益用入纤功率与 fiber_output 相除，比值本身与坐标无关。
-            ase_polarization_scale=evaluator.ase_polarization_scale,
-        )
-        return ElementOutput(
-            element.power_out_w,
-            element.spm_noise_w,
-            element.xpm_noise_w,
-            element.ase_noise_w,
-            element.nli_amplitude_spm,
-            element.nli_amplitude_xpm,
+            ase_polarization_scale=self.ase_polarization_scale,
         )
 
 
