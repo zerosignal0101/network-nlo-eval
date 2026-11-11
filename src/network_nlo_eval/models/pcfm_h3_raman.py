@@ -684,6 +684,11 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             and with ``nli_fallback="numerical"`` under
             ``nli_fallback_trigger="audit"``; allowed with
             ``nli_fallback_trigger="fwm_only"``.
+        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``,
+            forwarded to :class:`PCFMSpanKernel`.  ``"incoherent"`` splits the
+            FWM term out of ``xpm`` and lets the route layer power-accumulate
+            it across spans; only acts with ``dense_grid_fwm_fix=True`` on a
+            dense plan, and the default keeps every number bit-for-bit intact.
         lumped_loss: Lumped loss elements inside the span
             (``(position_m, loss_db)``), paper Section IV-D.  Positions must
             lie strictly inside ``(0, L)``, the loss must be non-negative, and
@@ -753,6 +758,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_signal_overlap_guard_hz: float = PUMP_SIGNAL_OVERLAP_GUARD_HZ,
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
+        dense_grid_fwm_coherence: str = "xci",
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
@@ -833,6 +839,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             nli_power_convention=resolved_nli,
             dense_grid_fix=bool(dense_grid_fix),
             dense_grid_fwm_fix=bool(dense_grid_fwm_fix),
+            dense_grid_fwm_coherence=dense_grid_fwm_coherence,
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
             nli_fallback_trigger=nli_fallback_trigger,
@@ -1676,6 +1683,12 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "dense_grid_fix and with nli_fallback='numerical' under nli_fallback_trigger='audit'; "
             "allowed with nli_fallback='numerical' + nli_fallback_trigger='fwm_only'.",
         ),
+        (
+            "dense_grid_fwm_coherence",
+            "How the dense-grid FWM term accumulates across spans: 'xci' (default) keeps it in the "
+            "XCI complex amplitude; 'incoherent' splits it out of xpm and power-accumulates it in "
+            "the route layer. Only acts with dense_grid_fwm_fix=True on a dense plan.",
+        ),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
         (
@@ -1869,6 +1882,11 @@ class PCFH3RamanModel(PCFMModel):
             with ``nli_fallback="numerical"`` under
             ``nli_fallback_trigger="audit"``; allowed with
             ``nli_fallback_trigger="fwm_only"``.
+        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``,
+            forwarded to :class:`PCFMSpanKernel`.  ``"incoherent"`` splits the
+            FWM term out of ``xpm`` and lets the route layer power-accumulate
+            it across spans; only acts with ``dense_grid_fwm_fix=True`` on a
+            dense plan, and the default keeps every number bit-for-bit intact.
         nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
             fallback forwarded to :class:`PCFMSpanKernel`: the SCI/XCI of the
             flagged spans (dense plan or low-dispersion / FWM regime) is
@@ -2044,6 +2062,7 @@ class PCFH3RamanModel(PCFMModel):
         resolution: str | None = None,
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
+        dense_grid_fwm_coherence: str = "xci",
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
@@ -2194,6 +2213,7 @@ class PCFH3RamanModel(PCFMModel):
             resolution=None,
             dense_grid_fix=dense_grid_fix,
             dense_grid_fwm_fix=dense_grid_fwm_fix,
+            dense_grid_fwm_coherence=dense_grid_fwm_coherence,
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
             nli_fallback_trigger=nli_fallback_trigger,
@@ -2355,6 +2375,7 @@ class PCFH3RamanModel(PCFMModel):
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
             dense_grid_fwm_fix=self.dense_grid_fwm_fix,
+            dense_grid_fwm_coherence=self.dense_grid_fwm_coherence,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
             nli_fallback_trigger=self.nli_fallback_trigger,
@@ -2417,10 +2438,13 @@ class PCFH3RamanModel(PCFMModel):
             n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
             ratio = kernel.modulation_format_ratio(power_in_w, span_length_m, n_spans)
             amplitude_xpm = fiber_output.nli_amplitude_xpm
+            fwm_noise = fiber_output.fwm_noise_w
             fiber_output = replace(
                 fiber_output,
                 xpm_noise_w=fiber_output.xpm_noise_w * ratio,
                 nli_amplitude_xpm=None if amplitude_xpm is None else amplitude_xpm * np.sqrt(ratio),
+                # 拆出的 FWM 项与 XCI 同一物理类，修正比值同样适用。
+                fwm_noise_w=None if fwm_noise is None else fwm_noise * ratio,
             )
         self._record_span_validity(kernel, power_in_w, fiber_output.power_out_w, span_length_m)
         input_ase_w = kernel.last_raman_ase_w if (self._h3_raman_ase and kernel.active) else None
@@ -2435,6 +2459,7 @@ class PCFH3RamanModel(PCFMModel):
             bandwidth_hz=self.channel_bandwidth_hz_channels,
             input_ase_w=input_ase_w,
             ase_polarization_scale=self.ase_polarization_scale,
+            fwm_is_additive=self.fwm_noise_is_additive,
         )
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)

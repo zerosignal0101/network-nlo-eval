@@ -95,10 +95,13 @@ class SpanFiberOutput:
         xpm_noise_w: 本跨产生的 XPM（或论文口径的 XCI）噪声功率 (W)。
         nli_amplitude_spm: 可选的 SPM 复振幅，``|amp|**2`` 必须等于 ``spm_noise_w``。
         nli_amplitude_xpm: 可选的 XPM 复振幅，``|amp|**2`` 必须等于 ``xpm_noise_w``。
-        fwm_noise_w: 可选的四波混频（FWM）噪声功率 (W)，即 Eq. (4) 中三重积的
-            第三波落在 CUT 带**之外**的那一部分。默认 ``None``：路由层不读它，
-            所有不拆分的模型（含 ``numerical`` 的 ``spm/xpm``）行为逐位不变。
-            给出时它是**单跨**功率，跨间按功率（非相干）处理。
+        fwm_noise_w: 可选的四波混频（FWM/MCI）单跨噪声功率 (W)。语义由调用方声明：
+            ``numerical`` 用它报告 ``spm + xpm`` 中的 FWM **子集**（``r != ell``），
+            是诊断量，绝不能与 ``spm/xpm`` 相加；PCFM 的
+            ``dense_grid_fwm_coherence="incoherent"`` 则把同一物理项从 ``xpm``
+            中**拆出**，此时 ``xpm_noise_w`` 不再包含它，路由层按跨间功率
+            （非相干）累加。默认 ``None`` 表示既没有拆分也没有诊断，路由层
+            完全不读它，所有既有模型逐位不变。
 
     振幅的参考面是**本跨出纤处**：路由层负责把它按后续跨的功率传输因子（取
     ``sqrt``）送到接收端。跨间相位必须由模型自己写进振幅，否则相干累加无从谈起。
@@ -141,6 +144,12 @@ class ElementOutput:
         ase_noise_w: 本跨放大器 ASE (W)。
         nli_amplitude_spm: 可选的 SPM 复振幅（已含放大器增益与 ROADM 损耗的幅度因子）。
         nli_amplitude_xpm: 可选的 XPM 复振幅。二者与 ``*_noise_w`` 的模方一一对应。
+        fwm_noise_w: 可选的 **additive** FWM 单跨噪声 (W)。只有模型显式声明
+            ``fwm_noise_is_additive`` 且核把该项从 ``xpm_noise_w`` 拆出时才非
+            ``None``；路由层按功率（非相干）跨间累加，并在最终
+            ``xpm_noise_w`` 中把它加回，使路径级 XPM 仍是"XCI 含 FWM 子集"。
+            默认 ``None``：路由层不读它，``numerical`` 等以子集口径报告
+            ``fwm_noise_w`` 的模型不会因此被重复计数。
     """
 
     power_out_w: NDArrayFloat
@@ -149,6 +158,7 @@ class ElementOutput:
     ase_noise_w: NDArrayFloat
     nli_amplitude_spm: NDArrayComplex | None = None
     nli_amplitude_xpm: NDArrayComplex | None = None
+    fwm_noise_w: NDArrayFloat | None = None
 
 
 @runtime_checkable

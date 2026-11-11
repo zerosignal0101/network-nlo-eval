@@ -452,6 +452,17 @@ DENSE_GRID_SPACING_RATIO: float = 1.0
 #: affected channels.  Neither value ever changes the point NLI/ASE/SNR.
 FWM_VALIDITY_MODES: tuple[str, ...] = ("flag", "reject")
 
+#: Accepted values of ``dense_grid_fwm_coherence``.
+#:
+#: ``"xci"`` (default) keeps the displaced-third-wave term inside the XCI
+#: complex amplitude, so it inherits the inter-span XCI visibility and the
+#: route layer accumulates ``|sum_k a_k|**2``.  ``"incoherent"`` splits the
+#: term out of ``xpm`` and hands it to the route layer as an additive power
+#: that accumulates as ``sum_k P_k`` across spans.  The split is only
+#: meaningful together with ``dense_grid_fwm_fix=True``; on a non-dense plan
+#: no triple exists and both values are bit-for-bit identical.
+FWM_COHERENCE_MODES: tuple[str, ...] = ("xci", "incoherent")
+
 #: Accepted values of ``nli_fallback``.
 #:
 #: ``None`` (default) never imports, constructs or evaluates the numerical
@@ -2407,6 +2418,12 @@ PCFM_MODEL_INFO = ModelInfo(
             "allowed with nli_fallback='numerical' + nli_fallback_trigger='fwm_only'.",
         ),
         (
+            "dense_grid_fwm_coherence",
+            "How the dense-grid FWM term accumulates across spans: 'xci' (default) keeps it inside "
+            "the XCI complex amplitude; 'incoherent' splits it out of xpm and power-accumulates it "
+            "in the route layer. Only acts with dense_grid_fwm_fix=True on a dense plan.",
+        ),
+        (
             "cache_spans",
             "Memoises the SPP/kernels of identical spans inside one path. Default True.",
         ),
@@ -2565,6 +2582,15 @@ class PCFMSpanKernel:
             so it inherits the XCI visibility; the numerical reference instead
             power-accumulates it, which is exact for the near-incoherent FWM
             average but is an approximation here.
+        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``.
+            ``"xci"`` keeps the displaced-third-wave term inside ``xpm``, so it
+            inherits the XCI inter-span phase (the historical behaviour).  On a
+            dense plan with ``dense_grid_fwm_fix=True``, ``"incoherent"``
+            removes the term from ``xpm`` and returns it as
+            :attr:`SpanFiberOutput.fwm_noise_w`; the route layer accumulates it
+            as a power across spans and adds it back to the path XPM.  One
+            span, every non-dense plan and the default value stay bit-for-bit
+            unchanged.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The model
             carries no FWM term, so a comb near the zero-dispersion point is
             outside its physics.  ``"flag"`` only ORs ``fwm_required`` into
@@ -2619,6 +2645,7 @@ class PCFMSpanKernel:
         xci_edge_quadrature_points: int = XCI_EDGE_QUADRATURE_POINTS,
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
+        dense_grid_fwm_coherence: str = "xci",
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
@@ -2666,6 +2693,11 @@ class PCFMSpanKernel:
                 "Use nli_fallback_trigger='fwm_only' to keep the fallback on the low-dispersion / "
                 "FWM spans only, which leaves the dense plan to the FWM fix."
             )
+        if dense_grid_fwm_coherence not in FWM_COHERENCE_MODES:
+            raise ValueError(
+                "dense_grid_fwm_coherence must be one of "
+                f"{FWM_COHERENCE_MODES}, got {dense_grid_fwm_coherence!r}."
+            )
 
         self.poly_degree = int(poly_degree)
         self.n_poly = self.poly_degree + 1
@@ -2676,6 +2708,7 @@ class PCFMSpanKernel:
         self.edge_fix = bool(edge_fix)
         self.dense_grid_fix = bool(dense_grid_fix)
         self.dense_grid_fwm_fix = bool(dense_grid_fwm_fix)
+        self.dense_grid_fwm_coherence = str(dense_grid_fwm_coherence)
         if fwm_validity_mode not in FWM_VALIDITY_MODES:
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         self.fwm_validity_mode = str(fwm_validity_mode)
@@ -4267,6 +4300,7 @@ class PCFMSpanKernel:
         # 位移第三波（FWM/MCI）：opt-in，且仅在密集计划上非零。闭式 XCI 只覆盖
         # 第三波与第二个泵同带的 (r == ell) 部分，这里补上 r != ell 的三元组。
         self.last_dense_fwm_fix_applied = False
+        fwm_split: NDArrayFloat | None = None
         if self.dense_grid_fwm_fix:
             fwm_terms = self._dense_fwm_weight_terms(span_length_m)
             if fwm_terms is not None:
@@ -4280,13 +4314,19 @@ class PCFMSpanKernel:
                     * weight
                 )
                 accumulated = np.bincount(i_idx, weights=values, minlength=self.n_nodes)
-                fwm_noise = (32.0 / 27.0) * psd * self.b_hz * accumulated
-                xpm = xpm + np.where(active, fwm_noise, 0.0)
+                fwm_noise = np.where(active, (32.0 / 27.0) * psd * self.b_hz * accumulated, 0.0)
+                if self.dense_grid_fwm_coherence == "incoherent":
+                    # 拆出：xpm 不含该项，路由层按跨间功率累加。
+                    fwm_split = fwm_noise
+                else:
+                    xpm = xpm + fwm_noise
                 self.last_dense_fwm_fix_applied = True
         if self.nli_power_convention == "per_pol":
             # 输出回到每偏振坐标：信号与 ASE 都是每偏振量，NLI 也必须除 2。
             spm = 0.5 * spm
             xpm = 0.5 * xpm
+            if fwm_split is not None:
+                fwm_split = 0.5 * fwm_split
         # 参考回退（opt-in）：flagged span 的 NLI 整段换成 numerical 的 SPM+XPM。
         # 默认 None 时这一步只写两个诊断字段，闭式结果逐位不变。
         fallback = self._maybe_nli_fallback(power, span_length_m, active)
@@ -4294,6 +4334,7 @@ class PCFMSpanKernel:
             spm, xpm = fallback
 
         inverse = self.inverse_order
+        fwm_out = None if fwm_split is None else np.ascontiguousarray(fwm_split[inverse])
         n_spans = 1 if span_context is None else max(1, int(span_context.total_spans))
         if span_context is None or n_spans <= 1:
             # Single span (or no context at all): the route layer keeps the
@@ -4303,6 +4344,7 @@ class PCFMSpanKernel:
                 power_out_w=np.ascontiguousarray(power_out[inverse]),
                 spm_noise_w=np.ascontiguousarray(spm[inverse]),
                 xpm_noise_w=np.ascontiguousarray(xpm[inverse]),
+                fwm_noise_w=fwm_out,
             )
         # Multi-span link: hand the route layer the complex NLI amplitudes.
         # Their modulus is the square root of the noise power of this span
@@ -4317,6 +4359,7 @@ class PCFMSpanKernel:
             xpm_noise_w=np.ascontiguousarray(xpm[inverse]),
             nli_amplitude_spm=np.ascontiguousarray(amplitude_spm[inverse]),
             nli_amplitude_xpm=np.ascontiguousarray(amplitude_xpm[inverse]),
+            fwm_noise_w=fwm_out,
         )
 
 
@@ -4459,7 +4502,13 @@ class _PCFMNetworkView:
             np.asarray(power_in_w, dtype=np.float64),
             float(span_length_m),
         )
-        return element.power_out_w, element.spm_noise_w, element.xpm_noise_w, element.ase_noise_w
+        xpm = element.xpm_noise_w
+        if element.fwm_noise_w is not None:
+            # 网络层按"整跨 × N"各自独立求值，本身就是功率累加；把拆出的
+            # FWM 项并回 XPM 才不会少算。这里不做跨间相干，因此结果与
+            # dense_grid_fwm_coherence="xci" 的单跨口径一致。
+            xpm = xpm + element.fwm_noise_w
+        return element.power_out_w, element.spm_noise_w, xpm, element.ase_noise_w
 
 
 class PCFMModel(RouteModel):
@@ -4500,6 +4549,15 @@ class PCFMModel(RouteModel):
             ``nli_fallback_trigger="audit"``; the combination is allowed with
             ``nli_fallback_trigger="fwm_only"`` because the trigger sets are
             disjoint.
+        dense_grid_fwm_coherence: ``"xci"`` (default) or ``"incoherent"``.
+            ``"xci"`` keeps the displaced-third-wave term inside the XCI
+            complex amplitude, so it inherits the inter-span XCI visibility.
+            On a dense plan with ``dense_grid_fwm_fix=True``, ``"incoherent"``
+            splits the term out of ``xpm`` and lets the route layer accumulate
+            it as a power across spans (task BE audit: the FWM average is
+            near-incoherent, and the split removes the 10-span residual growth
+            of the densest C grids).  One span, non-dense plans and the default
+            value stay bit-for-bit unchanged.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The kernels
             carry SPM/XCI only, so a comb whose local dispersion reaches the
             zero-dispersion point (or whose dispersion anchor is outside the
@@ -4599,6 +4657,7 @@ class PCFMModel(RouteModel):
         resolution: str | None = None,
         dense_grid_fix: bool = False,
         dense_grid_fwm_fix: bool = False,
+        dense_grid_fwm_coherence: str = "xci",
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
@@ -4645,6 +4704,11 @@ class PCFMModel(RouteModel):
                 "Use nli_fallback_trigger='fwm_only' to keep the fallback on the low-dispersion / "
                 "FWM spans only, which leaves the dense plan to the FWM fix."
             )
+        if dense_grid_fwm_coherence not in FWM_COHERENCE_MODES:
+            raise ValueError(
+                "dense_grid_fwm_coherence must be one of "
+                f"{FWM_COHERENCE_MODES}, got {dense_grid_fwm_coherence!r}."
+            )
         profile = resolve_resolution_profile(resolution)
         quadrature_points = XCI_EDGE_QUADRATURE_POINTS
         if profile is not None:
@@ -4664,6 +4728,7 @@ class PCFMModel(RouteModel):
         self.edge_fix = bool(edge_fix)
         self.dense_grid_fix = bool(dense_grid_fix)
         self.dense_grid_fwm_fix = bool(dense_grid_fwm_fix)
+        self.dense_grid_fwm_coherence = str(dense_grid_fwm_coherence)
         self.cache_spans = bool(cache_spans)
         self.nli_power_convention = resolve_nli_power_convention(nli_power_convention)
         # plain PCFM 没有 launch_power_convention，也不覆盖 ase_polarization_scale：
@@ -4749,6 +4814,7 @@ class PCFMModel(RouteModel):
             xci_edge_quadrature_points=self.xci_edge_quadrature_points,
             dense_grid_fix=self.dense_grid_fix,
             dense_grid_fwm_fix=self.dense_grid_fwm_fix,
+            dense_grid_fwm_coherence=self.dense_grid_fwm_coherence,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
             nli_fallback_trigger=self.nli_fallback_trigger,
@@ -4820,6 +4886,19 @@ class PCFMModel(RouteModel):
         it, without changing the point result.
         """
         return bool(self._lumped_raman_active)
+
+    @property
+    def fwm_noise_is_additive(self) -> bool:
+        """Whether ``span_step`` hands the route layer a *split* FWM power.
+
+        ``True`` only for ``dense_grid_fwm_fix=True`` with
+        ``dense_grid_fwm_coherence="incoherent"``: the kernel removes the
+        displaced-third-wave term from ``xpm_noise_w`` and returns it as
+        ``fwm_noise_w``, so the route layer must accumulate it as a power and
+        add it back to the path XPM exactly once.  The default ``"xci"``
+        returns ``False`` and keeps the historical single-array convention.
+        """
+        return bool(self.dense_grid_fwm_fix and self.dense_grid_fwm_coherence == "incoherent")
 
     @property
     def physical_power_scale(self) -> float:
@@ -5099,6 +5178,7 @@ class PCFMModel(RouteModel):
                     xpm_noise_w=fiber_output.xpm_noise_w,
                     nli_amplitude_spm=fiber_output.nli_amplitude_spm,
                     nli_amplitude_xpm=fiber_output.nli_amplitude_xpm,
+                    fwm_noise_w=fiber_output.fwm_noise_w,
                 )
                 if self._raman_ase:
                     input_ase_w = amplifier.ase_w(self.f_abs_hz, self.channel_bandwidth_hz_channels)
@@ -5113,6 +5193,7 @@ class PCFMModel(RouteModel):
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
             input_ase_w=input_ase_w,
+            fwm_is_additive=self.fwm_noise_is_additive,
         )
         self._span_index += 1
         self._beta2_accum_ps2 = self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)

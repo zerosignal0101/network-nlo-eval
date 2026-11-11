@@ -103,6 +103,7 @@ def apply_amplifier_and_roadm(
     bandwidth_hz: NDArrayFloat,
     input_ase_w: NDArrayFloat | None = None,
     ase_polarization_scale: float = 1.0,
+    fwm_is_additive: bool = False,
 ) -> ElementOutput:
     """把单跨光纤结果接到放大器（与可选 ROADM），得到出跨功率与 ASE。
 
@@ -127,6 +128,10 @@ def apply_amplifier_and_roadm(
         ase_polarization_scale: 本跨**新产生** EDFA ASE 的偏振缩放，默认
             ``1.0`` 保持双偏振总量。``per_pol`` 模型传 ``0.5``，只让新
             ASE 进入每偏振坐标；``input_ase_w`` 不受影响，避免二次缩放。
+        fwm_is_additive: ``True`` 时把 ``fiber_output.fwm_noise_w`` 作为
+            **独立加项**透传（已从 ``xpm_noise_w`` 拆出）。默认 ``False``：
+            不改动任何既有模型的输出，也保证把 ``fwm_noise_w`` 当子集报告的
+            模型（如 ``numerical``）不会被重复计数。
 
     Returns
     -------
@@ -142,6 +147,13 @@ def apply_amplifier_and_roadm(
     xpm = fiber_output.xpm_noise_w
     amp_spm = getattr(fiber_output, "nli_amplitude_spm", None)
     amp_xpm = getattr(fiber_output, "nli_amplitude_xpm", None)
+    # 仅在模型显式声明"FWM 已从 xpm 拆出"时透传；否则丢弃，避免子集口径
+    # （numerical）被当成加项重复计数。默认 False 时逐位不变。
+    fwm_extra = None
+    if fwm_is_additive:
+        raw_fwm = getattr(fiber_output, "fwm_noise_w", None)
+        if raw_fwm is not None:
+            fwm_extra = np.array(raw_fwm, dtype=np.float64, copy=True)
 
     if edfa_config is None:
         power_out = power_out_fiber
@@ -181,14 +193,16 @@ def apply_amplifier_and_roadm(
         spm /= loss_lin
         xpm /= loss_lin
         ase /= loss_lin
+        if fwm_extra is not None:
+            fwm_extra /= loss_lin
         if amp_spm is not None:
             amp_root = np.sqrt(1.0 / loss_lin)
             amp_spm = amp_spm * amp_root
             amp_xpm = amp_xpm * amp_root
 
     if amp_spm is None:
-        return ElementOutput(power_out, spm, xpm, ase)
-    return ElementOutput(power_out, spm, xpm, ase, amp_spm, amp_xpm)
+        return ElementOutput(power_out, spm, xpm, ase, fwm_noise_w=fwm_extra)
+    return ElementOutput(power_out, spm, xpm, ase, amp_spm, amp_xpm, fwm_extra)
 
 
 def accumulate_route(
@@ -232,6 +246,13 @@ def accumulate_route(
     total_spm = np.zeros_like(power)
     total_xpm = np.zeros_like(power)
     total_ase = np.zeros_like(power)
+    # 可选的 additive FWM 项：模型把该项从 xpm 复振幅里拆出（见
+    # ``fwm_noise_is_additive``），这里按跨间功率累加，最后再加回 total_xpm。
+    # 默认（模型未声明）完全不读 fwm_noise_w，逐位不变；这也保证把
+    # ``fwm_noise_w`` 当子集报告的 numerical 不会被重复计数。
+    fwm_is_additive = bool(getattr(model, "fwm_noise_is_additive", False))
+    total_fwm = np.zeros_like(power)
+    fwm_present = False
     # 相干档：模型给了复振幅就按 |Σ a_k|² 累加，否则走原来的功率相加。
     # None 表示尚未判定（路径上还没有跨段）。
     coherent: bool | None = None
@@ -286,6 +307,12 @@ def accumulate_route(
                 total_spm += step.spm_noise_w
                 total_xpm += step.xpm_noise_w
                 total_ase += step.ase_noise_w
+                if fwm_is_additive and fwm_present:
+                    total_fwm *= transfer
+                step_fwm = getattr(step, "fwm_noise_w", None) if fwm_is_additive else None
+                if step_fwm is not None:
+                    total_fwm += step_fwm
+                    fwm_present = True
             else:
                 if coherent is False:
                     raise TypeError(
@@ -298,6 +325,13 @@ def accumulate_route(
                 amp_xpm = amp_xpm * amp_root + step.nli_amplitude_xpm
                 total_ase *= transfer
                 total_ase += step.ase_noise_w
+                if fwm_is_additive:
+                    if fwm_present:
+                        total_fwm *= transfer
+                    step_fwm = getattr(step, "fwm_noise_w", None)
+                    if step_fwm is not None:
+                        total_fwm += step_fwm
+                        fwm_present = True
             span_count += 1
             cumulative_m += span_km * 1e3
             remaining_km -= span_km
@@ -317,6 +351,8 @@ def accumulate_route(
             total_spm /= loss
             total_xpm /= loss
         total_ase /= loss
+        if fwm_present:
+            total_fwm /= loss
         if roadm.equalize_output_power:
             gain = loss
             power *= gain
@@ -328,6 +364,8 @@ def accumulate_route(
                 total_spm *= gain
                 total_xpm *= gain
             total_ase *= gain
+            if fwm_present:
+                total_fwm *= gain
             nf = 10 ** (roadm.booster_noise_figure_db / 10)
             booster_ase = (
                 nf * H_PLANCK * model.f_abs_hz * model.channel_bandwidth_hz_channels * (gain - 1)
@@ -347,8 +385,12 @@ def accumulate_route(
             total_spm *= penalty
             total_xpm *= penalty
         total_ase *= penalty
+        if fwm_present:
+            total_fwm *= penalty
         if blocked:
             power[blocked] = total_spm[blocked] = total_xpm[blocked] = total_ase[blocked] = 0
+            if fwm_present:
+                total_fwm[blocked] = 0
             if coherent:
                 amp_spm[blocked] = 0
                 amp_xpm[blocked] = 0
@@ -356,6 +398,10 @@ def accumulate_route(
     if coherent:
         total_spm = np.abs(amp_spm) ** 2
         total_xpm = np.abs(amp_xpm) ** 2
+    if fwm_present:
+        # 拆出的 FWM 项按跨间功率累加，再并回路径级 XPM：PathQoTResult
+        # 的 xpm_noise_w 保持"XCI 含 FWM 子集"的既有语义。
+        total_xpm = total_xpm + total_fwm
 
     total_noise = total_spm + total_xpm + total_ase
     snr = np.full_like(power, -np.inf)
