@@ -465,6 +465,18 @@ FWM_VALIDITY_MODES: tuple[str, ...] = ("flag", "reject")
 #: runtime, and it is paid only on the spans that need it.
 NLI_FALLBACK_MODES: tuple[str | None, ...] = (None, "numerical")
 
+#: Accepted values of ``nli_fallback_trigger``.
+#:
+#: ``"audit"`` (default) keeps the historical trigger set: the fallback fires
+#: on a dense plan (``dense_grid_plan``) *or* where
+#: :func:`dispersion_validity` reports ``fwm_required``.  ``"fwm_only"``
+#: removes the dense-plan trigger, so the fallback is driven only by the
+#: low-dispersion / zero-dispersion / out-of-band-anchor audit.  On a dense
+#: plan that leaves the closed form (optionally with the displaced-third-wave
+#: correction of ``dense_grid_fwm_fix``) in charge, which is what makes the
+#: two options composable: their trigger sets no longer overlap.
+NLI_FALLBACK_TRIGGERS: tuple[str, ...] = ("audit", "fwm_only")
+
 #: Local dispersion magnitude (ps/nm/km) below which the PCFM/H3 closed form
 #: is reported as needing the FWM term it does not carry.
 #:
@@ -2391,7 +2403,8 @@ PCFM_MODEL_INFO = ModelInfo(
             "Opt-in: adds the displaced-third-wave (FWM/MCI) triples (third wave outside the "
             "second pump band) on a dense plan, using the same quadrature as the XCI repair. "
             "Default False keeps every number bit-for-bit identical. Mutually exclusive with "
-            "dense_grid_fix and nli_fallback='numerical'.",
+            "dense_grid_fix and with nli_fallback='numerical' under nli_fallback_trigger='audit'; "
+            "allowed with nli_fallback='numerical' + nli_fallback_trigger='fwm_only'.",
         ),
         (
             "cache_spans",
@@ -2468,6 +2481,17 @@ PCFM_MODEL_INFO = ModelInfo(
             "the PCFM XCI double counts it. Accuracy is the numerical reference's, the cost is "
             "runtime and is paid only on the flagged spans (C 100 GHz and C+L 75 GHz never trigger). "
             "Rejected together with lumped_loss, which the numerical kernel does not model.",
+        ),
+        (
+            "nli_fallback_trigger",
+            "'audit' (default) keeps the historical trigger set: a dense plan or the low-dispersion / "
+            "zero-dispersion / out-of-band-anchor audit. 'fwm_only' drops the dense-plan trigger, so "
+            "only dispersion_validity(...).fwm_required fires the fallback. The dense plan is then "
+            "left to the closed form, optionally with dense_grid_fwm_fix; that is why this trigger "
+            "is what allows dense_grid_fwm_fix + nli_fallback='numerical' (the two trigger sets are "
+            "disjoint). Under 'audit' the same combination raises ValueError because the dense points "
+            "would be replaced wholesale and the FWM term double counted. Ignored when nli_fallback "
+            "is None.",
         ),
     ),
 )
@@ -2565,6 +2589,18 @@ class PCFMSpanKernel:
             numerical result is cached per ``(span length, power)``, so a
             transparent link pays the double integral once.  Lumped loss is
             rejected because the numerical kernel does not model it.
+        nli_fallback_trigger: ``"audit"`` (default) or ``"fwm_only"``.  The
+            first keeps the historical trigger set (dense plan or
+            ``fwm_required``); the second fires the fallback only where
+            :func:`dispersion_validity` reports ``fwm_required``, so a dense
+            plan is left to the closed form.  This is what makes
+            ``dense_grid_fwm_fix=True`` + ``nli_fallback="numerical"`` legal:
+            the fallback handles the low-dispersion / O-band spans and the
+            fix handles the dense ones, with disjoint trigger sets.  Under
+            ``"audit"`` that combination still raises ``ValueError`` because
+            the dense points would be replaced and the FWM term double
+            counted.  The option has no effect when ``nli_fallback`` is
+            ``None``.
     """
 
     def __init__(
@@ -2585,6 +2621,7 @@ class PCFMSpanKernel:
         dense_grid_fwm_fix: bool = False,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
+        nli_fallback_trigger: str = "audit",
     ) -> None:
         """Prepare the per-channel constants of the span.
 
@@ -2593,9 +2630,9 @@ class PCFMSpanKernel:
             ValueError: The polynomial degree or the integration resolution
                 is not positive, a lumped loss element is out of the span,
                 ``fwm_validity_mode`` is not ``"flag"``/``"reject"``, or
-                ``nli_fallback`` is not ``None``/``"numerical"`` (or is
-                combined with a lumped loss, which the numerical kernel does
-                not model).
+                ``nli_fallback``/``nli_fallback_trigger`` is invalid (or
+                ``nli_fallback`` is combined with a lumped loss, which the
+                numerical kernel does not model).
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -2605,6 +2642,10 @@ class PCFMSpanKernel:
             raise ValueError(f"xci_edge_quadrature_points must be >= 2, got {xci_edge_quadrature_points}.")
         if nli_fallback not in NLI_FALLBACK_MODES:
             raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback_trigger not in NLI_FALLBACK_TRIGGERS:
+            raise ValueError(
+                f"nli_fallback_trigger must be one of {NLI_FALLBACK_TRIGGERS}, got {nli_fallback_trigger!r}."
+            )
         if nli_fallback is not None and lumped_loss:
             raise ValueError(
                 "nli_fallback='numerical' cannot be combined with lumped_loss: the numerical "
@@ -2617,10 +2658,13 @@ class PCFMSpanKernel:
                 "overlap repair of the XCI rows already supplies the energy that the displaced "
                 "triples would add, so enabling both double counts it (task BB audit)."
             )
-        if dense_grid_fwm_fix and nli_fallback is not None:
+        if dense_grid_fwm_fix and nli_fallback is not None and nli_fallback_trigger != "fwm_only":
             raise ValueError(
-                "dense_grid_fwm_fix=True cannot be combined with nli_fallback='numerical': the "
-                "fallback replaces spm/xpm wholesale and already contains the FWM average."
+                "dense_grid_fwm_fix=True cannot be combined with nli_fallback='numerical' under "
+                "nli_fallback_trigger='audit': the audit trigger replaces spm/xpm wholesale on the "
+                "dense plan, where the FWM fix is already added, so the two would double count. "
+                "Use nli_fallback_trigger='fwm_only' to keep the fallback on the low-dispersion / "
+                "FWM spans only, which leaves the dense plan to the FWM fix."
             )
 
         self.poly_degree = int(poly_degree)
@@ -2636,6 +2680,7 @@ class PCFMSpanKernel:
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         self.fwm_validity_mode = str(fwm_validity_mode)
         self.nli_fallback = nli_fallback
+        self.nli_fallback_trigger = str(nli_fallback_trigger)
         # 数值回退：核按需构造（默认路径永不 import/构造 numerical），结果按
         # (跨长, 功率) 缓存，诊断字段在每次 evaluate 时重置。
         self._fiber_config = fiber_config
@@ -3978,25 +4023,29 @@ class PCFMSpanKernel:
         )
 
     # -- numerical NLI fallback ------------------------------------------
-    def _nli_fallback_trigger(self, active: NDArrayBool) -> bool:
-        """Whether this span plan is flagged by the applicability audit.
+    def _dense_fallback_trigger(self) -> bool:
+        """Whether the plan itself is dense (the disjoint-rectangle XCI limit).
 
-        The two triggers are the ones the report already exposes: a dense plan
-        (``min spacing < max bandwidth``, where the disjoint-rectangle XCI
-        derivation breaks) and the low-dispersion / zero-dispersion /
-        out-of-band-anchor regime of :func:`dispersion_validity`, where the
-        omitted FWM term matters.  ``dispersion_validity`` only depends on the
-        occupied mask, so its answer is cached per mask.
+        This is the plan-level predicate the validity report exposes as
+        ``dense_grid``: ``min spacing < max bandwidth``.  It does not depend on
+        the occupied mask, so it is a frozen property of the channel plan.
+        """
+        return bool(self.dense_grid_plan)
+
+    def _fwm_required_fallback_trigger(self, active: NDArrayBool) -> bool:
+        """Whether :func:`dispersion_validity` asks for the FWM term.
+
+        The audit covers the low-dispersion, zero-dispersion and out-of-band-
+        anchor regimes, where the PCFM kernels are outside their physics.  It
+        only depends on the occupied mask, so the answer is cached per mask.
 
         Args:
             active: ``(N,)`` boolean mask of launched channels, internal order.
 
         Returns
         -------
-            ``True`` when the fallback has to replace the closed-form NLI.
+            ``True`` when the low-dispersion / FWM audit flags the span.
         """
-        if self.dense_grid_plan:
-            return True
         key = np.ascontiguousarray(active, dtype=bool).tobytes()
         cached = self._fwm_required_cache.get(key)
         if cached is None:
@@ -4012,6 +4061,29 @@ class PCFMSpanKernel:
             )
             self._fwm_required_cache[key] = cached
         return cached
+
+    def _nli_fallback_trigger(self, active: NDArrayBool) -> bool:
+        """Whether this span plan is flagged by the applicability audit.
+
+        The trigger set is selected by ``nli_fallback_trigger``:
+
+        * ``"audit"`` (default) — dense plan *or* ``fwm_required``, the
+          historical behaviour.  The dense test short-circuits first, so a
+          dense plan never computes (nor caches) the dispersion audit.
+        * ``"fwm_only"`` — only ``dispersion_validity(...).fwm_required``.
+          A dense plan is not flagged, so the fallback and
+          ``dense_grid_fwm_fix`` can coexist on disjoint span sets.
+
+        Args:
+            active: ``(N,)`` boolean mask of launched channels, internal order.
+
+        Returns
+        -------
+            ``True`` when the fallback has to replace the closed-form NLI.
+        """
+        if self.nli_fallback_trigger == "fwm_only":
+            return self._fwm_required_fallback_trigger(active)
+        return self._dense_fallback_trigger() or self._fwm_required_fallback_trigger(active)
 
     def _numerical_kernel(self):
         """Return the lazily built numerical ISRS-GN kernel of this span.
@@ -4424,7 +4496,10 @@ class PCFMModel(RouteModel):
             the same quadrature as the XCI repair and added to the XCI; see
             :class:`PCFMSpanKernel`.  Non-dense plans and the default path stay
             bit-for-bit unchanged.  Mutually exclusive with ``dense_grid_fix``
-            and ``nli_fallback="numerical"``.
+            and with ``nli_fallback="numerical"`` under
+            ``nli_fallback_trigger="audit"``; the combination is allowed with
+            ``nli_fallback_trigger="fwm_only"`` because the trigger sets are
+            disjoint.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``.  The kernels
             carry SPM/XCI only, so a comb whose local dispersion reaches the
             zero-dispersion point (or whose dispersion anchor is outside the
@@ -4442,6 +4517,17 @@ class PCFMModel(RouteModel):
             the flagged spans: C 100 GHz and C+L 75 GHz never trigger it, and
             ``None`` keeps every number bit-for-bit unchanged without importing
             the numerical module.  See :class:`PCFMSpanKernel`.
+        nli_fallback_trigger: ``"audit"`` (default) or ``"fwm_only"``.
+            ``"audit"`` keeps the historical trigger set (dense plan or
+            ``dispersion_validity(...).fwm_required``).  ``"fwm_only"`` drops
+            the dense-plan trigger, so only the low-dispersion / FWM regime
+            fires the fallback; the dense plan is then handled by the closed
+            form, optionally with ``dense_grid_fwm_fix``.  Because the two
+            trigger sets are disjoint, ``dense_grid_fwm_fix=True`` +
+            ``nli_fallback="numerical"`` is accepted with ``"fwm_only"`` and
+            rejected with ``"audit"`` (which would replace the dense points
+            wholesale and double count the FWM term).  No effect when
+            ``nli_fallback`` is ``None``.  See :class:`PCFMSpanKernel`.
         cache_spans: Memoise the identical spans of one path.
         spp_steps: RK4 steps of the SPP integration, or ``"auto"`` (12 at
             ``<=0 dBm`` per channel, 32 above it).
@@ -4515,6 +4601,7 @@ class PCFMModel(RouteModel):
         dense_grid_fwm_fix: bool = False,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
+        nli_fallback_trigger: str = "audit",
         **route_options,
     ) -> None:
         """Initialize the model.
@@ -4525,8 +4612,8 @@ class PCFMModel(RouteModel):
                 the Raman options are inconsistent, ``validity_mode`` is not
                 ``"warn"``/``"strict"``, ``nli_power_convention`` is unknown,
                 ``resolution`` is unknown or conflicts with an explicit
-                ``spp_steps``, or ``nli_fallback`` is not
-                ``None``/``"numerical"``.
+                ``spp_steps``, or ``nli_fallback``/``nli_fallback_trigger``
+                is invalid.
         """
         if poly_degree < 0:
             raise ValueError(f"poly_degree must be >= 0, got {poly_degree}.")
@@ -4540,16 +4627,23 @@ class PCFMModel(RouteModel):
             raise ValueError(f"fwm_validity_mode must be one of {FWM_VALIDITY_MODES}, got {fwm_validity_mode!r}.")
         if nli_fallback not in NLI_FALLBACK_MODES:
             raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback_trigger not in NLI_FALLBACK_TRIGGERS:
+            raise ValueError(
+                f"nli_fallback_trigger must be one of {NLI_FALLBACK_TRIGGERS}, got {nli_fallback_trigger!r}."
+            )
         if dense_grid_fwm_fix and dense_grid_fix:
             raise ValueError(
                 "dense_grid_fwm_fix=True cannot be combined with dense_grid_fix=True: the "
                 "overlap repair of the XCI rows already supplies the energy that the displaced "
                 "triples would add, so enabling both double counts it (task BB audit)."
             )
-        if dense_grid_fwm_fix and nli_fallback is not None:
+        if dense_grid_fwm_fix and nli_fallback is not None and nli_fallback_trigger != "fwm_only":
             raise ValueError(
-                "dense_grid_fwm_fix=True cannot be combined with nli_fallback='numerical': the "
-                "fallback replaces spm/xpm wholesale and already contains the FWM average."
+                "dense_grid_fwm_fix=True cannot be combined with nli_fallback='numerical' under "
+                "nli_fallback_trigger='audit': the audit trigger replaces spm/xpm wholesale on the "
+                "dense plan, where the FWM fix is already added, so the two would double count. "
+                "Use nli_fallback_trigger='fwm_only' to keep the fallback on the low-dispersion / "
+                "FWM spans only, which leaves the dense plan to the FWM fix."
             )
         profile = resolve_resolution_profile(resolution)
         quadrature_points = XCI_EDGE_QUADRATURE_POINTS
@@ -4592,6 +4686,7 @@ class PCFMModel(RouteModel):
         self.validity_mode = str(validity_mode)
         self.fwm_validity_mode = str(fwm_validity_mode)
         self.nli_fallback = nli_fallback
+        self.nli_fallback_trigger = str(nli_fallback_trigger)
         self._active_spp_steps = DEFAULT_SPP_STEPS if spp_steps == "auto" else int(spp_steps)
         self._span_index = 0
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
@@ -4656,6 +4751,7 @@ class PCFMModel(RouteModel):
             dense_grid_fwm_fix=self.dense_grid_fwm_fix,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
+            nli_fallback_trigger=self.nli_fallback_trigger,
             lumped_loss=fiber_config.lumped_loss or None,
         )
 

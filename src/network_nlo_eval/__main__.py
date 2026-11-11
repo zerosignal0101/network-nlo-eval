@@ -129,6 +129,20 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
         "bit-for-bit unchanged and no numerical kernel is built."
     ),
 )
+@click.option(
+    "--nli-fallback-trigger",
+    "nli_fallback_trigger",
+    type=click.Choice(["audit", "fwm_only"]),
+    default="audit",
+    show_default=True,
+    help=(
+        "Trigger set of '--nli-fallback numerical': 'audit' fires on the dense plan or the "
+        "low-dispersion/FWM audit (historical behaviour); 'fwm_only' fires only on the latter, "
+        "leaving a dense plan to the closed form (optionally with the FWM fix). Forwarded only "
+        "when 'numerical' is selected; the default 'audit' is never passed, so models without "
+        "the option and the default path stay unchanged."
+    ),
+)
 def simulate(
     topology_file: Path,
     service_num: int,
@@ -143,6 +157,7 @@ def simulate(
     qot_model: str,
     launch_power_convention: str,
     nli_fallback: str,
+    nli_fallback_trigger: str,
 ) -> None:
     """Run a dynamic RWA simulation."""
     click.echo(f"Starting simulation with topology: {topology_file}")
@@ -169,9 +184,13 @@ def simulate(
     # 物理层快速评估模型：由注册表选择，默认 ECZ。
     # ``--nli-fallback`` 只在用户显式选择时进入构造参数：默认 ``none`` 不传，
     # 模型自己决定默认语义（``nli_fallback=None``，构造 numerical 核的路径不触发）。
+    # ``--nli-fallback-trigger`` 同理：默认 ``audit`` 是模型自己的默认值，不传；
+    # 只有显式 ``fwm_only`` 且真的启用了 numerical 时才转发。
     model_options: dict[str, object] = {}
     if nli_fallback != "none":
         model_options["nli_fallback"] = nli_fallback
+        if nli_fallback == "numerical" and nli_fallback_trigger == "fwm_only":
+            model_options["nli_fallback_trigger"] = nli_fallback_trigger
     try:
         gn_evaluator = create_model(
             qot_model,
@@ -183,6 +202,13 @@ def simulate(
         raise click.ClickException(str(exc)) from exc
     except TypeError as exc:
         # 不接受该选项的模型（例如 ECZ）必须明确失败，不能吞掉用户的选择。
+        if "nli_fallback_trigger" in model_options:
+            raise click.ClickException(
+                f"QoT model {qot_model!r} does not accept --nli-fallback-trigger "
+                f"{model_options['nli_fallback_trigger']!r}: {exc}. Only models with an explicit "
+                "'nli_fallback_trigger' option support 'fwm_only'; see "
+                "'network-nlo-eval models'."
+            ) from exc
         raise click.ClickException(
             f"QoT model {qot_model!r} does not accept --nli-fallback {nli_fallback!r}: {exc}. "
             "Only models with an explicit 'nli_fallback' option support it; see "

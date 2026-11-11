@@ -139,6 +139,7 @@ from network_nlo_eval.models.base import (
 from network_nlo_eval.models.numba_kernels import _calc_aeff_dynamic
 from network_nlo_eval.models.pcfm import (
     NLI_FALLBACK_MODES,
+    NLI_FALLBACK_TRIGGERS,
     SPAN_CACHE_MAX_ENTRIES,
     SPAN_CACHE_RTOL,
     XCI_EDGE_QUADRATURE_POINTS,
@@ -680,7 +681,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             dense plan, uses the model's own quadrature and constants (never
             the numerical reference), and leaves every non-dense plan
             bit-for-bit unchanged.  Mutually exclusive with ``dense_grid_fix``
-            and ``nli_fallback="numerical"``.
+            and with ``nli_fallback="numerical"`` under
+            ``nli_fallback_trigger="audit"``; allowed with
+            ``nli_fallback_trigger="fwm_only"``.
         lumped_loss: Lumped loss elements inside the span
             (``(position_m, loss_db)``), paper Section IV-D.  Positions must
             lie strictly inside ``(0, L)``, the loss must be non-negative, and
@@ -717,6 +720,12 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             signal/pump span: an active pump is rejected with ``ValueError`` at
             construction instead of silently mixing two different physics.
             Without active pumps the unpumped parent path is used unchanged.
+        nli_fallback_trigger: ``"audit"`` (default) or ``"fwm_only"``,
+            forwarded to :class:`PCFMSpanKernel`.  ``"fwm_only"`` drops the
+            dense-plan trigger and leaves the dense plan to the closed form
+            (optionally with ``dense_grid_fwm_fix``), while the low-dispersion
+            / O-band regime still fires the fallback.  Ignored when
+            ``nli_fallback`` is ``None``.
         fwm_validity_mode: ``"flag"`` (default) or ``"reject"``, forwarded to
             :class:`PCFMSpanKernel`.  The H3 kernels carry SPM/XCI only, so a
             low-dispersion comb is outside their physics; ``"reject"`` clears
@@ -750,6 +759,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_backend: str = "python",
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
+        nli_fallback_trigger: str = "audit",
         **kwargs: object,
     ) -> None:
         """Build the kernel and cache the pump-side constants.
@@ -763,7 +773,8 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 or a lumped loss position is outside ``(0, L)`` of the fibre,
                 or ``raman_backend`` is not ``"python"``/``"numba"``/``"auto"``,
                 or ``raman_backend="numba"`` is combined with a lumped loss,
-                or ``nli_fallback`` is invalid or combined with an active pump.
+                or ``nli_fallback``/``nli_fallback_trigger`` is invalid, or
+                ``nli_fallback`` is combined with an active pump.
         """
         if int(raman_steps) < 4:
             raise ValueError(f"raman_steps must be >= 4, got {raman_steps}.")
@@ -771,6 +782,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             raise ValueError(f"raman_iterations must be >= 1, got {raman_iterations}.")
         if nli_fallback not in NLI_FALLBACK_MODES:
             raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback_trigger not in NLI_FALLBACK_TRIGGERS:
+            raise ValueError(
+                f"nli_fallback_trigger must be one of {NLI_FALLBACK_TRIGGERS}, got {nli_fallback_trigger!r}."
+            )
         if nli_fallback is not None:
             # numerical ISRS-GN 只有信号剖面，没有耦合的泵浦/信号演化；用它替换
             # 有泵跨的 NLI 会静默混用两套物理，所以构造期直接拒绝。
@@ -820,6 +835,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             dense_grid_fwm_fix=bool(dense_grid_fwm_fix),
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
+            nli_fallback_trigger=nli_fallback_trigger,
             **kwargs,  # type: ignore[arg-type]
         )
         self._fiber_config = fiber_config
@@ -1657,7 +1673,8 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "Opt-in displaced-third-wave (FWM/MCI) term on a dense plan: adds the triples whose "
             "third wave lands outside the second pump band, using the PCFM's own quadrature. "
             "Default False keeps every number bit-for-bit identical. Mutually exclusive with "
-            "dense_grid_fix and nli_fallback='numerical'.",
+            "dense_grid_fix and with nli_fallback='numerical' under nli_fallback_trigger='audit'; "
+            "allowed with nli_fallback='numerical' + nli_fallback_trigger='fwm_only'.",
         ),
         ("cache_spans", "Memoise identical spans of one path. Default True."),
         ("spp_steps", "PCFM SPP RK4 steps, or 'auto'. Default 'auto'."),
@@ -1795,6 +1812,15 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
             "models the signal profile only and cannot represent the coupled signal/pump evolution.",
         ),
         (
+            "nli_fallback_trigger",
+            "'audit' (default) keeps the historical trigger set: a dense plan or the low-dispersion / "
+            "zero-dispersion / out-of-band-anchor audit. 'fwm_only' drops the dense-plan trigger, so "
+            "only dispersion_validity(...).fwm_required fires the fallback and a dense plan is left "
+            "to the closed form (optionally with dense_grid_fwm_fix). Under 'audit' the combination "
+            "dense_grid_fwm_fix + nli_fallback='numerical' raises ValueError; 'fwm_only' makes the "
+            "trigger sets disjoint and allows it. Ignored when nli_fallback is None.",
+        ),
+        (
             "modulation_format_correction",
             "Opt-in Semrau 2019b modulation-format correction of the XCI term. False (default) keeps "
             "every number bit-for-bit. True multiplies the per-span XCI by the 2019b XPM ratio "
@@ -1840,7 +1866,9 @@ class PCFH3RamanModel(PCFMModel):
             bit-for-bit; on a dense plan ``True`` adds the triples whose third
             wave lands outside the second pump band, evaluated with the PCFM's
             own quadrature.  Mutually exclusive with ``dense_grid_fix`` and
-            ``nli_fallback="numerical"``.
+            with ``nli_fallback="numerical"`` under
+            ``nli_fallback_trigger="audit"``; allowed with
+            ``nli_fallback_trigger="fwm_only"``.
         nli_fallback: ``None`` (default) or ``"numerical"``.  Opt-in reference
             fallback forwarded to :class:`PCFMSpanKernel`: the SCI/XCI of the
             flagged spans (dense plan or low-dispersion / FWM regime) is
@@ -1849,6 +1877,13 @@ class PCFH3RamanModel(PCFMModel):
             used; with an active pump the construction fails with
             ``ValueError``, because the numerical kernel does not model the
             coupled signal/pump profile.
+        nli_fallback_trigger: ``"audit"`` (default) or ``"fwm_only"``,
+            forwarded to :class:`PCFMSpanKernel`.  ``"fwm_only"`` restricts
+            the fallback to the ``dispersion_validity(...).fwm_required``
+            spans, so a dense C plan is left to the closed form and can be
+            combined with ``dense_grid_fwm_fix``; the O-band / low-dispersion
+            regime still triggers the numerical reference.  Ignored when
+            ``nli_fallback`` is ``None``.
         cache_spans: Memoise identical spans. Default True.
         spp_steps: PCFM SPP RK4 steps or ``"auto"``. Default ``"auto"``.
         raman_pumps: Pumps applied to every span.  When omitted, the pumps of
@@ -2011,6 +2046,7 @@ class PCFH3RamanModel(PCFMModel):
         dense_grid_fwm_fix: bool = False,
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
+        nli_fallback_trigger: str = "audit",
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         modulation_format_correction: bool = False,
         excess_kurtosis: float = 0.0,
@@ -2114,6 +2150,10 @@ class PCFH3RamanModel(PCFMModel):
         resolved_egn = _resolve_egn(egn, pump_source)
         if nli_fallback not in NLI_FALLBACK_MODES:
             raise ValueError(f"nli_fallback must be one of {NLI_FALLBACK_MODES}, got {nli_fallback!r}.")
+        if nli_fallback_trigger not in NLI_FALLBACK_TRIGGERS:
+            raise ValueError(
+                f"nli_fallback_trigger must be one of {NLI_FALLBACK_TRIGGERS}, got {nli_fallback_trigger!r}."
+            )
         if nli_fallback is not None and any(float(pump.power_w) > 0.0 for pump in (pump_source or ())):
             # 数值回退核没有耦合的泵浦/信号剖面；有泵链路必须显式失败，不能
             # 用闭式 H3 的泵浦收益配上 numerical 的无泵 NLI。
@@ -2156,6 +2196,7 @@ class PCFH3RamanModel(PCFMModel):
             dense_grid_fwm_fix=dense_grid_fwm_fix,
             fwm_validity_mode=fwm_validity_mode,
             nli_fallback=nli_fallback,
+            nli_fallback_trigger=nli_fallback_trigger,
             **route_options,
         )
         self._h3_raman_pumps = None if raman_pumps is None else list(raman_pumps)
@@ -2316,6 +2357,7 @@ class PCFH3RamanModel(PCFMModel):
             dense_grid_fwm_fix=self.dense_grid_fwm_fix,
             fwm_validity_mode=self.fwm_validity_mode,
             nli_fallback=self.nli_fallback,
+            nli_fallback_trigger=self.nli_fallback_trigger,
         )
         if self._mf_active:
             # 参考核与主核共用同一栅格/光纤/波长，因此 semrau2019 算出的
