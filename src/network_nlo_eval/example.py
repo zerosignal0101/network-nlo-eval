@@ -1,24 +1,27 @@
-"""Behold, module level docstring."""
+"""Example module demonstrating NumPy-style docstrings."""
 
 
 class Example:
-    """This class exists to show off autodocstring generation."""
+    """Example class used to demonstrate API documentation generation."""
 
     def add(self, a: int, b: int) -> int:
         """Add two integers.
 
-        Notes
-        -----
-            Docstring can be useful. I promise.
-
         Parameters
         ----------
-            a: First integer to add.
-            b: Second integer to add.
+        a : int
+            First integer to add.
+        b : int
+            Second integer to add.
 
         Returns
         -------
+        int
             The sum of the two integers.
+
+        Notes
+        -----
+        Docstrings are rendered by mkdocstrings on the API page.
         """
         return a + b
 
@@ -27,11 +30,14 @@ class Example:
 
         Parameters
         ----------
-            a: Integer to subtract from.
-            b: Integer to subtract.
+        a : int
+            Integer to subtract from.
+        b : int
+            Integer to subtract.
 
         Returns
         -------
+        int
             The difference of the two integers.
         """
         return a - b

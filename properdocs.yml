@@ -39,6 +39,7 @@ plugins:
           - https://docs.python.org/3/objects.inv
           - https://docs.pydantic.dev/latest/objects.inv
         options:
+          docstring_style: numpy
           members_order: source
           separate_signature: true
           filters: ["!^_"]
