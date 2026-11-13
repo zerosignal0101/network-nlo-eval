@@ -1,0 +1,15 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: 2026.08.14
+_src_path: gh:scientific-python/cookie
+backend: uv
+docs: properdocs
+email: zerosignal0101@proton.me
+full_name: Xiangrong Li
+license: Apache
+org: zerosignal0101
+project_name: network-nlo-eval
+project_short_description: Physical-layer transmission quality (QoT) evaluation for
+    multi-band WDM optical networks, with QoT-aware routing and wavelength assignment
+    (RWA) and discrete-event simulation.
+url: https://github.com/zerosignal0101/network-nlo-eval
+vcs: true
