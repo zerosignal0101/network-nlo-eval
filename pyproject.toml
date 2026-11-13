@@ -13,7 +13,9 @@ description = "Physical-layer transmission quality (QoT) evaluation for multi-ba
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+# Upper bound is driven by numpy==1.26.4, which has no wheels for Python >=3.13.
+# Lower bound is driven by scipy 1.17.1 and networkx 3.6.1, which require Python >=3.11.
+requires-python = ">=3.11,<3.13"
 classifiers = [
   "Development Status :: 1 - Planning",
   "Intended Audience :: Science/Research",
@@ -22,15 +24,20 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "click>=8.0.1",
+    "networkx>=3.6.1,<4.0.0",
+    "numba>=0.64.0,<0.65.0",
+    "numpy==1.26.4",
+    "pydantic>=2.12.5,<3.0.0",
+    "scipy>=1.17.1,<2.0.0",
+    "tqdm>=4.66.0,<5.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/zerosignal0101/network-nlo-eval"
@@ -79,7 +86,7 @@ report.exclude_also = [
 
 [tool.mypy]
 files = ["src", "tests"]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_configs = true
 strict = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
@@ -142,7 +149,7 @@ ignore = [
 
 
 [tool.pylint]
-py-version = "3.10"
+py-version = "3.11"
 ignore-paths = [".*/_version.py"]
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
