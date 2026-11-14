@@ -74,7 +74,7 @@ from network_nlo_eval.models.route import (
 )
 
 if TYPE_CHECKING:
-    from network_nlo_eval.core.types import NDArrayFloat
+    from network_nlo_eval.core.types import NDArrayFloat, NDArrayInt
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
@@ -448,8 +448,8 @@ def _effective_beta2(
 
 def _stimulus_attenuation(
     alpha_npm: NDArrayFloat,
-    second: NDArrayFloat,
-    third: NDArrayFloat,
+    second: NDArrayInt,
+    third: NDArrayInt,
     convention: str = NSP_CONVENTION_DEFAULT,
 ) -> NDArrayFloat:
     """Calculate the NSP exponential attenuation for CUT-first islands.
@@ -734,7 +734,7 @@ def _island_cover(
     u1: NDArrayFloat,
     u2: NDArrayFloat,
     n_cells: int,
-) -> tuple[NDArrayFloat, ...]:
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
     """Cover a three-band integration island with midpoint rectangles.
 
     Each first-axis slice uses the midpoint height of its allowed second-axis
@@ -788,7 +788,7 @@ def _third_wave_slots(
     f_abs_hz: NDArrayFloat,
     b_hz: NDArrayFloat,
     widen_by_cut_bandwidth: bool = False,
-) -> tuple[NDArrayFloat, int]:
+) -> tuple[NDArrayInt, int]:
     """Enumerate reachable third-wave channels for each CUT and second wave.
 
     The optional CUT-bandwidth widening covers observation frequencies throughout
@@ -838,7 +838,7 @@ def _island_core(
     dispersion_convention: str,
     nsp_convention: str,
     length_m: float,
-    r_index: NDArrayFloat,
+    r_index: NDArrayInt,
     correlation_points: int,
     island_cells: int,
     n_coherent_spans: int,
@@ -849,7 +849,7 @@ def _island_core(
     band_points: int = DEFAULT_BAND_POINTS,
     compact_live: bool = False,
     compact_scatter: bool = True,
-) -> NDArrayFloat:
+) -> tuple[NDArrayFloat, NDArrayFloat | None]:
     """Calculate single-span and coherent link core matrices for CUT-first islands.
 
     Each core integral combines the NSP spectrum and rectangular correlation
@@ -1249,7 +1249,7 @@ def _mci_slot_table(
     b_hz: NDArrayFloat,
     alpha_npm: NDArrayFloat,
     beta2_s2_m: float,
-) -> tuple[NDArrayFloat, NDArrayFloat]:
+) -> tuple[NDArrayInt, NDArrayFloat]:
     """Enumerate MCI wave triples for each CUT and their symmetry weights.
 
     The first two waves lie outside the CUT. Candidates are screened against the
@@ -1353,9 +1353,9 @@ def _mci_slot_table(
 
 def _mci_stimulus_attenuation(
     alpha_npm: NDArrayFloat,
-    first: NDArrayFloat,
-    second: NDArrayFloat,
-    third: NDArrayFloat,
+    first: NDArrayInt,
+    second: NDArrayInt,
+    third: NDArrayInt,
     cut_alpha: NDArrayFloat,
     convention: str = NSP_CONVENTION_DEFAULT,
 ) -> NDArrayFloat:
@@ -1388,7 +1388,7 @@ def _mci_core(
     dispersion_convention: str,
     nsp_convention: str,
     length_m: float,
-    mci_index: NDArrayFloat,
+    mci_index: NDArrayInt,
     correlation_points: int,
     island_cells: int,
     n_coherent_spans: int,
@@ -1654,7 +1654,7 @@ def _mci_core(
 
 def _mci_from_core(
     mci_core: NDArrayFloat,
-    mci_index: NDArrayFloat,
+    mci_index: NDArrayInt,
     mci_weight: NDArrayFloat,
     g_psd: NDArrayFloat,
     b_hz: NDArrayFloat,
@@ -1683,16 +1683,16 @@ class _GridView:
     Indices and slot tables use view-local coordinates; ``act`` and ``inv`` map
     between the view and full grid. Sparse views omit zero-power contributions."""
 
-    act: NDArrayFloat
-    inv: NDArrayFloat
+    act: NDArrayInt
+    inv: NDArrayInt
     f_abs_hz: NDArrayFloat
     b_hz: NDArrayFloat
     f_rel_hz: NDArrayFloat
     alpha_npm: NDArrayFloat
     gamma_w_m: NDArrayFloat
-    r_index: NDArrayFloat
-    r_index_padded: NDArrayFloat
-    mci_index: NDArrayFloat
+    r_index: NDArrayInt
+    r_index_padded: NDArrayInt
+    mci_index: NDArrayInt
     mci_weight: NDArrayFloat
     sparse: bool = False
 
@@ -1703,7 +1703,7 @@ class _CoreEntry:
 
     plain: NDArrayFloat
     mci_plain: NDArrayFloat
-    mci_index: NDArrayFloat
+    mci_index: NDArrayInt
     mci_weight: NDArrayFloat
     ramp_spm: NDArrayFloat | None = None
     ramp_xpm: NDArrayFloat | None = None
@@ -1844,9 +1844,9 @@ class CGNSpanKernel:
         )
         self._r_index_padded = np.where(self._r_index >= 0, self._r_index + 1, 0)
         self.n_coherent_spans = 1
-        self._core_cache: dict[tuple, NDArrayFloat] = {}
+        self._core_cache: dict[tuple[float, int, bytes | None, bytes], _CoreEntry] = {}
         self._core_cache_bytes = 0
-        self._mci_table_cache: tuple[NDArrayFloat, NDArrayFloat] | None = None
+        self._mci_table_cache: tuple[NDArrayInt, NDArrayFloat] | None = None
         self._view_cache: dict[bytes, _GridView] = {}
         self._full_view = _GridView(
             act=np.arange(self.n_nodes, dtype=np.int64),
@@ -1862,7 +1862,7 @@ class CGNSpanKernel:
             mci_weight=np.zeros((self.n_nodes, 0), dtype=np.float64),
         )
 
-    def _mci_table(self) -> tuple[NDArrayFloat, NDArrayFloat]:
+    def _mci_table(self) -> tuple[NDArrayInt, NDArrayFloat]:
         """Build and cache the power-independent MCI geometry and symmetry weights."""
         if self._mci_table_cache is None:
             if self.band_points > 1:
@@ -1878,7 +1878,7 @@ class CGNSpanKernel:
             self._mci_table_cache = (index, weight)
         return self._mci_table_cache
 
-    def _subset_view(self, act: NDArrayFloat) -> _GridView:
+    def _subset_view(self, act: NDArrayInt) -> _GridView:
         """Return a cached view of active channels using filtered full-grid geometry.
 
         Zero-power slots contribute nothing, although their removal changes summation
@@ -2019,7 +2019,7 @@ class CGNSpanKernel:
         NDArrayFloat | None,
         NDArrayFloat,
         NDArrayFloat | None,
-        NDArrayFloat,
+        NDArrayInt,
         NDArrayFloat,
     ]:
         """Build single-span and coherent island and MCI core integrals for a view.
@@ -2126,7 +2126,7 @@ class CGNSpanKernel:
         dirichlet: NDArrayFloat,
         mci_plain: NDArrayFloat,
         mci_dirichlet: NDArrayFloat,
-        mci_index: NDArrayFloat,
+        mci_index: NDArrayInt,
         mci_weight: NDArrayFloat,
         canonical_power: NDArrayFloat,
         n_spans: int,
@@ -2268,7 +2268,9 @@ class CGNSpanKernel:
             self._store_core(key, cached)
         return cached
 
-    def _store_core(self, key: tuple, entry: _CoreEntry) -> None:
+    def _store_core(
+        self, key: tuple[float, int, bytes | None, bytes], entry: _CoreEntry
+    ) -> None:
         """Cache a core entry and evict old entries to respect the memory budget."""
         size = int(entry.plain.nbytes)
         if size > CORE_CACHE_BUDGET_BYTES:
