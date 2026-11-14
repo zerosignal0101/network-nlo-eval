@@ -156,12 +156,12 @@ class BenchCase:
     @property
     def per_channel_power_dbm(self) -> float:
         """Return nominal physical total launch power per channel in dBm."""
-        return self.total_power_dbm - 10.0 * np.log10(self.num_channels)
+        return float(self.total_power_dbm - 10.0 * np.log10(self.num_channels))
 
     @property
     def per_channel_power_dbm_per_pol(self) -> float:
         """Return the corresponding per-polarization channel power in dBm."""
-        return self.per_channel_power_dbm - 10.0 * np.log10(2.0)
+        return float(self.per_channel_power_dbm - 10.0 * np.log10(2.0))
 
 
 def _case(
