@@ -7,6 +7,7 @@ from scipy.integrate import quad
 from network_nlo_eval.models.dra_common import (
     BugliaProfile,
     DRASpanKernelBase,
+    ZhangProfile,
     average_link_squared,
     fit_buglia_profile,
     fit_zhang_profile,
@@ -22,13 +23,13 @@ def test_profile_fits_and_link_integral() -> None:
     alpha = np.full(2, 4.6e-5)
     z = np.arange(1, 2 * n_steps + 1) * length / (2 * n_steps)
     profile = np.exp(-z[:, None] * alpha)
-    fits = [
+    fits: list[BugliaProfile | ZhangProfile] = [
         fit_buglia_profile(
             profile, length, frequencies, alpha, 200e12, 5e-5, 5e-5, n_steps
         ),
         fit_zhang_profile(profile, length, frequencies, alpha, n_steps),
     ]
-    nodes, weights = np.polynomial.legendre.leggauss(16)
+    nodes, weights = np.polynomial.legendre.leggauss(16)  # type: ignore[no-untyped-call]
     for fit in fits:
         np.testing.assert_allclose(
             fit.value(z, frequencies[0]), profile[:, 0], rtol=3e-3
@@ -88,4 +89,5 @@ def test_shared_kernel_runs_raman_ode_and_noise() -> None:
     assert np.all(output.spm_noise_w > 0)
     assert np.all(output.xpm_noise_w > 0)
     assert np.all(kernel.last_raman_ase_w > 0)
+    assert kernel.last_pump_power_out_w is not None
     assert kernel.last_pump_power_out_w[0] > 0
