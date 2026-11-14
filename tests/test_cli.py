@@ -1,6 +1,7 @@
 """Command-line model listing, comparison and simulation."""
 
 import json
+from pathlib import Path
 
 import networkx as nx
 from click.testing import CliRunner
@@ -92,6 +93,7 @@ def test_default_topology_is_packaged() -> None:
     runner = CliRunner()
     command = main.commands["simulate"]
     topology_option = next(p for p in command.params if p.name == "topology_file")
+    assert isinstance(topology_option.default, Path)
     assert topology_option.default.is_file()
     help_result = runner.invoke(main, ["--help"])
     assert help_result.exit_code == 0
