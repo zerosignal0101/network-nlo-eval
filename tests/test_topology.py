@@ -51,3 +51,14 @@ def test_export_preserves_original_ids_and_physical_configuration() -> None:
 def test_optical_path_requires_two_nodes() -> None:
     with pytest.raises(ValueError, match="at least two"):
         make_topology().build_optical_path([0])
+
+
+def test_build_optical_path_preserves_order_and_link_configuration() -> None:
+    topology = make_topology()
+    path = topology.build_optical_path([0, 1, 2])
+    assert path.node_path == [0, 1, 2]
+    assert path.link_keys == [(0, 1), (1, 2)]
+    assert [fiber.length_km for fiber in path.fiber_configs] == [80, 100]
+    assert [edfa.noise_figure_db for edfa in path.edfa_configs] == [4, 5]
+    with pytest.raises(ValueError, match="non-adjacent"):
+        topology.build_optical_path([0, 2])

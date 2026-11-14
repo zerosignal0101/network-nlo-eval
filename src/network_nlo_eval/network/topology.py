@@ -9,7 +9,7 @@ from network_nlo_eval.core.types import LinkKey, NodeID, OriginalNodeID
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 
 if TYPE_CHECKING:
-    from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
+    from network_nlo_eval.models.base import MultiSpanOpticalPath
 
 
 class NetworkTopology:
@@ -162,7 +162,7 @@ class NetworkTopology:
         if len(path) < 2:
             msg = "An optical path must contain at least two nodes."
             raise ValueError(msg)
-        from network_nlo_eval.models import isrs_gn  # noqa: PLC0415
+        from network_nlo_eval.models import base  # noqa: PLC0415
 
         fiber_configs: list[FiberSpanConfig] = []
         edfa_configs: list[EDFAConfig] = []
@@ -178,7 +178,7 @@ class NetworkTopology:
             fiber_configs.append(self.get_fiber_config(u_idx, v_idx))
             edfa_configs.append(self.get_link_edfa_config(u_idx, v_idx))
             roadm_configs.append(self.get_roadm_config(v_idx))
-        return isrs_gn.MultiSpanOpticalPath(
+        return base.MultiSpanOpticalPath(
             fiber_configs=fiber_configs,
             edfa_configs=edfa_configs,
             roadm_configs=roadm_configs,
