@@ -1,0 +1,228 @@
+"""NetworkX topology management, node mapping, and link configuration."""
+
+import itertools
+from typing import TYPE_CHECKING, Any
+
+import networkx as nx
+
+from network_nlo_eval.core.types import LinkKey, NodeID, OriginalNodeID
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
+
+if TYPE_CHECKING:
+    from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
+
+
+class NetworkTopology:
+    """Manage node mappings and physical network configurations.
+
+    The internal representation assigns consecutive integer node IDs for
+    array operations; the underlying graph and exports use original IDs.
+
+    Parameters
+    ----------
+    network_raw : networkx.Graph
+        Original graph with node and edge attributes.
+    default_fiber_config : FiberSpanConfig
+        Default fiber configuration, overridden by edge attributes.
+    default_edfa_config : EDFAConfig
+        Default amplifier configuration, overridden by node or edge attributes.
+    default_roadm_config : ROADMConfig
+        Default ROADM configuration, overridden by node attributes.
+    """
+
+    def __init__(
+        self,
+        network_raw: nx.Graph,
+        default_fiber_config: FiberSpanConfig,
+        default_edfa_config: EDFAConfig,
+        default_roadm_config: ROADMConfig,
+    ):
+        """Initialize the node mapping and element configurations."""
+        self._network_raw = network_raw
+        self._node_id_to_idx: dict[OriginalNodeID, NodeID] = {}
+        self._idx_to_node_id: dict[NodeID, OriginalNodeID] = {}
+        self._fiber_configs: dict[LinkKey, FiberSpanConfig] = {}
+        self._link_edfa_configs: dict[LinkKey, EDFAConfig] = {}
+        self._edfa_configs: dict[NodeID, EDFAConfig] = {}
+        self._roadm_configs: dict[NodeID, ROADMConfig] = {}
+        self._adj_list: dict[NodeID, list[NodeID]] = {}
+
+        self._default_fiber_config = default_fiber_config
+        self._default_edfa_config = default_edfa_config
+        self._default_roadm_config = default_roadm_config
+
+        self._setup_node_mapping()
+        self._parse_links_and_nodes_configs()
+
+    def _setup_node_mapping(self) -> None:
+        """Map original node IDs to consecutive internal integers."""
+        for idx, original_id in enumerate(self._network_raw.nodes()):
+            self._node_id_to_idx[original_id] = idx
+            self._idx_to_node_id[idx] = original_id
+            self._adj_list[idx] = []  # Initialize the adjacency list.
+
+    def _parse_links_and_nodes_configs(self) -> None:
+        """Parse edge and node attributes into physical configurations."""
+        for u_orig, v_orig, data in self._network_raw.edges(data=True):
+            u_idx = self._node_id_to_idx[u_orig]
+            v_idx = self._node_id_to_idx[v_orig]
+            link_key = LinkKey(
+                (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
+            )  # Normalize the link key.
+
+            # Support nested physical settings and legacy edge weights as lengths.
+            fiber_overrides = dict(data.get("fiber", data.get("fiber_config", {})))
+            fiber_overrides.setdefault(
+                "length_km", data.get("length_km", data.get("weight", 100.0))
+            )
+            fiber_config = FiberSpanConfig.model_validate(
+                {**self._default_fiber_config.model_dump(), **fiber_overrides}
+            )
+            edfa_overrides = dict(data.get("edfa", data.get("edfa_config", {})))
+            link_edfa = EDFAConfig.model_validate(
+                {**self._default_edfa_config.model_dump(), **edfa_overrides}
+            )
+
+            self._fiber_configs[link_key] = fiber_config
+            self._link_edfa_configs[link_key] = link_edfa
+            self._adj_list[u_idx].append(v_idx)
+            self._adj_list[v_idx].append(u_idx)  # Undirected graph.
+
+        for original_id, data in self._network_raw.nodes(data=True):
+            node_idx = self._node_id_to_idx[original_id]
+            edfa_overrides = dict(data.get("edfa", data.get("edfa_config", {})))
+            roadm_overrides = dict(data.get("roadm", data.get("roadm_config", {})))
+            self._edfa_configs[node_idx] = EDFAConfig.model_validate(
+                {**self._default_edfa_config.model_dump(), **edfa_overrides}
+            )
+            self._roadm_configs[node_idx] = ROADMConfig.model_validate(
+                {**self._default_roadm_config.model_dump(), **roadm_overrides}
+            )
+
+    def get_internal_node_id(self, original_id: OriginalNodeID) -> NodeID:
+        """Return the internal ID of an original node."""
+        return self._node_id_to_idx[original_id]
+
+    def get_original_node_id(self, internal_id: NodeID) -> OriginalNodeID:
+        """Return the original ID of an internal node."""
+        return self._idx_to_node_id[internal_id]
+
+    def get_internal_node_count(self) -> int:
+        """Return the number of internal nodes."""
+        return len(self._node_id_to_idx)
+
+    def get_fiber_config(self, u_idx: NodeID, v_idx: NodeID) -> FiberSpanConfig:
+        """Return the fiber configuration for a link."""
+        link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+        return self._fiber_configs[link_key]
+
+    def get_edfa_config(self, node_idx: NodeID) -> EDFAConfig:
+        """Return the EDFA configuration for a node."""
+        return self._edfa_configs[node_idx]
+
+    def get_link_edfa_config(self, u_idx: NodeID, v_idx: NodeID) -> EDFAConfig:
+        """Return the amplifier configuration for a link."""
+        link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+        return self._link_edfa_configs[link_key]
+
+    def get_roadm_config(self, node_idx: NodeID) -> ROADMConfig:
+        """Return the ROADM configuration for a node."""
+        return self._roadm_configs[node_idx]
+
+    def get_adjacency_list(self) -> dict[NodeID, list[NodeID]]:
+        """Return the adjacency list indexed by internal node IDs."""
+        return self._adj_list
+
+    def get_all_internal_nodes(self) -> list[NodeID]:
+        """Return all internal node IDs."""
+        return list(self._idx_to_node_id.keys())
+
+    def get_all_internal_links(self) -> list[LinkKey]:
+        """Return the normalized keys of all internal links."""
+        return list(self._fiber_configs.keys())
+
+    def get_network_graph(self) -> nx.Graph:
+        """Return the underlying NetworkX graph for read-only path computations."""
+        return self._network_raw
+
+    def get_default_fiber_config(self) -> FiberSpanConfig:
+        """Return the default fiber configuration."""
+        return self._default_fiber_config
+
+    def get_default_edfa_config(self) -> EDFAConfig:
+        """Return the default EDFA configuration."""
+        return self._default_edfa_config
+
+    def get_default_roadm_config(self) -> ROADMConfig:
+        """Return the default ROADM configuration."""
+        return self._default_roadm_config
+
+    def build_optical_path(self, path: list[NodeID]) -> "MultiSpanOpticalPath":
+        """Convert internal node IDs to an ordered physical optical path."""
+        if len(path) < 2:
+            msg = "An optical path must contain at least two nodes."
+            raise ValueError(msg)
+        from network_nlo_eval.models import isrs_gn  # noqa: PLC0415
+
+        fiber_configs: list[FiberSpanConfig] = []
+        edfa_configs: list[EDFAConfig] = []
+        roadm_configs: list[ROADMConfig] = []
+        link_keys: list[LinkKey] = []
+        # The shifted sequence intentionally has one fewer element.
+        for u_idx, v_idx in itertools.pairwise(path):
+            link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+            if link_key not in self._fiber_configs:
+                msg = f"Path contains non-adjacent nodes: {u_idx}, {v_idx}."
+                raise ValueError(msg)
+            link_keys.append(link_key)
+            fiber_configs.append(self.get_fiber_config(u_idx, v_idx))
+            edfa_configs.append(self.get_link_edfa_config(u_idx, v_idx))
+            roadm_configs.append(self.get_roadm_config(v_idx))
+        return isrs_gn.MultiSpanOpticalPath(
+            fiber_configs=fiber_configs,
+            edfa_configs=edfa_configs,
+            roadm_configs=roadm_configs,
+            link_keys=link_keys,
+            node_path=path.copy(),
+        )
+
+    def export_to_dict(self) -> dict[str, Any]:
+        """Export the topology as a dictionary for visualization or storage."""
+        exported_nodes = []
+        for original_node_id, data in self._network_raw.nodes(data=True):
+            pos = data.get("pos")
+            x, y = pos or (data.get("x", 0.0), data.get("y", 0.0))
+            node_idx = self._node_id_to_idx[original_node_id]
+            exported_nodes.append(
+                {
+                    "id": int(original_node_id),
+                    "name": str(original_node_id),
+                    "position": {"x": float(x), "y": float(y)},
+                    "edfa": self.get_edfa_config(node_idx).model_dump(mode="json"),
+                    "roadm": self.get_roadm_config(node_idx).model_dump(mode="json"),
+                }
+            )
+
+        exported_connections = []
+        connection_id_counter = itertools.count()
+        for u, v, _ in self._network_raw.edges(data=True):
+            u_idx = self._node_id_to_idx[u]
+            v_idx = self._node_id_to_idx[v]
+            fiber = self.get_fiber_config(u_idx, v_idx)
+            exported_connections.append(
+                {
+                    "id": next(connection_id_counter),
+                    "from_node": int(u),
+                    "to_node": int(v),
+                    "length_km": fiber.length_km,
+                    "fiber": fiber.model_dump(mode="json"),
+                    "edfa": self.get_link_edfa_config(u_idx, v_idx).model_dump(
+                        mode="json"
+                    ),
+                }
+            )
+
+        return {
+            "nodes": {node["id"]: node for node in exported_nodes},
+            "connections": {conn["id"]: conn for conn in exported_connections},
+        }
