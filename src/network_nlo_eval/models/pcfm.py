@@ -3838,7 +3838,7 @@ class PCFMSpanKernel:
         """Return the plan-level overlap metrics of the XCI rows (read only).
 
         The closed-form XCI kernel of Eq. (24) is derived for two *disjoint*
-        rectangular spectra.  The true disjointness condition is
+        rectangular spectra. The non-overlap condition is
 
         .. code-block:: text
 
