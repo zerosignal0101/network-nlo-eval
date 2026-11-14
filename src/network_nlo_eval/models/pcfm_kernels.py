@@ -106,7 +106,7 @@ SCI_X_SERIES_SWITCH: float = 2.0
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _isrs_coefficient_matrix_jit(f_desc_hz: NDArrayFloat) -> NDArrayFloat:
     r"""Build the linear coupling matrix of the coupled ISRS power equations.
 
@@ -161,7 +161,7 @@ def _isrs_coefficient_matrix_jit(f_desc_hz: NDArrayFloat) -> NDArrayFloat:
     return mat
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _solve_spp_jit(
     coef_mat: NDArrayFloat,
     alpha_npm: NDArrayFloat,
@@ -250,7 +250,7 @@ def _solve_spp_jit(
         power_out_w[i] = power[i]
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _rhs_mat_jit(
     coef_mat: NDArrayFloat,
     power_w: NDArrayFloat,
@@ -269,7 +269,7 @@ def _rhs_mat_jit(
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _j_single_jit(x: float, c_const: float) -> float:
     """``J(X) = int_0^X Si(t)/t dt`` for a single argument."""
     if x == 0.0:
@@ -295,10 +295,10 @@ def _j_single_jit(x: float, c_const: float) -> float:
     sign = 1.0 if x > 0.0 else -1.0
     a = abs(x)
     tail = _j_tail_jit(a)
-    return sign * ((0.5 * np.pi) * np.log(a) + c_const - tail)
+    return float(sign * ((0.5 * np.pi) * np.log(a) + c_const - tail))
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _j_tail_jit(x: float) -> float:
     """``int_x^inf [Si(t) - pi/2]/t dt`` via the asymptotic expansion.
 
@@ -337,7 +337,7 @@ def _j_tail_jit(x: float) -> float:
     return -total
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _j_batch_jit(x: NDArrayFloat, c_const: float) -> NDArrayFloat:
     """Vectorised :func:`_j_single_jit`."""
     out = np.empty(x.shape[0], dtype=np.float64)
@@ -465,7 +465,7 @@ def _sci_small_x_coefficients(m_max: int, n_terms: int = 0) -> NDArrayFloat:
     )
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _sci_kernel_batch_jit(
     r_coef: NDArrayFloat,
     x_all: NDArrayFloat,
@@ -604,7 +604,7 @@ def _sci_kernel_batch_jit(
         out[ch] = (4.0 * length_m) / (4.0 * np.pi**2 * beta2_all[ch]) * total
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _profile_energy_jit(q_all: NDArrayFloat) -> NDArrayFloat:
     """Profile energy ``int_0^L p(z)^2 dz`` of every channel.
 
