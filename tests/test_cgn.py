@@ -1,13 +1,18 @@
 """Correlation GN physical integrals, sparse grids and coherent accumulation."""
 
+from typing import cast
+
 import numpy as np
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
 from network_nlo_eval.models.cgn import (
+    CGNModel,
     CGNSpanKernel,
+    _island_core,
     _isrs_nsp_energy_spectrum,
+    _mci_core,
     _nsp_energy_spectrum,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
@@ -71,9 +76,9 @@ def test_sparse_isrs_cache_and_multispan_coherence(monkeypatch) -> None:
     grid = SpectrumGrid(5, 50e9, 193.1e12)
     fiber = FiberSpanConfig(length_km=20)
     options = {"correlation_points": 12, "band_points": 3, "isrs_segments": 4}
-    model = create_model("cgn", grid, fiber, 32e9, **options)
-    power = np.array([1e-3, 0, 0.8e-3, 0, 1.2e-3])
-    kernel = model.kernel_for(fiber)
+    model = cast("CGNModel", create_model("cgn", grid, fiber, 32e9, **options))
+    power = np.array([1e-3, 0, 0.8e-3, 0, 1.2e-3], dtype=np.float64)
+    kernel = cast("CGNSpanKernel", model.kernel_for(fiber))
     sparse = kernel.evaluate(power, 20e3)
     kernel.evaluate(2 * power, 20e3)
     repeated = kernel.evaluate(power, 20e3)
@@ -81,24 +86,54 @@ def test_sparse_isrs_cache_and_multispan_coherence(monkeypatch) -> None:
         np.testing.assert_array_equal(getattr(sparse, field), getattr(repeated, field))
     with monkeypatch.context() as patch:
         patch.setattr(CGNSpanKernel, "_subset_view", lambda self, _act: self._full_view)
-        dense = (
-            create_model("cgn", grid, fiber, 32e9, **options)
-            .kernel_for(fiber)
-            .evaluate(power, 20e3)
+        dense_model = cast(
+            "CGNModel", create_model("cgn", grid, fiber, 32e9, **options)
         )
+        dense = dense_model.kernel_for(fiber).evaluate(power, 20e3)
     for field in ("power_out_w", "spm_noise_w", "xpm_noise_w"):
         np.testing.assert_allclose(
             getattr(sparse, field), getattr(dense, field), rtol=1e-12, atol=0
         )
     # Uniform amplification without ISRS gives identical launch powers per span.
-    coherent = create_model(
-        "cgn", grid, fiber, 32e9, correlation_points=12, include_isrs=False
+    coherent = cast(
+        "CGNModel",
+        create_model(
+            "cgn", grid, fiber, 32e9, correlation_points=12, include_isrs=False
+        ),
     )
     coherent_power = np.full(5, 1e-3)
     path = MultiSpanOpticalPath([fiber] * 2, [EDFAConfig()] * 2)
     result = coherent.evaluate_path(path, coherent_power)
-    link_sci, link_xci = coherent.kernel_for(fiber).link_nli(coherent_power, 20e3, 2)
+    coherent_kernel = cast("CGNSpanKernel", coherent.kernel_for(fiber))
+    link_sci, link_xci = coherent_kernel.link_nli(coherent_power, 20e3, 2)
     np.testing.assert_allclose(result.spm_noise_w, link_sci, rtol=1e-9, atol=0)
     np.testing.assert_allclose(result.xpm_noise_w, link_xci, rtol=1e-9, atol=0)
     with pytest.raises(ValueError, match="egn"):
         create_model("cgn", grid, fiber, egn=True)
+
+
+@pytest.mark.parametrize("integrator", [_island_core, _mci_core])
+def test_isrs_integrators_require_segment_positions(integrator) -> None:
+    """ISRS profiles need segment positions to form their spatial integral."""
+    common = {
+        "f_abs_hz": np.array([193.1e12]),
+        "b_hz": np.array([32e9]),
+        "alpha_npm": np.array([4e-5]),
+        "gamma_w_m": np.array([1e-3]),
+        "beta2_s2_m": -2e-26,
+        "beta3_s3_m": 0.0,
+        "dispersion_convention": "repo",
+        "nsp_convention": "gn",
+        "length_m": 80e3,
+        "correlation_points": 4,
+        "island_cells": 1,
+        "n_coherent_spans": 1,
+        "isrs_gain": np.ones((1, 1)),
+        "isrs_rate": np.ones(1),
+    }
+    if integrator is _island_core:
+        common["r_index"] = np.zeros((1, 1, 1), dtype=np.int64)
+    else:
+        common["mci_index"] = np.zeros((1, 1, 3), dtype=np.int64)
+    with pytest.raises(ValueError, match="segment positions"):
+        integrator(**common)

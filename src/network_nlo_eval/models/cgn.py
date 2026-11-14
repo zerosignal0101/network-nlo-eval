@@ -171,12 +171,12 @@ CGN_MODEL_INFO = ModelInfo(
 # Fused kernels preserve the NumPy 1.26 complex arithmetic operation order.
 
 
-@_nb_intrinsic
-def _fma(typingctx, a, b, c):  # noqa: ARG001
+@_nb_intrinsic  # type: ignore[untyped-decorator]
+def _fma(typingctx: Any, a: Any, b: Any, c: Any) -> Any:  # noqa: ARG001
     """Emit LLVM's correctly rounded fused multiply-add intrinsic."""
     sig = _nb_types.float64(_nb_types.float64, _nb_types.float64, _nb_types.float64)
 
-    def codegen(context, builder, sig, args):  # noqa: ARG001
+    def codegen(context: Any, builder: Any, sig: Any, args: Any) -> Any:  # noqa: ARG001
         module = builder.module
         function = module.declare_intrinsic(
             "llvm.fma", [_ll_ir.DoubleType(), _ll_ir.DoubleType(), _ll_ir.DoubleType()]
@@ -186,8 +186,10 @@ def _fma(typingctx, a, b, c):  # noqa: ARG001
     return sig, codegen
 
 
-@njit(cache=True, nogil=True)
-def _complex_multiply(ar, ai, br, bi):
+@njit(cache=True, nogil=True)  # type: ignore[untyped-decorator]
+def _complex_multiply(
+    ar: float, ai: float, br: float, bi: float
+) -> tuple[float, float]:
     """Multiply complex scalars using the NumPy 1.26 SIMD FMA order.
 
     The explicit operation order preserves the fused kernel's rounding behavior."""
@@ -196,8 +198,8 @@ def _complex_multiply(ar, ai, br, bi):
     return _fma(ar, br, -cross), _fma(ar, bi, cross2)
 
 
-@njit(cache=True, nogil=True)
-def _np_maximum(a, b):
+@njit(cache=True, nogil=True)  # type: ignore[untyped-decorator]
+def _np_maximum(a: float, b: float) -> float:
     """Return the scalar maximum with NumPy's NaN propagation semantics."""
     if a != a:  # noqa: PLR0124
         return a
@@ -207,8 +209,8 @@ def _np_maximum(a, b):
     return a if a > b else b  # noqa: FURB136
 
 
-@njit(cache=True, nogil=True)
-def _np_minimum(a, b):
+@njit(cache=True, nogil=True)  # type: ignore[untyped-decorator]
+def _np_minimum(a: float, b: float) -> float:
     """Return the scalar minimum with NumPy's NaN propagation semantics."""
     if a != a:  # noqa: PLR0124
         return a
@@ -218,32 +220,32 @@ def _np_minimum(a, b):
     return a if a < b else b  # noqa: FURB136
 
 
-@njit(cache=True, nogil=True)
-def _square(value):
+@njit(cache=True, nogil=True)  # type: ignore[untyped-decorator]
+def _square(value: float) -> float:
     """Square by multiplication, matching NumPy array exponentiation by two."""
     return value * value
 
 
-@njit(cache=True, nogil=True)
+@njit(cache=True, nogil=True)  # type: ignore[untyped-decorator]
 def _fused_integrand_isrs(
-    out,
-    alpha_x,
-    residual,
-    magnitude,
-    expm1_neg,
-    beta2_eff,
-    xi_min,
-    xi_span,
-    uu,
-    wq,
-    a_b,
-    b_b,
-    c_d,
-    d_d,
-    gamma2,
-    decay,
-    four_pi2,
-):
+    out: NDArrayFloat,
+    alpha_x: NDArrayFloat,
+    residual: NDArrayFloat,
+    magnitude: NDArrayFloat,
+    expm1_neg: NDArrayFloat,
+    beta2_eff: NDArrayFloat,
+    xi_min: NDArrayFloat,
+    xi_span: NDArrayFloat,
+    uu: NDArrayFloat,
+    wq: NDArrayFloat,
+    a_b: NDArrayFloat,
+    b_b: NDArrayFloat,
+    c_d: NDArrayFloat,
+    d_d: NDArrayFloat,
+    gamma2: NDArrayFloat,
+    decay: float,
+    four_pi2: float,
+) -> NDArrayFloat:
     """Evaluate the ISRS spectrum, rectangle and quadrature weights in one pass.
 
     The output has shape ``(CUT, second, third, cells, points)``. The NSP
@@ -322,23 +324,23 @@ def _fused_integrand_isrs(
     return out
 
 
-@njit(cache=True, nogil=True)
+@njit(cache=True, nogil=True)  # type: ignore[untyped-decorator]
 def _fused_integrand_plain(
-    out,
-    alpha_x,
-    length_m,
-    beta2_eff,
-    xi_min,
-    xi_span,
-    uu,
-    wq,
-    a_b,
-    b_b,
-    c_d,
-    d_d,
-    gamma2,
-    four_pi2,
-):
+    out: NDArrayFloat,
+    alpha_x: NDArrayFloat,
+    length_m: float,
+    beta2_eff: NDArrayFloat,
+    xi_min: NDArrayFloat,
+    xi_span: NDArrayFloat,
+    uu: NDArrayFloat,
+    wq: NDArrayFloat,
+    a_b: NDArrayFloat,
+    b_b: NDArrayFloat,
+    c_d: NDArrayFloat,
+    d_d: NDArrayFloat,
+    gamma2: NDArrayFloat,
+    four_pi2: float,
+) -> NDArrayFloat:
     """Evaluate the attenuation-only spectrum and quadrature weights in one pass.
 
     The output has shape ``(CUT, second, third, cells, points)``."""
@@ -512,7 +514,10 @@ def _nsp_energy_spectrum(
     decay = np.exp(-alpha_x * length_m)
     numerator = 1.0 - 2.0 * decay * np.cos(omega * length_m) + decay * decay
     denominator = alpha_x * alpha_x + omega * omega
-    return np.asarray(gamma_w_m, dtype=np.float64) ** 2 * numerator / denominator
+    return cast(
+        "NDArrayFloat",
+        np.asarray(gamma_w_m, dtype=np.float64) ** 2 * numerator / denominator,
+    )
 
 
 def _isrs_span_profile(
@@ -607,7 +612,7 @@ def _isrs_nsp_energy_spectrum(
     segment = one_minus_w / (alpha_x - 1j * omega)
     amplitude = segment * accumulator
     gamma = np.asarray(gamma_w_m, dtype=np.float64)
-    return gamma**2 * (amplitude.real**2 + amplitude.imag**2)
+    return cast("NDArrayFloat", gamma**2 * (amplitude.real**2 + amplitude.imag**2))
 
 
 def _rectangle_weight(
@@ -625,7 +630,7 @@ def _rectangle_weight(
     eta_max = np.minimum(np.asarray(b), xi / c_safe)
     log_min = np.log(np.maximum(eta_min, 1e-300))
     log_max = np.log(np.maximum(eta_max, 1e-300))
-    return np.maximum(log_max - log_min, 0.0)
+    return cast("NDArrayFloat", np.maximum(log_max - log_min, 0.0))
 
 
 def _dirichlet_weight(theta: NDArrayFloat, n_spans: int) -> NDArrayFloat:
@@ -721,7 +726,7 @@ def _band_quadrature(n_points: int) -> tuple[tuple[float, float], ...]:
     if n_points < 2:
         msg = f"band_points must be >= 2, got {n_points}."
         raise ValueError(msg)
-    nodes, weights = np.polynomial.legendre.leggauss(int(n_points))
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_points))  # type: ignore[no-untyped-call]
     return tuple(
         (float(node), float(weight))
         for node, weight in zip(nodes, weights, strict=True)
@@ -889,9 +894,16 @@ def _island_core(
     alpha_x = _stimulus_attenuation(alpha_npm, second, third, convention=nsp_convention)
 
     use_isrs = isrs_gain is not None and isrs_rate is not None
+    if use_isrs and isrs_z_mid is None:
+        msg = "ISRS segment positions are required with gain and rate profiles."
+        raise ValueError(msg)
+    # The three arrays are only accessed when use_isrs is true.
+    gain_profile = cast("NDArrayFloat", isrs_gain)
+    rate_profile = cast("NDArrayFloat", isrs_rate)
+    segment_positions = cast("NDArrayFloat", isrs_z_mid)
     if use_isrs:
         scale = 0.5 if nsp_convention == "gn" else 1.0
-        alpha_x = alpha_x + scale * (isrs_rate[second] + isrs_rate[third])
+        alpha_x = alpha_x + scale * (rate_profile[second] + rate_profile[third])
 
     per_c = max(1, n_ch * n_slots * island_cells * max(correlation_points, 1))
     chunk = max(1, min(n_ch, int(_CHUNK_BYTES // (per_c * 8))))
@@ -939,15 +951,17 @@ def _island_core(
         expm1_neg = None
         if use_isrs:
             residual = np.empty(
-                (stop - start, n_ch, n_slots, isrs_gain.shape[0]), dtype=np.float64
+                (stop - start, n_ch, n_slots, gain_profile.shape[0]), dtype=np.float64
             )
             third_chunk = third[idx]
-            rate_second = isrs_rate[second[idx]]
-            for seg in range(isrs_gain.shape[0]):
-                gain_seg = isrs_gain[seg]
+            rate_second = rate_profile[second[idx]]
+            for seg in range(gain_profile.shape[0]):
+                gain_seg = gain_profile[seg]
                 residual[..., seg] = (
                     gain_seg[None, :, None] * gain_seg[third_chunk]
-                ) * np.exp((rate_second + isrs_rate[third_chunk]) * isrs_z_mid[seg])
+                ) * np.exp(
+                    (rate_second + rate_profile[third_chunk]) * segment_positions[seg]
+                )
             residual_view = residual
             decay = float(isrs_seg_length_m)
             exponent = alpha_c * decay
@@ -1012,6 +1026,11 @@ def _island_core(
                 xi_end = np.maximum(xi_cut, xi_min)
 
                 if compact_live:
+                    assert row_gamma is not None
+                    assert row_second is not None
+                    assert row_third is not None
+                    assert compact_buf is not None
+                    assert weighted_buf is not None
                     xi_span = xi_end - xi_min
                     span_rows = xi_span.reshape(n_rows, island_cells)
                     live_rows, live_cells = np.nonzero(span_rows > 0.0)
@@ -1073,15 +1092,18 @@ def _island_core(
                             second_live = row_second[live_rows]
                             third_live = row_third[live_rows]
                             residual_live = np.empty(
-                                (n_live, 1, 1, isrs_gain.shape[0]), dtype=np.float64
+                                (n_live, 1, 1, gain_profile.shape[0]), dtype=np.float64
                             )
-                            for seg in range(isrs_gain.shape[0]):
-                                gain_seg = isrs_gain[seg]
+                            for seg in range(gain_profile.shape[0]):
+                                gain_seg = gain_profile[seg]
                                 residual_live[:, 0, 0, seg] = (
                                     gain_seg[second_live] * gain_seg[third_live]
                                 ) * np.exp(
-                                    (isrs_rate[second_live] + isrs_rate[third_live])
-                                    * isrs_z_mid[seg]
+                                    (
+                                        rate_profile[second_live]
+                                        + rate_profile[third_live]
+                                    )
+                                    * segment_positions[seg]
                                 )
                             magnitude_live = np.exp(-alpha_live * decay)
                             expm1_live = np.expm1(-alpha_live * decay)
@@ -1170,6 +1192,7 @@ def _island_core(
                                 weighted, axis=(-2, -1)
                             )
                         elif n_live:
+                            assert dirichlet_values is not None
                             weighted = np.where(
                                 np.isfinite(dirichlet_values), dirichlet_values, 0.0
                             )
@@ -1375,8 +1398,8 @@ def _mci_stimulus_attenuation(
         - np.asarray(cut_alpha)
     )
     if convention == "gn":
-        return 0.5 * total
-    return total
+        return cast("NDArrayFloat", 0.5 * total)
+    return cast("NDArrayFloat", total)
 
 
 def _mci_core(
@@ -1420,6 +1443,13 @@ def _mci_core(
 
     half = 0.5 * np.asarray(b_hz, dtype=np.float64)
     use_isrs = isrs_gain is not None and isrs_rate is not None
+    if use_isrs and isrs_z_mid is None:
+        msg = "ISRS segment positions are required with gain and rate profiles."
+        raise ValueError(msg)
+    # The three arrays are only accessed when use_isrs is true.
+    gain_profile = cast("NDArrayFloat", isrs_gain)
+    rate_profile = cast("NDArrayFloat", isrs_rate)
+    segment_positions = cast("NDArrayFloat", isrs_z_mid)
 
     integrate_band = int(band_points) > 1
     band_nodes = _band_quadrature(int(band_points)) if integrate_band else ((0.0, 1.0),)
@@ -1467,19 +1497,23 @@ def _mci_core(
         if use_isrs:
             scale = 0.5 if nsp_convention == "gn" else 1.0
             alpha_x = alpha_x + scale * (
-                isrs_rate[first]
-                + isrs_rate[second]
-                + isrs_rate[third]
-                - np.repeat(isrs_rate[idx], n_slots)
+                rate_profile[first]
+                + rate_profile[second]
+                + rate_profile[third]
+                - np.repeat(rate_profile[idx], n_slots)
             )
-            residual = np.empty((flat, 1, 1, isrs_gain.shape[0]), dtype=np.float64)
-            for seg in range(isrs_gain.shape[0]):
-                gain_seg = isrs_gain[seg]
+            residual = np.empty((flat, 1, 1, gain_profile.shape[0]), dtype=np.float64)
+            for seg in range(gain_profile.shape[0]):
+                gain_seg = gain_profile[seg]
                 residual[..., seg] = (
                     (gain_seg[first] * gain_seg[second] * gain_seg[third])
                     * np.exp(
-                        (isrs_rate[first] + isrs_rate[second] + isrs_rate[third])
-                        * isrs_z_mid[seg]
+                        (
+                            rate_profile[first]
+                            + rate_profile[second]
+                            + rate_profile[third]
+                        )
+                        * segment_positions[seg]
                     )
                 ).reshape(flat, 1, 1)
             residual_view = residual
@@ -1572,6 +1606,9 @@ def _mci_core(
                 band_live = band_scale.reshape(flat)[live_rows]
                 out = integrand[:n_live]
                 if use_isrs:
+                    assert residual_view is not None
+                    assert magnitude is not None
+                    assert expm1_neg is not None
                     _fused_integrand_isrs(
                         out,
                         alpha_flat,
@@ -1674,8 +1711,8 @@ def _mci_from_core(
     )
     total = (16.0 / 27.0) * values.sum(axis=1)
     if apply_bandwidth:
-        return total * b_hz
-    return total
+        return cast("NDArrayFloat", total * b_hz)
+    return cast("NDArrayFloat", total)
 
 
 @dataclass(frozen=True)
@@ -1973,15 +2010,18 @@ class CGNSpanKernel:
                 DELTA_F_CO_HZ,
                 total_w,
             )
-            return _calc_span_out_power_jit(
-                np.ascontiguousarray(power, dtype=np.float64),
-                self.f_rel_hz,
-                np.ascontiguousarray(self.alpha_npm, dtype=np.float64),
-                length,
-                np.ascontiguousarray(r_f, dtype=np.float64),
-                float(self.k_bar),
+            return cast(
+                "NDArrayFloat",
+                _calc_span_out_power_jit(
+                    np.ascontiguousarray(power, dtype=np.float64),
+                    self.f_rel_hz,
+                    np.ascontiguousarray(self.alpha_npm, dtype=np.float64),
+                    length,
+                    np.ascontiguousarray(r_f, dtype=np.float64),
+                    float(self.k_bar),
+                ),
             )
-        return power * np.exp(-self.alpha_npm * length)
+        return cast("NDArrayFloat", power * np.exp(-self.alpha_npm * length))
 
     def _span_output_power_view(
         self,
@@ -2000,15 +2040,18 @@ class CGNSpanKernel:
                 DELTA_F_CO_HZ,
                 total_w,
             )
-            return _calc_span_out_power_jit(
-                np.ascontiguousarray(power, dtype=np.float64),
-                view.f_rel_hz,
-                np.ascontiguousarray(view.alpha_npm, dtype=np.float64),
-                length,
-                np.ascontiguousarray(r_f, dtype=np.float64),
-                float(self.k_bar),
+            return cast(
+                "NDArrayFloat",
+                _calc_span_out_power_jit(
+                    np.ascontiguousarray(power, dtype=np.float64),
+                    view.f_rel_hz,
+                    np.ascontiguousarray(view.alpha_npm, dtype=np.float64),
+                    length,
+                    np.ascontiguousarray(r_f, dtype=np.float64),
+                    float(self.k_bar),
+                ),
             )
-        return power * np.exp(-view.alpha_npm * length)
+        return cast("NDArrayFloat", power * np.exp(-view.alpha_npm * length))
 
     def _core_matrix(
         self,
@@ -2325,7 +2368,7 @@ class CGNSpanKernel:
         entry = self._core_for(power, span_length_m, self.n_coherent_spans)
         view = entry.view
         active = power > 0.0
-        if view is not None and view.sparse:
+        if view.sparse:
             act = view.act
             power_out = np.zeros(self.n_nodes, dtype=np.float64)
             power_out[act] = self._span_output_power_view(
@@ -2348,7 +2391,7 @@ class CGNSpanKernel:
             view.b_hz,
             self.band_points == 1,
         )
-        if view is not None and view.sparse:
+        if view.sparse:
             spm_noise = np.zeros(self.n_nodes, dtype=np.float64)
             xpm_noise = np.zeros(self.n_nodes, dtype=np.float64)
             spm_noise[view.act] = spm_view
@@ -2371,7 +2414,7 @@ class CGNSpanKernel:
             )
 
         scale = span_context.cumulative_length_m / float(span_length_m)
-        if view is not None and view.sparse:
+        if view.sparse:
             phase_spm = np.zeros(self.n_nodes, dtype=np.float64)
             phase_xpm = np.zeros(self.n_nodes, dtype=np.float64)
             phase_spm[view.act] = entry.ramp_spm * scale
