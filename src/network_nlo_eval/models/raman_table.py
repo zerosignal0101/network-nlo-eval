@@ -221,10 +221,11 @@ class RamanGainTable:
         if self.format != RAMAN_GAIN_TABLE_FORMAT:
             msg = f"format must be {RAMAN_GAIN_TABLE_FORMAT!r}, got {self.format!r}."
             raise ValueError(msg)
+        version: object = self.version
         if (
-            isinstance(self.version, bool)
-            or not isinstance(self.version, int)
-            or self.version != RAMAN_GAIN_TABLE_VERSION
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != RAMAN_GAIN_TABLE_VERSION
         ):
             msg = f"version must be the integer {RAMAN_GAIN_TABLE_VERSION}, got {self.version!r}."
             raise ValueError(msg)
@@ -484,7 +485,7 @@ def save_raman_gain_table(table: RamanGainTable, path: str | Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _freeze_units(units: Mapping[str, str]) -> Mapping[str, str]:
+def _freeze_units(units: object) -> Mapping[str, str]:
     """Validate and freeze the unit mapping.
 
     Parameters
