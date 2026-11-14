@@ -33,7 +33,7 @@ try:
     from numba import njit
 except ImportError:  # Keep statistical models usable without JIT.
 
-    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:  # type: ignore[misc, no-redef]
+    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:
         """Return an identity decorator when optional Numba is unavailable."""
         del args, kwargs
 
@@ -74,7 +74,7 @@ class P1XpmMatrices:
         return int(self.g1.shape[0])
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def build_p1_xpm_pair_matrices(
     n_ch: int,
     b_hz_channels: NDArrayFloat,
@@ -147,7 +147,7 @@ def build_p1_xpm_pair_matrices(
     return g1, g2, phi_raw, gamma_mat
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _p1_span_pre_nli_batch_jit(
     p_in: NDArrayFloat,
     span_length_m: float,
@@ -251,7 +251,7 @@ def _p1_span_pre_nli_batch_jit(
     return p_out, r_f, t_factors, l_eff_m
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _p1_xpm_weights_jit(
     n_ch: int,
     n_batch: int,
@@ -319,7 +319,7 @@ def _p1_xpm_weights_jit(
     return w1, w2, safe
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _p1_spm_jit(
     n_ch: int,
     n_batch: int,
@@ -371,7 +371,7 @@ def _p1_spm_jit(
     return out
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _p1_xpm_clamp_correction_jit(
     n_ch: int,
     n_batch: int,
