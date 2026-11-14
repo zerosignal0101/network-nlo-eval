@@ -28,7 +28,7 @@ def test_span_matches_reference_with_coherent_amplitudes() -> None:
         80e3,
         span_context=SpanContext(1, 2, 80e3, 80e3),
     )
-    reference = {
+    reference: dict[str, list[float | complex]] = {
         "power_out_w": [
             2.5121106585461745e-05,
             5.0237002232318273e-05,
@@ -57,6 +57,7 @@ def test_span_matches_reference_with_coherent_amplitudes() -> None:
     }
     for name, expected in reference.items():
         np.testing.assert_allclose(getattr(result, name), expected, rtol=1e-11, atol=0)
+    assert result.fwm_noise_w is not None
     np.testing.assert_array_equal(result.fwm_noise_w, 0)
 
 
