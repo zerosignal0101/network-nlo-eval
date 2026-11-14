@@ -37,6 +37,7 @@ def test_exact_aggregation_and_multispan_amplitudes() -> None:
     grid = SpectrumGrid(4, 50e9, 193.1e12)
     fiber = FiberSpanConfig(length_km=20)
     power = np.full(4, 1e-3)
+
     def make_model(n_bands: int) -> Damico2022Model:
         model = create_model("damico2022", grid, fiber, 32e9, n_bands=n_bands)
         assert isinstance(model, Damico2022Model)
