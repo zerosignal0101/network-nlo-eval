@@ -702,7 +702,7 @@ class RamanGainModel:
             out=np.ones_like(weight),
             where=weight > 0,
         )
-        cumulative = cumulative_trapezoid(rate_total, z_m, axis=1, initial=0.0)
+        cumulative = cumulative_trapezoid(rate_total, z_m, axis=1, initial=0)
         tail = cumulative[:, -1:] - cumulative
         integrand = (
             rate_source
