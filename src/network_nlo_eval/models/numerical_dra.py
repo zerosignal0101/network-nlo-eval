@@ -26,7 +26,7 @@ Stimulated Raman Scattering", JLT, 2018.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -44,7 +44,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from network_nlo_eval.core.types import NDArrayFloat
-    from network_nlo_eval.models.raman_ode import PaperRamanSpanResult
     from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
 __all__ = [
@@ -961,7 +960,7 @@ def _coherence_scale(alpha_npm: float, dispersion: float, width_hz: float) -> fl
     return float(np.clip(scale, 1.0, max(float(width_hz), 1.0)))
 
 
-class NumericalDRAKernel(DRASpanKernelBase):
+class NumericalDRAKernel(DRASpanKernelBase[ODESpanProfile]):
     """Numerical Raman span kernel using DOP853 and double NLI integration.
 
     Parameters
@@ -1009,14 +1008,14 @@ class NumericalDRAKernel(DRASpanKernelBase):
         self._n_spm_y = int(n_spm_y)
         self._xpm_phase_limit = float(xpm_phase_limit)
         self._result_cache: dict[
-            tuple[int, bytes], tuple[PaperRamanSpanResult, NDArrayFloat, NDArrayFloat]
+            tuple[int, bytes], tuple[NumericalDRASpanResult, NDArrayFloat, NDArrayFloat]
         ] = {}
         self._nli_cache: dict[tuple[int, bytes], tuple[NDArrayFloat, NDArrayFloat]] = {}
 
     def _solver_for(self, span_length_m: float) -> NumericalDRASpanSolver:
         """Return a DOP853 solver cached by span length."""
         key = round(span_length_m * 1e6)
-        solver = self._solver_cache.get(key)
+        solver = cast("NumericalDRASpanSolver | None", self._solver_cache.get(key))
         if solver is None:
             solver = NumericalDRASpanSolver(
                 self.f_abs_hz,
@@ -1055,7 +1054,7 @@ class NumericalDRAKernel(DRASpanKernelBase):
     def _nli_span(
         self,
         power_internal: NDArrayFloat,
-        profile: ODESpanProfile,  # type: ignore[override]
+        profile: ODESpanProfile,
         span_context: object | None,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Compute per-span SPM and XPM using numerical double integration."""

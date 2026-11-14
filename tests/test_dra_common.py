@@ -5,6 +5,7 @@ import pytest
 from scipy.integrate import quad
 
 from network_nlo_eval.models.dra_common import (
+    BugliaProfile,
     DRASpanKernelBase,
     average_link_squared,
     fit_buglia_profile,
@@ -56,7 +57,7 @@ def test_profile_fits_and_link_integral() -> None:
         ) == pytest.approx(abs(zero) ** 2)
 
 
-class BugliaKernel(DRASpanKernelBase):
+class BugliaKernel(DRASpanKernelBase[BugliaProfile]):
     def _fit_profile(self, profile_norm, span_length_m):
         return fit_buglia_profile(
             profile_norm,

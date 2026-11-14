@@ -73,7 +73,7 @@ __all__ = [
 NLI_FORMS: tuple[str, ...] = ("paper", "integral", "pcfm")
 
 
-class HybridRamanPaperSpanKernel(DRASpanKernelBase):
+class HybridRamanPaperSpanKernel(DRASpanKernelBase[BugliaClosedProfile]):
     """Hybrid Raman span kernel using the paper's closed-form SPM and XPM.
 
     The coupled ODE profile is fitted to Eq. (10), then the SPM and XPM closed
@@ -209,7 +209,7 @@ class HybridRamanPaperSpanKernel(DRASpanKernelBase):
     def _nli_span(
         self,
         power_internal: NDArrayFloat,
-        profile: BugliaClosedProfile,  # type: ignore[override]
+        profile: BugliaClosedProfile,
         span_context: SpanContext | None,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Evaluate per-span SPM and XPM using Eq. (6)-(9).

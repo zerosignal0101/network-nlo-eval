@@ -27,7 +27,7 @@ instead, which is the quantity those closed forms approximate.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, cast
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -94,8 +94,37 @@ _ZHANG_RELATIVE_FLOOR: float = 0.05
 class _Profile(Protocol):
     """Minimal interface of a fitted normalised profile ``rho(z, f)``."""
 
-    def link(self, frequency_hz: NDArrayFloat, phi: NDArrayFloat) -> NDArrayComplex:
+    def link(self, frequency_hz: float, phi: NDArrayFloat) -> NDArrayComplex:
         """Return ``int_0^L rho(z, frequency_hz) exp(1j phi z) dz``."""
+
+
+_ProfileT = TypeVar("_ProfileT")
+
+
+class _SpanResult(Protocol):
+    """Output arrays shared by the fixed-step and adaptive Raman solvers."""
+
+    @property
+    def profile_norm(self) -> NDArrayFloat: ...
+
+    @property
+    def power_out_w(self) -> NDArrayFloat: ...
+
+    @property
+    def raman_ase_w(self) -> NDArrayFloat: ...
+
+    @property
+    def pump_power_out_w(self) -> NDArrayFloat: ...
+
+
+class _SpanSolver(Protocol):
+    """Solver interface used by the shared distributed-Raman kernel."""
+
+    def solve(
+        self,
+        signal_power_in_w: NDArrayFloat,
+        signal_ase_in_w: NDArrayFloat | None = None,
+    ) -> _SpanResult: ...
 
 
 @dataclass(frozen=True)
@@ -179,7 +208,7 @@ class BugliaProfile:
             axis=0,
         )
 
-    def link(self, frequency_hz: NDArrayFloat, phi: NDArrayFloat) -> NDArrayComplex:
+    def link(self, frequency_hz: float, phi: NDArrayFloat) -> NDArrayComplex:
         """Analytic ``int_0^L rho(z, f) exp(1j phi z) dz``."""
         rates, coefficients = self._coefficients(float(frequency_hz))
         return _exponential_link(
@@ -260,7 +289,7 @@ class ZhangProfile:
             axis=0,
         )
 
-    def link(self, frequency_hz: NDArrayFloat, phi: NDArrayFloat) -> NDArrayComplex:
+    def link(self, frequency_hz: float, phi: NDArrayFloat) -> NDArrayComplex:
         """Analytic ``int_0^L rho(z, f) exp(1j phi z) dz``."""
         rates, coefficients = self._coefficients(float(frequency_hz))
         return _exponential_link(
@@ -702,7 +731,7 @@ def nli_power_from_profile(
     return spm, xpm
 
 
-class DRASpanKernelBase:
+class DRASpanKernelBase(Generic[_ProfileT]):
     """Common single-span kernel of the two DRA paper-control models.
 
     It owns the coupled-ODE solver, the profile fit cache, the Raman ASE, and
@@ -881,8 +910,8 @@ class DRASpanKernelBase:
         self._input_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._last_raman_ase_internal = np.zeros(self.n_nodes, dtype=np.float64)
         self._last_pump_power_out_w: NDArrayFloat | None = None
-        self._solver_cache: dict[int, RamanPaperSpanSolver] = {}
-        self._profile_cache: dict[tuple[int, bytes], object] = {}
+        self._solver_cache: dict[int, _SpanSolver] = {}
+        self._profile_cache: dict[tuple[int, bytes], _ProfileT] = {}
         self._ramp_cache: dict[tuple[int, float], NDArrayFloat] = {}
         self.last_profile_rmse: NDArrayFloat | None = None
 
@@ -928,7 +957,7 @@ class DRASpanKernelBase:
         self._ramp_cache.clear()
         self.last_profile_rmse = None
 
-    def _solver_for(self, span_length_m: float) -> RamanPaperSpanSolver:
+    def _solver_for(self, span_length_m: float) -> _SpanSolver:
         key = round(span_length_m * 1e6)
         solver = self._solver_cache.get(key)
         if solver is None:
@@ -956,13 +985,13 @@ class DRASpanKernelBase:
 
     def _fit_profile(
         self, profile_norm: NDArrayFloat, span_length_m: float
-    ) -> _Profile:
+    ) -> _ProfileT:
         raise NotImplementedError
 
     def _nli_span(
         self,
         power_internal: NDArrayFloat,
-        profile: _Profile,
+        profile: _ProfileT,
         span_context: SpanContext | None,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Calculate per-span SPM and XPM noise powers.
@@ -986,7 +1015,7 @@ class DRASpanKernelBase:
         """
         del span_context
         return nli_power_from_profile(
-            profile,
+            cast("_Profile", profile),
             self.f_abs_hz,
             power_internal,
             self.b_hz,
@@ -1004,7 +1033,7 @@ class DRASpanKernelBase:
         power_internal: NDArrayFloat,
         span_length_m: float,
         profile_norm: NDArrayFloat,
-    ) -> _Profile:
+    ) -> _ProfileT:
         scale = float(np.max(power_internal)) if power_internal.size else 1.0
         scale = scale if scale > 0.0 else 1.0
         quantized = np.round(np.asarray(power_internal) / scale * 1.0e8).astype(
@@ -1013,7 +1042,7 @@ class DRASpanKernelBase:
         key = (round(span_length_m * 1e6), quantized.tobytes())
         cached = self._profile_cache.get(key)
         if cached is not None:
-            return cached  # type: ignore[return-value]
+            return cached
         profile = self._fit_profile(profile_norm, span_length_m)
         if len(self._profile_cache) >= 8:
             self._profile_cache.clear()
@@ -1173,7 +1202,7 @@ class DRARamanModelBase(RouteModel):
         Forwarded to :class:`~network_nlo_eval.models.route.RouteModel`.
     """
 
-    _kernel_class: ClassVar[type[DRASpanKernelBase]] = DRASpanKernelBase
+    _kernel_class: ClassVar[type[DRASpanKernelBase[Any]]] = DRASpanKernelBase
     supports_span_context: ClassVar[bool] = False
 
     def __init__(
@@ -1234,7 +1263,7 @@ class DRARamanModelBase(RouteModel):
             else list(fiber_config.raman_pumps)
         )
 
-    def _build_kernel(self, fiber_config: FiberSpanConfig) -> DRASpanKernelBase:
+    def _build_kernel(self, fiber_config: FiberSpanConfig) -> DRASpanKernelBase[Any]:
         """Build the span kernel of this fibre."""
         return self._kernel_class(
             self.f_abs_hz,

@@ -52,7 +52,7 @@ __all__ = [
 ]
 
 
-class Buglia2024RASpanKernel(DRASpanKernelBase):
+class Buglia2024RASpanKernel(DRASpanKernelBase[BugliaClosedProfile]):
     """Single-span Buglia 2024 Raman-amplified GN kernel.
 
     Parameters
@@ -118,7 +118,7 @@ class Buglia2024RASpanKernel(DRASpanKernelBase):
     def _nli_span(
         self,
         power_internal: NDArrayFloat,
-        profile: BugliaClosedProfile,  # type: ignore[override]
+        profile: BugliaClosedProfile,
         span_context: SpanContext | None,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Evaluate per-span SPM and XPM and apply the Eq. (4) coherence factor."""
@@ -278,7 +278,7 @@ class Buglia2024RAModel(DRARamanModelBase):
             **route_options,
         )
 
-    def _build_kernel(self, fiber_config: FiberSpanConfig) -> DRASpanKernelBase:
+    def _build_kernel(self, fiber_config: FiberSpanConfig) -> Buglia2024RASpanKernel:
         """Build a span kernel with the selected NLI calculation."""
         return self._kernel_class(
             self.f_abs_hz,

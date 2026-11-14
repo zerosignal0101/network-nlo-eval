@@ -94,7 +94,7 @@ def default_calibration() -> dict[str, CalibrationSet]:
     return load_calibration()
 
 
-class Zhang2024DRASpanKernel(DRASpanKernelBase):
+class Zhang2024DRASpanKernel(DRASpanKernelBase[ZhangSpanProfile]):
     """Evaluate ODE power and profile for a coherent Zhang route.
 
     The kernel returns zero NLI; the route evaluates coherent NLI across all spans
@@ -127,7 +127,7 @@ class Zhang2024DRASpanKernel(DRASpanKernelBase):
     def _nli_span(
         self,
         power_internal: NDArrayFloat,
-        profile: ZhangSpanProfile,  # type: ignore[override]
+        profile: ZhangSpanProfile,
         span_context: SpanContext | None,
     ) -> tuple[NDArrayFloat, NDArrayFloat]:
         """Record the profile and defer NLI to the route-level calculation."""
