@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import functools
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -136,12 +136,13 @@ def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
     d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
     sin_beta = np.sin(beta * t)
     cos_beta = np.cos(beta * t)
-    return (
+    return cast(
+        "NDArrayFloat",
         -f * sin_beta / beta
         - df * cos_beta / beta**2
         + d2f * sin_beta / beta**3
         + d3f * cos_beta / beta**4
-        - d4f * sin_beta / beta**5
+        - d4f * sin_beta / beta**5,
     )
 
 
@@ -272,7 +273,7 @@ def _gauss_legendre_nodes(n_points: int) -> tuple[NDArrayFloat, NDArrayFloat]:
     tuple of ndarray
         Nodes and weights on ``[-1, 1]``.
     """
-    nodes, weights = np.polynomial.legendre.leggauss(n_points)
+    nodes, weights = np.polynomial.legendre.leggauss(n_points)  # type: ignore[no-untyped-call]
     return nodes, weights
 
 
@@ -542,7 +543,7 @@ def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     if n <= 1:
         return np.ones(visibility.shape[-1], dtype=np.float64)
     weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
-    return n + 2.0 * (weights * visibility).sum(axis=0)
+    return cast("NDArrayFloat", n + 2.0 * (weights * visibility).sum(axis=0))
 
 
 def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
@@ -758,7 +759,7 @@ class ECZCoherentModel(MultiBandISRSGN):
         if self.f_abs_hz.size > 1:
             offsets = np.abs(self.f_abs_hz[:, None] - self.f_abs_hz[None, :])
             np.fill_diagonal(offsets, np.inf)
-            return offsets.min(axis=1)
+            return cast("NDArrayFloat", offsets.min(axis=1))
         return np.zeros(self.f_abs_hz.size, dtype=np.float64)
 
     def _span_phase_factors(
