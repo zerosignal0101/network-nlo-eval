@@ -27,29 +27,29 @@ to know the bias.
 
 * No field is added to :class:`PathQoTResult`; callers opt in through
   :meth:`PCFH3RamanModel.evaluate_path_with_uncertainty`.
-* :mod:`network_nlo_eval.rwa.qot_checker` is not modified.  The design for
-  propagating per-link validity into ``rwa.link_noise`` and the two-tier
-  "H3 field + numerical fallback" orchestrator is in ``docs/h3-uq-design.md``.
+* Routing and optional two-tier fallback consume uncertainty through separate
+  validity and evaluation interfaces.
 * The numerical model is never imported or called at runtime.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from network_nlo_eval.models.pcfm import (
     DENSE_GRID_SPACING_RATIO,
-    SCI_X_SERIES_SWITCH,
     PCFMSpanKernel,
     _xci_validity_s,
     dense_grid_metrics,
 )
+from network_nlo_eval.models.pcfm_kernels import SCI_X_SERIES_SWITCH
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Protocol
 
     from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
     from network_nlo_eval.models.base import (
@@ -57,6 +57,12 @@ if TYPE_CHECKING:
         MultiSpanOpticalPath,
         PathQoTResult,
     )
+    from network_nlo_eval.network.elements import RamanPumpConfig
+
+    class _ActiveRamanKernel(Protocol):
+        @property
+        def active_pumps(self) -> Sequence[RamanPumpConfig]: ...
+
 
 __all__ = [
     "DENSE_GRID_PENALTY_SCHEDULE_V4",
@@ -1125,7 +1131,8 @@ def estimate_h3_error_budget(
         confidence = np.minimum(confidence, span_confidence)
         # Plain PCFM uses model-level pump configuration; H3 records active pumps on the kernel.
         if bool(getattr(kernel, "active", False)):
-            directions.extend(str(pump.direction) for pump in kernel.active_pumps)
+            pumps = cast("_ActiveRamanKernel", kernel).active_pumps
+            directions.extend(str(pump.direction) for pump in pumps)
             if not bool(getattr(kernel, "last_raman_converged", True)):
                 not_converged[:] = True
 
@@ -1298,7 +1305,7 @@ def estimate_h3_error_budget(
     schedule = cfg.dense_grid_penalty_schedule
     schedule_active = bool(dense_grid and schedule is not None)
     dense_penalty_clamped = False
-    if schedule_active:
+    if dense_grid and schedule is not None:
         penalty_value, dense_penalty_clamped = dense_grid_schedule_penalty(
             schedule, float(spacing_ratio)
         )
