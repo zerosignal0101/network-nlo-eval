@@ -1,11 +1,17 @@
 """Service-level QoT accumulation and blocking."""
 
+from collections.abc import Iterator
+
 import numpy as np
 import pytest
 
 from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache
-from network_nlo_eval.rwa.qot_checker import accumulate_service_snr, fold_roadm_terms
+from network_nlo_eval.rwa.qot_checker import (
+    RoadmTerms,
+    accumulate_service_snr,
+    fold_roadm_terms,
+)
 
 
 def test_accumulates_link_noise_and_roadm_filtering() -> None:
@@ -29,7 +35,7 @@ def test_blocked_hop_stops_lazy_iteration() -> None:
     roadm = fold_roadm_terms(ROADMConfig(), is_last_hop=False)
     cache = LinkNoiseCache(np.zeros(1), np.zeros(1), np.zeros(1), 1)
 
-    def hops():
+    def hops() -> Iterator[tuple[RoadmTerms, LinkNoiseCache]]:
         yield roadm, cache
         msg = "blocked paths must not evaluate later hops"
         raise AssertionError(msg)
