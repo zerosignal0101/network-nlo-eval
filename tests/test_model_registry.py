@@ -1,5 +1,7 @@
 """Tests for path configuration and the QoT model registry."""
 
+from typing import cast
+
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
@@ -27,7 +29,7 @@ def test_registry_registration_discovery_and_construction(
     monkeypatch.setattr(base, "MODEL_REGISTRY", {})
     monkeypatch.setattr(base, "MODEL_INFO", {})
     info = base.ModelInfo("sample", "Test model", "gn", "Test reference")
-    model = object()
+    model = cast("base.QoTModel", object())
     base.register_model(info, lambda *_args, **_kwargs: model)
     assert base.available_models() == {"sample": info}
     assert base.get_model_info("sample") is info
