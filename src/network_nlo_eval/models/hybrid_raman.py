@@ -20,11 +20,18 @@ doi:10.1109/JLT.2024.3439999.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from network_nlo_eval.models.base import ModelInfo, SpanContext, register_model
+from network_nlo_eval.models.base import (
+    ElementOutput,
+    ModelInfo,
+    MultiSpanOpticalPath,
+    PathQoTResult,
+    SpanContext,
+    register_model,
+)
 from network_nlo_eval.models.buglia2024_closed import (
     BugliaClosedProfile,
     fit_buglia_profile_5param,
@@ -54,8 +61,14 @@ from network_nlo_eval.models.route import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
-    from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
+    from network_nlo_eval.network.elements import (
+        EDFAConfig,
+        FiberSpanConfig,
+        RamanPumpConfig,
+    )
 
 __all__ = [
     "DEFAULT_FIXED_POINT_ITERATIONS",
@@ -305,17 +318,17 @@ class HybridRamanPcfmSpanKernel(PCFMSpanKernel):
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
-        **kwargs: object,
+        **kwargs: Any,
     ) -> None:
         """Initialize the PCFM comparison kernel and cache pump parameters."""
-        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+        if not isinstance(cast("object", pump_pump_raman), (bool, np.bool_)):
             msg = f"pump_pump_raman must be a bool, got {pump_pump_raman!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         resolved_convention = resolve_launch_power_convention(
             launch_power_convention, signal_polarizations
         )
         kwargs.setdefault("cache_spans", False)
-        super().__init__(  # type: ignore[arg-type]
+        super().__init__(
             f_abs_hz,
             b_hz,
             fiber_config,
@@ -697,10 +710,10 @@ class HybridRamanPaperModel(PCFMModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
         raman_gain_model: str | RamanGainModel = "gaussian",
         raman_gain_table: tuple[Sequence[float], Sequence[float]] | None = None,
@@ -719,7 +732,7 @@ class HybridRamanPaperModel(PCFMModel):
         signal_polarizations: int = 1,
         pump_pump_raman: bool = True,
         launch_power_convention: str = "total",
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         """Build the paper model."""
         if fixed_point_iterations < 1:
@@ -747,7 +760,7 @@ class HybridRamanPaperModel(PCFMModel):
                 UserWarning,
                 stacklevel=2,
             )
-        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+        if not isinstance(cast("object", pump_pump_raman), (bool, np.bool_)):
             msg = f"pump_pump_raman must be a bool, got {pump_pump_raman!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         super().__init__(
@@ -802,7 +815,9 @@ class HybridRamanPaperModel(PCFMModel):
             return 0.5
         return 1.0
 
-    def _build_kernel(self, fiber_config: FiberSpanConfig):
+    def _build_kernel(
+        self, fiber_config: FiberSpanConfig
+    ) -> HybridRamanPcfmSpanKernel | HybridRamanPaperSpanKernel:
         """Build the span kernel of this fibre for the selected NLI form."""
         pumps = (
             self._paper_pumps
@@ -848,7 +863,18 @@ class HybridRamanPaperModel(PCFMModel):
             launch_power_convention=self._launch_power_convention,
         )
 
-    def evaluate_path(self, optical_path, power_in_w):
+    def kernel_for(
+        self, fiber_config: FiberSpanConfig
+    ) -> HybridRamanPcfmSpanKernel | HybridRamanPaperSpanKernel:
+        """Return the configured hybrid kernel for a fiber."""
+        return cast(
+            "HybridRamanPcfmSpanKernel | HybridRamanPaperSpanKernel",
+            super().kernel_for(fiber_config),
+        )
+
+    def evaluate_path(
+        self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat
+    ) -> PathQoTResult:
         """Evaluate a path, resetting the cross-span ASE and kernel state."""
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
         for kernel in self._kernel_cache.values():
@@ -859,36 +885,37 @@ class HybridRamanPaperModel(PCFMModel):
 
     def span_step(
         self,
-        fiber_config,
-        edfa_config,
-        power_in_w,
-        span_length_m,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
         span_context: SpanContext | None = None,
-    ):
+    ) -> ElementOutput:
         """Single span: ODE kernel, then the shared amplifier handling.
 
         Parameters
         ----------
-        fiber_config : object
-            Fibre parameters of the span.
-        edfa_config : object
+        fiber_config : FiberSpanConfig
+            Fiber parameters of the span.
+        edfa_config : EDFAConfig or None
             Amplifier configuration of the span.
-        power_in_w : object
+        power_in_w : numpy.ndarray
             ``(N,)`` launch power per channel (W).
-        span_length_m : object
+        span_length_m : float
             Span length (m).
         span_context : SpanContext | None
             Position of the span in the link.
 
         Returns
         -------
-        object
-            The :class:`~network_nlo_eval.models.base.ElementOutput` of the span.
+        ElementOutput
+            Output power and noise for the span.
         """
         kernel = self.kernel_for(fiber_config)
         kernel.set_input_ase_w(self._ase_in_w)
         if self._nli_form == "pcfm":
-            fiber_output = kernel.evaluate(
+            pcfm_kernel = cast("HybridRamanPcfmSpanKernel", kernel)
+            fiber_output = pcfm_kernel.evaluate(
                 power_in_w,
                 span_length_m,
                 1,
@@ -923,9 +950,9 @@ class HybridRamanPaperModel(PCFMModel):
         self._ase_in_w = np.array(element.ase_noise_w, dtype=np.float64, copy=True)
         self._span_index += 1
         if self._nli_form == "pcfm":
-            self._beta2_accum_ps2 = (
-                self._beta2_accum_ps2 + kernel.effective_dispersion_ps2(span_length_m)
-            )
+            self._beta2_accum_ps2 = self._beta2_accum_ps2 + cast(
+                "HybridRamanPcfmSpanKernel", kernel
+            ).effective_dispersion_ps2(span_length_m)
         return element
 
 

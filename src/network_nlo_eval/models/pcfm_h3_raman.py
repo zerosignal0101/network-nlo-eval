@@ -123,7 +123,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -2804,7 +2804,7 @@ class PCFH3RamanModel(PCFMModel):
         object
             The :class:`~network_nlo_eval.models.base.ElementOutput` of the span.
         """
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("PCFH3RamanSpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w,
             span_length_m,

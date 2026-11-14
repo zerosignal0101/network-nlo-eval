@@ -161,6 +161,7 @@ from network_nlo_eval.models.base import (
     PathQoTResult,
     SpanContext,
     SpanFiberOutput,
+    SpanKernel,
     register_model,
 )
 from network_nlo_eval.models.numba_kernels import (
@@ -5635,7 +5636,7 @@ class PCFMModel(RouteModel):
         # Cache stateless network adapters by fiber JSON; physics remains in the parent.
         self._fiber_view_cache: dict[str, _PCFMNetworkView] = {}
 
-    def _build_kernel(self, fiber_config: FiberSpanConfig) -> PCFMSpanKernel:
+    def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         """Build the single-span kernel of this fibre.
 
         The fibre-level ``lumped_loss`` (connectors, splices, discrete
@@ -5664,10 +5665,6 @@ class PCFMModel(RouteModel):
             nli_fallback_trigger=self.nli_fallback_trigger,
             lumped_loss=fiber_config.lumped_loss or None,
         )
-
-    def kernel_for(self, fiber_config: FiberSpanConfig) -> PCFMSpanKernel:
-        """Return the cached PCFM kernel for the given fiber configuration."""
-        return cast("PCFMSpanKernel", super().kernel_for(fiber_config))
 
     def for_fiber(self, fiber_config: FiberSpanConfig) -> _PCFMNetworkView:
         """Return the cached network view bound to a fiber configuration.
@@ -5729,9 +5726,8 @@ class PCFMModel(RouteModel):
             if span_length_m is None
             else span_length_m
         )
-        return self.kernel_for(self.ref_fiber_config).dense_grid_diagnostics(
-            length_m, power_in_w
-        )
+        kernel = cast("PCFMSpanKernel", self.kernel_for(self.ref_fiber_config))
+        return kernel.dense_grid_diagnostics(length_m, power_in_w)
 
     @property
     def lumped_raman_active(self) -> bool:
@@ -5825,9 +5821,8 @@ class PCFMModel(RouteModel):
             if span_length_m is None
             else span_length_m
         )
-        return self.kernel_for(self.ref_fiber_config).dense_fwm_fix_diagnostics(
-            length_m
-        )
+        kernel = cast("PCFMSpanKernel", self.kernel_for(self.ref_fiber_config))
+        return kernel.dense_fwm_fix_diagnostics(length_m)
 
     @property
     def last_fallback_nli_w(self) -> NDArrayFloat | None:
@@ -6036,7 +6031,7 @@ class PCFMModel(RouteModel):
         ElementOutput
             Output power and noise for the span.
         """
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("PCFMSpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w,
             span_length_m,
