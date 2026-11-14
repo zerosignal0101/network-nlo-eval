@@ -1,0 +1,548 @@
+"""Command-line interface."""
+
+# ruff: noqa: PLC0415  # Load benchmark helpers only for benchmark commands.
+
+import json
+from pathlib import Path
+
+import click
+import networkx as nx
+import numpy as np
+
+from network_nlo_eval.core.spectrum import SpectrumGrid
+from network_nlo_eval.models.base import create_model, describe_models
+from network_nlo_eval.models.numba_kernels import _dbm_to_w
+from network_nlo_eval.models.power_conventions import to_convention
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
+from network_nlo_eval.network.state import NetworkState
+from network_nlo_eval.network.topology import NetworkTopology
+from network_nlo_eval.physics.comparison import TopologyQoTComparator
+from network_nlo_eval.rwa.allocators import (
+    KSPFirstFitAllocator,
+    KSPFirstFitFlexAllocator,
+)
+from network_nlo_eval.rwa.path_computation import PathCache
+from network_nlo_eval.rwa.qot_checker import BaseRWAAllocator, QoTValidator
+
+# Discrete-event simulator components.
+from network_nlo_eval.simulation.engine import SimulatorEngine
+from network_nlo_eval.simulation.reporter import MetricsCollector
+from network_nlo_eval.simulation.traffic import generate_services
+
+
+@click.group()
+@click.version_option()
+def main() -> None:
+    """Network NLO Eval."""
+
+
+@main.command(name="models")
+def list_models() -> None:
+    """List the registered QoT models as JSON."""
+    click.echo(json.dumps(describe_models(), ensure_ascii=False, indent=2))
+
+
+def _load_topology(topology_file: Path) -> NetworkTopology:
+    """Load a JSON graph with physical defaults and node or link overrides."""
+    with topology_file.open(encoding="utf-8") as file:
+        network_obj = json.load(file)
+    network_raw = nx.node_link_graph(network_obj, edges="edges")
+    return NetworkTopology(
+        network_raw=network_raw,
+        default_fiber_config=FiberSpanConfig(length_km=100.0),
+        default_edfa_config=EDFAConfig(),
+        default_roadm_config=ROADMConfig(),
+    )
+
+
+@main.command()
+@click.option(
+    "-t",
+    "--topology-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path(__file__).with_name("data") / "example_pan_europe_network.json",
+    help="Path to the NetworkX JSON topology file.",
+)
+@click.option(
+    "-s",
+    "--service-num",
+    type=int,
+    default=1000,
+    help="Number of services to generate.",
+)
+@click.option(
+    "--avg-arrival-interval",
+    type=float,
+    default=10.0,
+    help="Average arrival interval for services (time units).",
+)
+@click.option(
+    "--avg-holding-time",
+    type=float,
+    default=400.0,
+    help="Average holding time for services (time units).",
+)
+@click.option(
+    "-o",
+    "--output-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default="results",
+    help="Directory to save simulation results.",
+)
+@click.option("--num-channels", type=int, default=80, help="Number of WDM channels.")
+@click.option(
+    "--channel-spacing-ghz", type=float, default=50.0, help="Channel spacing in GHz."
+)
+@click.option(
+    "--center-freq-thz", type=float, default=193.1, help="Center frequency in THz."
+)
+@click.option(
+    "--max-ksp-paths",
+    type=int,
+    default=5,
+    help="Maximum number of KSP paths to precompute.",
+)
+@click.option(
+    "--slot-width-ghz",
+    type=float,
+    default=None,
+    help="Enable flexible-grid slot allocation with this slot width (e.g. 12.5).",
+)
+@click.option(
+    "--qot-model",
+    "qot_model",
+    default="ecz",
+    show_default=True,
+    help="Registered QoT model used for SNR checks (see 'network-nlo-eval models').",
+)
+@click.option(
+    "--launch-power-convention",
+    type=click.Choice(["total", "per_pol"]),
+    default="total",
+    show_default=True,
+    help=(
+        "Power convention of NetworkState/ServiceRequest launch powers (total = per-channel "
+        "dual-polarization total). Converted once to the model convention inside QoTValidator."
+    ),
+)
+@click.option(
+    "--coherent-assembly",
+    "coherent_assembly",
+    is_flag=True,
+    default=False,
+    help=(
+        "Request coherent span-to-span NLI assembly for the network link-noise cache "
+        "(default: off). The switch is a request, not a guarantee: only models that emit "
+        "inter-span coherent NLI amplitudes honour it. Frozen baselines (ecz) and a pumped "
+        "pcfm_h3_raman keep the power-only 'full span x N' path without raising."
+    ),
+)
+@click.option(
+    "--nli-fallback",
+    "nli_fallback",
+    type=click.Choice(["none", "numerical"]),
+    default="none",
+    show_default=True,
+    help=(
+        "Opt-in NLI reference fallback: 'numerical' replaces the closed-form NLI on the spans the "
+        "applicability audit flags. 'none' passes nothing to the model, so the default path stays "
+        "bit-for-bit unchanged and no numerical kernel is built."
+    ),
+)
+@click.option(
+    "--nli-fallback-trigger",
+    "nli_fallback_trigger",
+    type=click.Choice(["audit", "fwm_only"]),
+    default="audit",
+    show_default=True,
+    help=(
+        "Trigger set of '--nli-fallback numerical': 'audit' fires on the dense plan or the "
+        "low-dispersion/FWM audit (historical behaviour); 'fwm_only' fires only on the latter, "
+        "leaving a dense plan to the closed form (optionally with the FWM fix). Forwarded only "
+        "when 'numerical' is selected; the default 'audit' is never passed, so models without "
+        "the option and the default path stay unchanged."
+    ),
+)
+def simulate(
+    topology_file: Path,
+    service_num: int,
+    avg_arrival_interval: float,
+    avg_holding_time: float,
+    output_dir: Path,
+    num_channels: int,
+    channel_spacing_ghz: float,
+    center_freq_thz: float,
+    max_ksp_paths: int,
+    slot_width_ghz: float | None,
+    qot_model: str,
+    launch_power_convention: str,
+    coherent_assembly: bool,
+    nli_fallback: str,
+    nli_fallback_trigger: str,
+) -> None:
+    """Run a dynamic RWA simulation."""
+    click.echo(f"Starting simulation with topology: {topology_file}")
+
+    # Create the output directory.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_filepath = output_dir / "simulation_results.json"
+
+    # Load the topology.
+    try:
+        network_topology = _load_topology(topology_file)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        click.secho(f"Error loading topology file: {exc}", fg="red")
+        return
+
+    # Initialize the spectrum grid and physical model.
+    spectrum_grid = SpectrumGrid(
+        num_channels=num_channels,
+        channel_spacing_hz=channel_spacing_ghz * 1e9,
+        center_frequency_hz=center_freq_thz * 1e12,
+    )
+
+    # Forward fallback options only when explicitly enabled, retaining model defaults.
+    model_options: dict[str, object] = {}
+    if nli_fallback != "none":
+        model_options["nli_fallback"] = nli_fallback
+        if nli_fallback == "numerical" and nli_fallback_trigger == "fwm_only":
+            model_options["nli_fallback_trigger"] = nli_fallback_trigger
+    try:
+        gn_evaluator = create_model(
+            qot_model,
+            spectrum_grid,
+            network_topology.get_default_fiber_config(),
+            **model_options,
+        )
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except TypeError as exc:
+        # Report unsupported fallback options explicitly.
+        if "nli_fallback_trigger" in model_options:
+            msg = (
+                f"QoT model {qot_model!r} does not accept --nli-fallback-trigger "
+                f"{model_options['nli_fallback_trigger']!r}: {exc}. Only models with an explicit "
+                "'nli_fallback_trigger' option support 'fwm_only'; see "
+                "'network-nlo-eval models'."
+            )
+            raise click.ClickException(msg) from exc
+        msg = (
+            f"QoT model {qot_model!r} does not accept --nli-fallback {nli_fallback!r}: {exc}. "
+            "Only models with an explicit 'nli_fallback' option support it; see "
+            "'network-nlo-eval models'."
+        )
+        raise click.ClickException(msg) from exc
+
+    # Coherent assembly is opt-in and depends on model support.
+    validator_options: dict[str, object] = {}
+    if coherent_assembly:
+        validator_options["coherent_assembly"] = True
+    qot_validator = QoTValidator(
+        gn_evaluator=gn_evaluator,
+        network_topology=network_topology,
+        spectrum_grid=spectrum_grid,
+        launch_power_convention=launch_power_convention,
+        **validator_options,
+    )
+
+    # Precompute candidate paths.
+    path_cache = PathCache(network_topology, max_ksp_paths)
+
+    # Flexible slot width must divide the physical channel spacing.
+    slot_width_hz: float | None = None
+    slots_per_channel = 1
+    if slot_width_ghz is not None:
+        if slot_width_ghz <= 0 or slot_width_ghz > channel_spacing_ghz:
+            msg = "--slot-width-ghz must be positive and no wider than the channel spacing."
+            raise click.ClickException(msg)
+        ratio = channel_spacing_ghz / slot_width_ghz
+        if not np.isclose(ratio, round(ratio)):
+            msg = (
+                "--channel-spacing-ghz must be an integer multiple of --slot-width-ghz."
+            )
+            raise click.ClickException(msg)
+        slots_per_channel = round(ratio)
+        slot_width_hz = slot_width_ghz * 1e9
+
+    # Select the fixed-grid or flexible-grid allocator.
+    if slot_width_hz is None:
+        allocator: BaseRWAAllocator = KSPFirstFitAllocator(
+            path_cache=path_cache,
+            qot_validator=qot_validator,
+            spectrum_grid=spectrum_grid,
+        )
+    else:
+        allocator = KSPFirstFitFlexAllocator(
+            path_cache=path_cache,
+            qot_validator=qot_validator,
+            spectrum_grid=spectrum_grid,
+            network_topology=network_topology,
+            slots_per_channel=slots_per_channel,
+        )
+        click.echo(
+            f"Flexible grid enabled: {slot_width_ghz} GHz slots, "
+            f"{slots_per_channel} slots per {channel_spacing_ghz} GHz channel."
+        )
+
+    # Initialize network state.
+    network_state = NetworkState(
+        network_topology=network_topology,
+        spectrum_grid=spectrum_grid,
+        slots_per_channel=slots_per_channel,
+    )
+
+    # Generate traffic requests.
+    services = generate_services(
+        path_cache=path_cache,
+        service_num=service_num,
+        avg_arrival_interval=avg_arrival_interval,
+        avg_holding_time=avg_holding_time,
+        slot_width_hz=slot_width_hz,
+    )
+    click.echo(f"Generated {len(services)} services.")
+
+    # Collect simulation metrics.
+    metrics_collector = MetricsCollector(
+        network_topology=network_topology,
+        spectrum_grid=spectrum_grid,
+        total_incoming_services=len(services),
+    )
+
+    # Run the simulation.
+    simulator = SimulatorEngine(
+        allocator=allocator,
+        network_state=network_state,
+        metrics_collector=metrics_collector,
+        incoming_services=services,
+    )
+    click.echo("Running simulation...")
+    simulator.run()
+    click.echo("Simulation finished.")
+
+    # Export the simulation report.
+    report_data = metrics_collector.generate_report(network_state)
+    report_data["topology"] = network_topology.export_to_dict()
+
+    with results_filepath.open("w", encoding="utf-8") as f:
+        json.dump(report_data, f, ensure_ascii=False, indent=2)
+
+    click.echo(f"Simulation results saved to: {results_filepath}")
+    click.echo("\n--- Simulation Summary ---")
+    click.echo(
+        f"Blocking Rate: {report_data['simulation_metrics']['blocking_rate']:.4f}"
+    )
+    click.echo(
+        f"Wavelength Utilization (End State): {report_data['simulation_metrics']['wavelength_utilization']:.4f}"
+    )
+    click.echo(
+        f"Average Hop Count for Allocated Services: {report_data['simulation_metrics']['average_hop_count']:.2f}"
+    )
+    click.echo(
+        f"Average Wavelength Fragmentation Index (End State): "
+        f"{report_data['simulation_metrics']['average_wavelength_fragmentation_index']:.4f}"
+    )
+    click.echo("--------------------------")
+
+
+@main.command()
+@click.option(
+    "-t",
+    "--topology-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+)
+@click.option(
+    "--path",
+    "path_text",
+    required=True,
+    help="Comma-separated original topology node IDs.",
+)
+@click.option(
+    "--channel",
+    "channels",
+    type=int,
+    multiple=True,
+    help="Active zero-based channel; repeat as needed.",
+)
+@click.option(
+    "--launch-power-dbm",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Per-channel physical total launch power (dBm); independent of the power convention.",
+)
+@click.option(
+    "--launch-power-convention",
+    type=click.Choice(["total", "per_pol"]),
+    default="total",
+    show_default=True,
+    help=(
+        "Convention of the launch profile handed to the comparator (total = per-channel "
+        "dual-polarization total). Each engine converts to its own convention once."
+    ),
+)
+@click.option("--num-channels", type=int, default=80, show_default=True)
+@click.option("--channel-spacing-ghz", type=float, default=50.0, show_default=True)
+@click.option("--center-freq-thz", type=float, default=193.1, show_default=True)
+@click.option(
+    "--qot-model",
+    "qot_model",
+    default="ecz",
+    show_default=True,
+    help="Registered QoT model for the statistical side (see 'network-nlo-eval models').",
+)
+@click.option(
+    "--waveform/--statistical-only",
+    default=False,
+    help="Also run the numerical waveform engine.",
+)
+@click.option("--num-symbols", type=int, default=1024, show_default=True)
+@click.option("-o", "--output-file", type=click.Path(dir_okay=False, path_type=Path))
+def compare(
+    topology_file: Path,
+    path_text: str,
+    channels: tuple[int, ...],
+    launch_power_dbm: float,
+    launch_power_convention: str,
+    num_channels: int,
+    channel_spacing_ghz: float,
+    center_freq_thz: float,
+    qot_model: str,
+    waveform: bool,
+    num_symbols: int,
+    output_file: Path | None,
+) -> None:
+    """Compare statistical and optional waveform QoT on one topology path."""
+    try:
+        topology = _load_topology(topology_file)
+        original_path = [
+            int(value.strip()) for value in path_text.split(",") if value.strip()
+        ]
+        path = [topology.get_internal_node_id(node_id) for node_id in original_path]
+        grid = SpectrumGrid(
+            num_channels, channel_spacing_ghz * 1e9, center_freq_thz * 1e12
+        )
+        active_channels = channels or (num_channels // 2,)
+        if any(index < 0 or index >= num_channels for index in active_channels):
+            msg = "Channel index is outside the configured spectrum grid."
+            raise ValueError(msg)  # noqa: TRY301 - Convert input errors to Click exceptions.
+        launch_profile = np.zeros(num_channels, dtype=np.float64)
+        # Input dBm denotes total channel power; store it in the selected coordinate.
+        launch_profile[list(active_channels)] = to_convention(
+            _dbm_to_w(launch_power_dbm), "total", launch_power_convention
+        )
+        gn_evaluator = create_model(
+            qot_model, grid, topology.get_default_fiber_config()
+        )
+        result = TopologyQoTComparator(
+            topology,
+            grid,
+            gn_evaluator=gn_evaluator,
+            launch_power_convention=launch_power_convention,
+        ).evaluate(path, launch_profile, run_waveform=waveform, num_symbols=num_symbols)
+        payload = result.to_dict()
+        payload["original_path"] = original_path
+        output = json.dumps(payload, ensure_ascii=False, indent=2)
+        if output_file is not None:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(output + "\n", encoding="utf-8")
+            click.echo(f"Comparison saved to: {output_file}")
+        else:
+            click.echo(output)
+    except (
+        ImportError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OSError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@main.command()
+@click.option(
+    "--case",
+    "case_name",
+    required=True,
+    help="Benchmark case (see benchmarks.cases.BENCH_CASES).",
+)
+@click.option(
+    "--model",
+    "models",
+    multiple=True,
+    required=True,
+    help="Registered QoT model; repeat for several.",
+)
+@click.option(
+    "--reference",
+    default=None,
+    help="Reference model for accuracy deltas, e.g. 'numerical'.",
+)
+@click.option(
+    "--power-step-db",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Launch-power sweep step.",
+)
+@click.option(
+    "--reps", type=int, default=25, show_default=True, help="Warm timing repetitions."
+)
+@click.option("-o", "--output-file", type=click.Path(dir_okay=False, path_type=Path))
+def bench(
+    case_name: str,
+    models: tuple[str, ...],
+    reference: str | None,
+    power_step_db: float,
+    reps: int,
+    output_file: Path | None,
+) -> None:
+    """Run a benchmark case across models and report accuracy plus speed."""
+    from network_nlo_eval.benchmarks.cases import build_case
+    from network_nlo_eval.benchmarks.runner import accuracy_vs_reference, run_case
+
+    try:
+        case = build_case(case_name)
+        powers = tuple(np.arange(-4.0, 6.0 + 1e-9, power_step_db))
+        runs = {}
+        for name in models:
+            run = run_case(name, case.name, powers_dbm=powers, reps=reps)
+            runs[name] = run
+        payload = {
+            "case": {
+                "name": case.name,
+                "bands": case.bands,
+                "num_channels": case.num_channels,
+                "channel_spacing_ghz": case.channel_spacing_hz / 1e9,
+                "symbol_rate_ghz": case.symbol_rate_hz / 1e9,
+                "span_count": case.span_count,
+                "span_length_km": case.span_length_km,
+                "edfa_noise_figure_db": case.edfa_noise_figure_db,
+                "total_power_dbm": case.total_power_dbm,
+                "powers_dbm": list(powers),
+            },
+            "runs": {name: run.to_dict() for name, run in runs.items()},
+            "accuracy": {},
+        }
+        if reference is not None:
+            if reference not in runs:
+                msg = f"--reference {reference!r} must also be passed via --model."
+                raise click.ClickException(msg)
+            for name, run in runs.items():
+                if name == reference:
+                    continue
+                payload["accuracy"][name] = accuracy_vs_reference(run, runs[reference])
+        echo_payload = json.dumps(payload, ensure_ascii=False, indent=2)
+        if output_file is not None:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(echo_payload + "\n", encoding="utf-8")
+            click.echo(f"Benchmark saved to: {output_file}")
+        else:
+            click.echo(echo_payload)
+    except (ImportError, KeyError, TypeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+if __name__ == "__main__":
+    main(prog_name="network-nlo-eval")

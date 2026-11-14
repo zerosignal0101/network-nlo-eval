@@ -39,6 +39,9 @@ dependencies = [
     "tqdm>=4.66.0,<5.0.0",
 ]
 
+[project.scripts]
+network-nlo-eval = "network_nlo_eval.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/zerosignal0101/network-nlo-eval"
 "Bug Tracker" = "https://github.com/zerosignal0101/network-nlo-eval/issues"
