@@ -1,14 +1,16 @@
 """NetworkX topology management, node mapping, and link configuration."""
 
+from __future__ import annotations
+
 import itertools
 from typing import TYPE_CHECKING, Any
 
-import networkx as nx
-
-from network_nlo_eval.core.types import LinkKey, NodeID, OriginalNodeID
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 
 if TYPE_CHECKING:
+    import networkx as nx
+
+    from network_nlo_eval.core.types import LinkKey, NodeID, OriginalNodeID
     from network_nlo_eval.models.base import MultiSpanOpticalPath
 
 
@@ -32,7 +34,7 @@ class NetworkTopology:
 
     def __init__(
         self,
-        network_raw: nx.Graph,
+        network_raw: nx.Graph[OriginalNodeID],
         default_fiber_config: FiberSpanConfig,
         default_edfa_config: EDFAConfig,
         default_roadm_config: ROADMConfig,
@@ -139,7 +141,7 @@ class NetworkTopology:
         """Return the normalized keys of all internal links."""
         return list(self._fiber_configs.keys())
 
-    def get_network_graph(self) -> nx.Graph:
+    def get_network_graph(self) -> nx.Graph[OriginalNodeID]:
         """Return the underlying NetworkX graph for read-only path computations."""
         return self._network_raw
 
@@ -155,7 +157,7 @@ class NetworkTopology:
         """Return the default ROADM configuration."""
         return self._default_roadm_config
 
-    def build_optical_path(self, path: list[NodeID]) -> "MultiSpanOpticalPath":
+    def build_optical_path(self, path: list[NodeID]) -> MultiSpanOpticalPath:
         """Convert internal node IDs to an ordered physical optical path."""
         if len(path) < 2:
             msg = "An optical path must contain at least two nodes."

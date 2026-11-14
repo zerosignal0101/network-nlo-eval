@@ -14,7 +14,7 @@ def test_cli_models_compare_and_simulate(tmp_path) -> None:
     assert models.exit_code == 0, models.output
     assert any(item["name"] == "pcfm_h3_raman" for item in json.loads(models.output))
 
-    graph = nx.Graph()
+    graph: nx.Graph[int] = nx.Graph()
     graph.add_edge(10, 20, weight=20)
     topology = tmp_path / "topology.json"
     topology.write_text(

@@ -8,7 +8,7 @@ from network_nlo_eval.network.topology import NetworkTopology
 
 
 def make_topology() -> NetworkTopology:
-    graph = nx.Graph()
+    graph: nx.Graph[int] = nx.Graph()
     graph.add_node(101, pos=(1, 2), roadm={"insertion_loss_db": 3})
     graph.add_node(203, edfa={"noise_figure_db": 6})
     graph.add_node(301)

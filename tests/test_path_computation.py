@@ -8,7 +8,7 @@ from network_nlo_eval.rwa.path_computation import PathCache
 
 
 def test_weighted_paths_are_ordered_and_reversible() -> None:
-    graph = nx.Graph()
+    graph: nx.Graph[int] = nx.Graph()
     graph.add_weighted_edges_from([(10, 20, 1), (20, 30, 1), (10, 30, 5)])
     graph.add_node(40)
     topology = NetworkTopology(

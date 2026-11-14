@@ -147,7 +147,7 @@ def test_validator_assembles_registered_model_link(
     fiber = FiberSpanConfig(length_km=50, max_span_length_km=20)
     edfa = EDFAConfig()
     grid = SpectrumGrid(2, 50e9, 193.1e12)
-    graph = nx.Graph()
+    graph: nx.Graph[int] = nx.Graph()
     graph.add_edge(0, 1, length_km=50)
     topology = NetworkTopology(graph, fiber, edfa, ROADMConfig())
     model = create_model(model_name, grid, fiber, 32e9, **options)
