@@ -18,7 +18,7 @@ try:
     from numba import njit
 except ImportError:  # Keep statistical models usable without JIT.
 
-    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:  # type: ignore[misc]
+    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:
         """Return an identity decorator when optional Numba is unavailable."""
         del args, kwargs
 
@@ -31,35 +31,35 @@ except ImportError:  # Keep statistical models usable without JIT.
 # =============================================================================
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _dbm_to_w(p_dbm: float) -> float:
     """Convert dBm to watts."""
     return 1e-3 * 10 ** (p_dbm / 10.0)
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _w_to_dbm(p_w: float) -> float:
     """Convert watts to dBm, returning negative infinity for non-positive power."""
     if p_w <= 0:
         return -np.inf
-    return 10.0 * np.log10(p_w * 1e3)
+    return 10.0 * np.log10(p_w * 1e3)  # type: ignore[no-any-return]
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _lin_to_db(value: float) -> float:
     """Convert a linear ratio to dB, returning negative infinity if non-positive."""
     if value <= 0:
         return -np.inf
-    return 10.0 * np.log10(value)
+    return 10.0 * np.log10(value)  # type: ignore[no-any-return]
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _db_to_lin(value_db: float) -> float:
     """Convert a dB ratio to a linear ratio."""
     return 10 ** (value_db / 10.0)
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _dbkm_to_power_npm(alpha_dbkm: float) -> float:
     """Convert power attenuation in dB/km to nepers per meter."""
     return alpha_dbkm / (NP_TO_DB * 1000)
@@ -70,7 +70,7 @@ def _dbkm_to_power_npm(alpha_dbkm: float) -> float:
 # =============================================================================
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_fiber_attenuation_npm(
     lambdas_m: NDArrayFloat,
     lambda_ref_nm: float,
@@ -103,7 +103,7 @@ def _calc_fiber_attenuation_npm(
     return alpha_dbkm / (NP_TO_DB * 1000)
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_aeff_dynamic(
     lambdas_m: NDArrayFloat,
     a_eff_ref_um2: float,
@@ -133,7 +133,7 @@ def _calc_aeff_dynamic(
     ) * 1e-12  # Convert to square meters.
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_gamma_coeff_scalar(
     lambda_i_m: float,
     lambda_l_m: float,  # noqa: ARG001 - retained for kernel API compatibility
@@ -160,7 +160,7 @@ def _calc_gamma_coeff_scalar(
     return (2 * PI / lambda_i_m) * (2 * n2 / (a_eff_i_m2 + a_eff_l_m2))
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_beta2_from_d(d_ps_nm_km: float, lambda_m: float) -> float:
     """Convert dispersion parameter D to beta2.
 
@@ -179,7 +179,7 @@ def _calc_beta2_from_d(d_ps_nm_km: float, lambda_m: float) -> float:
     return -d_ps_nm_km * 1e-6 * lambda_m**2 / (2 * PI * C_LIGHT)
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_beta3_from_s_d(
     s_ps_nm2_km: float, d_ps_nm_km: float, lambda_m: float
 ) -> float:
@@ -211,7 +211,7 @@ def _calc_beta3_from_s_d(
 _SRS_CR = 0.028 / 1e3 / 1e12  # [1/(W·m·Hz)] if we define r_f using Hz
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_raman_profile_jit(
     f_rel_hz: NDArrayFloat,  # Relative frequency (Hz)
     f_m_hz: float,  # Lower frequency (Hz)
@@ -278,7 +278,7 @@ def _calc_raman_profile_jit(
     return r_f
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_span_out_power_jit(
     p_in_w: NDArrayFloat,  # Per-channel launch power (W)
     f_rel_hz: NDArrayFloat,  # noqa: ARG001 - retained for kernel API compatibility
@@ -341,7 +341,7 @@ def _calc_span_out_power_jit(
 _EPSILON = 1e-35
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_spm_variance_jit(
     p_i_w: float,  # Channel-of-interest launch power (W)
     b_i_hz: float,  # Channel-of-interest bandwidth B_i (Hz)
@@ -419,10 +419,10 @@ def _calc_spm_variance_jit(
     ) * asinh_2
 
     result = pre_factor * term_bracket
-    return max(result, 0.0)  # Noise variance cannot be negative.
+    return max(result, 0.0)  # type: ignore[no-any-return]  # Noise variance cannot be negative.
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_xpm_variance_term_jit(
     p_l_w: float,  # Interfering-channel launch power (W)
     b_l_hz: float,  # Interfering-channel bandwidth B_l (Hz)
@@ -485,10 +485,10 @@ def _calc_xpm_variance_term_jit(
     ) * atan_2
 
     result = pre_factor * term_bracket
-    return max(result, 0.0)  # Noise variance cannot be negative.
+    return max(result, 0.0)  # type: ignore[no-any-return]  # Noise variance cannot be negative.
 
 
-@njit(cache=True)  # No fine-grained multithreading.
+@njit(cache=True)  # type: ignore[untyped-decorator]  # No fine-grained multithreading.
 def _compute_nli_variances(
     n_ch: int,  # Number of channels
     n_span: int,  # Number of spans
@@ -608,7 +608,7 @@ def _compute_nli_variances(
 # =============================================================================
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_nf_lin_jit(lambdas_m: NDArrayFloat) -> NDArrayFloat:
     """Estimate linear amplifier noise figure from wavelength band.
 
@@ -637,7 +637,7 @@ def _calc_nf_lin_jit(lambdas_m: NDArrayFloat) -> NDArrayFloat:
     return nf_lin
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calculate_ase_noise_variance(
     p_in_w: NDArrayFloat,  # Per-channel launch power (W)
     p_out_w: NDArrayFloat,  # Per-channel output power (W)
@@ -690,7 +690,7 @@ def _calculate_ase_noise_variance(
     return total_ase_variance  # Return variance in watts.
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _calc_span_noise_and_power_jit(
     # --- Input state ---
     power_in_w: NDArrayFloat,  # Per-channel launch power (W)
