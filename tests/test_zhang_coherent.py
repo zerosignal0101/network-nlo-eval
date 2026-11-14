@@ -1,5 +1,7 @@
 """Coherent Raman link, phase accumulation and calibration."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -11,6 +13,7 @@ from network_nlo_eval.models.zhang2024_coherent import (
     ZhangSpanProfile,
     _coherent_field,
     _to_buglia_profile,
+    cfm_and_egn_terms,
     coherent_eta,
     fit_zhang_coherent_profile,
     link_function,
@@ -74,3 +77,29 @@ def test_coherent_spans_and_calibration() -> None:
         1 / (2 * np.exp(0.5))
     )
     assert CalibrationSet((term,)).apply({}) == 1
+
+
+@pytest.mark.parametrize("zero_dispersion", [False, True])
+def test_singular_closed_form_uses_finite_single_span_integral(
+    zero_dispersion: bool,
+) -> None:
+    profile = make_profile()
+    if not zero_dispersion:
+        profile = replace(profile, d_npm=profile.a_npm.copy())
+    power = np.full(2, 1e-3)
+    span = ZhangCoherentSpan(profile, power, 0.0)
+    cfm_spm, cfm_xpm, integral_spm, integral_xpm = cfm_and_egn_terms(
+        [span],
+        power,
+        profile.bandwidths_hz,
+        np.full(2, 0.0013),
+        0.0 if zero_dispersion else -2e-26,
+        0.0,
+        193.1e12,
+        n_frequency=16,
+        n_spm_frequency=8,
+    )
+    np.testing.assert_allclose(cfm_spm, integral_spm, rtol=1e-12)
+    np.testing.assert_allclose(cfm_xpm, integral_xpm, rtol=1e-12)
+    assert np.all(cfm_spm > 0)
+    assert np.all(cfm_xpm > 0)

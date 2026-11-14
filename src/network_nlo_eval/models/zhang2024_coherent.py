@@ -551,6 +551,12 @@ def single_span_eta_closed(
 
     The Zhang profile is mapped to three poles. Cross-span terms are evaluated by
     :func:`coherent_eta` because their closed forms were not published.
+
+    Raises
+    ------
+    ValueError
+        If pole cancellation or the phase mismatch makes the closed form
+        singular. The numerical integral can be used for those profiles.
     """
     from network_nlo_eval.models.buglia2024_closed import (
         eta_spm_closed,
@@ -568,6 +574,14 @@ def single_span_eta_closed(
     bandwidths = np.asarray(bandwidths_hz, dtype=np.float64)
     gammas = np.asarray(gamma_per_w_m, dtype=np.float64)
     n_channels = frequencies.size
+    active = np.asarray(powers_w) > 0.0
+    # Each closed-form sum divides by pairs of pole rates. Coincident
+    # forward and backward rates make the individual terms singular even
+    # though their combined integral has a finite limit.
+    for forward in (profile.alpha_npm, profile.a_npm):
+        if np.any(active & np.isclose(forward, profile.d_npm, rtol=1.0e-8, atol=0.0)):
+            msg = "Opposing profile poles make the closed form singular."
+            raise ValueError(msg)
     spm = np.zeros(n_channels, dtype=np.float64)
     xpm = np.zeros(n_channels, dtype=np.float64)
     for index in range(n_channels):
@@ -577,6 +591,9 @@ def single_span_eta_closed(
         phi_i = buglia_phase_spm(
             beta2, beta3, float(frequencies[index]), reference_frequency_hz
         )
+        if phi_i < _PHI_FLOOR:
+            msg = "SPM phase mismatch is outside the closed-form domain."
+            raise ValueError(msg)
         spm[index] = eta_spm_closed(
             converted, index, phi_i, float(bandwidths[index]), float(gammas[index])
         )
@@ -704,6 +721,8 @@ def cfm_and_egn_terms(
 
     The integral contains same-span and cross-span terms; the closed-form estimate
     combines same-span closed forms with numerically integrated cross-span terms.
+    When the same-span closed form is singular, its numerical integral supplies
+    the corresponding coefficients at the requested quadrature resolution.
 
     Returns
     -------
@@ -737,15 +756,30 @@ def cfm_and_egn_terms(
         )
         same_spm += one_spm
         same_xpm += one_xpm
-    closed_spm, closed_xpm = single_span_eta_closed(
-        spans[0].profile,
-        bandwidths_hz,
-        reference_powers_w,
-        gamma_per_w_m,
-        beta2,
-        beta3,
-        reference_frequency_hz,
-    )
+    try:
+        closed_spm, closed_xpm = single_span_eta_closed(
+            spans[0].profile,
+            bandwidths_hz,
+            reference_powers_w,
+            gamma_per_w_m,
+            beta2,
+            beta3,
+            reference_frequency_hz,
+        )
+    except ValueError:
+        # The frequency integral has a finite limit when individual terms of
+        # the analogous closed form become singular.
+        closed_spm, closed_xpm = coherent_eta(
+            [ZhangCoherentSpan(spans[0].profile, reference_powers_w, 0.0)],
+            reference_powers_w,
+            bandwidths_hz,
+            gamma_per_w_m,
+            beta2,
+            beta3,
+            reference_frequency_hz,
+            n_frequency=n_frequency,
+            n_spm_frequency=n_spm_frequency,
+        )
     scale = sum(
         float(np.mean(span.launch_power_w / np.maximum(reference_powers_w, 1e-30))) ** 3
         for span in spans

@@ -62,3 +62,23 @@ def test_zhang_rejects_forward_pumps_and_unpublished_correction() -> None:
         create_model(
             "zhang2024_dra_egn", grid, fiber, modulation_format_correction=True
         )
+
+
+def test_zhang_without_pumps_produces_finite_noise() -> None:
+    grid = SpectrumGrid(2, 50e9, 193.1e12)
+    fiber = FiberSpanConfig(length_km=20)
+    model = create_model(
+        "zhang2024_dra_egn",
+        grid,
+        fiber,
+        32e9,
+        n_steps=8,
+        n_quadrature=8,
+        n_spm_quadrature=8,
+    )
+    result = model.evaluate_path(
+        MultiSpanOpticalPath([fiber], [EDFAConfig()]), np.full(2, 1e-3)
+    )
+    assert np.all(np.isfinite(result.snr_db))
+    assert np.all(result.spm_noise_w > 0)
+    assert np.all(result.xpm_noise_w > 0)
