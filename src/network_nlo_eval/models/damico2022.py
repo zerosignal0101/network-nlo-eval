@@ -23,7 +23,7 @@ doi:10.1109/JLT.2022.3162134."""
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -32,7 +32,6 @@ from network_nlo_eval.models.base import (
     ModelInfo,
     SpanContext,
     SpanFiberOutput,
-    SpanKernel,
     register_model,
 )
 from network_nlo_eval.models.isrs_gn import _SRS_CR
@@ -50,7 +49,9 @@ from network_nlo_eval.models.route import (
 )
 
 if TYPE_CHECKING:
-    from network_nlo_eval.core.types import NDArrayFloat
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
+    from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 __all__ = [
@@ -85,7 +86,7 @@ def _band_group_masks(
     f_abs_hz: NDArrayFloat,
     band_edges_hz: tuple[tuple[float, float], ...],
     n_bands: int | None,
-) -> list[NDArrayFloat]:
+) -> list[NDArrayBool]:
     """Group channels by band and return nonempty Boolean masks.
 
     Parameters
@@ -101,7 +102,7 @@ def _band_group_masks(
     -------
     list of numpy.ndarray
         Boolean masks, including a group for channels outside nominal bands."""
-    masks: list[NDArrayFloat] = []
+    masks: list[NDArrayBool] = []
     if n_bands is None:
         for low, high in band_edges_hz:
             mask = (f_abs_hz >= low) & (f_abs_hz < high)
@@ -340,7 +341,7 @@ class Damico2022SpanKernel:
         self.alpha_npm = alpha_npm
         self.a_eff_m2 = a_eff_m2
         self.beta2_s2_m = beta2
-        self.gamma_w_m = gamma
+        self.gamma_w_m: NDArrayFloat = gamma
 
         beta2_avg = 0.5 * (beta2[:, None] + beta2[None, :])
         df = self.f_abs_hz[:, None] - self.f_abs_hz[None, :]
@@ -435,7 +436,7 @@ class Damico2022SpanKernel:
         leff = np.where(alive, leff, 0.0)
         total = np.sum(leff, axis=1)
         total = np.where(np.isfinite(total), total, 0.0)
-        return np.square(total)
+        return cast("NDArrayFloat", np.square(total))
 
     def _sc_noise(
         self,
@@ -755,7 +756,7 @@ class Damico2022Model(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         *,
@@ -766,7 +767,7 @@ class Damico2022Model(RouteModel):
         c_inf_enabled: bool = True,
         use_dispersion_slope: bool = True,
         coherence_points: int = DEFAULT_COHERENCE_POINTS,
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize the route and model-specific options."""
         super().__init__(
@@ -783,7 +784,7 @@ class Damico2022Model(RouteModel):
             raise ValueError(msg)
         self.coherence_points = int(coherence_points)
 
-    def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
+    def _build_kernel(self, fiber_config: FiberSpanConfig) -> Damico2022SpanKernel:
         """Build a span kernel for the given fiber configuration."""
         return Damico2022SpanKernel(
             fiber_config=fiber_config,
@@ -815,7 +816,7 @@ class Damico2022Model(RouteModel):
         The fiber output carries physical single-span powers and, for multispan
         links, complex amplitudes referenced to the fiber output. The route layer
         handles their propagation and coherent accumulation."""
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("Damico2022SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )

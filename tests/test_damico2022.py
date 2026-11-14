@@ -5,7 +5,11 @@ import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, SpanContext, create_model
-from network_nlo_eval.models.damico2022 import _dirichlet_factor, _equivalent_phase_ramp
+from network_nlo_eval.models.damico2022 import (
+    _band_group_masks,
+    _dirichlet_factor,
+    _equivalent_phase_ramp,
+)
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 
@@ -15,6 +19,16 @@ def test_phase_ramp_matches_target(n: int, fraction: float) -> None:
     target = n + fraction * (n * n - n)
     phase = _equivalent_phase_ramp(n, target)
     assert _dirichlet_factor(n, phase) == pytest.approx(target, rel=1e-12)
+
+
+def test_band_masks_cover_outside_channels_once() -> None:
+    frequencies = np.array([180e12, 185e12, 193e12, 221e12])
+    masks = _band_group_masks(
+        frequencies, ((184.4e12, 191.6e12), (191.6e12, 195.9e12)), None
+    )
+    assert all(mask.dtype == np.bool_ for mask in masks)
+    np.testing.assert_array_equal(np.sum(masks, axis=0), np.ones(4))
+    np.testing.assert_array_equal(masks[-1], [True, False, False, True])
 
 
 def test_exact_aggregation_and_multispan_amplitudes() -> None:
