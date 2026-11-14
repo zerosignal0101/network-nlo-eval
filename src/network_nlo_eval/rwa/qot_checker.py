@@ -8,6 +8,7 @@ candidate-link caches only after all affected services meet their thresholds.
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Literal
 
 import numpy as np
 
@@ -22,7 +23,7 @@ from network_nlo_eval.models.power_conventions import (
     to_convention,
 )
 from network_nlo_eval.network.elements import ROADMConfig
-from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
+from network_nlo_eval.network.state import LinkNoiseCache, LinkState, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.rwa.link_noise import assemble_link_noise
 from network_nlo_eval.rwa.validity import (
@@ -52,7 +53,7 @@ def _normalize(u: NodeID, v: NodeID) -> LinkKey:
     LinkKey
         Canonical link key.
     """
-    return LinkKey((u, v) if u < v else (v, u))
+    return (u, v) if u < v else (v, u)
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def fold_roadm_terms(config: ROADMConfig, *, is_last_hop: bool) -> RoadmTerms:
     RoadmTerms
         Folded ROADM constants.
     """
-    operation = "drop" if is_last_hop else "express"
+    operation: Literal["drop", "express"] = "drop" if is_last_hop else "express"
     nf_lin = 10 ** (config.booster_noise_figure_db / 10)
     loss_db = config.path_loss_db(operation)
     return RoadmTerms(
@@ -715,7 +716,7 @@ class QoTValidator:
     def _get_or_calc_noise_cache(
         self,
         link_key: LinkKey,
-        link_state,
+        link_state: LinkState,
         temp_noise_cache: dict[LinkKey, LinkNoiseCache],
         fixed_span_length_km: float | None,
     ) -> LinkNoiseCache:
