@@ -70,3 +70,41 @@ def test_physical_unit_conversions_and_wavelength_dependence() -> None:
     )
     attenuation = _calc_fiber_attenuation_npm(wavelengths, 1550, 0, 0, 0.2)
     np.testing.assert_allclose(attenuation, _dbkm_to_power_npm(0.2))
+
+
+@pytest.mark.parametrize("uniform_attenuation", [False, True])
+def test_p1_batch_matches_pairwise_kernel(uniform_attenuation: bool) -> None:
+    from network_nlo_eval.models.numba_kernels_p1_accel import (  # noqa: PLC0415
+        P1XpmMatrices,
+        build_p1_xpm_pair_matrices,
+        calc_span_noise_and_power_p1_matvec,
+    )
+
+    inputs = list(span_inputs())
+    if uniform_attenuation:
+        inputs[5] = np.full(3, inputs[5][0])
+    power = inputs[0]
+    batch = np.stack([power, power * np.array([0.0, 1.0, 2.0]), np.zeros(3)])
+    g1, g2, phi, gamma = build_p1_xpm_pair_matrices(
+        3,
+        inputs[12],
+        inputs[2],
+        inputs[4],
+        inputs[6],
+        inputs[5],
+        inputs[7],
+        inputs[8],
+        inputs[9],
+    )
+    matrices = P1XpmMatrices(
+        g1, g2, np.ascontiguousarray(g1.T), np.ascontiguousarray(g2.T), phi, gamma
+    )
+    outputs = calc_span_noise_and_power_p1_matvec(batch, *inputs[1:], matrices)
+    for index, candidate in enumerate(batch):
+        reference = _calc_span_noise_and_power_jit(candidate, *inputs[1:])
+        for batched, expected in zip(outputs, reference, strict=True):
+            np.testing.assert_allclose(batched[index], expected, rtol=1e-12, atol=1e-30)
+    empty = calc_span_noise_and_power_p1_matvec(np.empty((0, 3)), *inputs[1:], matrices)
+    assert all(array.shape == (0, 3) for array in empty)
+    with pytest.raises(ValueError, match="shape"):
+        calc_span_noise_and_power_p1_matvec(power, *inputs[1:], matrices)
