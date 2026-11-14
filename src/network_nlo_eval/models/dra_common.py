@@ -1269,7 +1269,7 @@ class DRARamanModelBase(RouteModel):
         )
         self._paper_pumps = None if raman_pumps is None else list(raman_pumps)
         self._gain_model = RamanGainModel(
-            gain_model=raman_gain_model,  # type: ignore[arg-type]
+            gain_model=raman_gain_model,
             temperature_k=raman_temperature_k,
             peak_gain_coefficient_m_per_w=raman_peak_gain_coefficient_m_per_w,
         )

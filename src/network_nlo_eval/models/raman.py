@@ -21,14 +21,13 @@ are not a calibration for any particular fiber.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from scipy.integrate import cumulative_trapezoid, trapezoid
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.models.raman_table import (
@@ -51,7 +50,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazily export table helpers to avoid a circular import.
 
     Parameters
@@ -164,7 +163,7 @@ class RamanGainModel:
     def __init__(
         self,
         *,
-        gain_model: Literal["gaussian", "linear", "table"] = "gaussian",
+        gain_model: str = "gaussian",
         table: tuple[Sequence[float], Sequence[float]] | None = None,
         peak_gain_coefficient_m_per_w: float = DEFAULT_PEAK_GAIN_COEFFICIENT_M_PER_W,
         delta_f_peak_hz: float = DEFAULT_DELTA_F_PEAK_HZ,
@@ -176,7 +175,7 @@ class RamanGainModel:
         reference_a_eff_m2: float = 80e-12,
     ) -> None:
         """Validate and store the gain-model parameters."""
-        if isinstance(gain_model, RamanGainModel):
+        if isinstance(cast("object", gain_model), RamanGainModel):
             msg = (
                 "gain_model must be a string name, not an already constructed RamanGainModel. "
                 "File-backed tables are only supported by pcfm (raman_model='lumped'), "
@@ -184,8 +183,9 @@ class RamanGainModel:
                 "to those models' raman_gain_model option."
             )
             raise TypeError(msg)
-        if isinstance(gain_model, os.PathLike) or (
-            isinstance(gain_model, str) and _looks_like_gain_table_path(gain_model)
+        if isinstance(cast("object", gain_model), os.PathLike) or (
+            isinstance(cast("object", gain_model), str)
+            and _looks_like_gain_table_path(gain_model)
         ):
             msg = (
                 f"gain_model does not accept the table file {gain_model!r}; construct it with "
@@ -302,10 +302,10 @@ class RamanGainModel:
     @classmethod
     def from_file(
         cls,
-        path: str | Path,
+        path: str | os.PathLike[str],
         *,
         strict_calibration_override: bool = False,
-        **overrides: object,
+        **overrides: Any,
     ) -> RamanGainModel:
         """Load a measured Raman spectrum from a JSON or CSV table.
 
@@ -337,7 +337,7 @@ class RamanGainModel:
         # Import lazily to avoid the table module's dependency on this class.
         from network_nlo_eval.models.raman_table import load_raman_gain_table  # noqa: I001, PLC0415
 
-        return load_raman_gain_table(path).to_model(
+        return load_raman_gain_table(os.fspath(path)).to_model(
             strict_calibration_override=strict_calibration_override,
             **overrides,
         )
@@ -420,6 +420,7 @@ class RamanGainModel:
             )
             return np.where(shift > 0, gaussian, 0.0)
         if self.gain_model == "table":
+            assert self.table is not None
             offsets, gains = self.table
             # Avoid extrapolating measurements beyond the available spectrum.
             interpolated = np.interp(shift, offsets, gains, left=0.0, right=0.0)
@@ -441,7 +442,7 @@ class RamanGainModel:
         float
             Pump attenuation (1/m).
         """
-        return float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3
+        return float(float(pump.attenuation_db_per_km) * np.log(10.0) / 10.0 / 1e3)
 
     @classmethod
     def _pump_effective_length_m(cls, pump: RamanPumpConfig, length_m: float) -> float:
@@ -498,7 +499,7 @@ class RamanGainModel:
         coefficient = self.peak_gain_coefficient_m_per_w / a_eff_m2
         if self.include_photon_energy_factor:
             coefficient = coefficient * (pump_frequency_hz / frequencies_hz)
-        return np.sign(shift) * coefficient * shape
+        return cast("NDArrayFloat", np.sign(shift) * coefficient * shape)
 
     def _pump_power_profile(
         self, pump: RamanPumpConfig, z_m: NDArrayFloat, length_m: float
@@ -521,8 +522,10 @@ class RamanGainModel:
         """
         alpha = self._pump_alpha_npm(pump)
         if str(pump.direction) == "forward":
-            return float(pump.power_w) * np.exp(-alpha * z_m)
-        return float(pump.power_w) * np.exp(-alpha * (length_m - z_m))
+            return cast("NDArrayFloat", float(pump.power_w) * np.exp(-alpha * z_m))
+        return cast(
+            "NDArrayFloat", float(pump.power_w) * np.exp(-alpha * (length_m - z_m))
+        )
 
     def _pump_nsp(
         self, pump: RamanPumpConfig, frequencies_hz: NDArrayFloat
@@ -549,7 +552,7 @@ class RamanGainModel:
         safe = x > 1e-12
         nsp = np.ones_like(x)
         nsp[safe] = 1.0 / (-np.expm1(-x[safe]))
-        return nsp
+        return cast("NDArrayFloat", nsp)
 
     def on_off_gain(
         self,
@@ -714,7 +717,7 @@ class RamanGainModel:
             * bandwidths
             * trapezoid(integrand, z_m, axis=1)
         )
-        return np.maximum(ase, 0.0)
+        return cast("NDArrayFloat", np.maximum(ase, 0.0))
 
     def _resolve_a_eff(
         self,
@@ -815,7 +818,8 @@ def resolve_raman_gain_model(
             raise ValueError(msg)
         return gain_model
     is_path = isinstance(gain_model, os.PathLike) or (
-        isinstance(gain_model, str) and _looks_like_gain_table_path(gain_model)
+        isinstance(cast("object", gain_model), str)
+        and _looks_like_gain_table_path(gain_model)
     )
     if is_path:
         if table is not None:
@@ -825,7 +829,7 @@ def resolve_raman_gain_model(
             )
             raise ValueError(msg)
         # None alone means omitted; explicit defaults still override file calibration.
-        overrides: dict[str, float] = {}
+        overrides: dict[str, Any] = {}
         if peak_gain_coefficient_m_per_w is not None:
             overrides["peak_gain_coefficient_m_per_w"] = float(
                 peak_gain_coefficient_m_per_w
@@ -834,7 +838,7 @@ def resolve_raman_gain_model(
             overrides["temperature_k"] = float(temperature_k)
         return RamanGainModel.from_file(gain_model, **overrides)
     return RamanGainModel(
-        gain_model=gain_model,
+        gain_model=cast("str", gain_model),
         table=table,
         # Only omitted values use the defaults.
         peak_gain_coefficient_m_per_w=(
