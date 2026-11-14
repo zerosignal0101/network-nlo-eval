@@ -170,7 +170,7 @@ class MetricsCollector:
         self, final_network_state: NetworkState
     ) -> dict[str, Any]:
         """Calculate key network performance metrics."""
-        metrics = {}
+        metrics: dict[str, Any] = {}
 
         # 1. Blocking rate.
         metrics["total_incoming_services"] = self.total_incoming_services
@@ -188,7 +188,7 @@ class MetricsCollector:
         total_occupied_slots = 0
         total_possible_slots = 0
         for link_state in final_network_state.get_all_link_states().values():
-            total_occupied_slots += np.sum(link_state.occupied_channels)
+            total_occupied_slots += int(np.sum(link_state.occupied_channels))
             total_possible_slots += self.spectrum_grid.num_channels
         metrics["wavelength_utilization"] = (
             total_occupied_slots / total_possible_slots
@@ -217,7 +217,7 @@ class MetricsCollector:
 
         for link_state in final_network_state.get_all_link_states().values():
             free_bands = ~link_state.occupied_channels  # True indicates a free channel.
-            num_free_channels = np.sum(free_bands)
+            num_free_channels = int(np.sum(free_bands))
 
             current_link_fragmentation = 0.0
 
@@ -227,8 +227,8 @@ class MetricsCollector:
                 # Pad with False to count blocks touching the array boundaries.
                 padded_free_bands = np.concatenate(([False], free_bands, [False]))
                 # Count transitions from occupied to free.
-                num_free_blocks = np.sum(
-                    padded_free_bands[1:] & ~padded_free_bands[:-1]
+                num_free_blocks = int(
+                    np.sum(padded_free_bands[1:] & ~padded_free_bands[:-1])
                 )
 
                 # Fragmentation is (number of free blocks - 1) / (number of free channels - 1).
