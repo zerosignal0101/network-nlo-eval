@@ -82,6 +82,7 @@ def test_lumped_raman_reference_and_validity_warning() -> None:
         [27.549176249539812, 25.219005392809578, 27.84136153559457],
         rtol=1e-11,
     )
+    assert model.last_validity_flagged is not None
     assert np.all(model.last_validity_flagged)
 
 
