@@ -41,7 +41,7 @@ def test_sweep_timing_and_convention_checks() -> None:
 
 
 def test_accuracy_and_serialization_drop_nonfinite_snr() -> None:
-    def run(snr, powers=(0.0,)):
+    def run(snr: list[float], powers: tuple[float, ...] = (0.0,)) -> ModelRun:
         return ModelRun("model", "case", np.array([snr]), powers, 1, 1, 1, 1000, 1, 1)
 
     sample = run([10.0, 22.0, np.nan])
