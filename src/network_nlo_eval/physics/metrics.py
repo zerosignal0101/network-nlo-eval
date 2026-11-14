@@ -45,7 +45,7 @@ def compute_ber_from_snr(snr_db: float, modulation: str = "QPSK") -> float:
         msg = "Unsupported modulation format."
         raise ValueError(msg)
 
-    return max(ber, 1e-15)  # Floor to avoid log(0)
+    return float(max(ber, 1e-15))  # Floor to avoid log(0)
 
 
 def compute_snr_from_evm(evm_linear: float, modulation: str = "QPSK") -> float:  # noqa: ARG001
@@ -68,6 +68,6 @@ def compute_snr_from_evm(evm_linear: float, modulation: str = "QPSK") -> float: 
         evm_sq = evm_linear * evm_linear
         # EVM² = P_error / P_signal ≈ 1/SNR (Standard EVM-to-SNR relation)
         snr_linear = 1.0 / evm_sq if evm_sq > 0 else 1e20
-        return max(_lin_to_db(snr_linear), -20.0)
+        return float(max(_lin_to_db(snr_linear), -20.0))
 
     return float("inf")
