@@ -15,7 +15,6 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.base import QoTModel
-from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.models.power_conventions import (
     ase_polarization_scale as convention_ase_polarization_scale,
 )
@@ -27,6 +26,7 @@ from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, LinkState, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.rwa.link_noise import (
+    FiberBoundQoTModel,
     assemble_link_noise,
     assemble_model_link_noise,
 )
@@ -703,7 +703,7 @@ class QoTValidator:
             )
             self.last_link_validity[link_key] = validity
 
-        if isinstance(self.gn_evaluator, MultiBandISRSGN):
+        if isinstance(self.gn_evaluator, FiberBoundQoTModel):
             return assemble_link_noise(
                 evaluator=self.gn_evaluator.for_fiber(fiber_config),
                 edfa_config=edfa_config,

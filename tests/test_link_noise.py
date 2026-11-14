@@ -13,6 +13,7 @@ from network_nlo_eval.models.base import (
     create_model,
 )
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
+from network_nlo_eval.models.pcfm import PCFMModel
 from network_nlo_eval.network.elements import (
     EDFAConfig,
     FiberSpanConfig,
@@ -174,3 +175,39 @@ def test_validator_assembles_registered_model_link(
         np.testing.assert_allclose(actual, reference, rtol=1e-12, atol=0)
     assert cache.span_count == 3
     assert np.all(cache.spm > 0)
+
+
+@pytest.mark.parametrize("coherent", [False, True])
+def test_validator_preserves_fiber_bound_pcfm_assembly(coherent: bool) -> None:
+    fiber = FiberSpanConfig(length_km=40, max_span_length_km=20)
+    edfa = EDFAConfig()
+    grid = SpectrumGrid(2, 50e9, 193.1e12)
+    graph: nx.Graph[int] = nx.Graph()
+    graph.add_edge(0, 1, length_km=40)
+    topology = NetworkTopology(graph, fiber, edfa, ROADMConfig())
+    model = PCFMModel(
+        grid,
+        fiber,
+        32e9,
+        channel_bandwidth_source="occupied",
+        power_width_mode="fixed_psd",
+    )
+    power = np.full(2, 1e-3)
+    validator = QoTValidator(model, topology, grid, coherent_assembly=coherent)
+    actual = validator._calc_link_noise((0, 1), power, None)
+    expected = assemble_link_noise(
+        evaluator=model.for_fiber(topology.get_fiber_config(0, 1)),
+        edfa_config=topology.get_link_edfa_config(0, 1),
+        power_profile=power,
+        span_length_m=20e3,
+        num_full_spans=2,
+        remainder_length_m=0,
+        num_channels=2,
+        coherent=coherent,
+    )
+    for actual_array, expected_array in zip(
+        (actual.spm, actual.xpm, actual.ase),
+        (expected.spm, expected.xpm, expected.ase),
+        strict=True,
+    ):
+        np.testing.assert_array_equal(actual_array, expected_array)

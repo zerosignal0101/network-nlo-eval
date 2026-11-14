@@ -7,7 +7,7 @@ this operation order to retain established numerical results.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 import numpy as np
 
@@ -16,13 +16,52 @@ from network_nlo_eval.network.state import LinkNoiseCache
 
 if TYPE_CHECKING:
     from network_nlo_eval.core.types import NDArrayFloat
-    from network_nlo_eval.models.base import PathQoTResult, QoTModel
-    from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
-    from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
+    from network_nlo_eval.models.base import ElementOutput, PathQoTResult, QoTModel
+    from network_nlo_eval.network.elements import (
+        EDFAConfig,
+        FiberSpanConfig,
+        ROADMConfig,
+    )
     from network_nlo_eval.rwa.validity import LinkValidity
 
 #: Remainders at or below this length in meters do not form a span.
 _REMAINDER_EPSILON_M = 1.0
+
+
+class _PowerSpanEvaluator(Protocol):
+    """A fiber-bound evaluator returning independent span powers."""
+
+    def _calc_span_noise_and_power(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        roadm_config: ROADMConfig | None = None,
+        /,
+        n_effective_spans: int = 1,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]: ...
+
+
+class _ContextSpanEvaluator(Protocol):
+    """A fiber-bound evaluator supporting span context."""
+
+    def _calc_span_output_with_context(
+        self,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        edfa_config: EDFAConfig | None,
+        span_context: SpanContext | None,
+        /,
+    ) -> ElementOutput: ...
+
+
+@runtime_checkable
+class FiberBoundQoTModel(Protocol):
+    """A model that exposes its existing fiber-bound network adapter."""
+
+    def for_fiber(
+        self, fiber_config: FiberSpanConfig
+    ) -> _PowerSpanEvaluator | _ContextSpanEvaluator: ...
 
 
 def assemble_model_link_noise(
@@ -131,7 +170,7 @@ def _emits_nli_amplitudes(evaluator: object) -> bool:
 
 def _assemble_coherent_link_noise(
     *,
-    evaluator: MultiBandISRSGN,
+    evaluator: _ContextSpanEvaluator,
     edfa_config: EDFAConfig | None,
     power_profile: NDArrayFloat,
     span_length_m: float,
@@ -253,7 +292,7 @@ def _assemble_coherent_link_noise(
 
 def assemble_link_noise(
     *,
-    evaluator: MultiBandISRSGN,
+    evaluator: _PowerSpanEvaluator | _ContextSpanEvaluator,
     edfa_config: EDFAConfig | None,
     power_profile: NDArrayFloat,
     span_length_m: float,
@@ -268,7 +307,7 @@ def assemble_link_noise(
 
     Parameters
     ----------
-    evaluator : MultiBandISRSGN
+    evaluator : object
         Evaluator configured for the link fiber.
     edfa_config : EDFAConfig or None
         Span amplifier configuration.
@@ -303,7 +342,7 @@ def assemble_link_noise(
 
     if coherent and _emits_nli_amplitudes(evaluator):
         return _assemble_coherent_link_noise(
-            evaluator=evaluator,
+            evaluator=cast("_ContextSpanEvaluator", evaluator),
             edfa_config=edfa_config,
             power_profile=power_profile,
             span_length_m=span_length_m,
@@ -318,9 +357,10 @@ def assemble_link_noise(
     total_xpm = np.zeros(num_channels, dtype=np.float64)
     total_ase = np.zeros(num_channels, dtype=np.float64)
     total_spans = 0
+    power_evaluator = cast("_PowerSpanEvaluator", evaluator)
 
     if num_full_spans > 0:
-        _, s_spm, s_xpm, s_ase = evaluator._calc_span_noise_and_power(
+        _, s_spm, s_xpm, s_ase = power_evaluator._calc_span_noise_and_power(
             power_profile,
             span_length_m,
             edfa_config,
@@ -333,7 +373,7 @@ def assemble_link_noise(
         total_spans += num_full_spans
 
     if remainder_length_m > _REMAINDER_EPSILON_M:
-        _, r_spm, r_xpm, r_ase = evaluator._calc_span_noise_and_power(
+        _, r_spm, r_xpm, r_ase = power_evaluator._calc_span_noise_and_power(
             power_profile,
             remainder_length_m,
             edfa_config,
