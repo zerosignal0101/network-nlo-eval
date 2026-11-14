@@ -20,7 +20,7 @@ the Presence of Raman Amplification", J. Lightwave Technol. 42(2), 636-648,
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -42,6 +42,8 @@ from network_nlo_eval.models.raman import C_LIGHT
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
@@ -239,10 +241,10 @@ class Buglia2024RAModel(DRARamanModelBase):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
         raman_gain_model: str = "gaussian",
         raman_ase: bool = True,
@@ -254,7 +256,7 @@ class Buglia2024RAModel(DRARamanModelBase):
         n_quadrature: int = DEFAULT_DRA_NLI_QUADRATURE,
         nli_form: str = "closed",
         spm_coherence_exponent: float = 0.0,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         if nli_form not in ("closed", "integral"):
             msg = "nli_form must be 'closed' or 'integral'."
