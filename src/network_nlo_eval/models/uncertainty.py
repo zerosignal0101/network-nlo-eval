@@ -53,9 +53,9 @@ if TYPE_CHECKING:
 
     from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
     from network_nlo_eval.models.base import (
+        KernelQoTModel,
         MultiSpanOpticalPath,
         PathQoTResult,
-        QoTModel,
     )
 
 __all__ = [
@@ -994,7 +994,7 @@ def span_validity(
 
 
 def _iter_span_states(
-    model: QoTModel, optical_path: MultiSpanOpticalPath
+    model: KernelQoTModel, optical_path: MultiSpanOpticalPath
 ) -> list[tuple[PCFMSpanKernel, float]]:
     """List the distinct ``(kernel, span length)`` states of a path.
 
@@ -1055,7 +1055,7 @@ def _path_tilt_db(states: Sequence[tuple[PCFMSpanKernel, float]]) -> float:
 
 
 def estimate_h3_error_budget(
-    model: QoTModel,
+    model: KernelQoTModel,
     optical_path: MultiSpanOpticalPath,
     power_in_w: NDArrayFloat,
     result: PathQoTResult,
@@ -1070,7 +1070,7 @@ def estimate_h3_error_budget(
 
     Parameters
     ----------
-    model : QoTModel
+    model : KernelQoTModel
         H3 model that produced ``result`` (must expose ``kernel_for``).
     optical_path : MultiSpanOpticalPath
         Path that was evaluated.

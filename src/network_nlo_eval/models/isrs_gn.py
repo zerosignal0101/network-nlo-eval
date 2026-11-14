@@ -137,6 +137,8 @@ class MultiBandISRSGN:
     therefore use the same convention and produce the same SNR.
     """
 
+    info = ECZ_MODEL_INFO
+
     #: Network-visible power convention; instances can override the total default.
     launch_power_convention = "total"
 

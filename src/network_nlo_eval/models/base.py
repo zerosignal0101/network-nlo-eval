@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "MODEL_REGISTRY",
+    "KernelQoTModel",
     "ModelInfo",
     "MultiSpanOpticalPath",
     "PathQoTResult",
@@ -263,8 +264,8 @@ class ModelInfo:
 class QoTModel(Protocol):
     """Protocol for a quality-of-transmission model that evaluates a path.
 
-    Implementations provide span kernels, per-node arrays, and ROADM blocking
-    information consumed by the common route layer.
+    Implementations provide per-node arrays and ROADM blocking information
+    consumed by the common route layer.
     """
 
     info: ModelInfo
@@ -283,10 +284,6 @@ class QoTModel(Protocol):
     @property
     def channel_bandwidth_hz_channels(self) -> NDArrayFloat:
         """Return the channel bandwidth in Hz for each node."""
-        ...
-
-    def kernel_for(self, fiber_config: FiberSpanConfig) -> SpanKernel:
-        """Return a possibly cached single-span kernel for a fiber configuration."""
         ...
 
     def blocked_nodes(self, roadm_config: ROADMConfig) -> list[int]:
@@ -311,6 +308,15 @@ class QoTModel(Protocol):
         self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat
     ) -> PathQoTResult:
         """Evaluate a path and return per-channel results."""
+        ...
+
+
+@runtime_checkable
+class KernelQoTModel(QoTModel, Protocol):
+    """A path model that also exposes its cached single-span kernels."""
+
+    def kernel_for(self, fiber_config: FiberSpanConfig) -> SpanKernel:
+        """Return a possibly cached single-span kernel for a fiber configuration."""
         ...
 
 

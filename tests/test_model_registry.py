@@ -2,6 +2,7 @@
 
 import pytest
 
+from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models import base
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
@@ -36,3 +37,16 @@ def test_registry_registration_discovery_and_construction(
         base.register_model(info, lambda: model)
     with pytest.raises(KeyError, match="Unknown QoT model"):
         base.create_model("missing")
+
+
+def test_registered_models_expose_their_supported_protocols() -> None:
+    """Path evaluation does not require every model to expose a span kernel."""
+    grid = SpectrumGrid(3, 50e9, 193.1e12)
+    fiber = FiberSpanConfig(length_km=80)
+    legacy_model = base.create_model("ecz", grid, fiber, 32e9)
+    kernel_model = base.create_model("carena2014", grid, fiber, 32e9)
+
+    assert isinstance(legacy_model, base.QoTModel)
+    assert legacy_model.info.name == "ecz"
+    assert not isinstance(legacy_model, base.KernelQoTModel)
+    assert isinstance(kernel_model, base.KernelQoTModel)

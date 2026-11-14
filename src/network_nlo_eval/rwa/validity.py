@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
-from network_nlo_eval.models.base import MultiSpanOpticalPath, QoTModel
+from network_nlo_eval.models.base import KernelQoTModel, MultiSpanOpticalPath
 from network_nlo_eval.models.power_conventions import (
     resolve_launch_power_convention,
     to_convention,
@@ -1304,7 +1304,7 @@ class H3LinkValidityProvider:
 
     Parameters
     ----------
-    model : QoTModel
+    model : KernelQoTModel
         PCFM/H3 model exposing ``evaluate_path``, ``kernel_for`` and ``n_nodes``.
     input_power_convention : str, optional
         Input power convention, ``total`` or ``per_pol``; defaults to total.
@@ -1321,7 +1321,7 @@ class H3LinkValidityProvider:
 
     def __init__(
         self,
-        model: QoTModel,
+        model: KernelQoTModel,
         *,
         input_power_convention: str = "total",
         config: H3UncertaintyConfig | None = None,
