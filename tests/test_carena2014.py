@@ -5,7 +5,12 @@ import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
-from network_nlo_eval.models.carena2014 import EgnIntegrator, LinkFunction
+from network_nlo_eval.models.carena2014 import (
+    Carena2014Model,
+    Carena2014SpanKernel,
+    EgnIntegrator,
+    LinkFunction,
+)
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
 
@@ -41,13 +46,15 @@ def test_mci_and_multispan_route():
     model = create_model(
         "carena2014", grid, fiber, 32e9, quadrature_points=4, frequency_points=5
     )
+    assert isinstance(model, Carena2014Model)
     kernel = model.kernel_for(fiber)
+    assert isinstance(kernel, Carena2014SpanKernel)
     power = np.full(3, 1e-3)
     table = kernel.mci_kappas(1, 20e3)
     assert all(upper > 0 > lower for upper, lower in table)
     assert max(np.max(item.kappa_m0) for item in table.values()) > 0
     gn, _ = kernel._mci_terms(1, 20e3, power)
-    doubled, _ = kernel._mci_terms(1, 20e3, 2 * power)
+    doubled, _ = kernel._mci_terms(1, 20e3, 2.0 * power)
     assert gn[1] > 0
     assert doubled[1] == pytest.approx(8 * gn[1])
     path = MultiSpanOpticalPath([fiber] * 2, [EDFAConfig()] * 2)
