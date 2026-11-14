@@ -233,16 +233,12 @@ def simulate(
         )
         raise click.ClickException(msg) from exc
 
-    # Coherent assembly is opt-in and depends on model support.
-    validator_options: dict[str, object] = {}
-    if coherent_assembly:
-        validator_options["coherent_assembly"] = True
     qot_validator = QoTValidator(
         gn_evaluator=gn_evaluator,
         network_topology=network_topology,
         spectrum_grid=spectrum_grid,
         launch_power_convention=launch_power_convention,
-        **validator_options,
+        coherent_assembly=coherent_assembly,
     )
 
     # Precompute candidate paths.
@@ -509,6 +505,7 @@ def bench(
         for name in models:
             run = run_case(name, case.name, powers_dbm=powers, reps=reps)
             runs[name] = run
+        accuracy: dict[str, dict[str, float]] = {}
         payload = {
             "case": {
                 "name": case.name,
@@ -523,7 +520,7 @@ def bench(
                 "powers_dbm": list(powers),
             },
             "runs": {name: run.to_dict() for name, run in runs.items()},
-            "accuracy": {},
+            "accuracy": accuracy,
         }
         if reference is not None:
             if reference not in runs:
@@ -532,7 +529,7 @@ def bench(
             for name, run in runs.items():
                 if name == reference:
                     continue
-                payload["accuracy"][name] = accuracy_vs_reference(run, runs[reference])
+                accuracy[name] = accuracy_vs_reference(run, runs[reference])
         echo_payload = json.dumps(payload, ensure_ascii=False, indent=2)
         if output_file is not None:
             output_file.parent.mkdir(parents=True, exist_ok=True)
