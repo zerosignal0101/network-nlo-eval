@@ -26,14 +26,15 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from network_nlo_eval.core.types import NDArrayFloat
+    from network_nlo_eval.core.types import NDArrayFloat, NDArrayInt
 
 try:  # pragma: no cover - the branch without numba is covered by monkeypatch.
     import numba.core.config as _numba_config
@@ -42,7 +43,7 @@ try:  # pragma: no cover - the branch without numba is covered by monkeypatch.
     NUMBA_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _numba_config = None
-    njit = None  # type: ignore[assignment]
+    njit = None
     NUMBA_AVAILABLE = False
 
 __all__ = [
@@ -55,6 +56,8 @@ __all__ = [
 #: Sub-directory of the system temporary directory used when the caller did not
 #: configure ``NUMBA_CACHE_DIR``.
 _CACHE_DIR_NAME = "network-nlo-eval-numba-cache"
+
+_JitFunction = TypeVar("_JitFunction", bound=Callable[..., Any])
 
 
 def _redirect_cache() -> None:
@@ -84,11 +87,12 @@ def _redirect_cache() -> None:
 _redirect_cache()
 
 
-def _jit(function):
+def _jit(function: _JitFunction) -> _JitFunction:
     """Decorate with ``njit(cache=True, nogil=True)``, or leave plain Python."""
     if not NUMBA_AVAILABLE:
         return function
-    return njit(cache=True, nogil=True)(function)
+    assert njit is not None
+    return cast("_JitFunction", njit(cache=True, nogil=True)(function))
 
 
 def cpu_count_hint() -> int:
@@ -99,8 +103,8 @@ def cpu_count_hint() -> int:
 @_jit
 def _rhs_forward(
     coupling: NDArrayFloat,
-    fwd_slots: np.ndarray,
-    bw_slots: np.ndarray,
+    fwd_slots: NDArrayInt,
+    bw_slots: NDArrayInt,
     alpha_fwd: NDArrayFloat,
     source_fwd: NDArrayFloat,
     ase_source_coeff: NDArrayFloat,
@@ -157,7 +161,7 @@ def _interp_row_into(
 @_jit
 def _rhs_backward(
     coupling_bw: NDArrayFloat,
-    bw_slots: np.ndarray,
+    bw_slots: NDArrayInt,
     alpha_bw: NDArrayFloat,
     drive_scale: NDArrayFloat,
     drive_uniform: bool,
@@ -187,8 +191,8 @@ def _rhs_backward(
 @_jit
 def rk4_forward(
     coupling: NDArrayFloat,
-    fwd_slots: np.ndarray,
-    bw_slots: np.ndarray,
+    fwd_slots: NDArrayInt,
+    bw_slots: NDArrayInt,
     alpha_fwd: NDArrayFloat,
     source_fwd: NDArrayFloat,
     ase_source_coeff: NDArrayFloat,
@@ -359,11 +363,11 @@ def rk4_forward(
 @_jit
 def rk4_backward(
     coupling_bw: NDArrayFloat,
-    bw_slots: np.ndarray,
+    bw_slots: NDArrayInt,
     alpha_bw: NDArrayFloat,
     drive_scale: NDArrayFloat,
     z_m: NDArrayFloat,
-    interp_index: np.ndarray,
+    interp_index: NDArrayInt,
     interp_weight: NDArrayFloat,
     power_in: NDArrayFloat,
     ase_in: NDArrayFloat,
