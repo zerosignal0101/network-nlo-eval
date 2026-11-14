@@ -32,7 +32,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, cas
 import numpy as np
 from scipy.optimize import least_squares
 
-from network_nlo_eval.models.base import SpanContext, SpanFiberOutput
+from network_nlo_eval.models.base import (
+    ElementOutput,
+    MultiSpanOpticalPath,
+    PathQoTResult,
+    SpanContext,
+    SpanFiberOutput,
+)
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
     _calc_beta2_from_d,
@@ -58,8 +64,14 @@ from network_nlo_eval.models.route import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
-    from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
+    from network_nlo_eval.network.elements import (
+        EDFAConfig,
+        FiberSpanConfig,
+        RamanPumpConfig,
+    )
 
 __all__ = [
     "DEFAULT_DRA_NLI_QUADRATURE",
@@ -203,9 +215,13 @@ class BugliaProfile:
     def value(self, z_m: NDArrayFloat, frequency_hz: float) -> NDArrayFloat:
         """Evaluate ``rho(z, f)`` at the given longitudinal positions."""
         rates, coefficients = self._coefficients(frequency_hz)
-        return np.sum(
-            coefficients[:, None] * np.exp(-rates[:, None] * np.asarray(z_m)[None, :]),
-            axis=0,
+        return cast(
+            "NDArrayFloat",
+            np.sum(
+                coefficients[:, None]
+                * np.exp(-rates[:, None] * np.asarray(z_m)[None, :]),
+                axis=0,
+            ),
         )
 
     def link(self, frequency_hz: float, phi: NDArrayFloat) -> NDArrayComplex:
@@ -284,9 +300,13 @@ class ZhangProfile:
     def value(self, z_m: NDArrayFloat, frequency_hz: float) -> NDArrayFloat:
         """Evaluate ``rho(z, f)`` at the given longitudinal positions."""
         rates, coefficients = self._coefficients(frequency_hz)
-        return np.sum(
-            coefficients[:, None] * np.exp(-rates[:, None] * np.asarray(z_m)[None, :]),
-            axis=0,
+        return cast(
+            "NDArrayFloat",
+            np.sum(
+                coefficients[:, None]
+                * np.exp(-rates[:, None] * np.asarray(z_m)[None, :]),
+                axis=0,
+            ),
         )
 
     def link(self, frequency_hz: float, phi: NDArrayFloat) -> NDArrayComplex:
@@ -310,7 +330,10 @@ def _exponential_link(
     """
     denominator = rates[:, None].astype(np.complex128) - 1j * phi[None, :]
     numerator = -np.expm1(-denominator * length_m)
-    return np.sum(coefficients[:, None] * numerator / denominator, axis=0)
+    return cast(
+        "NDArrayComplex",
+        np.sum(coefficients[:, None] * numerator / denominator, axis=0),
+    )
 
 
 def _profile_grid(profile: NDArrayFloat, length_m: float, n_steps: int) -> NDArrayFloat:  # noqa: ARG001
@@ -388,7 +411,7 @@ def fit_buglia_profile(
             model = np.exp(-alpha * positions) * (
                 1.0 - (cf * leff + cb * ltilde) * delta
             )
-            return model - target
+            return cast("NDArrayFloat", model - target)
 
         start = np.array([alpha_npm[index], 0.0, 0.0], dtype=np.float64)
         bounds = (
@@ -493,14 +516,16 @@ def fit_zhang_profile(
             # the analytic rho(0) so a fast-decaying fit cannot exploit the
             # half-step offset.
             rho_zero = 1.0 + d_value * np.exp(-d_rate * length_m)
-            return curve / rho_zero
+            return cast("NDArrayFloat", curve / rho_zero)
 
         def residual(
             parameters: NDArrayFloat,
             target: NDArrayFloat = target,
         ) -> NDArrayFloat:
-            return (model(parameters) - target) / np.maximum(
-                target, _ZHANG_RELATIVE_FLOOR
+            return cast(
+                "NDArrayFloat",
+                (model(parameters) - target)
+                / np.maximum(target, _ZHANG_RELATIVE_FLOOR),
             )
 
         start = np.array([0.2, 2.0 * alpha, 0.0, 4.0e-5], dtype=np.float64)
@@ -656,7 +681,7 @@ def nli_power_from_profile(
         msg = "powers_w and bandwidths_hz must contain one value per channel."
         raise ValueError(msg)
 
-    nodes, weights = np.polynomial.legendre.leggauss(int(n_quadrature))
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_quadrature))  # type: ignore[no-untyped-call]
     spm = np.zeros(n_channels, dtype=np.float64)
     xpm = np.zeros(n_channels, dtype=np.float64)
 
@@ -821,7 +846,7 @@ class DRASpanKernelBase(Generic[_ProfileT]):
         if int(signal_polarizations) < 1:
             msg = "signal_polarizations must be >= 1."
             raise ValueError(msg)
-        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+        if not isinstance(cast("object", pump_pump_raman), (bool, np.bool_)):
             msg = f"pump_pump_raman must be a bool, got {pump_pump_raman!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         self.launch_power_convention = resolve_launch_power_convention(
@@ -1083,7 +1108,7 @@ class DRASpanKernelBase(Generic[_ProfileT]):
             if span_length > 0
             else 0.0
         )
-        return np.exp(1j * ramp * scale)
+        return cast("NDArrayComplex", np.exp(1j * ramp * scale))
 
     def evaluate(
         self,
@@ -1207,10 +1232,10 @@ class DRARamanModelBase(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
         raman_gain_model: str = "gaussian",
         raman_ase: bool = True,
@@ -1221,7 +1246,7 @@ class DRARamanModelBase(RouteModel):
         n_steps: int = DEFAULT_DRA_STEPS,
         n_quadrature: int = DEFAULT_DRA_NLI_QUADRATURE,
         signal_polarizations: int = 1,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         if fixed_point_iterations < 1:
             msg = "fixed_point_iterations must be >= 1."
@@ -1279,7 +1304,13 @@ class DRARamanModelBase(RouteModel):
             signal_polarizations=self._signal_polarizations,
         )
 
-    def evaluate_path(self, optical_path, power_in_w):
+    def kernel_for(self, fiber_config: FiberSpanConfig) -> DRASpanKernelBase[Any]:
+        """Return the cached distributed-Raman kernel for a fiber."""
+        return cast("DRASpanKernelBase[Any]", super().kernel_for(fiber_config))
+
+    def evaluate_path(
+        self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat
+    ) -> PathQoTResult:
         """Evaluate a path with fresh per-path kernel state."""
         self._ase_in_w = np.zeros(self.n_nodes, dtype=np.float64)
         for kernel in self._kernel_cache.values():
@@ -1290,12 +1321,12 @@ class DRARamanModelBase(RouteModel):
 
     def span_step(
         self,
-        fiber_config,
-        edfa_config,
-        power_in_w,
-        span_length_m,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
         span_context: SpanContext | None = None,
-    ):
+    ) -> ElementOutput:
         """Single span: DRA kernel, then the shared amplifier handling."""
         kernel = self.kernel_for(fiber_config)
         kernel.set_input_ase_w(self._ase_in_w)
