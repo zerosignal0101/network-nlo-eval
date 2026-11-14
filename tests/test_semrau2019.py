@@ -13,6 +13,7 @@ from network_nlo_eval.models.base import (
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.models.semrau2019 import (
     Semrau2019Model,
+    Semrau2019SpanKernel,
     _coherent_factor,
     _equivalent_phase_ramp,
 )
@@ -85,9 +86,13 @@ def test_span_amplitudes_match_power_and_phase_changes_with_context() -> None:
     fiber = FiberSpanConfig(length_km=80)
     model = Semrau2019Model(SpectrumGrid(4, 50e9, 193.1e12), fiber, 32e9)
     kernel = model.kernel_for(fiber)
+    assert isinstance(kernel, Semrau2019SpanKernel)
     power = np.full(4, 1e-3)
     first = kernel.evaluate(power, 80e3, span_context=SpanContext(0, 3, 0, 80e3))
     second = kernel.evaluate(power, 80e3, span_context=SpanContext(1, 3, 80e3, 80e3))
+    assert first.nli_amplitude_spm is not None
+    assert second.nli_amplitude_spm is not None
+    assert second.nli_amplitude_xpm is not None
     np.testing.assert_allclose(np.abs(first.nli_amplitude_spm) ** 2, first.spm_noise_w)
     np.testing.assert_allclose(
         np.abs(second.nli_amplitude_xpm) ** 2, second.xpm_noise_w
