@@ -66,9 +66,7 @@ class NetworkTopology:
         for u_orig, v_orig, data in self._network_raw.edges(data=True):
             u_idx = self._node_id_to_idx[u_orig]
             v_idx = self._node_id_to_idx[v_orig]
-            link_key = LinkKey(
-                (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
-            )  # Normalize the link key.
+            link_key: LinkKey = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
 
             # Support nested physical settings and legacy edge weights as lengths.
             fiber_overrides = dict(data.get("fiber", data.get("fiber_config", {})))
@@ -113,7 +111,7 @@ class NetworkTopology:
 
     def get_fiber_config(self, u_idx: NodeID, v_idx: NodeID) -> FiberSpanConfig:
         """Return the fiber configuration for a link."""
-        link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+        link_key = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
         return self._fiber_configs[link_key]
 
     def get_edfa_config(self, node_idx: NodeID) -> EDFAConfig:
@@ -122,7 +120,7 @@ class NetworkTopology:
 
     def get_link_edfa_config(self, u_idx: NodeID, v_idx: NodeID) -> EDFAConfig:
         """Return the amplifier configuration for a link."""
-        link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+        link_key = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
         return self._link_edfa_configs[link_key]
 
     def get_roadm_config(self, node_idx: NodeID) -> ROADMConfig:
@@ -170,7 +168,7 @@ class NetworkTopology:
         link_keys: list[LinkKey] = []
         # The shifted sequence intentionally has one fewer element.
         for u_idx, v_idx in itertools.pairwise(path):
-            link_key = LinkKey((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+            link_key = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
             if link_key not in self._fiber_configs:
                 msg = f"Path contains non-adjacent nodes: {u_idx}, {v_idx}."
                 raise ValueError(msg)

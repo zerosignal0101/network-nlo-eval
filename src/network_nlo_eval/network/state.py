@@ -360,7 +360,7 @@ class NetworkState:
 
     def get_link_state(self, u_idx: NodeID, v_idx: NodeID) -> LinkState:
         """Return the current state of a link."""
-        link_key = tuple((u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx))
+        link_key = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
         return self._link_states[link_key]
 
     def get_all_link_states(self) -> dict[LinkKey, LinkState]:
