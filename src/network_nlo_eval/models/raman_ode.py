@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -38,7 +38,7 @@ from network_nlo_eval.models.raman import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from network_nlo_eval.core.types import NDArrayFloat
+    from network_nlo_eval.core.types import NDArrayFloat, NDArrayInt
     from network_nlo_eval.network.elements import RamanPumpConfig
 
 __all__ = [
@@ -115,7 +115,7 @@ def clear_raman_matrix_cache() -> None:
     _MATRIX_CACHE_STATS["misses"] = 0
 
 
-def validate_raman_backend(backend: str) -> str:
+def validate_raman_backend(backend: object) -> str:
     """Validate and return the requested Raman integration backend.
 
     Parameters
@@ -374,11 +374,13 @@ def _interp_rows(
         Interpolated row, clamped to the endpoints outside the grid.
     """
     if values.shape[0] == 1:
-        return values[0].copy()
+        return cast("NDArrayFloat", values[0].copy())
     index = int(np.clip(np.searchsorted(grid, query) - 1, 0, values.shape[0] - 2))
     span = float(grid[index + 1] - grid[index])
     weight = 0.0 if span <= 0.0 else float((query - grid[index]) / span)
-    return (1.0 - weight) * values[index] + weight * values[index + 1]
+    return cast(
+        "NDArrayFloat", (1.0 - weight) * values[index] + weight * values[index + 1]
+    )
 
 
 def _digest_gain_model(digest: Any, gain_model: RamanGainModel) -> None:
@@ -498,7 +500,7 @@ class RamanPaperSpanSolver:
         include_ase: bool = True,
         pump_depletion: bool = True,
         signal_polarizations: int = 1,
-        pump_pump_raman: bool = True,
+        pump_pump_raman: object = True,
         launch_power_convention: str = "total",
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         backend: str = "python",
@@ -661,6 +663,7 @@ class RamanPaperSpanSolver:
             _resolve_lumped_loss(lumped_loss, self.length_m)
         )
         self.n_lumped_loss = len(self._lumped_loss)
+        self._sample_positions_u: NDArrayFloat | None
         if self.n_lumped_loss:
             edges = np.concatenate(
                 ([0.0], self._lumped_loss_positions_m, [self.length_m])
@@ -752,7 +755,7 @@ class RamanPaperSpanSolver:
         self._coupling = coupling
         return coupling, self._build_source_matrix()
 
-    def _build_backward_interpolation(self) -> tuple[NDArrayFloat, NDArrayFloat]:
+    def _build_backward_interpolation(self) -> tuple[NDArrayInt, NDArrayFloat]:
         """Precompute interpolation indices and weights for backward RK4 stages."""
         n_steps = self.n_steps
         index = np.zeros((n_steps, 3), dtype=np.int64)
@@ -835,7 +838,7 @@ class RamanPaperSpanSolver:
         kappa = np.ones_like(x)
         mask = x > 1.0e-12
         kappa[mask] = 1.0 / (-np.expm1(-x[mask]))
-        return np.maximum(self._coupling, 0.0) * kappa
+        return cast("NDArrayFloat", np.maximum(self._coupling, 0.0) * kappa)
 
     def _scaled_drive(self, total: NDArrayFloat) -> NDArrayFloat:
         """Scale total powers into the reusable drive buffer."""
@@ -1073,21 +1076,24 @@ class RamanPaperSpanSolver:
     ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
         """Run compiled forward RK4 with the same layout as the Python implementation."""
         kernels = _numba_kernels()
-        return kernels.rk4_forward(
-            self._coupling,
-            self._fwd_slots,
-            self._bw_slots,
-            self._alpha_fwd,
-            self._source_fwd,
-            self._ase_source_coeff,
-            self._drive_scale,
-            self._z_m,
-            np.ascontiguousarray(power_in),
-            np.ascontiguousarray(ase_in),
-            np.ascontiguousarray(backward_total),
-            self._drive_uniform,
-            float(self._ase_source_scale),
-            self.include_ase,
+        return cast(
+            "tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]",
+            kernels.rk4_forward(
+                self._coupling,
+                self._fwd_slots,
+                self._bw_slots,
+                self._alpha_fwd,
+                self._source_fwd,
+                self._ase_source_coeff,
+                self._drive_scale,
+                self._z_m,
+                np.ascontiguousarray(power_in),
+                np.ascontiguousarray(ase_in),
+                np.ascontiguousarray(backward_total),
+                self._drive_uniform,
+                float(self._ase_source_scale),
+                self.include_ase,
+            ),
         )
 
     def _integrate_backward_numba(
@@ -1100,19 +1106,22 @@ class RamanPaperSpanSolver:
         kernels = _numba_kernels()
         if self._coupling_bw is None:
             self._coupling_bw = np.ascontiguousarray(self._coupling[self._bw_slots, :])
-        return kernels.rk4_backward(
-            self._coupling_bw,
-            self._bw_slots,
-            self._alpha_bw,
-            self._drive_scale,
-            self._z_m,
-            self._bw_interp_index,
-            self._bw_interp_weight,
-            np.ascontiguousarray(power_in),
-            np.ascontiguousarray(ase_in),
-            np.ascontiguousarray(forward_total),
-            self._drive_uniform,
-            self.include_ase,
+        return cast(
+            "tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]",
+            kernels.rk4_backward(
+                self._coupling_bw,
+                self._bw_slots,
+                self._alpha_bw,
+                self._drive_scale,
+                self._z_m,
+                self._bw_interp_index,
+                self._bw_interp_weight,
+                np.ascontiguousarray(power_in),
+                np.ascontiguousarray(ase_in),
+                np.ascontiguousarray(forward_total),
+                self._drive_uniform,
+                self.include_ase,
+            ),
         )
 
     def _integrate_backward_segment(
