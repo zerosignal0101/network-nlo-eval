@@ -1,5 +1,7 @@
 """Tests for service requests and reproducible traffic generation."""
 
+from typing import Any
+
 import networkx as nx
 import pytest
 
@@ -15,7 +17,7 @@ from network_nlo_eval.simulation.traffic import (
 
 def test_slot_count_and_allocated_service_validation() -> None:
     assert slots_for_bit_rate(100, slot_width_hz=12.5e9) == 4
-    fields = {
+    fields: dict[str, Any] = {
         "service_id": 1,
         "source_id": 0,
         "destination_id": 1,
