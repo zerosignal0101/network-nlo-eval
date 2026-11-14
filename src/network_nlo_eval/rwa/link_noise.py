@@ -7,7 +7,7 @@ this operation order to retain established numerical results.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -15,11 +15,10 @@ from network_nlo_eval.models.base import SpanContext
 from network_nlo_eval.network.state import LinkNoiseCache
 
 if TYPE_CHECKING:
-    from network_nlo_eval.rwa.validity import LinkValidity
-
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
     from network_nlo_eval.network.elements import EDFAConfig
+    from network_nlo_eval.rwa.validity import LinkValidity
 
 #: Remainders at or below this length in meters do not form a span.
 _REMAINDER_EPSILON_M = 1.0
@@ -138,8 +137,8 @@ def _assemble_coherent_link_noise(
         cumulative_m += length_m
 
     if coherent:
-        total_spm = np.abs(amp_spm) ** 2
-        total_xpm = np.abs(amp_xpm) ** 2
+        total_spm = cast("NDArrayFloat", np.abs(amp_spm) ** 2)
+        total_xpm = cast("NDArrayFloat", np.abs(amp_xpm) ** 2)
     else:
         total_spm = total_spm_power
         total_xpm = total_xpm_power
