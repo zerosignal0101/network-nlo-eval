@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 __all__ = [
     "BITS_PER_SYMBOL",
@@ -133,8 +133,8 @@ class FlexibleGrid:
             msg = f"slot_width_hz must be positive, got {self.slot_width_hz}."
             raise ValueError(msg)
         if (
-            isinstance(self.num_slots, bool)
-            or not isinstance(self.num_slots, int)
+            isinstance(cast("object", self.num_slots), bool)
+            or not isinstance(cast("object", self.num_slots), int)
             or self.num_slots <= 0
         ):
             msg = f"num_slots must be a positive integer, got {self.num_slots!r}."
@@ -265,15 +265,15 @@ class ConnectionSpec:
     def __post_init__(self) -> None:
         """Validate the connection and its slot allocation."""
         if (
-            isinstance(self.connection_id, bool)
-            or not isinstance(self.connection_id, int)
+            isinstance(cast("object", self.connection_id), bool)
+            or not isinstance(cast("object", self.connection_id), int)
             or self.connection_id < 0
         ):
             msg = f"connection_id must be a non-negative integer, got {self.connection_id!r}."
             raise ValueError(msg)
         if (
-            isinstance(self.n_slots, bool)
-            or not isinstance(self.n_slots, int)
+            isinstance(cast("object", self.n_slots), bool)
+            or not isinstance(cast("object", self.n_slots), int)
             or self.n_slots < 1
         ):
             msg = f"n_slots must be a positive integer, got {self.n_slots!r}."

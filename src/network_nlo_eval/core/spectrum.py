@@ -1,6 +1,7 @@
 """Frequency grids for multiband optical systems."""
 
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
@@ -29,8 +30,8 @@ class SpectrumGrid:
     def __post_init__(self) -> None:
         """Validate the grid dimensions and absolute frequencies."""
         if (
-            isinstance(self.num_channels, bool)
-            or not isinstance(self.num_channels, int)
+            isinstance(cast("object", self.num_channels), bool)
+            or not isinstance(cast("object", self.num_channels), int)
             or self.num_channels <= 0
         ):
             msg = "num_channels must be a positive integer."
