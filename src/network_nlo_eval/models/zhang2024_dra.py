@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from network_nlo_eval.models.base import (
+    ElementOutput,
     ModelInfo,
+    MultiSpanOpticalPath,
     PathQoTResult,
     SpanContext,
     register_model,
@@ -46,8 +48,14 @@ from network_nlo_eval.models.zhang2024_coherent import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
-    from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
+    from network_nlo_eval.network.elements import (
+        EDFAConfig,
+        FiberSpanConfig,
+        RamanPumpConfig,
+    )
 
 __all__ = [
     "ZHANG2024_DRA_MODEL_INFO",
@@ -82,7 +90,7 @@ def load_calibration(path: Path | None = None) -> dict[str, CalibrationSet]:
     for term, entries in payload.get("terms", {}).items():
         result[term] = CalibrationSet(
             terms=tuple(
-                CalibrationTerm(name=item["name"], parameters=tuple(item["parameters"]))  # type: ignore[arg-type]
+                CalibrationTerm(name=item["name"], parameters=tuple(item["parameters"]))
                 for item in entries
             )
         )
@@ -249,10 +257,10 @@ class Zhang2024DRAModel(DRARamanModelBase):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
         raman_gain_model: str = "gaussian",
         raman_ase: bool = True,
@@ -266,7 +274,7 @@ class Zhang2024DRAModel(DRARamanModelBase):
         calibration: dict[str, CalibrationSet] | None = None,
         use_calibration: bool = True,
         modulation_format_correction: bool = False,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         if modulation_format_correction:
             msg = (
@@ -317,12 +325,12 @@ class Zhang2024DRAModel(DRARamanModelBase):
 
     def span_step(
         self,
-        fiber_config,
-        edfa_config,
-        power_in_w,
-        span_length_m,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
         span_context: SpanContext | None = None,
-    ):
+    ) -> ElementOutput:
         """Record the span profile and input powers for coherent route accumulation."""
         element = super().span_step(
             fiber_config, edfa_config, power_in_w, span_length_m, span_context
@@ -350,7 +358,9 @@ class Zhang2024DRAModel(DRARamanModelBase):
             )
         return element
 
-    def evaluate_path(self, optical_path, power_in_w: NDArrayFloat) -> PathQoTResult:
+    def evaluate_path(
+        self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat
+    ) -> PathQoTResult:
         """Evaluate the route and replace NLI with coherent link-level calculations.
 
         The shared route layer supplies signal, ASE and ROADM behavior. Recorded span
@@ -362,7 +372,9 @@ class Zhang2024DRAModel(DRARamanModelBase):
         if not self._span_records:
             return result
 
-        kernel = self.kernel_for(optical_path.fiber_configs[0])
+        kernel = cast(
+            "Zhang2024DRASpanKernel", self.kernel_for(optical_path.fiber_configs[0])
+        )
         order = kernel.order
         inverse = kernel.inverse_order
         bandwidths = self.channel_bandwidth_hz_channels[order]
