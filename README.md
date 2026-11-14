@@ -42,6 +42,11 @@ are in kilometers. Models have different approximations, power conventions, and
 applicability limits: consult their documentation and options when selecting a
 model.
 
+Some model documentation refers to historical audit reports and calibration
+scripts from the development repository. Those research artifacts are not
+included here. In particular, the Zhang calibration data records the path of its
+original fitting script as provenance; that script is not bundled.
+
 ## Command line
 
 ```bash
