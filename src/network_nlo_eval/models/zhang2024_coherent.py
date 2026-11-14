@@ -25,13 +25,14 @@ Distributed Raman Amplification", OECC 2024, doi:10.1109/OECC54135.2024.10975528
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from scipy.optimize import least_squares
 
 if TYPE_CHECKING:
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
+    from network_nlo_eval.models.buglia2024_closed import BugliaClosedProfile
 
 __all__ = [
     "ZhangCoherentSpan",
@@ -105,10 +106,11 @@ class ZhangSpanProfile:
         a_value = float(self.a_npm[index])
         d_value = float(self.d_coeff[index])
         d_rate = float(self.d_npm[index])
-        return (
+        return cast(
+            "NDArrayFloat",
             (1.0 + t_value) * np.exp(-alpha * z)
             - t_value * np.exp(-a_value * z)
-            + d_value * np.exp(-d_rate * (self.length_m - z))
+            + d_value * np.exp(-d_rate * (self.length_m - z)),
         )
 
 
@@ -117,10 +119,11 @@ def _zhang_model(
 ) -> NDArrayFloat:
     """Evaluate Eq. (1) from parameters T, A, D and d."""
     t_value, a_value, d_value, d_rate = parameters
-    return (
+    return cast(
+        "NDArrayFloat",
         (1.0 + t_value) * np.exp(-alpha * z_m)
         - t_value * np.exp(-a_value * z_m)
-        + d_value * np.exp(-d_rate * (length_m - z_m))
+        + d_value * np.exp(-d_rate * (length_m - z_m)),
     )
 
 
@@ -175,9 +178,15 @@ def fit_zhang_coherent_profile(
         weight = 1.0 / np.maximum(target, floor)
 
         def residual(
-            parameters: NDArrayFloat, target=target, weight=weight, alpha=alpha
+            parameters: NDArrayFloat,
+            target: NDArrayFloat = target,
+            weight: NDArrayFloat = weight,
+            alpha: float = alpha,
         ) -> NDArrayFloat:
-            return (_zhang_model(parameters, z_fit, length_m, alpha) - target) * weight
+            return cast(
+                "NDArrayFloat",
+                (_zhang_model(parameters, z_fit, length_m, alpha) - target) * weight,
+            )
 
         base = np.exp(-alpha * z_fit)
         best: tuple[float, NDArrayFloat] | None = None
@@ -290,14 +299,14 @@ def link_function(
     common = np.exp(1j * phi * length)
     forward = -(1.0 + t_value) / (-alpha + 1j * phi) + t_value / (-a_value + 1j * phi)
     backward = d_value / (d_rate + 1j * phi)
-    return common * (forward + backward)
+    return cast("NDArrayComplex", common * (forward + backward))
 
 
 def _link_squared(
     profile: ZhangSpanProfile, index: int, phi: NDArrayFloat
 ) -> NDArrayFloat:
     """Return the squared magnitude of the approximate link function."""
-    return np.abs(link_function(profile, index, phi)) ** 2
+    return cast("NDArrayFloat", np.abs(link_function(profile, index, phi)) ** 2)
 
 
 # =============================================================================
@@ -450,8 +459,8 @@ def coherent_eta(
     bandwidths = np.asarray(bandwidths_hz, dtype=np.float64)
     gammas = np.asarray(gamma_per_w_m, dtype=np.float64)
     n_channels = frequencies.size
-    nodes, weights = np.polynomial.legendre.leggauss(int(n_frequency))
-    spm_nodes, spm_weights = np.polynomial.legendre.leggauss(int(n_spm_frequency))
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_frequency))  # type: ignore[no-untyped-call]
+    spm_nodes, spm_weights = np.polynomial.legendre.leggauss(int(n_spm_frequency))  # type: ignore[no-untyped-call]
     eta_spm = np.zeros(n_channels, dtype=np.float64)
     eta_xpm = np.zeros(n_channels, dtype=np.float64)
     # Phase is already in inverse meters, so position scale is one.
@@ -594,7 +603,7 @@ def single_span_eta_closed(
     return spm, xpm
 
 
-def _to_buglia_profile(profile: ZhangSpanProfile):
+def _to_buglia_profile(profile: ZhangSpanProfile) -> BugliaClosedProfile:
     """Map the Zhang profile to a three-pole Buglia closed-form carrier.
 
     The pole rates are ``(alpha, A, -d)`` and coefficients are
