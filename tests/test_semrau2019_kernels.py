@@ -1,17 +1,30 @@
 """Reference and invariant tests for the Semrau 2019 kernels."""
 
+from typing import TypedDict
+
 import numpy as np
 import pytest
 
 from network_nlo_eval.core.constants import C_LIGHT
+from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.semrau2019_kernels import (
+    SemrauMatrices,
     build_semrau_matrices,
     gn_weighted_spm_visibility,
     semrau_span_jit,
 )
 
 
-def kernel_parameters():
+class VisibilityInputs(TypedDict):
+    bandwidth_hz: NDArrayFloat
+    alpha_npm: NDArrayFloat
+    span_length_m: float
+    span_separations_m: NDArrayFloat
+
+
+def kernel_parameters() -> tuple[
+    NDArrayFloat, NDArrayFloat, NDArrayFloat, SemrauMatrices
+]:
     relative = np.array([-50e9, 0, 50e9])
     bandwidth = np.array([32e9, 48e9, 64e9])
     attenuation = np.full(3, 0.2 / 4.342944819032518 / 1000)
@@ -68,7 +81,7 @@ def test_multispan_kernel_matches_reference_and_per_span_normalization() -> None
 
 def test_gn_visibility_reference_and_zero_dispersion() -> None:
     _, bandwidth, attenuation, _ = kernel_parameters()
-    kwargs = {
+    kwargs: VisibilityInputs = {
         "bandwidth_hz": bandwidth,
         "alpha_npm": attenuation,
         "span_length_m": 80e3,
@@ -76,7 +89,7 @@ def test_gn_visibility_reference_and_zero_dispersion() -> None:
     }
     visibility = gn_weighted_spm_visibility(beta2_abs_s2_m=21.7e-27, **kwargs)
     expected = [
-        [1, 1, 1],
+        [1.0, 1.0, 1.0],
         [0.20549556628420695, 0.15155143178231636, 0.12845647182710188],
         [0.08464600843949929, 0.059146241916821586, 0.04835734735031591],
     ]
