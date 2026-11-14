@@ -24,7 +24,9 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
-grid = SpectrumGrid(num_channels=3, channel_spacing_hz=50e9, center_frequency_hz=193.1e12)
+grid = SpectrumGrid(
+    num_channels=3, channel_spacing_hz=50e9, center_frequency_hz=193.1e12
+)
 fiber = FiberSpanConfig(length_km=80)
 path = MultiSpanOpticalPath(fiber_configs=[fiber], edfa_configs=[EDFAConfig()])
 model = create_model("ecz", grid, fiber, symbol_rate_hz=32e9)
@@ -34,8 +36,8 @@ print(result.snr_db)
 
 The example launches 1 mW per channel. Channel frequencies use hertz, fiber
 lengths use kilometers, and result powers use watts. Models differ in their
-assumptions and power conventions; check each model's documentation before
-using its results.
+assumptions and power conventions; check each model's documentation before using
+its results.
 
 ## Command line
 

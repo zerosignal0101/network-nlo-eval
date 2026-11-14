@@ -1,9 +1,9 @@
 # network-nlo-eval
 
-A Python toolkit for evaluating physical-layer quality of transmission (QoT)
-in wavelength-division multiplexed optical networks. It provides nonlinear
-interference models, network topology and spectrum state, QoT-aware routing
-and spectrum assignment, and a discrete-event simulator.
+A Python toolkit for evaluating physical-layer quality of transmission (QoT) in
+wavelength-division multiplexed optical networks. It provides nonlinear
+interference models, network topology and spectrum state, QoT-aware routing and
+spectrum assignment, and a discrete-event simulator.
 
 ## Install
 
@@ -26,7 +26,9 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
-grid = SpectrumGrid(num_channels=3, channel_spacing_hz=50e9, center_frequency_hz=193.1e12)
+grid = SpectrumGrid(
+    num_channels=3, channel_spacing_hz=50e9, center_frequency_hz=193.1e12
+)
 fiber = FiberSpanConfig(length_km=80)
 path = MultiSpanOpticalPath(fiber_configs=[fiber], edfa_configs=[EDFAConfig()])
 model = create_model("ecz", grid, fiber, symbol_rate_hz=32e9)
@@ -34,11 +36,11 @@ result = model.evaluate_path(path, np.full(3, 1e-3))
 print(result.snr_db)
 ```
 
-Launch powers and returned signal and noise powers use watts; the example
-uses 1 mW per channel. Frequencies are in hertz and fiber lengths in
-`FiberSpanConfig` are in kilometers. Models have different approximations,
-power conventions, and applicability limits: consult their documentation and
-options when selecting a model.
+Launch powers and returned signal and noise powers use watts; the example uses 1
+mW per channel. Frequencies are in hertz and fiber lengths in `FiberSpanConfig`
+are in kilometers. Models have different approximations, power conventions, and
+applicability limits: consult their documentation and options when selecting a
+model.
 
 ## Command line
 
