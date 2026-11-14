@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import (
     ElementOutput,
     MultiSpanOpticalPath,
@@ -28,7 +29,7 @@ class TwoSpanModel:
     def __init__(self, coherent: bool = False) -> None:
         self.coherent = coherent
 
-    def power_width_scale(self) -> np.ndarray:
+    def power_width_scale(self) -> NDArrayFloat:
         return np.ones(2)
 
     def blocked_nodes(self, roadm: ROADMConfig) -> list[int]:
@@ -37,8 +38,8 @@ class TwoSpanModel:
     def span_step(
         self,
         _fiber: FiberSpanConfig,
-        _edfa: EDFAConfig,
-        power: np.ndarray,
+        _edfa: EDFAConfig | None,
+        power: NDArrayFloat,
         _length: float,
     ) -> ElementOutput:
         amplitude = np.full(2, 1e-3, dtype=complex) if self.coherent else None

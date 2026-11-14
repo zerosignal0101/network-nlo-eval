@@ -19,7 +19,6 @@ from network_nlo_eval.models.base import (
     ModelInfo,
     MultiSpanOpticalPath,
     PathQoTResult,
-    QoTModel,
     SpanContext,
     SpanFiberOutput,
     SpanKernel,
@@ -53,6 +52,32 @@ class _ContextualSpanModel(Protocol):
         power_in_w: NDArrayFloat,
         span_length_m: float,
         span_context: SpanContext | None = None,
+    ) -> ElementOutput: ...
+
+
+class _RouteSpanModel(Protocol):
+    """The channel and span operations required by route accumulation."""
+
+    @property
+    def n_nodes(self) -> int: ...
+
+    @property
+    def f_abs_hz(self) -> NDArrayFloat: ...
+
+    @property
+    def channel_bandwidth_hz_channels(self) -> NDArrayFloat: ...
+
+    def blocked_nodes(self, roadm_config: ROADMConfig, /) -> list[int]: ...
+
+    def power_width_scale(self) -> NDArrayFloat: ...
+
+    def span_step(
+        self,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        /,
     ) -> ElementOutput: ...
 
 
@@ -245,7 +270,7 @@ def apply_amplifier_and_roadm(
 
 
 def accumulate_route(
-    model: QoTModel,
+    model: _RouteSpanModel,
     optical_path: MultiSpanOpticalPath,
     power_in_w: NDArrayFloat,
     *,
@@ -255,7 +280,7 @@ def accumulate_route(
 
     Parameters
     ----------
-    model : QoTModel
+    model : object
         Model supplying channel geometry and span evaluation.
     optical_path : MultiSpanOpticalPath
         Ordered path of physical link configurations.
