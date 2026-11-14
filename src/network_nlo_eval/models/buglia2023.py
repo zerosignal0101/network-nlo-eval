@@ -33,7 +33,7 @@ doi:10.1109/JLT.2023.3256185."""
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -61,6 +61,8 @@ from network_nlo_eval.models.route import (
 )
 
 if TYPE_CHECKING:
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
@@ -155,12 +157,15 @@ def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
     d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
     sin_beta = np.sin(beta * t)
     cos_beta = np.cos(beta * t)
-    return (
-        -f * sin_beta / beta
-        - df * cos_beta / beta**2
-        + d2f * sin_beta / beta**3
-        + d3f * cos_beta / beta**4
-        - d4f * sin_beta / beta**5
+    return cast(
+        "NDArrayFloat",
+        (
+            -f * sin_beta / beta
+            - df * cos_beta / beta**2
+            + d2f * sin_beta / beta**3
+            + d3f * cos_beta / beta**4
+            - d4f * sin_beta / beta**5
+        ),
     )
 
 
@@ -299,7 +304,7 @@ def _spm_region_nodes(
     tuple of numpy.ndarray
         Lower and upper transformed bounds and quadrature measures."""
     frequencies, frequency_weights = _cosine_frequency_grid(half_band_hz, n_frequency)
-    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)  # type: ignore[no-untyped-call]
     low_parts: list[NDArrayFloat] = []
     high_parts: list[NDArrayFloat] = []
     measure_parts: list[NDArrayFloat] = []
@@ -352,7 +357,7 @@ def _xpm_region_nodes(
     -------
     tuple of numpy.ndarray
         Lower and upper transformed bounds and quadrature measures."""
-    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)  # type: ignore[no-untyped-call]
     low_parts: list[NDArrayFloat] = []
     high_parts: list[NDArrayFloat] = []
     measure_parts: list[NDArrayFloat] = []
@@ -504,7 +509,7 @@ def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     if n <= 1:
         return np.ones(visibility.shape[-1], dtype=np.float64)
     weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
-    return n + 2.0 * (weights * visibility).sum(axis=0)
+    return cast("NDArrayFloat", n + 2.0 * (weights * visibility).sum(axis=0))
 
 
 def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
@@ -854,11 +859,11 @@ class Buglia2023Model(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         egn: bool = False,
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize the route model and reference fiber properties."""
         if egn:
@@ -930,7 +935,7 @@ class Buglia2023Model(RouteModel):
         """Evaluate the span and apply amplifier and ASE effects.
 
         NLI amplitudes are referenced to the fiber output before amplification."""
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("Buglia2023SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
