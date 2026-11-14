@@ -103,6 +103,11 @@ module = "network_nlo_eval.*"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
+[[tool.mypy.overrides]]
+# These dependencies do not currently provide PEP 561 typing metadata.
+module = ["llvmlite.*", "numba.*", "physics_nlo_eval.*"]
+ignore_missing_imports = true
+
 
 [tool.ruff]
 show-fixes = true
