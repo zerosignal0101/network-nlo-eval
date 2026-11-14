@@ -148,7 +148,7 @@ from __future__ import annotations
 import time
 import warnings
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from scipy.integrate import IntegrationWarning
@@ -157,6 +157,8 @@ from scipy.special import sici
 from network_nlo_eval.models.base import (
     ElementOutput,
     ModelInfo,
+    MultiSpanOpticalPath,
+    PathQoTResult,
     SpanContext,
     SpanFiberOutput,
     register_model,
@@ -193,12 +195,15 @@ from network_nlo_eval.models.route import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import (
         NDArrayBool,
         NDArrayComplex,
         NDArrayFloat,
         NDArrayInt,
     )
+    from network_nlo_eval.models.numerical import NumericalISRSGNKernel
     from network_nlo_eval.network.elements import (
         EDFAConfig,
         FiberSpanConfig,
@@ -282,7 +287,10 @@ def resolve_resolution_profile(resolution: str | None) -> dict[str, int] | None:
     """
     if resolution is None or resolution == "default":
         return None
-    if not isinstance(resolution, str) or resolution not in RESOLUTION_PROFILES:
+    if (
+        not isinstance(cast("object", resolution), str)
+        or resolution not in RESOLUTION_PROFILES
+    ):
         msg = f"resolution must be None, 'default' or one of {sorted(RESOLUTION_PROFILES)}, got {resolution!r}."
         raise ValueError(msg)
     return dict(RESOLUTION_PROFILES[resolution])
@@ -1170,13 +1178,13 @@ class SpanValidityReport:
         echoed so the report is self-describing.
     """
 
-    xci_gated: NDArrayFloat
+    xci_gated: NDArrayBool
     xci_row_correction: NDArrayFloat
     xci_s_min: NDArrayFloat
-    xci_s_below_switch: NDArrayFloat
+    xci_s_below_switch: NDArrayBool
     sci_x: NDArrayFloat
-    sci_taylor: NDArrayFloat
-    sci_x_below_switch: NDArrayFloat
+    sci_taylor: NDArrayBool
+    sci_x_below_switch: NDArrayBool
     sci_x_abs_min: float
     power_tilt_db: float
     gain_tilt_db: float
@@ -1184,8 +1192,8 @@ class SpanValidityReport:
     pump_directions: tuple[str, ...]
     pump_depletion: NDArrayFloat
     pump_depletion_max: float
-    flagged: NDArrayFloat
-    valid: NDArrayFloat
+    flagged: NDArrayBool
+    valid: NDArrayBool
     confidence: NDArrayFloat
     effective_tilt_db: float = 0.0
     tilt_confidence_informational: float = 1.0
@@ -1488,7 +1496,7 @@ def egn_rho_nch(
     outer = (
         1.0 + a["a19"] * roll_off_cut ** a["a20"] + a["a21"] * roll_off_nch ** a["a22"]
     )
-    return outer * inner
+    return cast("NDArrayFloat", outer * inner)
 
 
 def egn_rho_cut(
@@ -1534,7 +1542,7 @@ def egn_rho_cut(
         )
     )
     outer = 1.0 + a["a23"] * roll_off_cut ** a["a24"]
-    return outer * inner
+    return cast("NDArrayFloat", outer * inner)
 
 
 # =============================================================================
@@ -1607,12 +1615,13 @@ def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
     d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
     sin_beta = np.sin(beta * t)
     cos_beta = np.cos(beta * t)
-    return (
+    return cast(
+        "NDArrayFloat",
         -f * sin_beta / beta
         - df * cos_beta / beta**2
         + d2f * sin_beta / beta**3
         + d3f * cos_beta / beta**4
-        - d4f * sin_beta / beta**5
+        - d4f * sin_beta / beta**5,
     )
 
 
@@ -1754,7 +1763,7 @@ def _spm_visibility_nodes(
     else:
         frequencies = np.zeros(1, dtype=np.float64)
         frequency_weights = np.ones(1, dtype=np.float64)
-    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)  # type: ignore[no-untyped-call]
     lo_parts: list[NDArrayFloat] = []
     hi_parts: list[NDArrayFloat] = []
     measure_parts: list[NDArrayFloat] = []
@@ -2054,10 +2063,10 @@ def _gn_weighted_xpm_visibility(
     rate = 4.0 * np.pi**2 * beta2_abs_s2_m * span_length_m
     abar = alpha_npm_m * span_length_m
     exp_abar = float(np.exp(-abar))
-    offset_nodes, offset_weights = np.polynomial.legendre.leggauss(n_offset)
+    offset_nodes, offset_weights = np.polynomial.legendre.leggauss(n_offset)  # type: ignore[no-untyped-call]
     offsets = partner_offset_hz + half_band * offset_nodes
     offset_weights = half_band * offset_weights
-    mismatch_nodes, mismatch_weights = np.polynomial.legendre.leggauss(n_mismatch)
+    mismatch_nodes, mismatch_weights = np.polynomial.legendre.leggauss(n_mismatch)  # type: ignore[no-untyped-call]
     numerator = 0.0
     denominator = 0.0
     for offset, offset_weight in zip(offsets, offset_weights, strict=True):
@@ -2144,7 +2153,7 @@ def _xci_edge_weight_matrix(
     validity_switch: float = XCI_EDGE_VALIDITY_SWITCH,
     materiality: float = XCI_EDGE_MATERIALITY,
     n_quad: int = XCI_EDGE_QUADRATURE_POINTS,
-) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+) -> tuple[NDArrayFloat, NDArrayBool, NDArrayFloat]:
     r"""Replace the XCI kernel by the exact island integral where it matters.
 
     Eq. (24) of the paper is the asymptotic form of the XCI frequency integral
@@ -2740,7 +2749,7 @@ def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     if n <= 1:
         return np.ones(visibility.shape[-1], dtype=np.float64)
     weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
-    return n + 2.0 * (weights * visibility).sum(axis=0)
+    return cast("NDArrayFloat", n + 2.0 * (weights * visibility).sum(axis=0))
 
 
 def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
@@ -3192,7 +3201,7 @@ class PCFMSpanKernel:
         # Construct the optional numerical fallback lazily; cache by span length and power and reset
         # diagnostics on each evaluation.
         self._fiber_config = fiber_config
-        self._fallback_kernel = None
+        self._fallback_kernel: NumericalISRSGNKernel | None = None
         self._fallback_cache: dict[
             tuple[int, bytes], tuple[NDArrayFloat, NDArrayFloat]
         ] = {}
@@ -3219,11 +3228,11 @@ class PCFMSpanKernel:
         )
         # Cache XCI validity corrections lazily by span length rounded to micrometers.
         self._xci_edge_cache: dict[
-            int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]
+            int, tuple[NDArrayFloat, NDArrayBool, NDArrayFloat]
         ] = {}
         # Cache overlap corrections only when dense_grid_fix is enabled.
         self._xci_dense_cache: dict[
-            int, tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]
+            int, tuple[NDArrayFloat, NDArrayBool, NDArrayFloat, NDArrayFloat]
         ] = {}
         # Cache displaced-wave FWM/MCI triplets only for an enabled dense plan; None means no
         # reachable triplets.
@@ -3234,7 +3243,7 @@ class PCFMSpanKernel:
         # Cache fiber- and span-length-dependent diagnostics by span length.
         self._xci_validity_cache: dict[
             int,
-            tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat],
+            tuple[NDArrayFloat, NDArrayBool, NDArrayFloat, NDArrayBool, NDArrayBool],
         ] = {}
         # Dense-grid barriers, overlaps and XCI row weights depend only on the channel plan.
         self._overlap_cache: (
@@ -3624,7 +3633,7 @@ class PCFMSpanKernel:
         self._xci_dense_cache[key] = (w_dense, dense_gated, dense_fraction, dense_pairs)
         return w_dense
 
-    def xci_edge_audit(self, span_length_m: float) -> tuple[NDArrayFloat, NDArrayFloat]:
+    def xci_edge_audit(self, span_length_m: float) -> tuple[NDArrayBool, NDArrayFloat]:
         """Return the CUT-row gate and the relative correction of the XCI edge fix.
 
         Parameters
@@ -3756,7 +3765,7 @@ class PCFMSpanKernel:
     def _xci_validity_metrics(
         self,
         span_length_m: float,
-    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    ) -> tuple[NDArrayFloat, NDArrayBool, NDArrayFloat, NDArrayBool, NDArrayBool]:
         """Return the span-length-dependent part of the validity report.
 
         The raw ``s`` parameter, the exact row correction and the SCI ``X``
@@ -4467,7 +4476,7 @@ class PCFMSpanKernel:
         energy = _profile_energy_jit(np.ascontiguousarray(q_scaled)) * float(
             span_length_m
         )
-        return self.k_xci_matrix * energy[None, :]
+        return cast("NDArrayFloat", self.k_xci_matrix * energy[None, :])
 
     def _spp_drive_scale(self) -> float:
         """Power scale between ``power_in_w`` and the physical ISRS drive.
@@ -4787,7 +4796,7 @@ class PCFMSpanKernel:
             active
         )
 
-    def _numerical_kernel(self):
+    def _numerical_kernel(self) -> NumericalISRSGNKernel:
         """Return the lazily built numerical ISRS-GN kernel of this span.
 
         The kernel is built on the *internal* (descending-frequency) channel
@@ -5427,7 +5436,7 @@ class PCFMModel(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         poly_degree: int = 5,
@@ -5452,7 +5461,7 @@ class PCFMModel(RouteModel):
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize the model.
 
@@ -5585,8 +5594,8 @@ class PCFMModel(RouteModel):
         self._beta2_accum_ps2 = np.zeros(self.n_nodes, dtype=np.float64)
         # Reset per-span and worst-link validity reports on path evaluation.
         self.last_span_validity: list[SpanValidityReport] = []
-        self.last_validity_valid: NDArrayFloat | None = None
-        self.last_validity_flagged: NDArrayFloat | None = None
+        self.last_validity_valid: NDArrayBool | None = None
+        self.last_validity_flagged: NDArrayBool | None = None
         self.last_validity_confidence: NDArrayFloat | None = None
         # Enable lumped Raman only when requested or pumps are explicitly supplied; fiber pumps
         # alone do not change defaults.
@@ -5655,6 +5664,10 @@ class PCFMModel(RouteModel):
             nli_fallback_trigger=self.nli_fallback_trigger,
             lumped_loss=fiber_config.lumped_loss or None,
         )
+
+    def kernel_for(self, fiber_config: FiberSpanConfig) -> PCFMSpanKernel:
+        """Return the cached PCFM kernel for the given fiber configuration."""
+        return cast("PCFMSpanKernel", super().kernel_for(fiber_config))
 
     def for_fiber(self, fiber_config: FiberSpanConfig) -> _PCFMNetworkView:
         """Return the cached network view bound to a fiber configuration.
@@ -5853,7 +5866,8 @@ class PCFMModel(RouteModel):
         and are deliberately kept: they measure the cost of the whole session,
         while the verdict and the NLI snapshot describe the last path.
         """
-        for kernel in self._kernel_cache.values():
+        for cached_kernel in self._kernel_cache.values():
+            kernel = cast("PCFMSpanKernel", cached_kernel)
             kernel.last_nli_fallback_applied = False
             kernel.last_fallback_nli_w = None
 
@@ -5910,6 +5924,8 @@ class PCFMModel(RouteModel):
                 report.confidence, dtype=np.float64, copy=True
             )
             return
+        assert self.last_validity_flagged is not None
+        assert self.last_validity_confidence is not None
         self.last_validity_valid &= report.valid
         self.last_validity_flagged |= report.flagged
         np.minimum(
@@ -5949,7 +5965,9 @@ class PCFMModel(RouteModel):
             self._active_spp_steps = wanted
             self._kernel_cache.clear()
 
-    def evaluate_path(self, optical_path, power_in_w):
+    def evaluate_path(
+        self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat
+    ) -> PathQoTResult:
         """Evaluate a path, resetting the EGN context and the span memoisation.
 
         The span memoisation is deliberately path-scoped: clearing it here
@@ -5986,12 +6004,12 @@ class PCFMModel(RouteModel):
 
     def span_step(
         self,
-        fiber_config,
-        edfa_config,
-        power_in_w,
-        span_length_m,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
         span_context: SpanContext | None = None,
-    ):
+    ) -> ElementOutput:
         """Single span: the kernel, then the shared amplifier/ROADM handling.
 
         The span index and the accumulated effective dispersion are tracked
@@ -6000,13 +6018,13 @@ class PCFMModel(RouteModel):
 
         Parameters
         ----------
-        fiber_config : object
-            Fibre parameters of the span.
-        edfa_config : object
+        fiber_config : FiberSpanConfig
+            Fiber parameters of the span.
+        edfa_config : EDFAConfig or None
             Amplifier configuration of the span.
-        power_in_w : object
+        power_in_w : numpy.ndarray
             ``(N,)`` launch power per channel (W).
-        span_length_m : object
+        span_length_m : float
             Span length (m).
         span_context : SpanContext | None
             Position of the span in the link.  It is handed to
@@ -6015,9 +6033,8 @@ class PCFMModel(RouteModel):
 
         Returns
         -------
-        object
-            The :class:`~network_nlo_eval.models.base.ElementOutput` of the
-            span.
+        ElementOutput
+            Output power and noise for the span.
         """
         kernel = self.kernel_for(fiber_config)
         fiber_output = kernel.evaluate(
