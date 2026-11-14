@@ -11,7 +11,7 @@ import importlib
 import pkgutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
@@ -398,7 +398,7 @@ def get_model_info(name: str) -> ModelInfo:
         raise KeyError(msg) from None
 
 
-def create_model(name: str, *args, **kwargs) -> QoTModel:
+def create_model(name: str, *args: Any, **kwargs: Any) -> QoTModel:
     """Construct a registered model, forwarding all arguments to its factory.
 
     Parameters
