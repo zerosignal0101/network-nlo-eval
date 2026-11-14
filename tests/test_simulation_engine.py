@@ -8,23 +8,28 @@ from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.state import NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
+from network_nlo_eval.rwa.qot_checker import BaseRWAAllocator
 from network_nlo_eval.simulation.engine import SimulatorEngine
 from network_nlo_eval.simulation.reporter import MetricsCollector
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
 
-class SingleChannelAllocator:
+class SingleChannelAllocator(BaseRWAAllocator):
     """Allocate the only channel when it is free."""
 
     def allocate(
-        self, request: ServiceRequest, state: NetworkState
+        self, service_request: ServiceRequest, network_state: NetworkState
     ) -> tuple[bool, AllocatedService | None]:
-        if state.get_link_state(0, 1).occupied_channels[0]:
+        if network_state.get_link_state(0, 1).occupied_channels[0]:
             return False, None
-        return True, AllocatedService(**asdict(request), path=[0, 1], wavelength=0)
+        return True, AllocatedService(
+            **asdict(service_request), path=[0, 1], wavelength=0
+        )
 
-    def release(self, service: AllocatedService, state: NetworkState) -> None:
-        state.release_service(service)
+    def release(
+        self, allocated_service: AllocatedService, network_state: NetworkState
+    ) -> None:
+        network_state.release_service(allocated_service)
 
 
 def test_arrival_blocking_departure_and_reallocation() -> None:
