@@ -7,7 +7,7 @@ Raman paper model uses coupled signal, pump, and ASE equations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from network_nlo_eval.models.base import ModelInfo, register_model
 from network_nlo_eval.models.pcfm import DEFAULT_SPP_STEPS, PCFMModel
@@ -46,7 +46,7 @@ class PCFMOriginalModel(PCFMModel):
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         connections: Sequence[ConnectionSpec] | None = None,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         """Build the paper configuration with its original numerical path."""
         super().__init__(
@@ -105,7 +105,7 @@ class RamanLumpedModel(PCFMModel):
         edge_fix: bool = True,
         cache_spans: bool = True,
         spp_steps: int | str = DEFAULT_SPP_STEPS,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         """Build the opt-in lumped Raman comparison model."""
         super().__init__(
