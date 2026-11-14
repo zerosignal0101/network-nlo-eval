@@ -151,11 +151,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from network_nlo_eval.models.base import (
+    ElementOutput,
     ModelInfo,
     SpanContext,
     SpanFiberOutput,
@@ -178,6 +179,8 @@ from network_nlo_eval.models.route import (
 )
 
 if TYPE_CHECKING:
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
@@ -459,7 +462,7 @@ def _spm_visibility_nodes(
     else:
         frequencies = np.zeros(1, dtype=np.float64)
         frequency_weights = np.ones(1, dtype=np.float64)
-    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)
+    nodes, weights = np.polynomial.legendre.leggauss(n_quadrature)  # type: ignore[no-untyped-call]
     lo_parts: list[NDArrayFloat] = []
     hi_parts: list[NDArrayFloat] = []
     measure_parts: list[NDArrayFloat] = []
@@ -592,12 +595,13 @@ def _lorentzian_tail(beta: float, t: NDArrayFloat) -> NDArrayFloat:
     d4f = 24.0 * (5.0 * t**4 - 10.0 * t * t + 1.0) / denominator**5
     sin_beta = np.sin(beta * t)
     cos_beta = np.cos(beta * t)
-    return (
+    return cast(
+        "NDArrayFloat",
         -f * sin_beta / beta
         - df * cos_beta / beta**2
         + d2f * sin_beta / beta**3
         + d3f * cos_beta / beta**4
-        - d4f * sin_beta / beta**5
+        - d4f * sin_beta / beta**5,
     )
 
 
@@ -674,7 +678,7 @@ def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     if n <= 1:
         return np.ones(visibility.shape[-1], dtype=np.float64)
     weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
-    return n + 2.0 * (weights * visibility).sum(axis=0)
+    return cast("NDArrayFloat", n + 2.0 * (weights * visibility).sum(axis=0))
 
 
 def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
@@ -1051,13 +1055,13 @@ class NumericalISRSGN(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         egn: bool = False,
         quadrature_points: int = DEFAULT_QUADRATURE_POINTS,
         ode_steps: int = DEFAULT_ODE_STEPS,
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize the model.
 
@@ -1098,7 +1102,7 @@ class NumericalISRSGN(RouteModel):
         power_in_w: NDArrayFloat,
         span_length_m: float,
         span_context: SpanContext | None = None,
-    ):
+    ) -> ElementOutput:
         """One span: fibre physics plus amplifier, with the NLI amplitudes.
 
         The frozen route helper scales a coherent amplitude by ``sqrt(gain)``
@@ -1110,7 +1114,7 @@ class NumericalISRSGN(RouteModel):
         output and the amplitudes are attached afterwards, at the fibre output
         plane the contract asks for.
         """
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("NumericalISRSGNKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
