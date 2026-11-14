@@ -18,7 +18,7 @@ from network_nlo_eval.models.power_conventions import (
 if TYPE_CHECKING:
     from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat, NodeID
-    from network_nlo_eval.models.base import PathQoTResult
+    from network_nlo_eval.models.base import PathQoTResult, QoTModel
     from network_nlo_eval.network.topology import NetworkTopology
     from network_nlo_eval.physics.qot_checker import PyNLOQoTEvaluator
 
@@ -76,7 +76,7 @@ class TopologyQoTComparator:
         self,
         topology: NetworkTopology,
         spectrum_grid: SpectrumGrid,
-        gn_evaluator: MultiBandISRSGN | None = None,
+        gn_evaluator: QoTModel | None = None,
         waveform_evaluator: PyNLOQoTEvaluator | None = None,
         *,
         launch_power_convention: str = "total",
@@ -89,7 +89,7 @@ class TopologyQoTComparator:
             Topology supplying physical path configurations.
         spectrum_grid : SpectrumGrid
             Frequency grid shared by the evaluators.
-        gn_evaluator : MultiBandISRSGN or None, optional
+        gn_evaluator : QoTModel or None, optional
             Statistical evaluator; None creates a total-power ISRS-GN model.
         waveform_evaluator : PyNLOQoTEvaluator or None, optional
             Waveform evaluator; None creates one when first requested.
