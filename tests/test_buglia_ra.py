@@ -5,6 +5,10 @@ import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
+from network_nlo_eval.models.buglia2024_ra import (
+    Buglia2024RAModel,
+    Buglia2024RASpanKernel,
+)
 from network_nlo_eval.network.elements import (
     EDFAConfig,
     FiberSpanConfig,
@@ -38,6 +42,9 @@ def test_registered_model_routes_pumped_span_in_both_nli_modes() -> None:
         assert np.all(np.isfinite(result.snr_db))
         assert np.all(result.spm_noise_w > 0)
         assert np.all(result.xpm_noise_w > 0)
-    assert np.all(models[0].kernel_for(fiber).last_raman_ase_w > 0)
+    assert isinstance(models[0], Buglia2024RAModel)
+    kernel = models[0].kernel_for(fiber)
+    assert isinstance(kernel, Buglia2024RASpanKernel)
+    assert np.all(kernel.last_raman_ase_w > 0)
     with pytest.raises(ValueError, match="nli_form"):
         create_model("buglia2024_ra_gn", grid, fiber, nli_form="unknown")
