@@ -1,11 +1,18 @@
 """Two-tier fallback planning and full-spectrum evaluation."""
 
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
 
-from network_nlo_eval.rwa.two_tier import TwoTierConfig, TwoTierEvaluator
+from network_nlo_eval.models.base import MultiSpanOpticalPath, QoTModel
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
+from network_nlo_eval.rwa.two_tier import (
+    H3UncertaintyModel,
+    TwoTierConfig,
+    TwoTierEvaluator,
+)
 
 
 class Budget:
@@ -25,19 +32,27 @@ class H3:
 def test_fallback_is_lazy_and_replaces_only_flagged_active_channels() -> None:
     power = np.array([1.0, 2.0, 0.0])
     calls = []
+    path = MultiSpanOpticalPath([FiberSpanConfig(length_km=20)], [EDFAConfig()])
 
     class Fallback:
         def evaluate_path(self, _path, actual_power):
             calls.append(actual_power.copy())
             return SimpleNamespace(snr_db=np.array([15.0, 50.0, 60.0]))
 
-    evaluator = TwoTierEvaluator(H3(), Fallback)
-    planned = evaluator.evaluate(None, power)
+    h3 = cast("H3UncertaintyModel", H3())
+
+    def fallback_factory() -> QoTModel:
+        return cast("QoTModel", Fallback())
+
+    evaluator = TwoTierEvaluator(h3, fallback_factory)
+    planned = evaluator.evaluate(path, power)
     assert not planned.fallback_ran
     assert not calls
     np.testing.assert_array_equal(planned.effective_snr_db, [8, 18, 28])
-    evaluator = TwoTierEvaluator(H3(), Fallback, config=TwoTierConfig(enabled=True))
-    result = evaluator.evaluate(None, power)
+    evaluator = TwoTierEvaluator(
+        h3, fallback_factory, config=TwoTierConfig(enabled=True)
+    )
+    result = evaluator.evaluate(path, power)
     assert result.fallback_ran
     np.testing.assert_array_equal(calls[0], power)
     np.testing.assert_array_equal(result.effective_snr_db, [15, 18, 28])
@@ -45,6 +60,9 @@ def test_fallback_is_lazy_and_replaces_only_flagged_active_channels() -> None:
 
 
 def test_enabled_fallback_requires_factory() -> None:
-    evaluator = TwoTierEvaluator(H3(), config=TwoTierConfig(enabled=True))
+    evaluator = TwoTierEvaluator(
+        cast("H3UncertaintyModel", H3()), config=TwoTierConfig(enabled=True)
+    )
+    path = MultiSpanOpticalPath([FiberSpanConfig(length_km=20)], [EDFAConfig()])
     with pytest.raises(ValueError, match="fallback_factory"):
-        evaluator.evaluate(None, np.array([1.0, 2.0, 0.0]))
+        evaluator.evaluate(path, np.array([1.0, 2.0, 0.0]))
