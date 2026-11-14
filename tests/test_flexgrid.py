@@ -24,7 +24,9 @@ def test_legacy_grid_centers_and_edges() -> None:
 
 def test_rate_and_service_allocation() -> None:
     grid = FlexibleGrid(12.5e9, 20, 190e12)
-    service = SimpleNamespace(service_id=1, bit_rate_gbps=100, n_slots=4, first_slot=2, launch_power_w=0.001)
+    service = SimpleNamespace(
+        service_id=1, bit_rate_gbps=100, n_slots=4, first_slot=2, launch_power_w=0.001
+    )
     assert bits_per_symbol("QPSK") == 2
     assert slots_for_rate(100e9, 2, 0.0, grid.slot_width_hz) == 4
     connection = connection_spec_from_allocation(service, grid)
@@ -39,5 +41,5 @@ def test_rate_and_service_allocation() -> None:
 def test_invalid_modulation_and_grid() -> None:
     with pytest.raises(ValueError, match="Unknown modulation"):
         bits_per_symbol("unknown")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="num_slots"):
         FlexibleGrid(12.5e9, 0, 190e12)
