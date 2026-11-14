@@ -10,12 +10,13 @@ numerical behavior: transfer accumulated noise first, then add new noise.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import numpy as np
 
 from network_nlo_eval.models.base import (
     ElementOutput,
+    ModelInfo,
     MultiSpanOpticalPath,
     PathQoTResult,
     QoTModel,
@@ -25,6 +26,10 @@ from network_nlo_eval.models.base import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.network.elements import (
         EDFAConfig,
@@ -38,6 +43,18 @@ __all__ = [
     "apply_amplifier_and_roadm",
     "resolve_noise_figure",
 ]
+
+
+class _ContextualSpanModel(Protocol):
+    def span_step(
+        self,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        span_context: SpanContext | None = None,
+    ) -> ElementOutput: ...
+
 
 #: Planck constant in J s, used in the ASE expression.
 H_PLANCK = 6.62607015e-34
@@ -297,9 +314,9 @@ def accumulate_route(
     )
     cumulative_m = 0.0
     wants_context = bool(getattr(model, "supports_span_context", False))
-    roadm_configs = optical_path.roadm_configs or [None] * len(
-        optical_path.fiber_configs
-    )
+    roadm_configs: Sequence[ROADMConfig | None] = optical_path.roadm_configs or [
+        None
+    ] * len(optical_path.fiber_configs)
     hop_count = len(optical_path.fiber_configs)
 
     for hop_index, (fiber, edfa, roadm) in enumerate(
@@ -315,7 +332,7 @@ def accumulate_route(
             span_km = min(remaining_km, fiber.max_span_length_km)
             previous_power = power
             if wants_context:
-                step = model.span_step(
+                step = cast("_ContextualSpanModel", model).span_step(
                     fiber,
                     edfa,
                     power,
@@ -386,7 +403,9 @@ def accumulate_route(
         if roadm is None:
             continue
         blocked = model.blocked_nodes(roadm)
-        operation = "drop" if hop_index == hop_count - 1 else "express"
+        operation: Literal["drop", "express"] = (
+            "drop" if hop_index == hop_count - 1 else "express"
+        )
         loss_db = roadm.path_loss_db(operation)
         loss = 10 ** (loss_db / 10)
         power /= loss
@@ -449,8 +468,8 @@ def accumulate_route(
                 amp_xpm[blocked] = 0
 
     if coherent:
-        total_spm = np.abs(amp_spm) ** 2
-        total_xpm = np.abs(amp_xpm) ** 2
+        total_spm = cast("NDArrayFloat", np.abs(amp_spm) ** 2)
+        total_xpm = cast("NDArrayFloat", np.abs(amp_xpm) ** 2)
     if fwm_present:
         # Accumulate separated FWM by power, then include it in path XPM.
         # Path-level XPM therefore retains its established FWM-inclusive meaning.
@@ -479,14 +498,14 @@ class RouteModel:
     Kernels are cached by the fiber configuration's JSON representation.
     """
 
-    info: object  # Subclasses supply ModelInfo.
+    info: ModelInfo  # Subclasses supply model metadata.
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = "symbol_rate",
         power_width_mode: str = "fixed_power",
