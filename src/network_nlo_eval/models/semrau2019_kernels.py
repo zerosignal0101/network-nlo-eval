@@ -25,7 +25,7 @@ try:
     from numba import njit
 except ImportError:  # Keep statistical models usable without JIT.
 
-    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:  # type: ignore[misc]
+    def njit(*args: Any, **kwargs: Any) -> Callable[[_F], _F]:
         """Return an identity decorator when optional Numba is unavailable."""
         del args, kwargs
 
@@ -290,7 +290,7 @@ def gn_weighted_spm_visibility(
     return out
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def semrau_span_jit(
     power_in_w: NDArrayFloat,
     span_length_m: float,
