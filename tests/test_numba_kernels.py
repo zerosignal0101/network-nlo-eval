@@ -1,5 +1,7 @@
 """Regression tests for physical-layer numerical kernels."""
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -16,7 +18,7 @@ from network_nlo_eval.models.numba_kernels import (
 )
 
 
-def span_inputs() -> tuple:
+def span_inputs() -> tuple[Any, ...]:
     frequencies = np.array([193.05e12, 193.1e12, 193.15e12])
     return (
         np.array([0.001, 0.002, 0.0005]),
@@ -99,12 +101,14 @@ def test_p1_batch_matches_pairwise_kernel(uniform_attenuation: bool) -> None:
     matrices = P1XpmMatrices(
         g1, g2, np.ascontiguousarray(g1.T), np.ascontiguousarray(g2.T), phi, gamma
     )
-    outputs = calc_span_noise_and_power_p1_matvec(batch, *inputs[1:], matrices)
+    outputs = calc_span_noise_and_power_p1_matvec(*[batch, *inputs[1:], matrices])
     for index, candidate in enumerate(batch):
         reference = _calc_span_noise_and_power_jit(candidate, *inputs[1:])
         for batched, expected in zip(outputs, reference, strict=True):
             np.testing.assert_allclose(batched[index], expected, rtol=1e-12, atol=1e-30)
-    empty = calc_span_noise_and_power_p1_matvec(np.empty((0, 3)), *inputs[1:], matrices)
+    empty = calc_span_noise_and_power_p1_matvec(
+        *[np.empty((0, 3)), *inputs[1:], matrices]
+    )
     assert all(array.shape == (0, 3) for array in empty)
     with pytest.raises(ValueError, match="shape"):
-        calc_span_noise_and_power_p1_matvec(power, *inputs[1:], matrices)
+        calc_span_noise_and_power_p1_matvec(*[power, *inputs[1:], matrices])
