@@ -495,8 +495,11 @@ def bench(
     output_file: Path | None,
 ) -> None:
     """Run a benchmark case across models and report accuracy plus speed."""
+    # Load the benchmark machinery only when the benchmark command is invoked.
+    # pylint: disable=import-outside-toplevel
     from network_nlo_eval.benchmarks.cases import build_case
     from network_nlo_eval.benchmarks.runner import accuracy_vs_reference, run_case
+    # pylint: enable=import-outside-toplevel
 
     try:
         case = build_case(case_name)
