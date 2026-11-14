@@ -2349,7 +2349,7 @@ def _xci_overlap_weight_matrix(
     ``F_inf = int_0^inf W dt``, exactly as in the edge integral, so the two
     corrections share their normalisation.
 
-    Only pairs that fail the disjointness condition are touched.  Rows whose
+    Only pairs that fail the non-overlap condition are touched.  Rows whose
     relative change stays below ``materiality`` keep the old weights bit for
     bit, unless they are in ``force_rows`` (the dense-grid opt-in).  Every
     other entry of ``w_base`` is copied unchanged.
