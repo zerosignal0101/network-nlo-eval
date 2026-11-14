@@ -26,7 +26,7 @@ Stimulated Raman Scattering", JLT, 2018.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -43,6 +43,8 @@ from network_nlo_eval.models.raman import C_LIGHT, H_PLANCK, K_BOLTZMANN, RamanG
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
 
@@ -81,6 +83,14 @@ _BW_TOLERANCE: float = 1.0e-7
 
 #: Power floor to avoid division by zero.
 _POWER_FLOOR: float = 1.0e-30
+
+
+class _OdeSolution(Protocol):
+    """Dense output returned by a successful SciPy integration."""
+
+    def sol(self, t: float | NDArrayFloat) -> NDArrayFloat:
+        """Evaluate the integrated state at one or more positions."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -391,7 +401,10 @@ class NumericalDRASpanSolver:
         total[self._bw_slots] = backward
         # Use total source drive for coupling but apply receiver state only once.
         drive = total * self._drive_scale
-        return state * (self._coupling_fwd @ drive) - self._alpha_fwd * state
+        return cast(
+            "NDArrayFloat",
+            state * (self._coupling_fwd @ drive) - self._alpha_fwd * state,
+        )
 
     def _backward_rhs(
         self,
@@ -403,11 +416,13 @@ class NumericalDRASpanSolver:
         total[self._fwd_slots] = forward_state
         total[self._bw_slots] = state
         drive = total * self._drive_scale
-        return state * (self._coupling_bw @ drive) - self._alpha_bw * state
+        return cast(
+            "NDArrayFloat", state * (self._coupling_bw @ drive) - self._alpha_bw * state
+        )
 
     def _solve_forward(
         self, signal_power_in_w: NDArrayFloat, backward_profile: NDArrayFloat
-    ):
+    ) -> _OdeSolution:
         """Integrate forward waves for a given backward-pump profile."""
         initial = self._initial_forward_state(signal_power_in_w)
 
@@ -428,9 +443,9 @@ class NumericalDRASpanSolver:
         if not solution.success:
             msg = f"solve_ivp forward failed: {solution.message}"
             raise RuntimeError(msg)
-        return solution
+        return cast("_OdeSolution", solution)
 
-    def _solve_backward(self, forward_solution):
+    def _solve_backward(self, forward_solution: _OdeSolution) -> _OdeSolution:
         """Integrate backward pumps for a given forward-wave solution."""
         initial = self._pump_power_w[self._bw_pump_original].copy()
 
@@ -451,14 +466,14 @@ class NumericalDRASpanSolver:
         if not solution.success:
             msg = f"solve_ivp backward failed: {solution.message}"
             raise RuntimeError(msg)
-        return solution
+        return cast("_OdeSolution", solution)
 
     def _solve_ase(
         self,
         signal_power_in_w: NDArrayFloat,  # noqa: ARG002 - Retain the solver interface.
         ase_in_w: NDArrayFloat,
-        forward_solution,
-        backward_solution,
+        forward_solution: _OdeSolution,
+        backward_solution: _OdeSolution | None,
     ) -> NDArrayFloat:
         """Integrate the linear signal ASE equation for the converged power profile."""
         if not self.include_ase:
@@ -486,7 +501,9 @@ class NumericalDRASpanSolver:
                 * self._b_signal
                 * (self._source_signal @ total)
             )
-            return gain_rate * ase - self._alpha_signal * ase + source_rate
+            return cast(
+                "NDArrayFloat", gain_rate * ase - self._alpha_signal * ase + source_rate
+            )
 
         solution = solve_ivp(
             rhs,
@@ -582,6 +599,7 @@ class NumericalDRASpanSolver:
         if self._fwd_pump_original.size:
             pump_out[self._fwd_pump_original] = power_end[~self._fwd_is_signal]
         if self._bw_pump_original.size:
+            assert backward_solution is not None
             pump_out[self._bw_pump_original] = np.asarray(
                 backward_solution.sol(self.length_m)
             )
@@ -618,7 +636,7 @@ def _tan_nodes(
     scale = max(float(scale), 1.0)
     u_lower = float(np.arctan(lower / scale))
     u_upper = float(np.arctan(upper / scale))
-    base_nodes, base_weights = np.polynomial.legendre.leggauss(int(nodes))
+    base_nodes, base_weights = np.polynomial.legendre.leggauss(int(nodes))  # type: ignore[no-untyped-call]
     u = 0.5 * (u_upper - u_lower) * base_nodes + 0.5 * (u_upper + u_lower)
     weights = 0.5 * (u_upper - u_lower) * base_weights
     values = scale * np.tan(u)
@@ -664,7 +682,7 @@ def _interpolate_profile(
     values = (1.0 - weight)[:, None] * rho_sorted[:, index].T + weight[
         :, None
     ] * rho_sorted[:, index + 1].T
-    return values.reshape((*shape, profile_norm.shape[0]))
+    return cast("NDArrayFloat", values.reshape((*shape, profile_norm.shape[0])))
 
 
 def _xpm_x_nodes(
@@ -728,14 +746,17 @@ def _phase_xpm(
     coi_hz: float,
     interferer_hz: float,
     x_hz: float,
-    y_hz: float,
+    y_hz: NDArrayFloat,
     reference_hz: float,
 ) -> NDArrayFloat:
     """Return the XPM phase mismatch relative to the dispersion reference."""
     dispersion = beta2 + np.pi * beta3 * (
         coi_hz + interferer_hz + x_hz + y_hz - 2.0 * reference_hz
     )
-    return -4.0 * np.pi**2 * x_hz * (interferer_hz + y_hz - coi_hz) * dispersion
+    return cast(
+        "NDArrayFloat",
+        -4.0 * np.pi**2 * x_hz * (interferer_hz + y_hz - coi_hz) * dispersion,
+    )
 
 
 def _phase_spm(
@@ -763,7 +784,7 @@ def _link_squared(
     integrand = (
         amplitude * weights[None, :] * np.exp(1j * phase[:, None] * z_m[None, :])
     )
-    return np.abs(np.sum(integrand, axis=1)) ** 2
+    return cast("NDArrayFloat", np.abs(np.sum(integrand, axis=1)) ** 2)
 
 
 def nli_power_from_ode_profile(
@@ -1279,10 +1300,10 @@ class NumericalDRAModel(DRARamanModelBase):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         raman_pumps: Sequence[RamanPumpConfig] | None = None,
         raman_gain_model: str = "gaussian",
         raman_ase: bool = True,
@@ -1299,7 +1320,7 @@ class NumericalDRAModel(DRARamanModelBase):
         n_spm_y: int = DEFAULT_SPM_QUADRATURE_Y,
         xpm_phase_limit: float = DEFAULT_XPM_PHASE_LIMIT,
         signal_polarizations: int = 1,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         if n_profile < 5 or n_profile % 2 == 0:
             msg = "n_profile must be an odd integer >= 5."
