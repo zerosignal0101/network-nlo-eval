@@ -21,7 +21,7 @@ the Presence of Raman Amplification", J. Lightwave Technol. 42(2), 636-648,
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -127,9 +127,14 @@ class BugliaClosedProfile:
             np.exp(-alpha_b * (self.length_m - z)) - np.exp(-alpha_b * self.length_m)
         ) / alpha_b
         delta = self.delta_hz(index)
-        return np.exp(-alpha * z) * (
-            1.0
-            - (float(self.c_f[index]) * leff + float(self.c_b[index]) * ltilde) * delta
+        return cast(
+            "NDArrayFloat",
+            np.exp(-alpha * z)
+            * (
+                1.0
+                - (float(self.c_f[index]) * leff + float(self.c_b[index]) * ltilde)
+                * delta
+            ),
         )
 
 
@@ -145,7 +150,10 @@ def _profile_from_parameters(
     ltilde = (
         np.exp(-alpha_b * (length_m - z_m)) - np.exp(-alpha_b * length_m)
     ) / alpha_b
-    return np.exp(-alpha * z_m) * (1.0 - (c_f * leff + c_b * ltilde) * delta_hz)
+    return cast(
+        "NDArrayFloat",
+        np.exp(-alpha * z_m) * (1.0 - (c_f * leff + c_b * ltilde) * delta_hz),
+    )
 
 
 def fit_buglia_profile_5param(
@@ -207,10 +215,13 @@ def fit_buglia_profile_5param(
         delta = float(frequencies_hz[index]) - float(f_hat_hz)
 
         def residual(
-            parameters: NDArrayFloat, target=target, weight=weight, delta=delta
+            parameters: NDArrayFloat,
+            target: NDArrayFloat = target,
+            weight: NDArrayFloat = weight,
+            delta: float = delta,
         ) -> NDArrayFloat:
             model = _profile_from_parameters(parameters, z_fit, length_m, delta)
-            return (model - target) * weight
+            return cast("NDArrayFloat", (model - target) * weight)
 
         candidates = _linear_starts(
             z_fit, target, weight, length_m, delta, float(alpha_npm[index])
@@ -745,7 +756,10 @@ def _link_exact(
     if profile.pole_coeffs is not None and profile.pole_rates is not None:
         rates = np.asarray(profile.pole_rates, dtype=np.float64)[index]
         coeffs = np.asarray(profile.pole_coeffs, dtype=np.float64)[index]
-        return np.sum(coeffs[:, None] / (rates[:, None] - 1j * phi[None, :]), axis=0)
+        return cast(
+            "NDArrayComplex",
+            np.sum(coeffs[:, None] / (rates[:, None] - 1j * phi[None, :]), axis=0),
+        )
     alpha = float(profile.alpha_npm[index])
     alpha_f = float(profile.alpha_f_npm[index])
     alpha_b = float(profile.alpha_b_npm[index])
@@ -759,7 +773,10 @@ def _link_exact(
     )
     denominator = rates[:, None] - 1j * phi[None, :]
     numerator = -np.expm1(-denominator * float(profile.length_m))
-    return np.sum(coefficients[:, None] * numerator / denominator, axis=0)
+    return cast(
+        "NDArrayComplex",
+        np.sum(coefficients[:, None] * numerator / denominator, axis=0),
+    )
 
 
 def nli_integral(
@@ -802,7 +819,7 @@ def nli_integral(
     bandwidths = np.asarray(bandwidths_hz, dtype=np.float64)
     gammas = np.asarray(gamma_per_w_m, dtype=np.float64)
     n_channels = frequencies.size
-    nodes, weights = np.polynomial.legendre.leggauss(int(n_frequency))
+    nodes, weights = np.polynomial.legendre.leggauss(int(n_frequency))  # type: ignore[no-untyped-call]
     spm = np.zeros(n_channels, dtype=np.float64)
     xpm = np.zeros(n_channels, dtype=np.float64)
 
