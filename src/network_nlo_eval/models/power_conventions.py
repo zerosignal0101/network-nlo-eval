@@ -9,7 +9,7 @@ whose known convention differs from that of the evaluator.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -156,7 +156,6 @@ def to_convention(power_w: Any, from_convention: str, to_convention: str) -> Any
     factor = launch_power_scale(target) / launch_power_scale(source)
     if isinstance(power_w, np.ndarray) or np.isscalar(power_w):
         # Preserve NumPy array and scalar behavior when scaling.
-
-        return power_w * factor
+        return cast("Any", power_w) * factor
     # Convert sequences before multiplying by a floating-point scale.
     return np.asarray(power_w, dtype=np.float64) * factor
