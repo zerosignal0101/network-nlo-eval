@@ -14,6 +14,7 @@ import numpy as np
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
+from network_nlo_eval.models.base import QoTModel
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.models.power_conventions import (
     ase_polarization_scale as convention_ase_polarization_scale,
@@ -25,7 +26,10 @@ from network_nlo_eval.models.power_conventions import (
 from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, LinkState, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
-from network_nlo_eval.rwa.link_noise import assemble_link_noise
+from network_nlo_eval.rwa.link_noise import (
+    assemble_link_noise,
+    assemble_model_link_noise,
+)
 from network_nlo_eval.rwa.validity import (
     ChannelValidity,
     LinkValidity,
@@ -378,7 +382,7 @@ class QoTValidator:
 
     def __init__(
         self,
-        gn_evaluator: MultiBandISRSGN,
+        gn_evaluator: QoTModel,
         network_topology: NetworkTopology,
         spectrum_grid: SpectrumGrid,
         fixed_span_length_km: float | None = None,
@@ -395,7 +399,7 @@ class QoTValidator:
 
         Parameters
         ----------
-        gn_evaluator : MultiBandISRSGN
+        gn_evaluator : QoTModel
             Link noise evaluator.
         network_topology : NetworkTopology
             Network topology and element configurations.
@@ -507,7 +511,7 @@ class QoTValidator:
         bool
             Whether the node is blocked.
         """
-        return self.gn_evaluator.roadm_blocks_node(roadm, node_index)
+        return node_index in self.gn_evaluator.blocked_nodes(roadm)
 
     def _node_frequency_and_bandwidth(self, channel_idx: int) -> tuple[float, float]:
         """Return node center frequency and bandwidth (Hz).
@@ -673,7 +677,6 @@ class QoTValidator:
         u, v = link_key
         fiber_config = self.network_topology.get_fiber_config(u, v)
         edfa_config = self.network_topology.get_link_edfa_config(u, v)
-        evaluator = self.gn_evaluator.for_fiber(fiber_config)
         power_eval = to_convention(
             power_profile, self.launch_power_convention, self.eval_power_convention
         )
@@ -700,14 +703,27 @@ class QoTValidator:
             )
             self.last_link_validity[link_key] = validity
 
-        return assemble_link_noise(
-            evaluator=evaluator,
+        if isinstance(self.gn_evaluator, MultiBandISRSGN):
+            return assemble_link_noise(
+                evaluator=self.gn_evaluator.for_fiber(fiber_config),
+                edfa_config=edfa_config,
+                power_profile=power_eval,
+                span_length_m=span_length_m,
+                num_full_spans=num_full_spans,
+                remainder_length_m=remainder_length_m,
+                num_channels=self.num_nodes,
+                validity=validity,
+                launch_power_convention=self.eval_power_convention,
+                coherent=self.coherent_assembly,
+            )
+        return assemble_model_link_noise(
+            evaluator=self.gn_evaluator,
+            fiber_config=fiber_config,
             edfa_config=edfa_config,
             power_profile=power_eval,
             span_length_m=span_length_m,
             num_full_spans=num_full_spans,
             remainder_length_m=remainder_length_m,
-            num_channels=self.num_nodes,
             validity=validity,
             launch_power_convention=self.eval_power_convention,
             coherent=self.coherent_assembly,

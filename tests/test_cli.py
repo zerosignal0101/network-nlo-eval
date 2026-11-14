@@ -61,6 +61,32 @@ def test_cli_models_compare_and_simulate(tmp_path) -> None:
     assert "simulation_metrics" in report
     assert len(report["service_events"]) >= 2
 
+    model_output = tmp_path / "semrau-output"
+    simulation = runner.invoke(
+        main,
+        [
+            "simulate",
+            "-t",
+            str(topology),
+            "-o",
+            str(model_output),
+            "--service-num",
+            "2",
+            "--num-channels",
+            "4",
+            "--qot-model",
+            "semrau2019",
+        ],
+    )
+    assert simulation.exit_code == 0, simulation.output
+    model_report = json.loads(
+        (model_output / "simulation_results.json").read_text(encoding="utf-8")
+    )
+    assert model_report["simulation_metrics"]["total_incoming_services"] == 2
+    assert (
+        model_report["simulation_metrics"]["successfully_allocated_service_count"] > 0
+    )
+
 
 def test_default_topology_is_packaged() -> None:
     runner = CliRunner()

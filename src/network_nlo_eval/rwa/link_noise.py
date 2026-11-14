@@ -11,17 +11,113 @@ from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
-from network_nlo_eval.models.base import SpanContext
+from network_nlo_eval.models.base import MultiSpanOpticalPath, SpanContext
 from network_nlo_eval.network.state import LinkNoiseCache
 
 if TYPE_CHECKING:
     from network_nlo_eval.core.types import NDArrayFloat
+    from network_nlo_eval.models.base import PathQoTResult, QoTModel
     from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
-    from network_nlo_eval.network.elements import EDFAConfig
+    from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
     from network_nlo_eval.rwa.validity import LinkValidity
 
 #: Remainders at or below this length in meters do not form a span.
 _REMAINDER_EPSILON_M = 1.0
+
+
+def assemble_model_link_noise(
+    *,
+    evaluator: QoTModel,
+    fiber_config: FiberSpanConfig,
+    edfa_config: EDFAConfig,
+    power_profile: NDArrayFloat,
+    span_length_m: float,
+    num_full_spans: int,
+    remainder_length_m: float,
+    validity: LinkValidity | None = None,
+    launch_power_convention: str | None = None,
+    coherent: bool = False,
+) -> LinkNoiseCache:
+    """Evaluate a registered model through its public path interface.
+
+    With incoherent assembly, each distinct span length is evaluated as a
+    separate one-span path and its noise powers are added. With coherent
+    assembly, the model evaluates the complete link so that models which
+    accumulate phase or maintain Raman state across spans can do so.
+
+    Parameters
+    ----------
+    evaluator : QoTModel
+        Registered model providing path evaluation.
+    fiber_config : FiberSpanConfig
+        Fiber properties for the link.
+    edfa_config : EDFAConfig
+        Amplifier configuration for each span.
+    power_profile : numpy.ndarray
+        Input powers in the evaluator's power convention.
+    span_length_m : float
+        Full span length in meters.
+    num_full_spans : int
+        Number of full spans.
+    remainder_length_m : float
+        Remaining length in meters; at most one meter is ignored.
+    validity : LinkValidity or None, optional
+        Validity metadata attached to the result.
+    launch_power_convention : str or None, optional
+        Convention recorded with the noise powers.
+    coherent : bool, optional
+        Evaluate the entire link together when True.
+
+    Returns
+    -------
+    LinkNoiseCache
+        Link SPM, XPM, and ASE powers and span count.
+    """
+    convention = launch_power_convention
+    if convention is None:
+        convention = str(getattr(evaluator, "launch_power_convention", "total"))
+    remainder = remainder_length_m if remainder_length_m > _REMAINDER_EPSILON_M else 0.0
+    total_spans = num_full_spans + int(remainder > 0.0)
+    spm = np.zeros_like(power_profile, dtype=np.float64)
+    xpm = np.zeros_like(power_profile, dtype=np.float64)
+    ase = np.zeros_like(power_profile, dtype=np.float64)
+
+    def evaluate(length_m: float) -> PathQoTResult:
+        fiber = fiber_config.model_copy(
+            update={
+                "length_km": length_m / 1000.0,
+                "max_span_length_km": span_length_m / 1000.0,
+            }
+        )
+        return evaluator.evaluate_path(
+            MultiSpanOpticalPath([fiber], [edfa_config]), power_profile
+        )
+
+    if coherent and total_spans:
+        result = evaluate(num_full_spans * span_length_m + remainder)
+        spm += result.spm_noise_w
+        xpm += result.xpm_noise_w
+        ase += result.ase_noise_w
+    else:
+        if num_full_spans:
+            result = evaluate(span_length_m)
+            spm += result.spm_noise_w * num_full_spans
+            xpm += result.xpm_noise_w * num_full_spans
+            ase += result.ase_noise_w * num_full_spans
+        if remainder:
+            result = evaluate(remainder)
+            spm += result.spm_noise_w
+            xpm += result.xpm_noise_w
+            ase += result.ase_noise_w
+
+    return LinkNoiseCache(
+        spm=spm,
+        xpm=xpm,
+        ase=ase,
+        span_count=total_spans,
+        validity=validity,
+        launch_power_convention=convention,
+    )
 
 
 def _emits_nli_amplitudes(evaluator: object) -> bool:
