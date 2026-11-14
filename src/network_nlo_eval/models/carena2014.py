@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
 
 import numpy as np
 from numpy.polynomial.legendre import leggauss
@@ -59,8 +59,12 @@ from network_nlo_eval.models.route import (
 )
 
 if TYPE_CHECKING:
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
+
+_KappaValue = TypeVar("_KappaValue", float, "NDArrayFloat")
 
 __all__ = [
     "CARENA2014_MODEL_INFO",
@@ -179,7 +183,7 @@ class LinkFunction:
     span_length_m: float
     n_spans: int
 
-    def mu(self, p_hz2: NDArrayFloat) -> NDArrayFloat:
+    def mu(self, p_hz2: NDArrayFloat) -> NDArrayComplex:
         """Evaluate the complex link function at frequency products in Hz²."""
         p = np.asarray(p_hz2, dtype=np.float64)
         theta = 4.0 * PI**2 * self.beta2_s2_m * p * self.span_length_m
@@ -194,9 +198,9 @@ class LinkFunction:
         )
         psi = 0.5 * theta
         nu = _sinc_ratio(self.n_spans, psi) * np.exp(1j * (self.n_spans - 1) * psi)
-        return zeta * nu
+        return cast("NDArrayComplex", zeta * nu)
 
-    def mu_of(self, f1: NDArrayFloat, f2: NDArrayFloat, f_hz: float) -> NDArrayFloat:
+    def mu_of(self, f1: NDArrayFloat, f2: NDArrayFloat, f_hz: float) -> NDArrayComplex:
         """Evaluate the complex link function at broadcastable frequencies in Hz."""
         return self.mu(
             (np.asarray(f1, dtype=np.float64) - f_hz)
@@ -238,7 +242,7 @@ def dirichlet_buildup(theta_rad: NDArrayFloat, n_spans: int) -> NDArrayFloat:
         float(n_spans) * np.cos((float(n_spans) - 1.0) * half),
         numerator / safe,
     )
-    return ratio * ratio
+    return cast("NDArrayFloat", ratio * ratio)
 
 
 def solve_dirichlet_step(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
@@ -314,7 +318,7 @@ class _MuAntiderivative:
         n_intervals = max(8, int(np.ceil(2.0 * limit / step)))
         edges = np.linspace(-limit, limit, n_intervals + 1)
         self.limit = float(limit)
-        x, w = leggauss(self.points)
+        x, w = leggauss(self.points)  # type: ignore[no-untyped-call]
         width = np.diff(edges)
         nodes = edges[:-1, None] + width[:, None] * (0.5 * (x + 1.0))[None, :]
         weights = 0.5 * width[:, None] * w
@@ -326,11 +330,19 @@ class _MuAntiderivative:
         self._psi = np.concatenate(([0.0 + 0.0j], np.cumsum(seg_psi)))
         self._g = np.concatenate(([0.0], np.cumsum(seg_g)))
         self._mu_edge = link.mu(edges)
-        self._power_edge = np.abs(self._mu_edge) ** 2
+        self._power_edge = cast("NDArrayFloat", np.abs(self._mu_edge) ** 2)
 
+    @overload
     def _interpolate(
         self, p: NDArrayFloat, values: NDArrayFloat, slopes: NDArrayFloat
-    ) -> NDArrayFloat:
+    ) -> NDArrayFloat: ...
+
+    @overload
+    def _interpolate(
+        self, p: NDArrayFloat, values: NDArrayComplex, slopes: NDArrayComplex
+    ) -> NDArrayComplex: ...
+
+    def _interpolate(self, p: NDArrayFloat, values: Any, slopes: Any) -> Any:
         """Interpolate table values using cubic Hermite interpolation."""
         x = np.clip(np.asarray(p, dtype=np.float64), self._edges[0], self._edges[-1])
         idx = np.searchsorted(self._edges, x, side="right") - 1
@@ -348,7 +360,7 @@ class _MuAntiderivative:
             + (s3 - s2) * h * slopes[idx + 1]
         )
 
-    def value(self, p: NDArrayFloat) -> NDArrayFloat:
+    def value(self, p: NDArrayFloat) -> NDArrayComplex:
         """Return the complex antiderivative of mu from zero to p in Hz²."""
         return self._interpolate(p, self._psi, self._mu_edge)
 
@@ -360,41 +372,41 @@ class _MuAntiderivative:
 # =============================================================================
 # =============================================================================
 @dataclass(frozen=True)
-class SciKappas:
+class SciKappas(Generic[_KappaValue]):
     """SCI GN, fourth-order, and sixth-order coefficients from Eq. (7)-(9).
 
     The fourth-order coefficient contains distinct f1-outer and f3-outer terms."""
 
-    kappa1: float
-    kappa2: float
-    kappa3: float
+    kappa1: _KappaValue
+    kappa2: _KappaValue
+    kappa3: _KappaValue
 
 
 @dataclass(frozen=True)
-class XciKappas:
+class XciKappas(Generic[_KappaValue]):
     """XCI coefficients for regions X1-X4 from Eq. (16)-(18) and Appendix A.
 
     In ``kappa_mn``, m identifies the region and n identifies the GN,
     fourth-order, or sixth-order contribution."""
 
-    kappa11: float
-    kappa12: float
-    kappa21: float
-    kappa22: float
-    kappa31: float
-    kappa32: float
-    kappa41: float
-    kappa42: float
-    kappa43: float
+    kappa11: _KappaValue
+    kappa12: _KappaValue
+    kappa21: _KappaValue
+    kappa22: _KappaValue
+    kappa31: _KappaValue
+    kappa32: _KappaValue
+    kappa41: _KappaValue
+    kappa42: _KappaValue
+    kappa43: _KappaValue
 
 
 @dataclass(frozen=True)
-class MciKappas:
+class MciKappas(Generic[_KappaValue]):
     """MCI coefficients for the M0 and M1 regions in Eq. (24)-(26)."""
 
-    kappa_m0: float
-    kappa_m1_1: float
-    kappa_m1_2: float
+    kappa_m0: _KappaValue
+    kappa_m1_1: _KappaValue
+    kappa_m1_2: _KappaValue
 
 
 # =============================================================================
@@ -482,12 +494,32 @@ class EgnIntegrator:
         else:
             n_osc = 0.0
         n_sub = max(1, int(np.ceil(n_osc / divisor)))
-        x, w = leggauss(self.points)
+        x, w = leggauss(self.points)  # type: ignore[no-untyped-call]
         edges = np.linspace(lo, hi, n_sub + 1)
         width = np.diff(edges)
         nodes = edges[:-1, None] + width[:, None] * (0.5 * (x + 1.0))[None, :]
         weights = 0.5 * width[:, None] * w
         return nodes.ravel(), weights.ravel()
+
+    @overload
+    def _core(
+        self,
+        f_hz: float,
+        band1: tuple[float, float],
+        band2: tuple[float, float],
+        band3: tuple[float, float],
+        kind: Literal["gn", "fourth", "l2"],
+    ) -> tuple[float, float]: ...
+
+    @overload
+    def _core(
+        self,
+        f_hz: float,
+        band1: tuple[float, float],
+        band2: tuple[float, float],
+        band3: tuple[float, float],
+        kind: Literal["sixth"],
+    ) -> tuple[float, complex]: ...
 
     def _core(
         self,
@@ -496,7 +528,7 @@ class EgnIntegrator:
         band2: tuple[float, float],
         band3: tuple[float, float],
         kind: str,
-    ) -> tuple[float, float]:
+    ) -> tuple[float, float | complex]:
         """Evaluate a reduced two-dimensional integral over three rectangular bands.
 
         The ``kind`` selects the GN, fourth-order, sixth-order, or L2 contribution.
@@ -526,12 +558,12 @@ class EgnIntegrator:
                 val = (self._table.power(p2) - self._table.power(p1)) / u_nodes
                 gn_total += float(np.sum(u_w * np.where(valid, val, 0.0)))
             else:
-                val = (self._table.value(p2) - self._table.value(p1)) / u_nodes
-                val = np.where(valid, val, 0.0)
+                complex_val = (self._table.value(p2) - self._table.value(p1)) / u_nodes
+                complex_val = np.where(valid, complex_val, 0.0)
                 if kind == "fourth":
-                    coh_total += complex(np.sum(u_w * np.abs(val) ** 2))
+                    coh_total += complex(np.sum(u_w * np.abs(complex_val) ** 2))
                 else:
-                    coh_total += complex(np.sum(u_w * val))
+                    coh_total += complex(np.sum(u_w * complex_val))
         if kind == "gn":
             return gn_total, 0.0
         if kind == "fourth":
@@ -543,7 +575,7 @@ class EgnIntegrator:
         w_nodes: NDArrayFloat,
         a2: NDArrayFloat,
         b2: NDArrayFloat,
-    ) -> NDArrayFloat:
+    ) -> NDArrayComplex:
         """Evaluate one even half of the L2 inner integral by product integration.
 
         After s=w-2v and u=s², the mu contribution uses its p-axis antiderivative;
@@ -557,7 +589,7 @@ class EgnIntegrator:
         average = np.where(du > 0.0, weight / np.where(du > 0.0, du, 1.0), 0.0)
         psi = self._table.value(p)
         segment = 4.0 * (psi[:, :-1] - psi[:, 1:])
-        return np.sum(average * segment, axis=1)
+        return cast("NDArrayComplex", np.sum(average * segment, axis=1))
 
     def _core_l2(
         self,
@@ -598,20 +630,20 @@ class EgnIntegrator:
             positive = valid & (s1 > 0.0)
             if bool(np.any(positive)):
                 a2 = np.where(s2 > 0.0, s2 * s2, 0.0)
-                b2 = s1 * s1
+                b2 = cast("NDArrayFloat", s1 * s1)
                 part = 0.25 * self._l2_half_integral(w_nodes, a2, b2)
                 inner = inner + np.where(positive, part, 0.0)
             negative = valid & (s2 < 0.0)
             if bool(np.any(negative)):
                 a2 = np.where(s1 < 0.0, s1 * s1, 0.0)
-                b2 = s2 * s2
+                b2 = cast("NDArrayFloat", s2 * s2)
                 part = 0.25 * self._l2_half_integral(w_nodes, a2, b2)
                 inner = inner + np.where(negative, part, 0.0)
             coh_total += float(np.sum(w_w * np.abs(inner) ** 2))
         return coh_total
 
     # --- SCI (2014 Eq. (7)/(8)/(9)) -----------------------------------------
-    def sci(self, f_hz: float) -> SciKappas:
+    def sci(self, f_hz: float) -> SciKappas[float]:
         """Calculate SCI kappa coefficients at an observation frequency in Hz.
 
         The fourth-order result combines the distinct 80/81 f1-outer and 16/81
@@ -633,7 +665,7 @@ class EgnIntegrator:
         kappa3 = (16.0 / 81.0) * rs * spec * abs(sixth) ** 2
         return SciKappas(kappa1=kappa1, kappa2=kappa2, kappa3=kappa3)
 
-    def xci(self, f_c_hz: float, f_hz: float) -> XciKappas:
+    def xci(self, f_c_hz: float, f_hz: float) -> XciKappas[float]:
         """Calculate the nine XCI coefficients for one interfering channel.
 
         The four domains assign the three waves to CUT/INT as follows: X1 CUT/INT/INT,
@@ -681,7 +713,9 @@ class EgnIntegrator:
         )
 
     # --- MCI (2014 Eq. (24)/(25)/(26)) --------------------------------------
-    def mci(self, f_upper_hz: float, f_lower_hz: float, f_hz: float) -> MciKappas:
+    def mci(
+        self, f_upper_hz: float, f_lower_hz: float, f_hz: float
+    ) -> MciKappas[float]:
         """Calculate the adjacent three-channel M0 and M1 coefficients.
 
         Parameters
@@ -814,14 +848,19 @@ class Carena2014SpanKernel:
             max_offset = max(max_offset, float(np.max(np.abs(np.diff(self.f_rel_hz)))))
         self._p_limit_hz2 = (max_offset + self.symbol_rate_hz) ** 2
 
-        self._kappa_cache: dict[tuple[int, float], dict[int, XciKappas]] = {}
-        self._sci_cache: dict[tuple[int, float], SciKappas] = {}
-        self._mci_cache: dict[
-            tuple[int, float], dict[tuple[float, float], MciKappas]
+        self._kappa_cache: dict[
+            tuple[int, float], dict[int, XciKappas[NDArrayFloat]]
         ] = {}
-        self._mci_channel_cache: dict[tuple[int, float], tuple[NDArrayFloat, ...]] = {}
+        self._sci_cache: dict[tuple[int, float], dict[float, SciKappas[float]]] = {}
+        self._mci_cache: dict[
+            tuple[int, float], dict[tuple[float, float], MciKappas[NDArrayFloat]]
+        ] = {}
+        self._mci_channel_cache: dict[
+            tuple[int, float], tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]
+        ] = {}
         self._xci_distance_cache: dict[
-            tuple[int, float], dict[int, tuple[float, ...]]
+            tuple[int, float],
+            dict[int, tuple[float, float, float, float, float, float]],
         ] = {}
         self._buildup_cache: dict[tuple[int, float], float] = {}
         self._step_cache: dict[tuple[int, float], float] = {}
@@ -865,7 +904,9 @@ class Carena2014SpanKernel:
             p_limit_hz2=self._p_limit_hz2,
         )
 
-    def sci_kappas(self, n_spans: int, span_length_m: float) -> dict[float, SciKappas]:
+    def sci_kappas(
+        self, n_spans: int, span_length_m: float
+    ) -> dict[float, SciKappas[float]]:
         """Return SCI coefficients keyed by observation frequency for the link."""
         key = (int(n_spans), float(span_length_m))
         cached = self._sci_cache.get(key)
@@ -876,14 +917,16 @@ class Carena2014SpanKernel:
         self._sci_cache[key] = table
         return table
 
-    def xci_kappas(self, n_spans: int, span_length_m: float) -> dict[int, XciKappas]:
+    def xci_kappas(
+        self, n_spans: int, span_length_m: float
+    ) -> dict[int, XciKappas[NDArrayFloat]]:
         """Return XCI coefficients keyed by channel index separation for the link."""
         key = (int(n_spans), float(span_length_m))
         cached = self._kappa_cache.get(key)
         if cached is not None:
             return cached
         integrator = self._integrator(n_spans, span_length_m)
-        table: dict[int, XciKappas] = {}
+        table: dict[int, XciKappas[NDArrayFloat]] = {}
         for d in range(1, self._separation_offsets.size):
             offset = float(self._separation_offsets[d])
             samples = [integrator.xci(offset, float(f)) for f in self._frequency_grid()]
@@ -898,14 +941,14 @@ class Carena2014SpanKernel:
 
     def mci_kappas(
         self, n_spans: int, span_length_m: float
-    ) -> dict[tuple[float, float], MciKappas]:
+    ) -> dict[tuple[float, float], MciKappas[NDArrayFloat]]:
         """Return MCI coefficients keyed by upper and lower frequency offsets."""
         key = (int(n_spans), float(span_length_m))
         cached = self._mci_cache.get(key)
         if cached is not None:
             return cached
         integrator = self._integrator(n_spans, span_length_m)
-        table: dict[tuple[float, float], MciKappas] = {}
+        table: dict[tuple[float, float], MciKappas[NDArrayFloat]] = {}
         n_ch = int(self.b_hz.size)
         for i in range(n_ch):
             lo = int(self.mci_lower[i])
@@ -1342,14 +1385,14 @@ class Carena2014Model(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         modulation_format: str = DEFAULT_MODULATION,
         *,
         quadrature_points: int = DEFAULT_QUADRATURE_POINTS,
         frequency_points: int = DEFAULT_FREQUENCY_POINTS,
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize the route and model-specific quadrature options."""
         super().__init__(
@@ -1396,7 +1439,7 @@ class Carena2014Model(RouteModel):
         """Evaluate a span and apply amplifier and ASE effects.
 
         NLI amplitudes are referenced to the fiber output before amplification."""
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("Carena2014SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
