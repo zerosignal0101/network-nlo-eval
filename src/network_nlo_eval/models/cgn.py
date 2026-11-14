@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import llvmlite.ir as _ll_ir
 import numpy as np
@@ -74,6 +74,8 @@ from network_nlo_eval.models.route import (
 )
 
 if TYPE_CHECKING:
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat, NDArrayInt
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
@@ -1334,9 +1336,9 @@ def _mci_slot_table(
         for pos in range(first_pos.size):
             first_int = int(first_idx[pos])
             second_int = int(second_idx[pos])
-            weight = 2.0 if first_int != second_int else 1.0
+            symmetry = 2.0 if first_int != second_int else 1.0
             for k in range(int(k_lo[pos]), int(k_hi[pos])):
-                entries.append((first_int, second_int, int(order[k]), weight))  # noqa: PERF401
+                entries.append((first_int, second_int, int(order[k]), symmetry))  # noqa: PERF401
             if len(entries) > MCI_MAX_SLOTS:
                 break
         rows.append(entries[:MCI_MAX_SLOTS])
@@ -1705,9 +1707,9 @@ class _CoreEntry:
     mci_plain: NDArrayFloat
     mci_index: NDArrayInt
     mci_weight: NDArrayFloat
+    view: _GridView
     ramp_spm: NDArrayFloat | None = None
     ramp_xpm: NDArrayFloat | None = None
-    view: _GridView | None = None
 
 
 class CGNSpanKernel:
@@ -2197,7 +2199,7 @@ class CGNSpanKernel:
             spm, xpm = _nli_from_core(
                 dirichlet, g_psd, third_psd, view.b_hz, apply_bandwidth
             )
-            mci_source = mci_dirichlet
+            mci_source = cast("NDArrayFloat", mci_dirichlet)
         xpm = xpm + _mci_from_core(
             mci_source, mci_index, mci_weight, g_psd, view.b_hz, apply_bandwidth
         )
@@ -2250,7 +2252,7 @@ class CGNSpanKernel:
                     plain,
                     dirichlet,
                     mci_plain,
-                    mci_dirichlet,
+                    cast("NDArrayFloat", mci_dirichlet),
                     mci_index,
                     mci_weight,
                     canonical,
@@ -2453,7 +2455,7 @@ class CGNModel(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         correlation_points: int = DEFAULT_CORRELATION_POINTS,
@@ -2463,7 +2465,7 @@ class CGNModel(RouteModel):
         isrs_segments: int = DEFAULT_ISRS_SEGMENTS,
         band_points: int = DEFAULT_BAND_POINTS,
         egn: bool = False,
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize route and correlation model options."""
         if egn:
@@ -2541,7 +2543,7 @@ class CGNModel(RouteModel):
         """Evaluate a span and apply amplifier and ASE effects.
 
         Direct calls outside path evaluation assume equal spans when context is given."""
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("CGNSpanKernel", self.kernel_for(fiber_config))
         if self._n_coherent_spans is None:
             kernel.n_coherent_spans = (
                 span_context.total_spans if span_context is not None else 1
