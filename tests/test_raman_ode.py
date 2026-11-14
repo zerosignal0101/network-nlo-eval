@@ -1,5 +1,7 @@
 """Coupled Raman span solver: conservation, loss, conventions and backends."""
 
+from typing import Any, Literal
+
 import numpy as np
 import pytest
 
@@ -13,7 +15,12 @@ from network_nlo_eval.models.raman_ode import (
 from network_nlo_eval.network.elements import RamanPumpConfig
 
 
-def make_solver(*, direction="forward", convention="total", **kwargs):
+def make_solver(
+    *,
+    direction: Literal["forward", "backward"] = "forward",
+    convention: str = "total",
+    **kwargs: Any,
+) -> RamanPaperSpanSolver:
     pump = RamanPumpConfig(
         wavelength_nm=1450, power_w=0.02, direction=direction, attenuation_db_per_km=0
     )
