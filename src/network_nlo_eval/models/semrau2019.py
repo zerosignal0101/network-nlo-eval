@@ -21,7 +21,7 @@ mapping assumes equal spans; unequal spans are an approximation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from scipy.special import sici
@@ -32,7 +32,6 @@ from network_nlo_eval.models.base import (
     ModelInfo,
     SpanContext,
     SpanFiberOutput,
-    SpanKernel,
     register_model,
 )
 from network_nlo_eval.models.isrs_gn import _SRS_CR
@@ -54,6 +53,8 @@ from network_nlo_eval.models.semrau2019_kernels import (
 )
 
 if TYPE_CHECKING:
+    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 
@@ -135,13 +136,16 @@ def _self_beating_visibility(
     numpy.ndarray
         Per-channel visibility between -1 and 1.
     """
-    return gn_weighted_spm_visibility(
-        beta2_abs_s2_m=beta2_abs_s2_m,
-        bandwidth_hz=bandwidth_hz,
-        alpha_npm=alpha_npm,
-        span_length_m=span_length_m,
-        span_separations_m=np.array([float(distance_m)], dtype=np.float64),
-    )[0]
+    return cast(
+        "NDArrayFloat",
+        gn_weighted_spm_visibility(
+            beta2_abs_s2_m=beta2_abs_s2_m,
+            bandwidth_hz=bandwidth_hz,
+            alpha_npm=alpha_npm,
+            span_length_m=span_length_m,
+            span_separations_m=np.array([float(distance_m)], dtype=np.float64),
+        )[0],
+    )
 
 
 def _signal_spectrum_spm_visibility(
@@ -231,7 +235,7 @@ def _coherent_factor(n_spans: int, visibility: NDArrayFloat) -> NDArrayFloat:
     if n <= 1:
         return np.ones(visibility.shape[-1], dtype=np.float64)
     weights = (n - np.arange(1, n, dtype=np.float64))[:, None]
-    return n + 2.0 * (weights * visibility).sum(axis=0)
+    return cast("NDArrayFloat", n + 2.0 * (weights * visibility).sum(axis=0))
 
 
 def _equivalent_phase_ramp(n_spans: int, target: NDArrayFloat) -> NDArrayFloat:
@@ -278,7 +282,7 @@ def _paper_visibility_equivalent(n_spans: int, coherence_exponent: float) -> flo
     n = int(n_spans)
     if n <= 1:
         return 1.0
-    return (float(n) ** coherence_exponent - 1.0) / (n - 1)
+    return float((float(n) ** coherence_exponent - 1.0) / (n - 1))
 
 
 class Semrau2019SpanKernel:
@@ -642,14 +646,14 @@ class Semrau2019Model(RouteModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
         egn: bool = False,
         *,
         excess_kurtosis: float = DEFAULT_EXCESS_KURTOSIS,
         srs_cr_w_m_hz: float = SRS_CR_W_M_HZ,
-        **route_options,
+        **route_options: Any,
     ) -> None:
         """Initialize channel geometry and Semrau model options.
 
@@ -677,7 +681,7 @@ class Semrau2019Model(RouteModel):
         self.excess_kurtosis = float(excess_kurtosis)
         self.srs_cr_w_m_hz = float(srs_cr_w_m_hz)
 
-    def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
+    def _build_kernel(self, fiber_config: FiberSpanConfig) -> Semrau2019SpanKernel:
         """Build a fiber-specific single-span kernel for the route cache."""
         return Semrau2019SpanKernel(
             fiber_config=fiber_config,
@@ -723,7 +727,7 @@ class Semrau2019Model(RouteModel):
         Complex amplitudes reference fiber output before amplification, following
         the same NLI gain convention as the shared power-only route.
         """
-        kernel = self.kernel_for(fiber_config)
+        kernel = cast("Semrau2019SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
