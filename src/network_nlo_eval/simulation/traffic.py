@@ -4,6 +4,7 @@
 
 import random
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 
@@ -89,8 +90,8 @@ class ServiceRequest:
     def __post_init__(self) -> None:
         """Require a positive integer slot count."""
         if (
-            isinstance(self.n_slots, bool)
-            or not isinstance(self.n_slots, int)
+            isinstance(cast("object", self.n_slots), bool)
+            or not isinstance(cast("object", self.n_slots), int)
             or self.n_slots < 1
         ):
             msg = f"n_slots must be a positive integer, got {self.n_slots!r}."
@@ -142,16 +143,16 @@ class AllocatedService(ServiceRequest):
         # Explicit base call is needed for this slotted dataclass.
         ServiceRequest.__post_init__(self)
         if (
-            isinstance(self.first_slot, bool)
-            or not isinstance(self.first_slot, int)
+            isinstance(cast("object", self.first_slot), bool)
+            or not isinstance(cast("object", self.first_slot), int)
             or self.first_slot < 0
         ):
             msg = f"first_slot must be a non-negative integer, got {self.first_slot!r}."
             raise ValueError(msg)
         if self.slots_per_channel is not None:
             if (
-                isinstance(self.slots_per_channel, bool)
-                or not isinstance(self.slots_per_channel, int)
+                isinstance(cast("object", self.slots_per_channel), bool)
+                or not isinstance(cast("object", self.slots_per_channel), int)
                 or self.slots_per_channel < 1
             ):
                 msg = f"slots_per_channel must be a positive integer or None, got {self.slots_per_channel!r}."

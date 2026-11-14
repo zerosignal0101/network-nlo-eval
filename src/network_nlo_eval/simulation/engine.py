@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import heapq
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from tqdm import tqdm
 
 if TYPE_CHECKING:
-    from network_nlo_eval.rwa.allocators import BaseRWAAllocator
-
     from network_nlo_eval.network.state import NetworkState
+    from network_nlo_eval.rwa.qot_checker import BaseRWAAllocator
     from network_nlo_eval.simulation.reporter import MetricsCollector
-    from network_nlo_eval.simulation.traffic import ServiceRequest
+    from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
 
 @dataclass(order=True)
@@ -136,7 +135,7 @@ class SimulatorEngine:
     def _handle_departure(self, event: Event) -> None:
         """Release an allocated service and record its departure."""
         # A departure carries an AllocatedService.
-        allocated_service = event.service_data
+        allocated_service = cast("AllocatedService", event.service_data)
 
         # The service may already have been released or preempted.
         if (
