@@ -6,6 +6,7 @@ import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
+from network_nlo_eval.models.pcfm_h3_raman import PCFH3RamanModel
 from network_nlo_eval.models.raman import C_LIGHT
 from network_nlo_eval.network.elements import (
     EDFAConfig,
@@ -36,6 +37,7 @@ def test_unpumped_h3_is_bit_identical_to_pcfm() -> None:
         path, power
     )
     h3 = create_model("pcfm_h3_raman", grid, fiber, 32e9)
+    assert isinstance(h3, PCFH3RamanModel)
     result, budget = h3.evaluate_path_with_uncertainty(path, power)
     for name in (
         "signal_power_w",
@@ -55,6 +57,7 @@ def test_pumped_h3_power_coordinates_and_loss() -> None:
     pump = RamanPumpConfig(wavelength_nm=1450, power_w=0.02, direction="backward")
     options = {"raman_pumps": [pump], "raman_steps": 16, "lumped_loss": [(10e3, 1.0)]}
     total = create_model("pcfm_h3_raman", grid, fiber, 32e9, **options)
+    assert isinstance(total, PCFH3RamanModel)
     per_pol = create_model(
         "pcfm_h3_raman",
         grid,
@@ -87,6 +90,7 @@ def test_network_validity_policy_rejects_pump_signal_overlap() -> None:
     model = create_model(
         "pcfm_h3_raman", grid, fiber, 32e9, raman_pumps=[pump], raman_steps=8
     )
+    assert isinstance(model, PCFH3RamanModel)
     request = ServiceRequest(0, 0, 1, 0, 1, 100, -200, 0.001)
     validator = QoTValidator(
         model,
