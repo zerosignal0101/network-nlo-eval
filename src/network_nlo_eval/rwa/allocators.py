@@ -1,6 +1,7 @@
 """Routing and spectrum allocation strategies."""
 
 from dataclasses import asdict
+from typing import cast
 
 import numpy as np
 
@@ -48,7 +49,7 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
             network_state.get_link_state(path[i], path[i + 1]).occupied_channels
             for i in range(len(path) - 1)
         ]
-        return ~np.logical_or.reduce(occupied_arrays)
+        return cast("NDArrayBool", ~np.logical_or.reduce(occupied_arrays))
 
     def allocate(
         self, service_request: ServiceRequest, network_state: NetworkState
