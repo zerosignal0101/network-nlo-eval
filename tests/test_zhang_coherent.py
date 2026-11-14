@@ -20,7 +20,7 @@ from network_nlo_eval.models.zhang2024_coherent import (
 )
 
 
-def make_profile():
+def make_profile() -> ZhangSpanProfile:
     return ZhangSpanProfile(
         alpha_npm=np.full(2, 4.6e-5),
         t_coeff=np.full(2, 0.1),
