@@ -1,6 +1,7 @@
 """Independent DRA reference and numerical fallback integration."""
 
 from types import SimpleNamespace
+from typing import cast
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from network_nlo_eval.network.elements import (
     RamanPumpConfig,
 )
 from network_nlo_eval.rwa.two_tier import (
+    H3UncertaintyModel,
     TwoTierConfig,
     TwoTierEvaluator,
     numerical_dra_factory,
@@ -79,7 +81,7 @@ def test_two_tier_runs_registered_numerical_fallback() -> None:
         n_spm_y=4,
     )
     result = TwoTierEvaluator(
-        H3(), factory, config=TwoTierConfig(enabled=True)
+        cast("H3UncertaintyModel", H3()), factory, config=TwoTierConfig(enabled=True)
     ).evaluate(path, power)
     assert result.fallback_ran
     assert np.isfinite(result.effective_snr_db[0])
