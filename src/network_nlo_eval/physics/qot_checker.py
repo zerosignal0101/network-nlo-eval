@@ -4,12 +4,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
-from network_nlo_eval.models.isrs_gn import MultiSpanOpticalPath
+from network_nlo_eval.models.base import MultiSpanOpticalPath
 from network_nlo_eval.models.numba_kernels import (
     _calc_beta2_from_d,
     _calc_beta3_from_s_d,
@@ -82,7 +82,9 @@ def apply_link_validity(
     )
     adjusted["margin_db"] = np.array(validity.margin_db, dtype=np.float64, copy=True)
     adjusted["soft_margin_db"] = np.array(
-        policy.scale_soft_margin(validity.soft_margin_db), dtype=np.float64, copy=True
+        policy.scale_soft_margin(cast("NDArrayFloat", validity.soft_margin_db)),
+        dtype=np.float64,
+        copy=True,
     )
     return adjusted
 
@@ -343,7 +345,9 @@ class PyNLOQoTEvaluator:
     ) -> Any:
         """Propagate the signal through fibers, amplifiers, Raman pumps and ROADMs."""
         current = wdm_signal
-        roadms = optical_path.roadm_configs or [None] * len(optical_path.fiber_configs)
+        roadms: Sequence[ROADMConfig | None] = optical_path.roadm_configs or [
+            None
+        ] * len(optical_path.fiber_configs)
         channel_info = current.ctx.meta["wdm_channels_info"]
         span_sequence = 0
         active_channels = np.flatnonzero(

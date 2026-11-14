@@ -9,18 +9,18 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from network_nlo_eval.models.isrs_gn import MultiBandISRSGN, PathQoTResult
+from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.models.power_conventions import (
     resolve_launch_power_convention,
     to_convention,
 )
 
 if TYPE_CHECKING:
-    from network_nlo_eval.physics.qot_checker import PyNLOQoTEvaluator
-
     from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat, NodeID
+    from network_nlo_eval.models.base import PathQoTResult
     from network_nlo_eval.network.topology import NetworkTopology
+    from network_nlo_eval.physics.qot_checker import PyNLOQoTEvaluator
 
 
 @dataclass(frozen=True)
