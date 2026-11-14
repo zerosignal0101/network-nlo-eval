@@ -24,7 +24,7 @@ import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import numpy as np
 
@@ -737,7 +737,7 @@ class LinkValidity:
         float
             Soft margin (dB).
         """
-        return float(self.soft_margin_db[channel_idx])
+        return float(cast("NDArrayFloat", self.soft_margin_db)[channel_idx])
 
     def effective_valid(self, policy: LinkValidityPolicy | None = None) -> NDArrayBool:
         """Return link availability under the selected policy.
@@ -791,7 +791,7 @@ class LinkValidity:
             values,
             self.valid,
             self.margin_db,
-            self.soft_margin_db,
+            cast("NDArrayFloat", self.soft_margin_db),
             dense_grid_overlap=self.dense_grid_overlap,
             raman_auto_under_resolved=self.raman_auto_under_resolved,
             fwm_required=self.fwm_required,
@@ -874,9 +874,12 @@ class LinkValidity:
                 float(value) if np.isfinite(value) else None for value in self.margin_db
             ],
             "tilt_confidence_informational": [
-                float(value) for value in self.tilt_confidence_informational
+                float(value)
+                for value in cast("NDArrayFloat", self.tilt_confidence_informational)
             ],
-            "soft_margin_db": [float(value) for value in self.soft_margin_db],
+            "soft_margin_db": [
+                float(value) for value in cast("NDArrayFloat", self.soft_margin_db)
+            ],
             "dense_grid_overlap": bool(self.dense_grid_overlap),
             "raman_auto_under_resolved": bool(self.raman_auto_under_resolved),
             "fwm_required": bool(self.fwm_required),
@@ -1010,7 +1013,7 @@ class ChannelValidity:
                 np.where(np.isfinite(link.margin_db), link.margin_db, 0.0),
                 0.0,
             )
-            soft += np.where(link.valid, link.soft_margin_db, 0.0)
+            soft += np.where(link.valid, cast("NDArrayFloat", link.soft_margin_db), 0.0)
             dense = dense or bool(link.dense_grid_overlap)
             raman_under = raman_under or bool(link.raman_auto_under_resolved)
             fwm_required = fwm_required or bool(link.fwm_required)
@@ -1062,7 +1065,7 @@ class ChannelValidity:
             values,
             self.valid,
             self.margin_db,
-            self.soft_margin_db,
+            cast("NDArrayFloat", self.soft_margin_db),
             dense_grid_overlap=self.dense_grid_overlap,
             raman_auto_under_resolved=self.raman_auto_under_resolved,
             fwm_required=self.fwm_required,
