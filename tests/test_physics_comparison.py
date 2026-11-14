@@ -1,5 +1,7 @@
 """Tests for topology-based statistical and waveform QoT comparison."""
 
+from typing import TYPE_CHECKING, cast
+
 import networkx as nx
 import numpy as np
 
@@ -8,6 +10,9 @@ from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.physics.comparison import TopologyQoTComparator
+
+if TYPE_CHECKING:
+    from network_nlo_eval.physics.qot_checker import PyNLOQoTEvaluator
 
 
 class WaveformStub:
@@ -30,7 +35,11 @@ def test_comparator_converts_each_model_input_and_serializes_nonfinite_values() 
     statistical = MultiBandISRSGN(grid, fiber, 32e9, launch_power_convention="per_pol")
     waveform = WaveformStub()
     comparator = TopologyQoTComparator(
-        topology, grid, statistical, waveform, launch_power_convention="total"
+        topology,
+        grid,
+        statistical,
+        cast("PyNLOQoTEvaluator", waveform),
+        launch_power_convention="total",
     )
     total_power = np.array([1e-3, 0])
     result = comparator.evaluate(
@@ -43,6 +52,7 @@ def test_comparator_converts_each_model_input_and_serializes_nonfinite_values() 
     np.testing.assert_array_equal(waveform.power, total_power)
     assert waveform.num_symbols == 128
     assert waveform.path.node_path == [0, 1]
+    assert result.snr_delta_db is not None
     assert result.snr_delta_db[0] == 10 - independent.snr_db[0]
     exported = result.to_dict()
     assert exported["statistical"]["snr_db"][1] is None
