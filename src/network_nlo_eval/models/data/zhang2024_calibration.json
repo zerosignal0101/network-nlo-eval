@@ -1,0 +1,66 @@
+{
+  "generated_by": "scripts/fit_zhang2024_calibration.py",
+  "provenance": "Coefficients fitted IN THIS REPOSITORY. Zhang 2024 Sec. II-B states that the closed-form terms are not printed and Sec. II-C gives only the functional form, so no paper coefficient exists to copy.",
+  "ranges": {
+    "spans": [
+      8,
+      20
+    ],
+    "launch_power_dbm": [
+      -1.0,
+      3.0
+    ],
+    "channels": 24,
+    "bands": "C+L"
+  },
+  "fit": {
+    "spm": {
+      "log_ratio_rms": 0.017558209460627465
+    },
+    "xpm": {
+      "log_ratio_rms": 7.933101015851333e-17
+    }
+  },
+  "terms": {
+    "spm": [
+      {
+        "name": "launch_power_dbm",
+        "parameters": [
+          1.0,
+          -0.0018156431458122638,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "name": "spans",
+        "parameters": [
+          1.0,
+          0.011272124462181508,
+          1.0,
+          0.0013436594901466976
+        ]
+      }
+    ],
+    "xpm": [
+      {
+        "name": "launch_power_dbm",
+        "parameters": [
+          1.0,
+          -9.251858538542963e-18,
+          1.0,
+          0.0
+        ]
+      },
+      {
+        "name": "spans",
+        "parameters": [
+          1.0,
+          6.608470384673555e-18,
+          1.0,
+          1.6785514777070816e-16
+        ]
+      }
+    ]
+  }
+}
