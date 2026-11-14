@@ -14,7 +14,7 @@ from network_nlo_eval.models.buglia2024_closed import (
 )
 
 
-def profile():
+def profile() -> BugliaClosedProfile:
     return BugliaClosedProfile(
         alpha_npm=np.full(2, 4.6e-5),
         alpha_f_npm=np.full(2, 5e-5),
