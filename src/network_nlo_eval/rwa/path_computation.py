@@ -28,7 +28,7 @@ class PathCache:
         """Initialize and precompute the path cache."""
         self.network_topology = network_topology
         self.max_paths_per_pair = max_paths_per_pair
-        self._ksp_cache: dict[tuple[NodeID, NodeID], list[list[NodeID]]] = {}
+        self._ksp_cache: dict[LinkKey, list[list[NodeID]]] = {}
         self._precompute_all_ksp_paths()
 
     def _precompute_all_ksp_paths(self) -> None:
@@ -78,7 +78,7 @@ class PathCache:
 
                     # Cache paths.
                     # Normalize keys as (min, max).
-                    key = LinkKey(
+                    key = (
                         (source_idx, dest_idx)
                         if source_idx < dest_idx
                         else (dest_idx, source_idx)
@@ -110,7 +110,7 @@ class PathCache:
             Paths ordered from source to destination, or an empty list if
             the pair is absent or disconnected.
         """
-        key = LinkKey(
+        key = (
             (source_idx, dest_idx) if source_idx < dest_idx else (dest_idx, source_idx)
         )
         paths = self._ksp_cache.get(key, [])
