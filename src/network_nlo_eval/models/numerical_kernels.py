@@ -481,7 +481,7 @@ def _gn_nli_jit(
             # the phase spread over the band is characterised by its rms value.
             theta_rms = abs(a_mix) * bi * np.sqrt((delta * delta + bl * bl / 3.0) / 3.0)
             c_bar = np.exp(-0.5 * theta_rms * theta_rms)
-            numer = numer_max - 2.0 * exp_al * c_bar
+            numerator = numer_max - 2.0 * exp_al * c_bar
 
             # Candidate bands of the third wave: f3 = f_l + x + y stays inside
             # [f_l - B_i/2 - B_l/2, f_l + B_i/2 + B_l/2].
@@ -529,7 +529,7 @@ def _gn_nli_jit(
                     if denom == 0.0:
                         # No phase mismatch over the band segment: the coherent
                         # limit of the kernel.
-                        integ = (length_m * length_m * numer / (al * al)) * (
+                        integ = (length_m * length_m * numerator / (al * al)) * (
                             y_hi - y_lo
                         )
                     else:
@@ -541,7 +541,7 @@ def _gn_nli_jit(
                             (th_hi - th_lo) / al,
                             1.0 + (th_hi * th_lo) / (al * al),
                         )
-                        integ = -(length_m * length_m * numer / (denom * al)) * ang
+                        integ = -(length_m * length_m * numerator / (denom * al)) * ang
                     term = g3 * s2 * integ * wx
                     acc += term
                     if r != ell:
