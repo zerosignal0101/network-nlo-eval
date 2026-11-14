@@ -123,12 +123,14 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from network_nlo_eval.models.base import (
+    ElementOutput,
     ModelInfo,
+    MultiSpanOpticalPath,
     PathQoTResult,
     SpanContext,
     SpanFiberOutput,
@@ -176,8 +178,14 @@ from network_nlo_eval.models.uncertainty import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayBool, NDArrayFloat
-    from network_nlo_eval.network.elements import FiberSpanConfig, RamanPumpConfig
+    from network_nlo_eval.network.elements import (
+        EDFAConfig,
+        FiberSpanConfig,
+        RamanPumpConfig,
+    )
 
 __all__ = [
     "DEFAULT_H3_RAMAN_STEPS",
@@ -481,7 +489,10 @@ def _resample_profile_onto(
     lower = indices - 1
     span = source[indices] - source[lower]
     weight = np.where(span > 0.0, (target - source[lower]) / span, 0.0)
-    return profile[lower] * (1.0 - weight)[:, None] + profile[indices] * weight[:, None]
+    return cast(
+        "NDArrayFloat",
+        profile[lower] * (1.0 - weight)[:, None] + profile[indices] * weight[:, None],
+    )
 
 
 def _relative_vector_change(coarse: NDArrayFloat, fine: NDArrayFloat) -> float:
@@ -509,7 +520,7 @@ def _relative_vector_change(coarse: NDArrayFloat, fine: NDArrayFloat) -> float:
     if reference.size == 0:
         return 0.0
     scale = float(np.max(np.abs(reference)))
-    floor = max(scale * 1.0e-12, np.finfo(np.float64).tiny)
+    floor = max(scale * 1.0e-12, float(np.finfo(np.float64).tiny))
     return float(
         np.max(np.abs(candidate - reference) / np.maximum(np.abs(reference), floor))
     )
@@ -639,7 +650,7 @@ def _resolve_egn(egn: bool | str, pumps: Sequence[RamanPumpConfig] | None) -> bo
     """
     if isinstance(egn, bool):
         return egn
-    if not isinstance(egn, str) or egn != "auto":
+    if not isinstance(cast("object", egn), str) or egn != "auto":
         msg = f"egn must be True, False or 'auto', got {egn!r}."
         raise ValueError(msg)
     return not any(pump.direction == "forward" for pump in _active_pumps(pumps))
@@ -922,14 +933,14 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 )
                 raise ValueError(msg)
         resolved_backend = validate_raman_backend(raman_backend)
-        if not isinstance(raman_resolution_check, (bool, np.bool_)):
+        if not isinstance(cast("object", raman_resolution_check), (bool, np.bool_)):
             msg = f"raman_resolution_check must be a bool, got {raman_resolution_check!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         resolved_resolution_tol = float(raman_resolution_tol)
         if not np.isfinite(resolved_resolution_tol) or resolved_resolution_tol <= 0.0:
             msg = f"raman_resolution_tol must be a finite positive fraction, got {raman_resolution_tol!r}."
             raise ValueError(msg)
-        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+        if not isinstance(cast("object", pump_pump_raman), (bool, np.bool_)):
             msg = f"pump_pump_raman must be a bool, got {pump_pump_raman!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         if int(signal_polarizations) < 1:
@@ -1515,6 +1526,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         pump_in = np.asarray(
             [float(pump.power_w) for pump in self._raman_pumps], dtype=np.float64
         )
+        assert self._pump_alpha_npm is not None
         pump_passive = pump_in * np.exp(-self._pump_alpha_npm * float(span_length_m))
         depletion = np.clip(1.0 - result.pump_power_out_w / pump_passive, 0.0, 1.0)
         directions = tuple(str(pump.direction) for pump in self._raman_pumps)
@@ -2373,10 +2385,10 @@ class PCFH3RamanModel(PCFMModel):
 
     def __init__(
         self,
-        grid,
+        grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections=None,
+        connections: Sequence[ConnectionSpec] | None = None,
         poly_degree: int = 3,
         egn: bool | str = "auto",
         edge_fix: bool = True,
@@ -2413,7 +2425,7 @@ class PCFH3RamanModel(PCFMModel):
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         modulation_format_correction: bool = False,
         excess_kurtosis: float = 0.0,
-        **route_options: object,
+        **route_options: Any,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
         if isinstance(raman_steps, str):
@@ -2449,7 +2461,7 @@ class PCFH3RamanModel(PCFMModel):
         if int(raman_iterations) < 1:
             msg = f"raman_iterations must be >= 1, got {raman_iterations}."
             raise ValueError(msg)
-        if not isinstance(raman_resolution_check, (bool, np.bool_)):
+        if not isinstance(cast("object", raman_resolution_check), (bool, np.bool_)):
             msg = f"raman_resolution_check must be a bool, got {raman_resolution_check!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         resolved_resolution_tol = float(raman_resolution_tol)
@@ -2460,7 +2472,7 @@ class PCFH3RamanModel(PCFMModel):
         if int(signal_polarizations) < 1:
             msg = "signal_polarizations must be >= 1."
             raise ValueError(msg)
-        if not isinstance(pump_pump_raman, (bool, np.bool_)):
+        if not isinstance(cast("object", pump_pump_raman), (bool, np.bool_)):
             msg = f"pump_pump_raman must be a bool, got {pump_pump_raman!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         resolved_guard = float(pump_signal_overlap_guard_hz)
@@ -2774,11 +2786,11 @@ class PCFH3RamanModel(PCFMModel):
     def span_step(
         self,
         fiber_config: FiberSpanConfig,
-        edfa_config,
+        edfa_config: EDFAConfig | None,
         power_in_w: NDArrayFloat,
         span_length_m: float,
         span_context: SpanContext | None = None,
-    ):
+    ) -> ElementOutput:
         """Evaluate one span without the lumped span-end gain block.
 
         The kernel already contains the Raman gain in the signal transfer and
@@ -2790,7 +2802,7 @@ class PCFH3RamanModel(PCFMModel):
         ----------
         fiber_config : FiberSpanConfig
             Fibre parameters of the span.
-        edfa_config : object
+        edfa_config : EDFAConfig or None
             Amplifier configuration of the span.
         power_in_w : ndarray
             ``(N,)`` launch power per channel (W).
@@ -2801,8 +2813,8 @@ class PCFH3RamanModel(PCFMModel):
 
         Returns
         -------
-        object
-            The :class:`~network_nlo_eval.models.base.ElementOutput` of the span.
+        ElementOutput
+            Output power and noise for the span.
         """
         kernel = cast("PCFH3RamanSpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
@@ -2862,7 +2874,7 @@ class PCFH3RamanModel(PCFMModel):
 
     def evaluate_path_with_uncertainty(
         self,
-        optical_path,
+        optical_path: MultiSpanOpticalPath,
         power_in_w: NDArrayFloat,
         *,
         config: H3UncertaintyConfig | None = None,
@@ -2876,7 +2888,7 @@ class PCFH3RamanModel(PCFMModel):
 
         Parameters
         ----------
-        optical_path : object
+        optical_path : MultiSpanOpticalPath
             Ordered path to evaluate.
         power_in_w : ndarray
             ``(N,)`` launch power (W).
