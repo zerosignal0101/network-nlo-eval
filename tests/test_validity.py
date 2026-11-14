@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
+from network_nlo_eval.core.types import LinkKey
 from network_nlo_eval.models.pcfm import PCFMModel
 from network_nlo_eval.network.elements import FiberSpanConfig
 from network_nlo_eval.rwa.validity import (
@@ -16,7 +17,7 @@ from network_nlo_eval.rwa.validity import (
 )
 
 
-def _report(key=(0, 1), *, dense=False):
+def _report(key: LinkKey = (0, 1), *, dense: bool = False) -> LinkValidity:
     return LinkValidity(
         valid=np.array([True, False, True]),
         active=np.ones(3, dtype=bool),
@@ -66,13 +67,14 @@ def test_path_aggregation_and_cache_isolate_spectrum() -> None:
     path = ChannelValidity.combine([first, second], 3)
     np.testing.assert_array_equal(path.valid, [True, False, True])
     np.testing.assert_allclose(path.margin_db, [4, 0, 2])
+    assert path.soft_margin_db is not None
     np.testing.assert_allclose(path.soft_margin_db, [0.4, 0, 0.2])
     assert path.dense_grid_overlap
     cache = LinkValidityCache(max_entries=1)
     power = np.array([1e-3, 0.0, 1e-3])
     cache.put((0, 1), power, 80e3, first)
     assert cache.get((0, 1), power, 80e3) is first
-    assert cache.get((0, 1), power * 2, 80e3) is None
+    assert cache.get((0, 1), power * 2.0, 80e3) is None
     assert occupancy_fingerprint(power, 80e3) != occupancy_fingerprint(power, 81e3)
     assert cache.invalidate((0, 1)) == 1
     assert cache.hits == 1
