@@ -84,7 +84,7 @@ RAMAN_GAIN_ROLLOFF_HZ: float = 16.0e12
 RAMAN_GAIN_ROLLOFF_ORDER: int = 8
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _raman_gain_jit(df_hz: float) -> float:
     """Raman gain spectrum at a frequency offset.
 
@@ -95,16 +95,18 @@ def _raman_gain_jit(df_hz: float) -> float:
 
     Returns
     -------
-    float : float
-        Polarisation-averaged, A_eff-normalised Raman gain coefficient (1/(W m)).
+    float
+        Polarization-averaged, A_eff-normalised Raman gain coefficient (1/(W m)).
     """
     if df_hz <= 0.0:
         return 0.0
     ratio = df_hz / RAMAN_GAIN_ROLLOFF_HZ
-    return RAMAN_GAIN_SLOPE_W_M_HZ * df_hz * np.exp(-(ratio**RAMAN_GAIN_ROLLOFF_ORDER))
+    return float(
+        RAMAN_GAIN_SLOPE_W_M_HZ * df_hz * np.exp(-(ratio**RAMAN_GAIN_ROLLOFF_ORDER))
+    )
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _isrs_rhs_jit(
     f_abs_hz: NDArrayFloat,
     power_w: NDArrayFloat,
@@ -155,7 +157,7 @@ def _isrs_rhs_jit(
         out[i] = acc * power_w[i] - alpha_npm[i] * power_w[i]
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _solve_isrs_profile_jit(
     f_abs_hz: NDArrayFloat,
     power_in_w: NDArrayFloat,
@@ -339,7 +341,7 @@ def _solve_isrs_profile_jit(
 # FWM term may apply on top of its own SCI/XCI.
 
 
-@njit(cache=True)
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _gn_nli_jit(
     f_abs_hz: NDArrayFloat,
     b_hz: NDArrayFloat,
