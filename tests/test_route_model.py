@@ -1,0 +1,120 @@
+"""Regression tests for optical route accumulation and amplifier effects."""
+
+import numpy as np
+import pytest
+
+from network_nlo_eval.models.base import (
+    ElementOutput,
+    MultiSpanOpticalPath,
+    SpanFiberOutput,
+)
+from network_nlo_eval.models.route import (
+    H_PLANCK,
+    accumulate_route,
+    apply_amplifier_and_roadm,
+    resolve_noise_figure,
+)
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
+
+
+class TwoSpanModel:
+    """A simple span model with optional coherent amplitudes and additive FWM."""
+
+    n_nodes = 2
+    f_abs_hz = np.array([193.1e12, 193.15e12])
+    channel_bandwidth_hz_channels = np.array([50e9, 50e9])
+    fwm_noise_is_additive = True
+
+    def __init__(self, coherent: bool = False) -> None:
+        self.coherent = coherent
+
+    def power_width_scale(self) -> np.ndarray:
+        return np.ones(2)
+
+    def blocked_nodes(self, roadm: ROADMConfig) -> list[int]:
+        return roadm.blocked_channels
+
+    def span_step(
+        self,
+        _fiber: FiberSpanConfig,
+        _edfa: EDFAConfig,
+        power: np.ndarray,
+        _length: float,
+    ) -> ElementOutput:
+        amplitude = np.full(2, 1e-3, dtype=complex) if self.coherent else None
+        return ElementOutput(
+            power_out_w=power * 0.5,
+            spm_noise_w=np.full(2, 1e-6),
+            xpm_noise_w=np.full(2, 1e-6),
+            ase_noise_w=np.full(2, 2e-6),
+            nli_amplitude_spm=amplitude,
+            nli_amplitude_xpm=amplitude,
+            fwm_noise_w=np.full(2, 2e-7),
+        )
+
+
+def test_incoherent_span_accumulation_and_additive_fwm() -> None:
+    path = MultiSpanOpticalPath(
+        [FiberSpanConfig(length_km=100, max_span_length_km=50)], [EDFAConfig()]
+    )
+    result = accumulate_route(TwoSpanModel(), path, np.array([0.001, 0.002]))
+    np.testing.assert_allclose(result.signal_power_w, [0.00025, 0.0005])
+    np.testing.assert_allclose(result.spm_noise_w, [1.5e-6] * 2)
+    np.testing.assert_allclose(result.xpm_noise_w, [1.8e-6] * 2)
+    np.testing.assert_allclose(result.ase_noise_w, [3e-6] * 2)
+    np.testing.assert_allclose(
+        result.snr_db, 10 * np.log10(result.signal_power_w / 6.3e-6)
+    )
+    assert result.span_count == 2
+    assert result.roadm_count == 0
+
+
+def test_coherent_accumulation_and_roadm_blocking() -> None:
+    roadm = ROADMConfig(
+        insertion_loss_db=0,
+        add_drop_loss_db=0,
+        filtering_penalty_db=0,
+        blocked_channels=[1],
+    )
+    path = MultiSpanOpticalPath(
+        [FiberSpanConfig(length_km=100, max_span_length_km=50)], [EDFAConfig()], [roadm]
+    )
+    result = accumulate_route(
+        TwoSpanModel(coherent=True), path, np.array([0.001, 0.002])
+    )
+    expected_coherent = (1 + np.sqrt(0.5)) ** 2 * 1e-6
+    assert result.spm_noise_w[0] == pytest.approx(expected_coherent)
+    assert result.xpm_noise_w[0] == pytest.approx(expected_coherent + 3e-7)
+    assert result.signal_power_w[1] == 0
+    assert result.snr_db[1] == -np.inf
+    assert result.roadm_count == 1
+
+
+def test_amplifier_ase_scaling_does_not_rescale_input_ase() -> None:
+    power = np.array([1e-3])
+    fiber = SpanFiberOutput(np.array([1e-4]), np.array([1e-6]), np.array([2e-6]))
+    edfa = EDFAConfig(noise_figure_db=5)
+    nf = resolve_noise_figure(edfa, np.ones(1), 1)
+    freq, bandwidth = np.array([193.1e12]), np.array([50e9])
+    result = apply_amplifier_and_roadm(
+        power_in_w=power,
+        fiber_output=fiber,
+        edfa_config=edfa,
+        roadm_config=None,
+        nf_lin=nf,
+        f_abs_hz=freq,
+        bandwidth_hz=bandwidth,
+        input_ase_w=np.array([1e-8]),
+        ase_polarization_scale=0.5,
+    )
+    np.testing.assert_allclose(result.power_out_w, power)
+    expected_ase = nf * H_PLANCK * freq * bandwidth * 9 * 0.5 + 1e-7
+    np.testing.assert_allclose(result.ase_noise_w, expected_ase)
+    np.testing.assert_allclose(result.spm_noise_w, [1e-6])
+    with pytest.raises(ValueError, match="finite and positive"):
+        accumulate_route(
+            TwoSpanModel(),
+            MultiSpanOpticalPath([FiberSpanConfig(length_km=1)], [edfa]),
+            power,
+            ase_polarization_scale=0,
+        )
