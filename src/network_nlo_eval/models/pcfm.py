@@ -1,10 +1,10 @@
 """Polynomial closed-form model (PCFM) of Poggiolini et al., JLT 2026.
 
-The model is the closed-form counterpart of the numerical ISRS-GN reference
-model of this repository.  It implements the "polynomial closed form model for
+The model evaluates analytical GN kernels on polynomial spatial power
+profiles. It implements the "polynomial closed form model for
 ultra-wideband transmission systems" of
 
-    L. Poggiolini, M. Jiang, G. Gao, F. Forghieri,
+    P. Poggiolini, Y. Jiang, Y. Gao, F. Forghieri,
     "Polynomial Closed Form Model for Ultra-Wideband Transmission Systems",
     J. Lightwave Technol., 2026, doi:10.1109/jlt.2026.3678322
 
@@ -21,7 +21,7 @@ Assumptions of the paper that are reproduced here: rectangular channel
 spectra, locally white NLI noise, rectangular (inscribed) integration
 islands, negligible MCI contribution and constant fibre characteristics over
 each channel. The spatial profile integrates inter-channel Stokes transfer
-without Raman pumps; optional lumped Raman gain is applied at the span end.
+without Raman pumps. Pumped links use ``pcfm_h3_raman`` or a DRA paper model.
 
 The EGN correction (``egn=True``) applies the machine-learning coefficient
 ``rho`` of Zefreh et al., JLT 2020, Eq. (14), with the coefficients of Table IV
@@ -29,24 +29,18 @@ of that paper.  Those coefficients are *fitted* values of the reference paper,
 not a derivation of this work package; they are reproduced verbatim and are
 marked as such in the module documentation.
 
-Two deliberate deviations from the printed paper are documented here, because
-both change the numbers and both need to be visible to a reader of the code:
+The output reference plane follows Eqs. (21) and (26):
 
-``The outer p_CUT(L) factor of Eqs. (21) and (26) is not applied``
-    Eqs. (21) and (26) multiply the closed-form kernels by the end-of-span
-    power ratio ``p_CUT(L) = P_CUT(L)/P_CUT(0)``.  The kernels themselves
-    already integrate the *normalised* spatial power profile (SPP) over the
-    span, Eq. (A.20), so the span loss is carried by the profile.  Applying
-    the outer factor on top of it therefore counts the span loss twice: on the
-    100 km SMF benchmark the resulting NLI sits about 16 dB below the
-    numerical GN reference, which contradicts the accuracy claimed in
-    Section IV of the paper.  The kernels are therefore used as printed and the
-    outer factor is set to one.
+``Output transfer Gamma * p_CUT(L)``
+    The kernel returns compensated NLI. The shared route layer applies
+    ``Gamma * P_CUT(L)/P_CUT(0)`` to noise powers and its square root to
+    amplitudes. Exact per-channel loss compensation gives a unit factor;
+    fixed gain, ripple, and unamplified spans use their actual transfer.
 
 ``Fourth-order dispersion is dropped``
     The framework carries no fourth-order dispersion coefficient, so the
-    ``beta4`` term of Eq. (A.15) is set to zero.  Over a C+L band this is a
-    sub-per-mille effect on the effective dispersion.
+    ``beta4`` term of Eq. (A.15) is set to zero. Its error depends on the
+    fiber and frequency range; this implementation supplies no general bound.
 
 **Polarization convention of the NLI kernels**
 
@@ -85,14 +79,13 @@ leaks into the ASE (0.19 dB mean / 1.30 dB worst on C+L unpumped).
 
 **Inter-span coherence (not a formula of the paper)**
 
-The paper accumulates the NLI linearly over transparent spans, Eq. (8): the
-NLI power of a link with ``N`` spans is ``N`` times the single-span value.
-That is the *incoherent* limit and it is systematically optimistic by
-0.2-0.3 dB on a 10-span link.  The rest of this repository
-(``numerical``, ``semrau2019``, ``carena2014``, ``damico2022``, ``cgn``) uses
-one common convention instead: the inter-span visibility is weighted by the
-**NLI noise power** (not by the signal spectrum), and the model hands the
-route layer a *complex amplitude* per span so that the route layer can sum
+The paper's Eq. (8) sums individual-span NLI powers. For identical transparent
+spans this gives ``N`` times the single-span result. Section IV-E discusses
+additional fitted corrections for formats and inter-span coherence, but does
+not derive the visibility construction used here. This implementation weights
+SPM inter-span visibility by **NLI noise power** and uses a uniform-band
+approximation for XPM. It hands the route layer a *complex amplitude* per span
+so that the route layer can sum
 ``|sum_k a_k|**2``.
 
 This module follows that convention.  The PCFM paper contains no inter-span
@@ -140,7 +133,9 @@ channel and span, so the factor is inverted into an equivalent phase ramp
 that is computed for the *current* span length.  On a link whose spans all
 have the same length the route layer then reproduces ``R(N)`` exactly; on a
 link with unequal spans the phase step is folded with the accumulated
-length, and the link-level factor is only exact in the equal-span case.
+length. Matching ``R(N)`` additionally requires identical fiber parameters,
+equal span noise amplitudes, and balanced downstream transfer weights; equal
+span lengths alone do not establish those conditions.
 """
 
 from __future__ import annotations
@@ -1390,9 +1385,10 @@ EGN_PHI_VALUES: dict[str, float] = {
 #:
 #: The evaluation framework of this repository is format agnostic: it models
 #: the Gaussian noise of the *Gaussian* channel, for which the EGN constant of
-#: Table I is ``Phi = 0``.  The PCFM paper uses the same Gaussian-shaped
-#: format in its own test system (its Table I), so the correction applied
-#: here is the one the paper applies.
+#: Table I is ``Phi = 0``. The PCFM paper's Gaussian-shaped test format does
+#: not establish validation of every QAM format or of this repository's
+#: zero-roll-off setting. The model classes fix Phi to zero; their egn option
+#: applies fitted Gaussian-limit factors rather than selecting a QAM format.
 EGN_PHI: float = EGN_PHI_VALUES["PM-Gaussian"]
 
 #: Channel roll-off assumed by the model.
@@ -2863,13 +2859,12 @@ PCFM_MODEL_INFO = ModelInfo(
         (
             "raman_model",
             (
-                "Set to 'lumped' to add a lumped-equivalent distributed Raman amplifier at the span end. "
-                "Default off, so links without pumps are bit-for-bit unchanged."
+                "Compatibility setting for unpumped links. Active pumps require a distributed-Raman model."
             ),
         ),
         (
             "raman_pumps",
-            "RamanPumpConfig sequence applied to every span; providing it enables the lumped Raman model.",
+            "Compatibility pump list; positive pump power requires pcfm_h3_raman or hybrid_raman_paper.",
         ),
         (
             "raman_gain_model",
@@ -4985,9 +4980,8 @@ class PCFMSpanKernel:
             rho_nch = egn_rho_nch(beta2_accum_ps2)
 
         # SCI: G_SCI = (16/27) gamma^2 Gamma p_CUT(L) G_CUT^3 K_SCI.
-        # The outer p_CUT(L) of Eq. (26) is set to one, see the module
-        # docstring: the span loss is already carried by the profile that the
-        # kernel integrates.
+        # Return compensated NLI: Gamma * p_CUT(L) = 1 under exact per-channel
+        # loss compensation. The shared route applies the actual output transfer.
         g_sci = (16.0 / 27.0) * self.gamma_sci**2 * psd**3 * k_sci * rho_cut
         # XCI: G_XCI = (32/27) p_CUT(L) G_CUT sum_nch gamma^2 G_nch^2 K_XCI.
         xci_weight = q_int * psd**2 * rho_nch
@@ -5385,13 +5379,11 @@ class PCFMModel(RouteModel):
         leaves every per-option default untouched.  See
         :data:`RESOLUTION_PROFILES`.
     raman_model : str | None
-        ``"lumped"`` enables the lumped-equivalent distributed
-        Raman amplifier of :mod:`network_nlo_eval.models.raman`.  ``None``
-        (default) and ``"off"`` leave the model bit-for-bit unchanged.
+        Compatibility setting for unpumped links. Positive pump power requires
+        ``pcfm_h3_raman`` or ``hybrid_raman_paper``. Default ``None``.
     raman_pumps : Sequence[RamanPumpConfig] | None
-        Pumps applied to every span.  Providing this argument
-        also enables the lumped model when ``raman_model`` is ``None``.
-        When omitted, the pumps of each :class:`FiberSpanConfig` are used.
+        Compatibility pump list; every pump must have zero power.
+        Pumped links require a distributed-Raman model.
     raman_gain_model : str | RamanGainModel
         Analytic spectrum name, RamanGainModel instance,
         or JSON/CSV table path; the model is loaded at construction.
@@ -5434,6 +5426,8 @@ class PCFMModel(RouteModel):
     #: coherence, so the route layer sums ``|sum_k a_k|**2`` instead of
     #: ``sum_k |a_k|**2``.
     supports_span_context = True
+
+    supports_lumped_loss = True
 
     def __init__(
         self,
@@ -5614,18 +5608,8 @@ class PCFMModel(RouteModel):
             and any(float(pump.power_w) > 0.0 for pump in (_pump_source or ()))
         )
         if self._lumped_raman_active:
-            warnings.warn(
-                "pcfm: raman_model='lumped' with active pumps is not a trustworthy QoT model. "
-                "The lumped approximation multiplies only the span-end signal power by the on-off "
-                "gain; it does not model pump depletion, the intra-span Raman profile or the "
-                "wideband Raman ASE. The accuracy matrix measures 5-28 dB of optimistic error "
-                "against the DRA reference, while the H3 budget only covers 2.24-8.79 dB. The "
-                "point values are kept for backward compatibility, but validity_report and the "
-                "error budget flag every such span/channel as unusable. Use pcfm_h3_raman or "
-                "hybrid_raman_paper for pumped links.",
-                UserWarning,
-                stacklevel=2,
-            )
+            msg = "Active Raman pumps require pcfm_h3_raman or hybrid_raman_paper."
+            raise ValueError(msg)
         self._raman_ase = bool(raman_ase)
         self._raman_gain_model = resolve_raman_gain_model(
             raman_gain_model,
@@ -5731,13 +5715,7 @@ class PCFMModel(RouteModel):
 
     @property
     def lumped_raman_active(self) -> bool:
-        """Whether this model applies the lumped Raman approximation with pumps.
-
-        Such a link is numerically supported for backward compatibility but is
-        not a trustworthy QoT: the intra-span profile and pump depletion are
-        missing.  The span reports and the error budget use this flag to refuse
-        it, without changing the point result.
-        """
+        """Compatibility flag; active pumps require a distributed-Raman model."""
         return bool(self._lumped_raman_active)
 
     @property

@@ -67,23 +67,12 @@ def test_multispan_reference_and_network_adapter() -> None:
         )
 
 
-def test_lumped_raman_reference_and_validity_warning() -> None:
+def test_lumped_raman_requires_distributed_raman_model_for_active_pumps() -> None:
     fiber = FiberSpanConfig(length_km=160, max_span_length_km=80)
     grid = SpectrumGrid(3, 50e9, 193.1e12)
     pumps = [RamanPumpConfig(wavelength_nm=1450, power_w=0.2)]
-    with pytest.warns(UserWarning, match="not a trustworthy QoT model"):
-        model = PCFMModel(grid, fiber, 32e9, raman_model="lumped", raman_pumps=pumps)
-    result = model.evaluate_path(
-        MultiSpanOpticalPath([fiber], [EDFAConfig(noise_figure_db=5.5)]),
-        np.array([1e-3, 2e-3, 0.5e-3]),
-    )
-    np.testing.assert_allclose(
-        result.snr_db,
-        [27.549176249539812, 25.219005392809578, 27.84136153559457],
-        rtol=1e-11,
-    )
-    assert model.last_validity_flagged is not None
-    assert np.all(model.last_validity_flagged)
+    with pytest.raises(ValueError, match="Active Raman pumps require"):
+        PCFMModel(grid, fiber, 32e9, raman_model="lumped", raman_pumps=pumps)
 
 
 def test_dense_plan_falls_back_to_numerical_model() -> None:

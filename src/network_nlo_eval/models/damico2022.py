@@ -22,7 +22,6 @@ doi:10.1109/JLT.2022.3162134."""
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -638,7 +637,7 @@ class Damico2022SpanKernel:
         With a single-span context, return single-span powers without amplitudes.
         With a multispan context, return single-span powers and complex amplitudes
         whose phase steps reproduce the SC and XC coherence factors for equal spans.
-        The amplitudes are referenced to the fiber output of the current span.
+        The amplitudes use the compensated NLI convention of SpanFiberOutput.
 
         Parameters
         ----------
@@ -813,34 +812,21 @@ class Damico2022Model(RouteModel):
     ) -> ElementOutput:
         """Evaluate the span and apply amplifier and ASE effects.
 
-        The fiber output carries physical single-span powers and, for multispan
-        links, complex amplitudes referenced to the fiber output. The route layer
-        handles their propagation and coherent accumulation."""
+        The kernel returns compensated single-span NLI powers and amplitudes.
+        The shared route layer applies the actual span transfer before accumulation."""
         kernel = cast("Damico2022SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
-        plain = SpanFiberOutput(
-            power_out_w=fiber_output.power_out_w,
-            spm_noise_w=fiber_output.spm_noise_w,
-            xpm_noise_w=fiber_output.xpm_noise_w,
-        )
-        element = apply_amplifier_and_roadm(
+        return apply_amplifier_and_roadm(
             power_in_w=power_in_w,
-            fiber_output=plain,
+            fiber_output=fiber_output,
             edfa_config=edfa_config,
             roadm_config=None,
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
-        )
-        if fiber_output.nli_amplitude_spm is None:
-            return element
-        return replace(
-            element,
-            nli_amplitude_spm=fiber_output.nli_amplitude_spm,
-            nli_amplitude_xpm=fiber_output.nli_amplitude_xpm,
         )
 
 

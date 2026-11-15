@@ -1230,6 +1230,8 @@ class DRARamanModelBase(RouteModel):
     _kernel_class: ClassVar[type[DRASpanKernelBase[Any]]] = DRASpanKernelBase
     supports_span_context: ClassVar[bool] = False
 
+    supports_distributed_raman = True
+
     def __init__(
         self,
         grid: SpectrumGrid | FlexibleGrid,

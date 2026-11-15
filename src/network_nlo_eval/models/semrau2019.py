@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 from scipy.special import sici
 
-from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.models.base import (
     ElementOutput,
     ModelInfo,
@@ -37,9 +36,8 @@ from network_nlo_eval.models.base import (
 from network_nlo_eval.models.isrs_gn import _SRS_CR
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
-    _calc_beta2_from_d,
-    _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
+    _dispersion_at_frequency,
 )
 from network_nlo_eval.models.route import (
     RouteModel,
@@ -349,15 +347,11 @@ class Semrau2019SpanKernel:
             self.fiber_config.reference_wavelength_nm,
         )
 
-        # Evaluate dispersion at the band-center wavelength, as in ECZ.
-        ref_lambda_m = C_LIGHT / float(band_center_hz)
-        beta2 = _calc_beta2_from_d(
-            self.fiber_config.dispersion_parameter_d, ref_lambda_m
-        )
-        beta3 = _calc_beta3_from_s_d(
-            self.fiber_config.dispersion_slope_s,
+        beta2, beta3 = _dispersion_at_frequency(
             self.fiber_config.dispersion_parameter_d,
-            ref_lambda_m,
+            self.fiber_config.dispersion_slope_s,
+            self.fiber_config.reference_wavelength_nm,
+            float(band_center_hz),
         )
 
         self.alpha_npm = alpha_npm
@@ -724,8 +718,8 @@ class Semrau2019Model(RouteModel):
 
         Notes
         -----
-        Complex amplitudes reference fiber output before amplification, following
-        the same NLI gain convention as the shared power-only route.
+        The shared element layer converts compensated NLI powers and amplitudes
+        to the actual amplifier-output reference plane.
         """
         kernel = cast("Semrau2019SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(

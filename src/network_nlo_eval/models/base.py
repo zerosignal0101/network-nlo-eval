@@ -104,7 +104,7 @@ class PathQoTResult:
 
 @dataclass(frozen=True)
 class SpanFiberOutput:
-    """Per-channel output of one fiber span before amplification and ROADMs.
+    """Per-channel span signal transfer and model-specific nonlinear noise.
 
     Attributes
     ----------
@@ -113,7 +113,7 @@ class SpanFiberOutput:
     spm_noise_w, xpm_noise_w : numpy.ndarray
         SPM/SCI and XPM/XCI noise powers generated in the span, in watts.
     nli_amplitude_spm, nli_amplitude_xpm : numpy.ndarray or None
-        Optional complex amplitudes at the fiber output. Their squared
+        Optional complex amplitudes in the compensated NLI convention. Their squared
         magnitudes must equal the corresponding noise powers.
     fwm_noise_w : numpy.ndarray or None
         Optional FWM/MCI noise in watts. Its meaning is model-dependent: it
@@ -122,6 +122,11 @@ class SpanFiberOutput:
 
     Notes
     -----
+    Signal power is at the fiber output. NLI powers and amplitudes are
+    normalized to exact per-channel span-loss compensation. The shared
+    amplifier layer converts them to the physical output plane using the
+    actual fiber and amplifier signal transfer.
+
     The route layer propagates amplitudes to the receiver using the square
     root of later power-transfer factors. Models must encode inter-span phase
     in the amplitudes. Supplied amplitudes are summed coherently; otherwise

@@ -1438,33 +1438,20 @@ class Carena2014Model(RouteModel):
     ) -> ElementOutput:
         """Evaluate a span and apply amplifier and ASE effects.
 
-        NLI amplitudes are referenced to the fiber output before amplification."""
+        NLI powers and amplitudes use the compensated convention of SpanFiberOutput."""
         kernel = cast("Carena2014SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
-        stripped = SpanFiberOutput(
-            fiber_output.power_out_w,
-            fiber_output.spm_noise_w,
-            fiber_output.xpm_noise_w,
-        )
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
-        element = apply_amplifier_and_roadm(
+        return apply_amplifier_and_roadm(
             power_in_w=power_in_w,
-            fiber_output=stripped,
+            fiber_output=fiber_output,
             edfa_config=edfa_config,
             roadm_config=None,
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
-        )
-        return ElementOutput(
-            element.power_out_w,
-            element.spm_noise_w,
-            element.xpm_noise_w,
-            element.ase_noise_w,
-            fiber_output.nli_amplitude_spm,
-            fiber_output.nli_amplitude_xpm,
         )
 
 

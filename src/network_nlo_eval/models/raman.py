@@ -1,9 +1,11 @@
-"""Lumped-equivalent distributed Raman amplification.
+"""Raman gain spectra and undepleted-pump lumped approximations.
 
-This module implements the lumped subset of U. C. de Moura et al.,
+Gain-spectrum utilities are shared by the coupled Raman solvers. The standalone
+on-off gain and ASE calculations use undepleted-pump approximations. The coupled
+ODE and NLI calculations based on H. Buglia, R. I. Killey and P. Bayvel,
 "Ultra-Wideband Modeling of Optical Fibre Nonlinearity in Hybrid-Amplified
-Links", sections III-B/C. The coupled ODE and NLI models are implemented
-separately. For undepleted pumps, on-off gain integrates the exponential pump
+Links", doi:10.1109/JLT.2024.3439999, are implemented separately.
+For undepleted pumps, on-off gain integrates the exponential pump
 attenuation into an effective length and places the gain at the span end.
 Forward and backward pumps have equal effective lengths but different spatial
 profiles. Raman ASE is integrated along the span with pump and signal loss,

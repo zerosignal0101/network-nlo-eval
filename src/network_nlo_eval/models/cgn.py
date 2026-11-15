@@ -6,29 +6,27 @@ integration islands. The model supports an attenuation-only NSP and a
 segmented ISRS profile using the repository's Raman power approximation.
 Fused kernels and independent channel chunks accelerate core construction.
 
-``band_points=1`` evaluates the NLI PSD at the channel center and multiplies
-by bandwidth. Larger values integrate the PSD across each band and include
-MCI islands whose first two waves lie outside the channel under test (CUT).
-MCI is omitted in the default center-frequency mode and at exactly zero
-second-order dispersion. MCI slots are capped by ``MCI_MAX_SLOTS``; reaching
-that cap truncates their contribution. The island cover is a midpoint staircase
-and the third-wave PSD is locally constant on each rectangle.
+``band_points=1`` evaluates center-frequency NLI PSD and multiplies by
+bandwidth. Larger values integrate the PSD across each channel. Both modes
+include SCI, XCI and MCI, including at zero second-order dispersion. The
+island cover is a midpoint staircase; ``island_cells`` controls its refinement.
+Fiber parameters and the third-wave PSD are locally constant on each rectangle.
+The correlation window uses ``TRUNCATION_FACTOR`` times its attenuation scale.
 
-Identical spans use the paper's pointwise Dirichlet coherence kernel. A
-per-channel equivalent phase ramp reproduces the integrated link total for
-identical, power-balanced spans, but compresses pairwise phase information.
-Additional inter-span loss or unequal powers can change the route result.
-Heterogeneous links use incoherent power accumulation because the paper's
-cross-span (XS) term is not implemented. Direct span calls without a path
-assume equal spans when a multi-span context is supplied.
+Identical, power-balanced spans use pointwise Dirichlet coherence. General
+routes integrate the coherent field sum across every span at each frequency
+product, retaining the SS and XS terms, span-dependent dispersion, launch
+powers, and receiver transfer. The general route calculation uses adaptive
+one-dimensional quadrature and is more expensive than the identical-span path.
 
+The default ``paper`` dispersion convention expands beta2 and beta3 about the
+fiber reference frequency, following Eq. (5). Fourth-order dispersion is zero.
 The default ``gn`` NSP convention uses the square root of the three signal
-profiles divided by the CUT profile. ``paper_product`` uses the unhalved
-exponent as a comparison. The default ``repo`` dispersion convention expands
-third-order dispersion about the CUT; ``paper_absolute`` uses absolute
-frequencies and can produce a large apparent dispersion term. Only GN is
-implemented, not EGN. ISRS core cache keys use canonical absolute powers;
-output powers are recalculated for each call.
+profiles divided by the CUT profile, as in Eq. (6). The other convention
+settings are diagnostic comparisons rather than physical model defaults.
+Only GN is implemented. ISRS core cache keys use canonical absolute powers;
+output powers are recalculated for each call. Launch pre-emphasis is zero.
+Active Raman amplification requires a distributed-Raman model.
 
 References
 ----------
@@ -39,7 +37,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 import llvmlite.ir as _ll_ir
@@ -106,17 +104,14 @@ NSP_CONVENTION_DEFAULT = "gn"
 #:
 #: ``"repo"``
 #: ``"paper_absolute"``
-DISPERSION_CONVENTIONS = ("repo", "paper_absolute")
-DISPERSION_CONVENTION_DEFAULT = "repo"
+DISPERSION_CONVENTIONS = ("paper", "repo", "paper_absolute")
+DISPERSION_CONVENTION_DEFAULT = "paper"
 
 #:
 DELTA_F_CO_HZ = 15e12
 
 #:
 TRUNCATION_FACTOR = 40.0
-
-#:
-MCI_MAX_SLOTS = 4096
 
 _CHUNK_ELEMENTS = 4_000_000
 
@@ -139,10 +134,12 @@ RAMP_BISECTION_STEPS = 60
 
 CGN_MODEL_INFO = ModelInfo(
     name="cgn",
-    summary="Correlation-based closed-form GN with ISRS for general multi-span links.",
+    summary=(
+        "Semi-analytical correlation GN with ISRS and coherent span-pair accumulation."
+    ),
     family="gn",
     reference="Jiang, Gao, Poggiolini, 'An Efficient Correlation-based Evaluation of the "
-    "GN-Model for General Multi-Span Optical Systems', JLT submitted",
+    "GN-Model for General Multi-Span Optical Systems', arXiv:2610.11624v1 (2026)",
     options=(
         (
             "correlation_points",
@@ -154,14 +151,17 @@ CGN_MODEL_INFO = ModelInfo(
         ),
         (
             "dispersion_convention",
-            "'repo' | 'paper_absolute'; beta3 expansion convention.",
+            "'paper' (default): beta3 expansion about the fiber reference frequency; comparison conventions also available.",
         ),
-        ("nsp_convention", "'gn' | 'paper_product'; NSP exponent convention."),
+        (
+            "nsp_convention",
+            "'gn' (paper Eq. (6) square root) | 'paper_product' (historical doubled-exponent comparison).",
+        ),
         (
             "band_points",
             (
                 "In-band NLI-PSD quadrature nodes; 1 = flat-PSD convention (default), "
-                ">1 = official cGN in-band integration."
+                ">1 = numerical in-band integration with the repository's island approximation."
             ),
         ),
     ),
@@ -303,7 +303,10 @@ def _fused_integrand_isrs(
                         omw_im = -(mag * sin_p)
                         div_re = ax
                         div_im = -omega
-                        if abs(div_re) >= abs(div_im):
+                        if div_re == 0.0 and div_im == 0.0:
+                            seg_re = decay
+                            seg_im = 0.0
+                        elif abs(div_re) >= abs(div_im):
                             rat = div_im / div_re
                             scl = 1.0 / (div_re + div_im * rat)
                             seg_re = (omw_re + omw_im * rat) * scl
@@ -378,11 +381,15 @@ def _fused_integrand_plain(
                             out[c, s, j, cell, p] = 0.0
                             continue
                         omega = om_coef * node
-                        numerator = (
-                            1.0 - 2.0 * decay * np.cos(omega * length_m) + decay * decay
+                        numerator = np.expm1(-ax * length_m) ** 2 + (
+                            4.0 * decay * np.sin(omega * length_m / 2.0) ** 2
                         )
                         denominator = ax * ax + omega * omega
-                        spectrum = (g2 * numerator) / denominator
+                        spectrum = g2 * (
+                            length_m**2
+                            if denominator == 0.0
+                            else numerator / denominator
+                        )
                         value = (spectrum * weight) * (xspan * wq[p])
                         if value != value or value == np.inf or value == -np.inf:  # noqa: PLR0124, PLR1714
                             value = 0.0
@@ -424,17 +431,14 @@ def _effective_beta2(
     y_offsets: NDArrayFloat,
     f_center_hz: NDArrayFloat | None = None,
     convention: str = DISPERSION_CONVENTION_DEFAULT,
+    f_reference_hz: float | None = None,
 ) -> NDArrayFloat:
-    """Calculate effective second-order dispersion in s²/m.
+    """Evaluate Eq. (5) through beta3 about the fiber reference frequency.
 
-    The ``repo`` convention uses beta2 + pi*beta3*(x+y), where x and y are
-    frequency offsets from the CUT. ``paper_absolute`` uses absolute frequencies;
-    that expansion can produce a large apparent dispersion term.
-
-    Raises
-    ------
-    ValueError
-        If the convention is invalid or absolute expansion lacks a center frequency."""
+    ``paper`` uses beta2 + pi*beta3*(2*(fCUT-fref)+x+y), with x and y
+    measured relative to the observation frequency. ``repo`` and
+    ``paper_absolute`` retain the two comparison expansion conventions.
+    """
     if convention not in DISPERSION_CONVENTIONS:
         msg = f"dispersion convention must be one of {DISPERSION_CONVENTIONS}, got {convention!r}."
         raise ValueError(msg)
@@ -443,10 +447,18 @@ def _effective_beta2(
     if convention == "repo":
         return float(beta2) + np.pi * float(beta3) * (x_offsets + y_offsets)
     if f_center_hz is None:
-        msg = "the 'paper_absolute' dispersion convention needs f_center_hz."
+        msg = "the dispersion convention needs f_center_hz."
         raise ValueError(msg)
+    reference = 0.0
+    if convention == "paper":
+        if f_reference_hz is None:
+            msg = "the 'paper' dispersion convention needs f_reference_hz."
+            raise ValueError(msg)
+        reference = float(f_reference_hz)
     return float(beta2) + np.pi * float(beta3) * (
-        2.0 * np.asarray(f_center_hz, dtype=np.float64) + x_offsets + y_offsets
+        2.0 * (np.asarray(f_center_hz, dtype=np.float64) - reference)
+        + x_offsets
+        + y_offsets
     )
 
 
@@ -512,11 +524,18 @@ def _nsp_energy_spectrum(
     alpha_x = np.asarray(alpha_x_npm, dtype=np.float64)
     omega = np.asarray(omega_rad_m, dtype=np.float64)
     decay = np.exp(-alpha_x * length_m)
-    numerator = 1.0 - 2.0 * decay * np.cos(omega * length_m) + decay * decay
+    numerator = (
+        np.expm1(-alpha_x * length_m) ** 2
+        + 4 * decay * np.sin(omega * length_m / 2) ** 2
+    )
     denominator = alpha_x * alpha_x + omega * omega
+    integral_squared = np.full(
+        np.broadcast_shapes(numerator.shape, denominator.shape), length_m**2
+    )
+    np.divide(numerator, denominator, out=integral_squared, where=denominator != 0)
     return cast(
         "NDArrayFloat",
-        np.asarray(gamma_w_m, dtype=np.float64) ** 2 * numerator / denominator,
+        np.asarray(gamma_w_m, dtype=np.float64) ** 2 * integral_squared,
     )
 
 
@@ -609,7 +628,11 @@ def _isrs_nsp_energy_spectrum(
     for index in range(residual.shape[-1] - 1, -1, -1):
         accumulator *= w
         accumulator += residual[..., index][..., None, None]
-    segment = one_minus_w / (alpha_x - 1j * omega)
+    denominator = alpha_x - 1j * omega
+    segment = np.full(
+        np.broadcast_shapes(one_minus_w.shape, denominator.shape), decay, dtype=complex
+    )
+    np.divide(one_minus_w, denominator, out=segment, where=denominator != 0)
     amplitude = segment * accumulator
     gamma = np.asarray(gamma_w_m, dtype=np.float64)
     return cast("NDArrayFloat", gamma**2 * (amplitude.real**2 + amplitude.imag**2))
@@ -666,19 +689,24 @@ def _nli_from_core(
     g_psd: NDArrayFloat,
     third_psd: NDArrayFloat,
     b_hz: NDArrayFloat,
+    r_index: NDArrayInt,
     apply_bandwidth: bool = True,
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
     """Aggregate the core integrals and channel PSDs into SCI/XCI powers.
 
-    SCI uses diagonal terms; XCI uses off-diagonal terms with the symmetry
-    factor. ``apply_bandwidth`` distinguishes center PSD from in-band integrals."""
+    SCI requires all three interacting waves in the CUT. Other CUT-first
+    islands contribute XCI, with a symmetry factor for distinct first and
+    second waves. ``apply_bandwidth`` distinguishes center PSD from in-band integrals."""
     m = core * third_psd
     m_sum = m.sum(axis=2)
     diag = np.arange(core.shape[0])
-    spm_sum = m_sum[diag, diag] * g_psd
+    sci_integral = np.where(
+        r_index[diag, diag] == diag[:, None], m[diag, diag], 0.0
+    ).sum(axis=1)
+    spm_sum = sci_integral * g_psd
     off_diagonal = m_sum.copy()
     off_diagonal[diag, diag] = 0.0
-    xpm_sum = 2.0 * (off_diagonal @ g_psd)
+    xpm_sum = 2.0 * (off_diagonal @ g_psd) + (m_sum[diag, diag] - sci_integral) * g_psd
     prefactor = (16.0 / 27.0) * g_psd
     if apply_bandwidth:
         return prefactor * spm_sum * b_hz, prefactor * xpm_sum * b_hz
@@ -856,6 +884,7 @@ def _island_core(
     band_points: int = DEFAULT_BAND_POINTS,
     compact_live: bool = False,
     compact_scatter: bool = True,
+    f_reference_hz: float | None = None,
 ) -> tuple[NDArrayFloat, NDArrayFloat | None]:
     """Calculate single-span and coherent link core matrices for CUT-first islands.
 
@@ -934,17 +963,7 @@ def _island_core(
             u2[idx],
             island_cells,
         )
-        x_center = 0.5 * (xa + xb)
-        y_center = 0.5 * (ylo + yhi)
         alpha_c = alpha_x[idx]
-        beta2_eff = _effective_beta2(
-            beta2_s2_m,
-            beta3_s3_m,
-            x_center,
-            y_center,
-            f_center_hz=f_abs_hz[idx].reshape(-1, 1, 1, 1),
-            convention=dispersion_convention,
-        )
 
         residual_view = None
         magnitude = None
@@ -959,8 +978,10 @@ def _island_core(
                 gain_seg = gain_profile[seg]
                 residual[..., seg] = (
                     gain_seg[None, :, None] * gain_seg[third_chunk]
-                ) * np.exp(
-                    (rate_second + rate_profile[third_chunk]) * segment_positions[seg]
+                ) ** scale * np.exp(
+                    scale
+                    * (rate_second + rate_profile[third_chunk])
+                    * segment_positions[seg]
                 )
             residual_view = residual
             decay = float(isrs_seg_length_m)
@@ -1009,6 +1030,17 @@ def _island_core(
                     u2[idx] - shift[..., None],
                     island_cells,
                 )
+            beta2_eff = _effective_beta2(
+                beta2_s2_m,
+                beta3_s3_m,
+                0.5 * (cover[0] + cover[1]),
+                0.5 * (cover[2] + cover[3]),
+                f_center_hz=(f_abs_hz[idx] + 0.5 * b_hz[idx] * node).reshape(
+                    -1, 1, 1, 1
+                ),
+                convention=dispersion_convention,
+                f_reference_hz=f_reference_hz,
+            )
             band_scale = (
                 1.0
                 if not integrate_band
@@ -1280,7 +1312,7 @@ def _mci_slot_table(
     The first two waves lie outside the CUT. Candidates are screened against the
     existing correlation-window truncation using a conservative detuning bound.
     The third wave must be reachable within the observation and input bands.
-    Slots are capped by ``MCI_MAX_SLOTS`` and omitted at zero dispersion.
+    Zero dispersion retains all geometrically valid candidates.
 
     Returns
     -------
@@ -1299,12 +1331,9 @@ def _mci_slot_table(
 
     with np.errstate(divide="ignore", invalid="ignore"):
         alpha_ref = float(np.max(np.asarray(alpha_npm, dtype=np.float64)))
-        xi_scale = alpha_ref / (4.0 * np.pi**2 * abs(float(beta2_s2_m)))
+        xi_scale = float(np.divide(alpha_ref, 4.0 * np.pi**2 * abs(float(beta2_s2_m))))
     xi_scale = xi_scale if np.isfinite(xi_scale) and xi_scale > 0.0 else np.inf
-    if not np.isfinite(xi_max := TRUNCATION_FACTOR * xi_scale):
-        return np.zeros((n_ch, 0, 3), dtype=np.int64), np.zeros(
-            (n_ch, 0), dtype=np.float64
-        )
+    xi_max = TRUNCATION_FACTOR * xi_scale
 
     rows: list[list[tuple[int, int, int, float]]] = []
     for cut in range(n_ch):
@@ -1362,9 +1391,7 @@ def _mci_slot_table(
             symmetry = 2.0 if first_int != second_int else 1.0
             for k in range(int(k_lo[pos]), int(k_hi[pos])):
                 entries.append((first_int, second_int, int(order[k]), symmetry))  # noqa: PERF401
-            if len(entries) > MCI_MAX_SLOTS:
-                break
-        rows.append(entries[:MCI_MAX_SLOTS])
+        rows.append(entries)
 
     n_slots = max((len(row) for row in rows), default=0)
     index = np.full((n_ch, n_slots, 3), -1, dtype=np.int64)
@@ -1422,6 +1449,7 @@ def _mci_core(
     isrs_z_mid: NDArrayFloat | None = None,
     isrs_seg_length_m: float = 0.0,
     band_points: int = DEFAULT_BAND_POINTS,
+    f_reference_hz: float | None = None,
 ) -> tuple[NDArrayFloat, NDArrayFloat | None]:
     """Compute single-span and coherent link core integrals for MCI slots.
 
@@ -1506,12 +1534,20 @@ def _mci_core(
             for seg in range(gain_profile.shape[0]):
                 gain_seg = gain_profile[seg]
                 residual[..., seg] = (
-                    (gain_seg[first] * gain_seg[second] * gain_seg[third])
+                    (
+                        gain_seg[first]
+                        * gain_seg[second]
+                        * gain_seg[third]
+                        / gain_seg[np.repeat(np.arange(start, stop), n_slots)]
+                    )
+                    ** scale
                     * np.exp(
-                        (
+                        scale
+                        * (
                             rate_profile[first]
                             + rate_profile[second]
                             + rate_profile[third]
+                            - np.repeat(rate_profile[idx], n_slots)
                         )
                         * segment_positions[seg]
                     )
@@ -1545,8 +1581,11 @@ def _mci_core(
                 beta3_s3_m,
                 x_center,
                 y_center,
-                f_center_hz=np.repeat(f_abs_hz[idx], n_slots)[:, None, None, None],
+                f_center_hz=np.repeat(f_abs_hz[idx] + 0.5 * b_hz[idx] * node, n_slots)[
+                    :, None, None, None
+                ],
                 convention=dispersion_convention,
+                f_reference_hz=f_reference_hz,
             )
             empty = ylo > yhi
             band_scale = (
@@ -1769,7 +1808,7 @@ class CGNSpanKernel:
         Rectangular slices per integration island.
     include_isrs : bool, optional
         Include ISRS in the power and stimulus profiles.
-    dispersion_convention : {"repo", "paper_absolute"}, optional
+    dispersion_convention : {"paper", "repo", "paper_absolute"}, optional
         Third-order dispersion expansion convention.
     nsp_convention : {"gn", "paper_product"}, optional
         NSP attenuation exponent convention.
@@ -1854,6 +1893,7 @@ class CGNSpanKernel:
             a_eff_m2,
         )
         ref_lambda_m = fiber_config.reference_wavelength_nm * 1e-9
+        self.f_reference_hz = C_LIGHT / ref_lambda_m
         self.beta2_s2_m = float(
             _calc_beta2_from_d(fiber_config.dispersion_parameter_d, ref_lambda_m)
         )
@@ -1874,7 +1914,14 @@ class CGNSpanKernel:
         self.f_rel_hz = np.ascontiguousarray(self.f_abs_hz - center, dtype=np.float64)
         self.f_m_hz = float(np.min(self.f_abs_hz - 0.5 * self.b_hz) - center)
         self.f_M_hz = float(np.max(self.f_abs_hz + 0.5 * self.b_hz) - center)
-        self.k_bar = min(sum(pump.power_w for pump in fiber_config.raman_pumps), 1.0)
+        if any(pump.power_w > 0.0 for pump in fiber_config.raman_pumps):
+            msg = (
+                "The cGN implementation does not support active Raman pumps. "
+                "The ECZ k_bar parameter is dimensionless launch pre-emphasis, "
+                "not pump power."
+            )
+            raise ValueError(msg)
+        self.k_bar = 0.0
 
         self._r_index, self._n_slots = _third_wave_slots(
             self.f_abs_hz,
@@ -1901,19 +1948,32 @@ class CGNSpanKernel:
             mci_weight=np.zeros((self.n_nodes, 0), dtype=np.float64),
         )
 
+    def _minimum_abs_beta2(self) -> float:
+        """Bound dispersion over the occupied band for conservative MCI screening."""
+        if self.dispersion_convention != "paper":
+            return 0.0
+        edges = np.array(
+            [
+                np.min(self.f_abs_hz - self.b_hz / 2),
+                np.max(self.f_abs_hz + self.b_hz / 2),
+            ]
+        )
+        beta = self.beta2_s2_m + 2 * np.pi * self.beta3_s3_m * (
+            edges - self.f_reference_hz
+        )
+        if beta[0] * beta[1] <= 0:
+            return 0.0
+        return float(np.min(np.abs(beta)))
+
     def _mci_table(self) -> tuple[NDArrayInt, NDArrayFloat]:
         """Build and cache the power-independent MCI geometry and symmetry weights."""
         if self._mci_table_cache is None:
-            if self.band_points > 1:
-                index, weight = _mci_slot_table(
-                    self.f_abs_hz,
-                    self.b_hz,
-                    self.alpha_npm,
-                    self.beta2_s2_m,
-                )
-            else:
-                index = np.zeros((self.n_nodes, 0, 3), dtype=np.int64)
-                weight = np.zeros((self.n_nodes, 0), dtype=np.float64)
+            index, weight = _mci_slot_table(
+                self.f_abs_hz,
+                self.b_hz,
+                self.alpha_npm,
+                self._minimum_abs_beta2(),
+            )
             self._mci_table_cache = (index, weight)
         return self._mci_table_cache
 
@@ -2093,6 +2153,7 @@ class CGNSpanKernel:
                 beta2_s2_m=self.beta2_s2_m,
                 beta3_s3_m=self.beta3_s3_m,
                 dispersion_convention=self.dispersion_convention,
+                f_reference_hz=self.f_reference_hz,
                 nsp_convention=self.nsp_convention,
                 length_m=float(span_length_m),
                 r_index=view.r_index,
@@ -2115,6 +2176,7 @@ class CGNSpanKernel:
                 beta2_s2_m=self.beta2_s2_m,
                 beta3_s3_m=self.beta3_s3_m,
                 dispersion_convention=self.dispersion_convention,
+                f_reference_hz=self.f_reference_hz,
                 nsp_convention=self.nsp_convention,
                 length_m=float(span_length_m),
                 mci_index=mci_index,
@@ -2136,6 +2198,7 @@ class CGNSpanKernel:
             beta2_s2_m=self.beta2_s2_m,
             beta3_s3_m=self.beta3_s3_m,
             dispersion_convention=self.dispersion_convention,
+            f_reference_hz=self.f_reference_hz,
             nsp_convention=self.nsp_convention,
             length_m=float(span_length_m),
             r_index=view.r_index,
@@ -2154,6 +2217,7 @@ class CGNSpanKernel:
             beta2_s2_m=self.beta2_s2_m,
             beta3_s3_m=self.beta3_s3_m,
             dispersion_convention=self.dispersion_convention,
+            f_reference_hz=self.f_reference_hz,
             nsp_convention=self.nsp_convention,
             length_m=float(span_length_m),
             mci_index=mci_index,
@@ -2184,10 +2248,10 @@ class CGNSpanKernel:
         third_psd = g_pad[view.r_index_padded]
         apply_bandwidth = self.band_points == 1
         single_spm, single_xpm = _nli_from_core(
-            plain, g_psd, third_psd, view.b_hz, apply_bandwidth
+            plain, g_psd, third_psd, view.b_hz, view.r_index, apply_bandwidth
         )
         link_spm, link_xpm = _nli_from_core(
-            dirichlet, g_psd, third_psd, view.b_hz, apply_bandwidth
+            dirichlet, g_psd, third_psd, view.b_hz, view.r_index, apply_bandwidth
         )
         single_xpm = single_xpm + _mci_from_core(
             mci_plain, mci_index, mci_weight, g_psd, view.b_hz, apply_bandwidth
@@ -2235,12 +2299,12 @@ class CGNSpanKernel:
         apply_bandwidth = self.band_points == 1
         if dirichlet is None:
             spm, xpm = _nli_from_core(
-                plain, g_psd, third_psd, view.b_hz, apply_bandwidth
+                plain, g_psd, third_psd, view.b_hz, view.r_index, apply_bandwidth
             )
             mci_source = mci_plain
         else:
             spm, xpm = _nli_from_core(
-                dirichlet, g_psd, third_psd, view.b_hz, apply_bandwidth
+                dirichlet, g_psd, third_psd, view.b_hz, view.r_index, apply_bandwidth
             )
             mci_source = cast("NDArrayFloat", mci_dirichlet)
         xpm = xpm + _mci_from_core(
@@ -2338,8 +2402,8 @@ class CGNSpanKernel:
     ) -> SpanFiberOutput:
         """Evaluate fiber output and SCI/XCI noise for one span.
 
-        A homogeneous multispan context produces equivalent coherent amplitudes;
-        single-span and heterogeneous paths use power accumulation.
+        A homogeneous multispan context produces equivalent coherent amplitudes.
+        General route coherence is integrated by the route-level span-pair evaluator.
 
         Parameters
         ----------
@@ -2381,7 +2445,12 @@ class CGNSpanKernel:
         g_pad = np.concatenate([[0.0], g_psd])
         third_psd = g_pad[view.r_index_padded]
         spm_view, xpm_view = _nli_from_core(
-            entry.plain, g_psd, third_psd, view.b_hz, self.band_points == 1
+            entry.plain,
+            g_psd,
+            third_psd,
+            view.b_hz,
+            view.r_index,
+            self.band_points == 1,
         )
         xpm_view = xpm_view + _mci_from_core(
             entry.mci_plain,
@@ -2448,7 +2517,7 @@ def _span_plan(
 
 
 def _identical_span_count(plan: list[tuple[FiberSpanConfig, float]]) -> int:
-    """Return the span count for identical spans, otherwise one for incoherent accumulation."""
+    """Return the span count for the identical-span Dirichlet calculation."""
     if not plan:
         return 1
     first_fiber, first_length = plan[0]
@@ -2474,14 +2543,14 @@ class CGNModel(RouteModel):
         Correlation-domain quadrature nodes.
     include_isrs : bool, optional
         Include ISRS power tilt.
-    dispersion_convention : {"repo", "paper_absolute"}, optional
+    dispersion_convention : {"paper", "repo", "paper_absolute"}, optional
         Third-order dispersion expansion convention.
     nsp_convention : {"gn", "paper_product"}, optional
         Stimulus profile exponent convention.
     isrs_segments : int, optional
         Number of ISRS profile segments.
     band_points : int, optional
-        Observation-frequency quadrature count; one uses center PSD and omits MCI.
+        Observation-frequency quadrature count; one uses center PSD including MCI.
     egn : bool, optional
         Must be False; this model implements GN only.
     **route_options
@@ -2545,6 +2614,7 @@ class CGNModel(RouteModel):
         self.isrs_segments = int(isrs_segments)
         self.band_points = int(band_points)
         self._n_coherent_spans: int | None = None
+        self._route_spans: list[tuple[CGNSpanKernel, NDArrayFloat, float]] | None = None
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         """Build the fiber-specific single-span kernel."""
@@ -2567,13 +2637,39 @@ class CGNModel(RouteModel):
         optical_path: MultiSpanOpticalPath,
         power_in_w: NDArrayFloat,
     ) -> PathQoTResult:
-        """Evaluate a route, enabling coherent accumulation only for identical spans."""
+        """Evaluate coherent NLI with each span's dispersion and receiver transfer."""
+        from network_nlo_eval.models.cgn_link import coherent_route_nli  # noqa: PLC0415
+
         previous = self._n_coherent_spans
+        previous_spans = self._route_spans
         self._n_coherent_spans = _identical_span_count(_span_plan(optical_path))
+        self._route_spans = []
         try:
-            return super().evaluate_path(optical_path, power_in_w)
+            result = super().evaluate_path(optical_path, power_in_w)
+            spans = self._route_spans
+            if len(spans) <= 1:
+                return result
+            balanced = self._n_coherent_spans > 1 and all(
+                np.allclose(power, spans[0][1], rtol=2e-14, atol=0)
+                for _, power, _ in spans[1:]
+            )
+            balanced = balanced and not any(
+                roadm.filtering_penalty_db != 0
+                for roadm in (optical_path.roadm_configs or [])
+            )
+            if balanced:
+                return result
+            spm, xpm = coherent_route_nli(spans, result.signal_power_w, optical_path)
+            noise = spm + xpm + result.ase_noise_w
+            snr = np.full_like(noise, -np.inf)
+            active = result.signal_power_w > 0
+            noisy = active & (noise > 0)
+            snr[noisy] = 10 * np.log10(result.signal_power_w[noisy] / noise[noisy])
+            snr[active & (noise == 0)] = np.inf
+            return replace(result, spm_noise_w=spm, xpm_noise_w=xpm, snr_db=snr)
         finally:
             self._n_coherent_spans = previous
+            self._route_spans = previous_spans
 
     def span_step(
         self,
@@ -2587,6 +2683,10 @@ class CGNModel(RouteModel):
 
         Direct calls outside path evaluation assume equal spans when context is given."""
         kernel = cast("CGNSpanKernel", self.kernel_for(fiber_config))
+        if self._route_spans is not None:
+            self._route_spans.append(
+                (kernel, np.array(power_in_w, copy=True), span_length_m)
+            )
         if self._n_coherent_spans is None:
             kernel.n_coherent_spans = (
                 span_context.total_spans if span_context is not None else 1

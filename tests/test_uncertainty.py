@@ -66,22 +66,13 @@ def test_dense_grid_schedule_adds_margin_and_checks_order() -> None:
         H3UncertaintyConfig(dense_grid_penalty_schedule=((0.5, 1), (0.5, 2)))
 
 
-def test_lumped_raman_remains_flagged_with_finite_margin() -> None:
+def test_active_lumped_raman_requires_a_distributed_raman_model() -> None:
     fiber = FiberSpanConfig(length_km=80)
-    path = MultiSpanOpticalPath([fiber], [EDFAConfig()])
-    power = np.full(3, 1e-3)
-    with pytest.warns(UserWarning, match="lumped"):
-        model = PCFMModel(
+    with pytest.raises(ValueError, match="Active Raman pumps require"):
+        PCFMModel(
             SpectrumGrid(3, 50e9, 193.1e12),
             fiber,
             32e9,
             raman_model="lumped",
             raman_pumps=[RamanPumpConfig(wavelength_nm=1450, power_w=0.2)],
         )
-    result = model.evaluate_path(path, power)
-    budget = estimate_h3_error_budget(model, path, power, result)
-    assert budget.validity.pump_mode == "backward"
-    assert np.all(budget.validity.lumped_raman)
-    assert np.all(budget.validity.flagged)
-    assert np.all(np.isfinite(budget.margin_db))
-    assert any("lumped Raman approximation" in note for note in budget.notes)

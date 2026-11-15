@@ -1,8 +1,10 @@
 """Reproducible comparison configurations for PCFM and lumped Raman.
 
-The original PCFM configuration disables the later edge fix and span cache.
-The lumped Raman model is an equivalent approximation; the separate hybrid
-Raman paper model uses coupled signal, pump, and ASE equations.
+The historical PCFM configuration disables the later edge fix and span cache.
+It still inherits the repository's power convention and inter-span coherence;
+it is not an unmodified reproduction of the published model or author software.
+The ``raman_lumped`` key is retained as an unpumped compatibility preset.
+Active pumps require a model with coupled signal, pump, and ASE equations.
 """
 
 from __future__ import annotations
@@ -29,14 +31,14 @@ __all__ = [
 
 PCFM_ORIGINAL_MODEL_INFO = ModelInfo(
     name="pcfm_original",
-    summary="Unmodified PCFM paper model (degree 5, GN, no edge fix, no span cache).",
+    summary="Historical PCFM preset (degree 5, GN, no edge fix/cache); retains repository coherence.",
     family="gn",
     reference="Poggiolini et al., JLT 2026, doi:10.1109/jlt.2026.3678322",
 )
 
 
 class PCFMOriginalModel(PCFMModel):
-    """Original PCFM configuration, before the H3 edge/cache changes."""
+    """Historical PCFM preset retaining the parent model's physics extensions."""
 
     info = PCFM_ORIGINAL_MODEL_INFO
 
@@ -48,7 +50,7 @@ class PCFMOriginalModel(PCFMModel):
         connections: Sequence[ConnectionSpec] | None = None,
         **route_options: Any,
     ) -> None:
-        """Build the paper configuration with its original numerical path."""
+        """Disable the later edge correction and span cache in the shared model."""
         super().__init__(
             grid,
             ref_fiber_config,
@@ -65,18 +67,16 @@ class PCFMOriginalModel(PCFMModel):
 
 RAMAN_LUMPED_MODEL_INFO = ModelInfo(
     name="raman_lumped",
-    summary="PCFM with the lumped-equivalent distributed Raman amplifier (not the paper coupled-ODE model).",
+    summary="Unpumped PCFM compatibility preset; active pumps require a distributed-Raman model.",
     family="gn+raman",
-    reference="Poggiolini et al., JLT 2026, doi:10.1109/jlt.2026.3678322; "
-    "de Moura et al., 'Ultra-Wideband Modeling of Optical Fibre Nonlinearity in Hybrid-Amplified Links'; "
-    "lumped equivalent implemented in network_nlo_eval.models.raman",
+    reference="Poggiolini et al., JLT 2026, doi:10.1109/jlt.2026.3678322",
     options=(
         (
             "raman_pumps",
-            "RamanPumpConfig sequence; omitted means use FiberSpanConfig.raman_pumps.",
+            "Compatibility setting: active pumps require pcfm_h3_raman or hybrid_raman_paper.",
         ),
         ("raman_gain_model", "'gaussian' (default) or 'linear'."),
-        ("raman_ase", "Include distributed Raman ASE before the EDFA. Default True."),
+        ("raman_ase", "Retained compatibility option; active pumps are unsupported."),
         ("poly_degree", "SPP polynomial degree. Default 5."),
         ("egn", "Apply the Zefreh 2020 EGN correction. Default False."),
         ("edge_fix", "Apply the H3 zero-dispersion edge fix. Default True."),
@@ -87,7 +87,7 @@ RAMAN_LUMPED_MODEL_INFO = ModelInfo(
 
 
 class RamanLumpedModel(PCFMModel):
-    """PCFM plus the repository's lumped-equivalent Raman amplifier."""
+    """Unpumped PCFM compatibility preset; use a DRA model for active pumps."""
 
     info = RAMAN_LUMPED_MODEL_INFO
 

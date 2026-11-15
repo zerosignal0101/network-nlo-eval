@@ -168,7 +168,7 @@ def apply_amplifier_and_roadm(
     power_in_w : numpy.ndarray
         Per-channel span input power in watts.
     fiber_output : SpanFiberOutput
-        Fiber output signal and noise before amplification.
+        Fiber-output signal and compensated NLI powers and amplitudes.
     edfa_config : EDFAConfig or None
         Span amplifier; None disables gain and newly generated ASE.
     roadm_config : ROADMConfig or None
@@ -196,12 +196,20 @@ def apply_amplifier_and_roadm(
 
     Notes
     -----
-    When EDFA target gain is unspecified, it compensates fiber loss. ROADM
-    loss attenuates signal and existing noise. NLI power and amplitudes do not
-    receive EDFA gain in this layer, matching the established convention.
+    Kernels return NLI normalized to exact per-channel span-loss compensation.
+    The output transfer is therefore ``gain / compensation_gain`` for powers
+    and its square root for amplitudes. This is the ``Gamma * p_CUT(L)``
+    factor in the PCFM paper. Without an amplifier it reduces to the fiber
+    signal transfer. ROADM loss then attenuates signal and noise together.
     """
     ase_polarization_scale = _validate_ase_polarization_scale(ase_polarization_scale)
     power_out_fiber = fiber_output.power_out_w
+    compensation_gain = np.divide(
+        power_in_w,
+        power_out_fiber,
+        out=np.ones_like(power_in_w),
+        where=power_out_fiber > 0,
+    )
     spm = fiber_output.spm_noise_w
     xpm = fiber_output.xpm_noise_w
     amp_spm = getattr(fiber_output, "nli_amplitude_spm", None)
@@ -216,6 +224,12 @@ def apply_amplifier_and_roadm(
 
     if edfa_config is None:
         power_out = power_out_fiber
+        nli_transfer = np.divide(
+            power_out_fiber,
+            power_in_w,
+            out=np.zeros_like(power_in_w),
+            where=power_in_w > 0,
+        )
         ase = (
             np.zeros_like(power_in_w)
             if input_ase_w is None
@@ -224,12 +238,7 @@ def apply_amplifier_and_roadm(
         ase[power_in_w <= 0] = 0
     else:
         if edfa_config.target_gain_db is None:
-            gain = np.divide(
-                power_in_w,
-                power_out_fiber,
-                out=np.ones_like(power_in_w),
-                where=power_out_fiber > 0,
-            )
+            gain = compensation_gain.copy()
         else:
             gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))
         if edfa_config.gain_ripple_db is not None:
@@ -239,6 +248,7 @@ def apply_amplifier_and_roadm(
                 raise ValueError(msg)
             gain *= 10 ** (ripple / 10)
         power_out = power_out_fiber * gain
+        nli_transfer = gain / compensation_gain
         ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
         if ase_polarization_scale != 1.0:
             # Avoid multiplication in the default total-power convention.
@@ -247,9 +257,16 @@ def apply_amplifier_and_roadm(
             # Input ASE already uses the caller's convention; do not rescale it.
             ase = ase + np.asarray(input_ase_w, dtype=np.float64) * gain
         ase[power_in_w <= 0] = 0
-        # NLI power does not receive EDFA gain in this layer.
-        # Complex amplitudes likewise must not receive sqrt(gain),
-        # keeping their squared magnitudes consistent with NLI powers.
+
+    if not np.all(nli_transfer == 1.0):
+        spm = spm * nli_transfer
+        xpm = xpm * nli_transfer
+        if fwm_extra is not None:
+            fwm_extra *= nli_transfer
+        if amp_spm is not None:
+            amplitude_transfer = np.sqrt(nli_transfer)
+            amp_spm = amp_spm * amplitude_transfer
+            amp_xpm = amp_xpm * amplitude_transfer
 
     if roadm_config is not None:
         loss_lin = 10 ** (roadm_config.path_loss_db() / 10)
@@ -525,6 +542,9 @@ class RouteModel:
 
     info: ModelInfo  # Subclasses supply model metadata.
 
+    supports_distributed_raman = False
+    supports_lumped_loss = False
+
     def __init__(
         self,
         grid: SpectrumGrid | FlexibleGrid,
@@ -568,6 +588,8 @@ class RouteModel:
         if slots_per_channel is not None and slots_per_channel < 1:
             msg = f"slots_per_channel must be >= 1, got {slots_per_channel}."
             raise ValueError(msg)
+
+        self._validate_fiber_scenario(ref_fiber_config)
 
         self.grid = grid
         self.ref_fiber_config = ref_fiber_config
@@ -765,8 +787,20 @@ class RouteModel:
         msg = "RouteModel subclasses must implement _build_kernel()."
         raise NotImplementedError(msg)
 
+    def _validate_fiber_scenario(self, fiber_config: FiberSpanConfig) -> None:
+        """Validate the model's pump and in-span loss capabilities."""
+        if not self.supports_distributed_raman and any(
+            pump.power_w > 0 for pump in fiber_config.raman_pumps
+        ):
+            msg = "This model does not support active Raman pumps; select a distributed-Raman model."
+            raise ValueError(msg)
+        if fiber_config.lumped_loss and not self.supports_lumped_loss:
+            msg = "This model does not support in-span lumped losses; select pcfm or pcfm_h3_raman."
+            raise ValueError(msg)
+
     def kernel_for(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         """Return a cached kernel for the supplied fiber configuration."""
+        self._validate_fiber_scenario(fiber_config)
         key = fiber_config.model_dump_json()
         kernel = self._kernel_cache.get(key)
         if kernel is None:

@@ -6,8 +6,9 @@ the profile and single-span XPM and SPM terms.
 
 The implementation uses fiber attenuation for the profile parameters rather
 than fitting them per link, and uses the ECZ triangular Raman approximation
-for output power. It implements GN only: the paper's modulation-format
-corrections are omitted. The route layer evaluates individual spans with
+for output power. It implements the GN contribution only; the paper also
+derives modulation-format corrections in Eqs. (2), (8), and (19), which this
+implementation omits. The route layer evaluates individual spans with
 ``n_effective_spans=1``, so the kernel's n**epsilon factor does not build up
 across the route.
 
@@ -16,12 +17,6 @@ with the nearest neighbor representing XPM. An equivalent per-channel phase
 ramp reproduces the calculated total for identical spans but cannot preserve
 all pairwise phase structure; unequal spans use the current span length to
 scale the phase. Zero-dispersion visibility tends to one.
-
-The paper specifies a loss-side applicability condition but no dispersion
-limit. In a 57-channel, 20-span comparison against this repository's
-numerical reference, mean SNR error grew to +5.01 dB at D=0.5 ps/(nm km).
-These measurements suggest avoiding low-dispersion fibers (approximately
-|D| < 5 ps/(nm km)); the cause has not been established.
 
 References
 ----------
@@ -47,12 +42,11 @@ from network_nlo_eval.models.base import (
 )
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
-    _calc_beta2_from_d,
-    _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
     _calc_gamma_coeff_scalar,
     _calc_raman_profile_jit,
     _calc_span_out_power_jit,
+    _dispersion_at_frequency,
 )
 from network_nlo_eval.models.route import (
     RouteModel,
@@ -84,12 +78,14 @@ _DELTA_F_CO_HZ = 15e12
 
 BUGLIA2023_MODEL_INFO = ModelInfo(
     name="buglia2023",
-    summary="Buglia 2023 closed-form ISRS-GN for arbitrary loss and fibre length.",
+    summary="GN-only subset of Buglia 2023 finite-length ISRS model, with repository coherence.",
     family="gn",
     reference="Buglia et al., 'A Closed-Form Expression for the Gaussian Noise Model in the "
     "Presence of Inter-Channel Stimulated Raman Scattering Extended for Arbitrary Loss and "
     "Fibre Length', JLT 2023, doi:10.1109/JLT.2023.3256185",
-    options=(("egn", "Not supported: the paper derives the GN model only."),),
+    options=(
+        ("egn", "Not implemented: the paper includes modulation-format corrections."),
+    ),
 )
 
 
@@ -768,7 +764,7 @@ class Buglia2023SpanKernel:
         Returns
         -------
         SpanFiberOutput
-            Output powers, noise, and optional fiber-output-referenced amplitudes."""
+            Output powers, noise, and optional compensated NLI amplitudes."""
         power = np.asarray(power_in_w, dtype=np.float64)
         length_m = float(span_length_m)
         n_spans = max(int(n_effective_spans), 1)
@@ -868,32 +864,13 @@ class Buglia2023Model(RouteModel):
         """Initialize the route model and reference fiber properties."""
         if egn:
             msg = (
-                "buglia2023 implements the GN model only: Buglia et al. (JLT 2023, "
-                "doi:10.1109/JLT.2023.3256185) derive the closed-form expression for the "
-                "Gaussian-noise model with ISRS; no EGN variant is published. "
-                "Use egn=False."
+                "buglia2023 implements the GN model only. Buglia et al. (JLT 2023, "
+                "doi:10.1109/JLT.2023.3256185) also derive modulation-format "
+                "corrections, but those terms are not implemented here. Use egn=False."
             )
             raise ValueError(msg)
         super().__init__(
             grid, ref_fiber_config, symbol_rate_hz=symbol_rate_hz, **route_options
-        )
-
-        self.ref_fiber_config = ref_fiber_config
-        self.n2_m2_w = float(ref_fiber_config.nonlinear_index_n2)
-        self.a_eff_m2 = _calc_aeff_dynamic(
-            self.lambdas_m,
-            ref_fiber_config.effective_area_um2_ref,
-            ref_fiber_config.aeff_slope_um2_nm,
-            ref_fiber_config.reference_wavelength_nm,
-        )
-        ref_lambda_m = 2.99792458e8 / self.band_center_hz
-        self.beta2_s2_m = _calc_beta2_from_d(
-            ref_fiber_config.dispersion_parameter_d, ref_lambda_m
-        )
-        self.beta3_s3_m = _calc_beta3_from_s_d(
-            ref_fiber_config.dispersion_slope_s,
-            ref_fiber_config.dispersion_parameter_d,
-            ref_lambda_m,
         )
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> Buglia2023SpanKernel:
@@ -911,14 +888,26 @@ class Buglia2023Model(RouteModel):
             alpha_npm = np.full(
                 self.n_nodes, alpha_db_km * (np.log(10) / 10.0) / 1e3, dtype=np.float64
             )
+        beta2, beta3 = _dispersion_at_frequency(
+            fiber_config.dispersion_parameter_d,
+            fiber_config.dispersion_slope_s,
+            fiber_config.reference_wavelength_nm,
+            self.band_center_hz,
+        )
+        a_eff = _calc_aeff_dynamic(
+            self.lambdas_m,
+            fiber_config.effective_area_um2_ref,
+            fiber_config.aeff_slope_um2_nm,
+            fiber_config.reference_wavelength_nm,
+        )
         return Buglia2023SpanKernel(
             f_rel_hz=self.f_rel_hz,
             lambdas_m=self.lambdas_m,
-            a_eff_m2=self.a_eff_m2,
+            a_eff_m2=a_eff,
             alpha_npm=alpha_npm,
-            beta2_s2_m=self.beta2_s2_m,
-            beta3_s3_m=self.beta3_s3_m,
-            n2_m2_w=self.n2_m2_w,
+            beta2_s2_m=beta2,
+            beta3_s3_m=beta3,
+            n2_m2_w=fiber_config.nonlinear_index_n2,
             b_hz_channels=self.channel_bandwidth_hz_channels,
             c_r_w_m_hz=_SRS_CR,
             symbol_rate_hz=self.symbol_rate_hz,
@@ -934,7 +923,7 @@ class Buglia2023Model(RouteModel):
     ) -> ElementOutput:
         """Evaluate the span and apply amplifier and ASE effects.
 
-        NLI amplitudes are referenced to the fiber output before amplification."""
+        NLI powers and amplitudes use the compensated convention of SpanFiberOutput."""
         kernel = cast("Buglia2023SpanKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context

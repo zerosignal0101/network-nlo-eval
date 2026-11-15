@@ -708,6 +708,9 @@ class HybridRamanPaperModel(PCFMModel):
 
     info = HYBRID_RAMAN_PAPER_MODEL_INFO
 
+    supports_distributed_raman = True
+    supports_lumped_loss = False
+
     def __init__(
         self,
         grid: SpectrumGrid | FlexibleGrid,

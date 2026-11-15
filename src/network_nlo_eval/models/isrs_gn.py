@@ -5,6 +5,12 @@ model and accumulates noise powers incoherently across spans. Its
 multispan results should not be interpreted as including inter-span
 coherence. The separate ``ecz_coherent`` model adds complex-amplitude
 accumulation and is the appropriate entry for coherent multispan use.
+
+The power profile and single-span SPM/XPM terms follow Lasagni 2023
+Eqs. (18), (20), and (29)-(32). The shaping profile assumes uniform launched
+PSD; using it for sparse or unequal-power loading is an approximation.
+The paper's dimensionless ``k_bar`` is launch pre-emphasis, not Raman pump
+power. These ECZ models use zero pre-emphasis and reject active Raman pumps.
 """
 
 from collections.abc import Sequence
@@ -26,12 +32,11 @@ from network_nlo_eval.models.base import (
 )
 from network_nlo_eval.models.numba_kernels import (
     _calc_aeff_dynamic,
-    _calc_beta2_from_d,
-    _calc_beta3_from_s_d,
     _calc_fiber_attenuation_npm,
     _calc_nf_lin_jit,
     _calc_span_noise_and_power_jit,
     _db_to_lin,
+    _dispersion_at_frequency,
 )
 from network_nlo_eval.models.numba_kernels_p1_accel import (
     P1XpmMatrices,
@@ -203,6 +208,16 @@ class MultiBandISRSGN:
         if power_width_mode not in POWER_WIDTH_MODES:
             msg = f"power_width_mode must be one of {POWER_WIDTH_MODES}, got {power_width_mode!r}."
             raise ValueError(msg)
+        if any(pump.power_w > 0.0 for pump in ref_fiber_config.raman_pumps):
+            msg = (
+                "ECZ models do not support active Raman pumps. The paper's k_bar "
+                "is dimensionless launch pre-emphasis, not pump power. Select a "
+                "distributed-Raman model for pumped fibers."
+            )
+            raise ValueError(msg)
+        if ref_fiber_config.lumped_loss:
+            msg = "ECZ models do not support in-span lumped losses; select pcfm or pcfm_h3_raman."
+            raise ValueError(msg)
         if launch_power_convention is None:
             # Preserve the inherited convention and ASE scale of subclasses
             # when no convention is explicitly supplied.
@@ -224,9 +239,7 @@ class MultiBandISRSGN:
         self.ref_fiber_config = ref_fiber_config
         self.symbol_rate_hz = symbol_rate_hz
         self.cr_w_m_hz = _SRS_CR  # Raman gain coefficient.
-        self.k_bar = min(
-            sum(pump.power_w for pump in ref_fiber_config.raman_pumps), 1.0
-        )
+        self.k_bar = 0.0  # Lasagni 2023 Eq. (22): launch pre-emphasis is disabled.
         self.delta_f_co_hz = (
             15e12  # SRS gain-spectrum cutoff frequency for silica fiber.
         )
@@ -408,17 +421,11 @@ class MultiBandISRSGN:
         # Linear noise figure.
         self.nf_lin_channels = _calc_nf_lin_jit(self.lambdas_m)
 
-        # beta2 and beta3 in s²/m and s³/m.
-        # Use D and S at the reference wavelength to calculate dispersion.
-        #
-        ref_lambda_m = C_LIGHT / self.band_center_hz
-        self.beta2_s2_m = _calc_beta2_from_d(
-            self.ref_fiber_config.dispersion_parameter_d, ref_lambda_m
-        )
-        self.beta3_s3_m = _calc_beta3_from_s_d(
-            self.ref_fiber_config.dispersion_slope_s,
+        self.beta2_s2_m, self.beta3_s3_m = _dispersion_at_frequency(
             self.ref_fiber_config.dispersion_parameter_d,
-            ref_lambda_m,
+            self.ref_fiber_config.dispersion_slope_s,
+            self.ref_fiber_config.reference_wavelength_nm,
+            self.band_center_hz,
         )
 
         # Relative frequencies in Hz for NLI and SRS calculations.
@@ -814,15 +821,17 @@ class MultiBandISRSGN:
             s2_spm = s2_spm * 0.5
             s2_xpm = s2_xpm * 0.5
 
+        compensation_gain = np.divide(
+            P, p_out_fiber, out=np.ones_like(P), where=p_out_fiber > 0
+        )
         if edfa_config is None:
             p_out = p_out_fiber
+            nli_transfer = np.divide(p_out_fiber, P, out=np.zeros_like(P), where=P > 0)
             s2_ase = np.zeros_like(P)
         else:
             if edfa_config.target_gain_db is None:
                 # Gain is the input/output ratio in either power convention.
-                gain = np.divide(
-                    P, p_out_fiber, out=np.ones_like(P), where=p_out_fiber > 0
-                )
+                gain = compensation_gain.copy()
             else:
                 gain = np.full_like(P, 10 ** (edfa_config.target_gain_db / 10))
             if edfa_config.gain_ripple_db is not None:
@@ -832,6 +841,7 @@ class MultiBandISRSGN:
                     raise ValueError(msg)
                 gain *= 10 ** (ripple / 10)
             p_out = p_out_fiber * gain
+            nli_transfer = gain / compensation_gain
             s2_ase = (
                 current_nf_lin
                 * 6.62607015e-34
@@ -842,6 +852,8 @@ class MultiBandISRSGN:
             if self.ase_polarization_scale != 1.0:
                 s2_ase = s2_ase * self.ase_polarization_scale
             s2_ase[P <= 0] = 0
+        s2_spm = s2_spm * nli_transfer
+        s2_xpm = s2_xpm * nli_transfer
 
         if roadm_config:
             loss_lin = _db_to_lin(roadm_config.path_loss_db())

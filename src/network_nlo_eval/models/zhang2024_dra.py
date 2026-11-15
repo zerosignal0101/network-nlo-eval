@@ -149,11 +149,9 @@ class Zhang2024DRASpanKernel(DRASpanKernelBase[ZhangSpanProfile]):
 ZHANG2024_DRA_MODEL_INFO = ModelInfo(
     name="zhang2024_dra_egn",
     summary=(
-        "Zhang 2024 backward-DRA coherent EGN: Eq. (1) profile, Eq. (2) closed-form "
-        "longitudinal integral, Eq. (4) span-coherent NLI with the inter-span phase "
-        "inside the frequency integral, plus the Sec. II-C per-term calibration "
-        "fitted in this repository. eta_XPM_corr is not printed in the paper and is "
-        "not implemented."
+        "Zhang-inspired backward-DRA coherent GN with repository-fitted calibration; "
+        "closed same-span and numerical cross-span terms. The registry key is historical: "
+        "the paper's modulation-format correction is not implemented."
     ),
     family="egn+raman+coherent",
     reference="Zhang et al., OECC 2024, doi:10.1109/OECC54135.2024.10975528",

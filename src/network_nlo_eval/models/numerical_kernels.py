@@ -1,8 +1,8 @@
-"""Numerba kernels for the numerical ISRS-GN reference model.
+"""Numba kernels for the approximate numerical ISRS-GN comparison model.
 
-Everything in this module is a *numerical* evaluation of the equations of
+The model is based on the equations of
 
-    C. Semrau, R. Killey, P. Bayvel,
+    D. Semrau, R. I. Killey, P. Bayvel,
     "The Gaussian Noise Model in the Presence of Inter-Channel Stimulated Raman
     Scattering", JLT 2018, doi:10.1109/jlt.2018.2830973
 
@@ -11,12 +11,11 @@ Two independent pieces live here:
 1. :func:`_solve_isrs_profile_jit` integrates the coupled inter-channel SRS
    ordinary differential equations, Eq. (6) of the paper, over one span.  This
    replaces the closed-form triangular approximation of Eq. (8) with an
-   explicitly integrated power profile, using a real Raman gain spectrum.
+   explicitly integrated power profile, using an analytic Raman-gain surrogate.
 
-2. :func:`_gn_nli_jit` evaluates the GN double integral of Eq. (4) of the paper
-   by numerical quadrature over the frequency variables, splitting the
-   self-interference (SCI), the cross-interference (XCI) and the
-   four-wave-mixing (FWM) parts.
+2. :func:`_gn_nli_jit` approximates Eq. (4) using a band-averaged span response,
+   an ISRS profile-energy factor, and CUT-first frequency islands. Its FWM
+   diagnostic is a subset of the returned noise, not the complete MCI integral.
 
 The kernels are deliberately free of any project-level policy: they take plain
 arrays and scalars so that they can be unit-tested in isolation.
@@ -298,8 +297,9 @@ def _solve_isrs_profile_jit(
 #              / int_0^L exp(-2 alpha zeta) dzeta ,
 #
 # where g is the SRS-only gain of the power profile.  It is evaluated
-# numerically on the distance grid of the ODE solution, so the ISRS power
-# profile of Eq. (6) enters the NLI in full.
+# numerically on the distance grid of the ODE solution. This energy factor
+# approximates the frequency-dependent longitudinal field integral; it does
+# not retain the full ISRS-dependent phase response of Eq. (4).
 #
 # SPM/XCI versus FWM: the third-wave band
 # ---------------------------------------
@@ -338,7 +338,9 @@ def _solve_isrs_profile_jit(
 # otherwise), never an addition to it.  ``spm_out``/``xpm_out`` therefore stay
 # bit-for-bit what they were before the split, and at the model level the total
 # NLI is unchanged; ``fwm_out`` is the additive correction a model without an
-# FWM term may apply on top of its own SCI/XCI.
+# FWM term may apply on top of its own SCI/XCI. The first input wave is
+# restricted to the CUT band, so this is not the complete MCI contribution
+# of the unrestricted two-frequency GN integral.
 
 
 @njit(cache=True)  # type: ignore[untyped-decorator]

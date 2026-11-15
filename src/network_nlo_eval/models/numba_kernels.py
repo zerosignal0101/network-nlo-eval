@@ -204,6 +204,20 @@ def _calc_beta3_from_s_d(
     )
 
 
+def _dispersion_at_frequency(
+    d_ps_nm_km: float,
+    s_ps_nm2_km: float,
+    reference_wavelength_nm: float,
+    frequency_hz: float,
+) -> tuple[float, float]:
+    """Translate the beta2/beta3 Taylor expansion from the fiber reference."""
+    wavelength_m = reference_wavelength_nm * 1e-9
+    beta2 = _calc_beta2_from_d(d_ps_nm_km, wavelength_m)
+    beta3 = _calc_beta3_from_s_d(s_ps_nm2_km, d_ps_nm_km, wavelength_m)
+    beta2 += 2 * PI * beta3 * (frequency_hz - C_LIGHT / wavelength_m)
+    return float(beta2), float(beta3)
+
+
 # =============================================================================
 # 2. Stimulated Raman scattering (SRS)
 # =============================================================================
@@ -216,7 +230,7 @@ def _calc_raman_profile_jit(
     f_rel_hz: NDArrayFloat,  # Relative frequency (Hz)
     f_m_hz: float,  # Lower frequency (Hz)
     f_M_hz: float,  # Upper frequency (Hz)
-    delta_f_co_hz: float,  # Co-channel bandwidth (Hz)
+    delta_f_co_hz: float,  # Raman cutoff frequency shift (Hz)
     p_total_w: float,  # Total power (W)
 ) -> NDArrayFloat:
     """Calculate the Raman power-transfer coefficient for each channel.
@@ -232,7 +246,7 @@ def _calc_raman_profile_jit(
     f_m_hz, f_M_hz : float
         Lower and upper WDM band frequencies in Hz.
     delta_f_co_hz : float
-        Co-channel bandwidth in Hz.
+        Raman cutoff frequency shift in Hz.
     p_total_w : float
         Total WDM launch power in watts.
 
@@ -285,7 +299,7 @@ def _calc_span_out_power_jit(
     alpha_power_npm: NDArrayFloat,  # Per-channel power attenuation (Np/m)
     length_m: float,  # Span length (m)
     r_f: NDArrayFloat,  # Raman power-transfer coefficient
-    k_bar: float = 0.0,  # Pump coefficient
+    k_bar: float = 0.0,  # Dimensionless launch pre-emphasis
 ) -> NDArrayFloat:
     """Calculate channel output powers after fiber loss and SRS tilt.
 
@@ -302,7 +316,7 @@ def _calc_span_out_power_jit(
     r_f : numpy.ndarray
         Raman power-transfer coefficients.
     k_bar : float, optional
-        Raman pumping factor.
+        Launch pre-emphasis factor.
 
     Returns
     -------
@@ -352,7 +366,7 @@ def _calc_spm_variance_jit(
     t_i: float,  # Channel-of-interest effective attenuation including SRS
     r_fi: float,  # Channel-of-interest Raman transfer coefficient
     cr_w_m_hz: float,  # Raman gain coefficient Cr
-    k_bar: float,  # Raman pumping factor (normally zero)
+    k_bar: float,  # Launch pre-emphasis factor (normally zero)
     l_eff_i_m: float,  # Channel-of-interest effective length (m)
     epsilon_n_span: float = 0.05,  # Span-count correction exponent from the original implementation
 ) -> float:
@@ -379,7 +393,7 @@ def _calc_spm_variance_jit(
     cr_w_m_hz : float
         Raman gain coefficient.
     k_bar : float
-        Raman pump factor.
+        Launch pre-emphasis factor.
     l_eff_i_m : float
         Effective length in meters.
     epsilon_n_span : float, optional
@@ -433,7 +447,7 @@ def _calc_xpm_variance_term_jit(
     t_l: float,  # Interfering-channel effective attenuation including SRS
     r_fl: float,  # Interfering-channel Raman transfer coefficient
     cr_w_m_hz: float,  # Raman gain coefficient Cr
-    k_bar: float,  # Raman pumping factor (normally zero)
+    k_bar: float,  # Launch pre-emphasis factor (normally zero)
     l_eff_l_m: float,  # Interfering-channel effective length (m)
 ) -> float:
     """Calculate one interfering channel's XPM noise contribution.
@@ -451,7 +465,7 @@ def _calc_xpm_variance_term_jit(
     t_l, r_fl : float
         Effective attenuation and Raman power-transfer factors.
     cr_w_m_hz, k_bar : float
-        Raman gain and pumping coefficients.
+        Raman gain coefficient and dimensionless launch pre-emphasis.
     l_eff_l_m : float
         Interfering-channel effective length in meters.
 
@@ -505,7 +519,7 @@ def _compute_nli_variances(
     beta_3_s3_m: float,  # Dispersion parameter beta3 (s³/m)
     n_2_m2_w: float,  # Nonlinear refractive index n2 (m²/W)
     cr_w_m_hz: float,  # Raman gain coefficient Cr (1/(W m Hz))
-    k_bar: float,  # Raman pumping factor (normally zero)
+    k_bar: float,  # Launch pre-emphasis factor (normally zero)
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
     """Calculate SPM and XPM variances for all channels.
 
@@ -526,7 +540,7 @@ def _compute_nli_variances(
     n_2_m2_w : float
         Nonlinear refractive index in square meters per watt.
     cr_w_m_hz, k_bar : float
-        Raman gain and pumping coefficients.
+        Raman gain coefficient and dimensionless launch pre-emphasis.
 
     Returns
     -------
@@ -712,7 +726,7 @@ def _calc_span_noise_and_power_jit(
     n_effective_spans: int,  # Effective span count for NLI accumulation
     # --- Physical constants ---
     cr_w_m_hz: float,  # SRS gain coefficient Cr
-    k_bar: float,  # Pumping factor
+    k_bar: float,  # Launch pre-emphasis factor
     delta_f_co_hz: float,  # SRS cutoff frequency
 ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat]:
     """Evaluate fiber output and SPM, XPM, and ASE for one span.
@@ -738,7 +752,7 @@ def _calc_span_noise_and_power_jit(
     n_effective_spans : int
         Effective number of accumulated spans for NLI.
     cr_w_m_hz, k_bar, delta_f_co_hz : float
-        Raman gain, pumping factor, and SRS cutoff frequency.
+        Raman gain, launch pre-emphasis factor, and SRS cutoff frequency.
 
     Returns
     -------

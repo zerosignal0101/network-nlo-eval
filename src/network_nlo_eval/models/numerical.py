@@ -1,22 +1,25 @@
-r"""Numerical ISRS-GN reference model.
+r"""Approximate numerical ISRS-GN comparison model.
 
-This is the ground-truth model of the multi-model comparison: the numerical
-counterpart of the closed-form GN models, implemented directly from
+This comparison model is based on
 
-    C. Semrau, R. Killey, P. Bayvel,
+    D. Semrau, R. I. Killey, P. Bayvel,
     "The Gaussian Noise Model in the Presence of Inter-Channel Stimulated Raman
     Scattering", JLT 2018, doi:10.1109/jlt.2018.2830973
 
-Two things are done numerically, where the closed-form models use algebraic
-approximations:
+It is not an exact evaluation of the paper's full integral. It combines:
 
 * the inter-channel SRS power profile is obtained by integrating the coupled
   ordinary differential equations of Eq. (6) of the paper over the span, with a
   Raman gain spectrum that rolls off beyond the Stokes shift instead of the
   triangular approximation;
-* the GN non-linear interference is obtained by evaluating the double integral
-  of Eq. (4) of the paper with a composite quadrature over the frequency
-  variables.
+* composite frequency quadrature with a band-averaged span response and a
+  profile-energy approximation for the effect of ISRS on nonlinear noise.
+
+The first interacting wave is restricted to the CUT band. Some displaced
+third-wave terms are retained, but MCI islands with neither input wave in the
+CUT are omitted. The longitudinal field integral is replaced by an exponential
+response multiplied by an ISRS profile-energy factor. Increasing frequency
+quadrature resolution does not remove these modeling approximations.
 
 The frequency integral of Eq. (4) runs over the offsets of the two input waves
 inside their own bands, ``f1 = f_i + x`` and ``f2 = f_l + y``; the generated
@@ -26,10 +29,9 @@ the intra-band offset uses a graded (cubic) grid that clusters the nodes
 towards the band centre, where the phase mismatch of the self-interference
 vanishes.  The squared transfer function of the span is the Cauchy-like kernel
 of the phase mismatch; because the intra-band mismatch oscillates with a period
-of ~156 MHz, far below the channel bandwidth, the kernel is evaluated with its
-band average, which reproduces a brute-force evaluation of Eq. (4) to better
-than 0.5 % and reproduces the closed-form GN limit exactly in the coherent
-(zero dispersion) limit.
+that depends on the system parameters, the kernel uses a Gaussian estimate of
+the averaged cosine. This preserves the attenuation-only zero-dispersion
+response, but is not a general accuracy bound for the paper's integral.
 
 Cross-span coherent accumulation
 --------------------------------
@@ -150,7 +152,6 @@ not speed.
 from __future__ import annotations
 
 import math
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -253,7 +254,10 @@ VISIBILITY_TABLE_MINIMUM = 1.0
 
 NUMERICAL_MODEL_INFO = ModelInfo(
     name="numerical",
-    summary="Numerical ISRS-GN reference: ODE power profile plus double-integral NLI.",
+    summary=(
+        "Approximate numerical ISRS-GN: ODE profile, band-averaged frequency kernel "
+        "and scalar inter-span coherence."
+    ),
     family="gn",
     reference="Semrau, Killey, Bayvel, JLT 2018, doi:10.1109/jlt.2018.2830973",
     options=(
@@ -1103,42 +1107,20 @@ class NumericalISRSGN(RouteModel):
         span_length_m: float,
         span_context: SpanContext | None = None,
     ) -> ElementOutput:
-        """One span: fibre physics plus amplifier, with the NLI amplitudes.
-
-        The frozen route helper scales a coherent amplitude by ``sqrt(gain)``
-        when an amplifier is present, while its power-only branch does not
-        scale the noise power at all.  The two conventions therefore differ by
-        the amplifier gain, and the golden vectors lock the power-only one.  To
-        keep the coherent accumulation bit-identical to the frozen behaviour
-        for a single span, the helper is called with the power-only fibre
-        output and the amplitudes are attached afterwards, at the fibre output
-        plane the contract asks for.
-        """
+        """Evaluate the span and transfer NLI powers and amplitudes through gain."""
         kernel = cast("NumericalISRSGNKernel", self.kernel_for(fiber_config))
         fiber_output = kernel.evaluate(
             power_in_w, span_length_m, 1, span_context=span_context
         )
         nf_lin = resolve_noise_figure(edfa_config, self.default_nf_lin, self.n_nodes)
-        plain = SpanFiberOutput(
-            power_out_w=fiber_output.power_out_w,
-            spm_noise_w=fiber_output.spm_noise_w,
-            xpm_noise_w=fiber_output.xpm_noise_w,
-        )
-        element = apply_amplifier_and_roadm(
+        return apply_amplifier_and_roadm(
             power_in_w=power_in_w,
-            fiber_output=plain,
+            fiber_output=fiber_output,
             edfa_config=edfa_config,
             roadm_config=None,
             nf_lin=nf_lin,
             f_abs_hz=self.f_abs_hz,
             bandwidth_hz=self.channel_bandwidth_hz_channels,
-        )
-        if fiber_output.nli_amplitude_spm is None:
-            return element
-        return replace(
-            element,
-            nli_amplitude_spm=fiber_output.nli_amplitude_spm,
-            nli_amplitude_xpm=fiber_output.nli_amplitude_xpm,
         )
 
 

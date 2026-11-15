@@ -173,7 +173,7 @@ def _p1_span_pre_nli_batch_jit(
     alpha_power_npm : numpy.ndarray
         Per-channel attenuation in nepers per meter.
     cr_w_m_hz, k_bar, delta_f_co_hz : float
-        SRS gain, pumping factor, and cutoff frequency in Hz.
+        SRS gain, launch pre-emphasis factor, and cutoff frequency in Hz.
 
     Returns
     -------
@@ -276,7 +276,7 @@ def _p1_xpm_weights_jit(
     b_hz_channels, alpha_power_npm, l_eff_m : numpy.ndarray
         Per-channel bandwidth, attenuation, and effective length arrays.
     cr_w_m_hz, k_bar : float
-        SRS gain coefficient and pumping factor.
+        SRS gain coefficient and dimensionless launch pre-emphasis.
 
     Returns
     -------
@@ -479,7 +479,7 @@ def calc_span_noise_and_power_p1_matvec(
     n_effective_spans : int
         Effective span count for NLI accumulation.
     cr_w_m_hz, k_bar, delta_f_co_hz : float
-        SRS gain coefficient, pumping factor, and cutoff frequency.
+        SRS gain coefficient, launch pre-emphasis factor, and cutoff frequency.
     mats : P1XpmMatrices
         Precomputed pair matrices matching the channel geometry.
 

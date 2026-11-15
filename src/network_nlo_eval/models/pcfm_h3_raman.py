@@ -2383,6 +2383,8 @@ class PCFH3RamanModel(PCFMModel):
 
     info = H3_RAMAN_MODEL_INFO
 
+    supports_distributed_raman = True
+
     def __init__(
         self,
         grid: SpectrumGrid | FlexibleGrid,

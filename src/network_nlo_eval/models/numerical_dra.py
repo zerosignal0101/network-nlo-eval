@@ -19,7 +19,7 @@ References
 ----------
 H. Buglia et al., "A Closed-Form Expression for the Gaussian Noise Model in the
 Presence of Raman Amplification", JLT 42(2), 2024, Eqs. (1)-(8).
-C. Semrau et al., "The Gaussian Noise Model in the Presence of Inter-Channel
+D. Semrau et al., "The Gaussian Noise Model in the Presence of Inter-Channel
 Stimulated Raman Scattering", JLT, 2018.
 """
 

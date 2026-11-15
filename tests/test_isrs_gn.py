@@ -11,7 +11,66 @@ from network_nlo_eval.models.base import (
     create_model,
 )
 from network_nlo_eval.models.isrs_gn import MultiBandISRSGN
-from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
+from network_nlo_eval.network.elements import (
+    EDFAConfig,
+    FiberSpanConfig,
+    RamanPumpConfig,
+    ROADMConfig,
+)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "ecz",
+        "ecz_coherent",
+        "cgn",
+        "semrau2019",
+        "buglia2023",
+        "damico2022",
+        "carena2014",
+        "numerical",
+        "pcfm",
+        "pcfm_original",
+        "raman_lumped",
+    ],
+)
+@pytest.mark.parametrize("pumped_reference", [True, False])
+def test_ecz_front_ends_reject_pumps_in_reference_and_route_fibers(
+    model_name: str, pumped_reference: bool
+) -> None:
+    grid = SpectrumGrid(2, 50e9, 193.1e12)
+    fiber = FiberSpanConfig(length_km=80)
+    pumped = fiber.model_copy(
+        update={"raman_pumps": [RamanPumpConfig(wavelength_nm=1450, power_w=0.2)]}
+    )
+    if pumped_reference:
+        with pytest.raises(ValueError, match="active Raman pumps"):
+            create_model(model_name, grid, pumped, 32e9)
+    else:
+        model = create_model(model_name, grid, fiber, 32e9)
+        with pytest.raises(ValueError, match="active Raman pumps"):
+            model.evaluate_path(
+                MultiSpanOpticalPath([pumped], [EDFAConfig()]), np.full(2, 1e-3)
+            )
+
+
+@pytest.mark.parametrize("model_name", ["ecz", "ecz_coherent", "cgn"])
+def test_ecz_front_ends_allow_inactive_pumps(model_name: str) -> None:
+    grid = SpectrumGrid(2, 50e9, 193.1e12)
+    fiber = FiberSpanConfig(length_km=80)
+    inactive = fiber.model_copy(
+        update={"raman_pumps": [RamanPumpConfig(wavelength_nm=1450, power_w=0.0)]}
+    )
+    power = np.full(2, 1e-3)
+    a = create_model(model_name, grid, fiber, 32e9).evaluate_path(
+        MultiSpanOpticalPath([fiber], [EDFAConfig()]), power
+    )
+    b = create_model(model_name, grid, inactive, 32e9).evaluate_path(
+        MultiSpanOpticalPath([inactive], [EDFAConfig()]), power
+    )
+    for field in ("signal_power_w", "spm_noise_w", "xpm_noise_w", "snr_db"):
+        np.testing.assert_array_equal(getattr(a, field), getattr(b, field))
 
 
 def test_multispan_path_matches_reference_vector() -> None:
@@ -31,24 +90,24 @@ def test_multispan_path_matches_reference_vector() -> None:
             0.004997835850147171,
         ],
         "spm_noise_w": [
-            2.571260335472043e-6,
-            2.0602308488771237e-5,
+            6.664562497431326e-06,
+            5.3388864420362666e-05,
             0.0,
-            3.229208040086056e-7,
+            8.364677879757955e-07,
         ],
         "xpm_noise_w": [
-            4.118901608114996e-6,
-            2.275749274131666e-6,
+            1.0624168882882526e-05,
+            5.869639910858695e-06,
             0.0,
-            1.2090188427351127e-6,
+            3.1168248964237126e-06,
         ],
         "ase_noise_w": [
-            6.720871581488242e-6,
-            6.721943533669781e-6,
+            6.720871581488242e-06,
+            6.721943533669781e-06,
             0.0,
-            6.7240866248934956e-6,
+            6.7240866248934956e-06,
         ],
-        "snr_db": [28.7263174693283, 28.297382568619437, -np.inf, 27.820109217147454],
+        "snr_db": [26.197090167564603, 24.816147278024484, -np.inf, 26.703173168540676],
     }
     for name, reference in expected.items():
         np.testing.assert_allclose(getattr(result, name), reference, rtol=1e-12, atol=0)

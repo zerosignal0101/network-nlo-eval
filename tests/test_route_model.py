@@ -1,16 +1,22 @@
 """Regression tests for optical route accumulation and amplifier effects."""
 
+from typing import cast
+
 import numpy as np
 import pytest
 
+from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import (
     ElementOutput,
     MultiSpanOpticalPath,
+    SpanContext,
     SpanFiberOutput,
+    create_model,
 )
 from network_nlo_eval.models.route import (
     H_PLANCK,
+    _ContextualSpanModel,
     accumulate_route,
     apply_amplifier_and_roadm,
     resolve_noise_figure,
@@ -119,3 +125,67 @@ def test_amplifier_ase_scaling_does_not_rescale_input_ase() -> None:
             power,
             ase_polarization_scale=0,
         )
+
+
+@pytest.mark.parametrize(
+    ("edfa", "expected_transfer"),
+    [
+        (None, np.array([0.1, 0.2])),
+        (EDFAConfig(), np.ones(2)),
+        (EDFAConfig(target_gain_db=10), np.array([1.0, 2.0])),
+        (
+            EDFAConfig(gain_ripple_db=np.array([3.0, -3.0])),
+            10 ** (np.array([3.0, -3.0]) / 10),
+        ),
+    ],
+)
+def test_nli_output_transfer_preserves_noise_to_signal_ratio_and_amplitudes(
+    edfa: EDFAConfig | None, expected_transfer: NDArrayFloat
+) -> None:
+    power = np.array([1e-3, 2e-3])
+    spm, xpm, fwm = power * 0.001, power * 0.002, power * 0.0001
+    fiber = SpanFiberOutput(
+        power * [0.1, 0.2],
+        spm.copy(),
+        xpm.copy(),
+        np.sqrt(spm).astype(complex),
+        1j * np.sqrt(xpm),
+        fwm.copy(),
+    )
+    result = apply_amplifier_and_roadm(
+        power_in_w=power,
+        fiber_output=fiber,
+        edfa_config=edfa,
+        roadm_config=None,
+        nf_lin=np.ones(2),
+        f_abs_hz=np.full(2, 193.1e12),
+        bandwidth_hz=np.full(2, 32e9),
+        fwm_is_additive=True,
+    )
+    np.testing.assert_allclose(result.spm_noise_w, spm * expected_transfer)
+    np.testing.assert_allclose(result.xpm_noise_w, xpm * expected_transfer)
+    assert result.fwm_noise_w is not None
+    np.testing.assert_allclose(result.fwm_noise_w, fwm * expected_transfer)
+    assert result.nli_amplitude_spm is not None
+    assert result.nli_amplitude_xpm is not None
+    np.testing.assert_allclose(abs(result.nli_amplitude_spm) ** 2, result.spm_noise_w)
+    np.testing.assert_allclose(abs(result.nli_amplitude_xpm) ** 2, result.xpm_noise_w)
+    np.testing.assert_allclose(result.spm_noise_w / result.power_out_w, spm / power)
+    np.testing.assert_array_equal(fiber.spm_noise_w, spm)
+
+
+@pytest.mark.parametrize("model_name", ["carena2014", "damico2022", "numerical"])
+def test_model_amplitudes_share_the_output_noise_reference(model_name: str) -> None:
+    fiber = FiberSpanConfig(length_km=80)
+    model = cast(
+        "_ContextualSpanModel",
+        create_model(model_name, SpectrumGrid(2, 50e9, 193.1e12), fiber, 32e9),
+    )
+    power = np.full(2, 1e-3)
+    output = model.span_step(
+        fiber, EDFAConfig(target_gain_db=10), power, 80e3, SpanContext(0, 2, 0, 80e3)
+    )
+    assert output.nli_amplitude_spm is not None
+    assert output.nli_amplitude_xpm is not None
+    np.testing.assert_allclose(abs(output.nli_amplitude_spm) ** 2, output.spm_noise_w)
+    np.testing.assert_allclose(abs(output.nli_amplitude_xpm) ** 2, output.xpm_noise_w)
