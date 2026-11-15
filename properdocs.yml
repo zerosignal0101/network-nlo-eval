@@ -50,4 +50,5 @@ plugins:
 
 nav:
   - Home: index.md
+  - Model literature audit: model-literature-audit.md
   - Python API: api.md

@@ -42,6 +42,9 @@ are in kilometers. Models have different approximations, power conventions, and
 applicability limits: consult their documentation and options when selecting a
 model.
 
+The [model literature audit](docs/model-literature-audit.md) maps all 16 model
+entries to their sources, equations, and supported scenarios.
+
 Some model documentation refers to historical audit reports and calibration
 scripts from the development repository. Those research artifacts are not
 included here. In particular, the Zhang calibration data records the path of its

@@ -47,3 +47,6 @@ Use `network-nlo-eval models` to list registered models and their options.
 path comparison and benchmarking. All commands provide `--help`.
 
 See the [Python API](api.md) for the model interface and network components.
+
+See the [model literature audit](model-literature-audit.md) for all registered
+models, their paper equations, supported scenarios, and implementation variants.
