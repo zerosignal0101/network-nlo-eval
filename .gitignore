@@ -184,3 +184,6 @@ Thumbs.db
 # Common editor files
 *~
 *.swp
+
+# Project
+scratch/
