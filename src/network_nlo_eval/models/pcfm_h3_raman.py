@@ -155,6 +155,7 @@ from network_nlo_eval.models.raman import (
     RamanGainModel,
     resolve_raman_gain_model,
 )
+from network_nlo_eval.models.raman_iteration import validate_raman_iteration_method
 from network_nlo_eval.models.raman_ode import (
     DEFAULT_FIXED_POINT_ITERATIONS,
     PaperRamanSpanResult,
@@ -734,6 +735,10 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         RK4 steps of the coarse signal/pump/ASE solve.
     raman_iterations : int
         Fixed-point iterations cap of the backward-pump solve.
+    raman_iteration_method : str
+        ``"relaxed"`` (default half damping), experimental ``"picard"`` or
+        safeguarded ``"anderson"``. The convergence test uses the actual
+        forward/backward map residual for every method.
     include_isrs : bool
         Include channel-channel ISRS in the coupled solve.
     pump_depletion : bool
@@ -888,6 +893,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
         raman_resolution_check: bool = False,
         raman_resolution_tol: float = DEFAULT_RAMAN_RESOLUTION_TOL,
         raman_backend: str = "python",
+        raman_iteration_method: str = "relaxed",
         fwm_validity_mode: str = "flag",
         nli_fallback: str | None = None,
         nli_fallback_trigger: str = "audit",
@@ -933,6 +939,9 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
                 )
                 raise ValueError(msg)
         resolved_backend = validate_raman_backend(raman_backend)
+        self.raman_iteration_method = validate_raman_iteration_method(
+            raman_iteration_method
+        )
         if not isinstance(cast("object", raman_resolution_check), (bool, np.bool_)):
             msg = f"raman_resolution_check must be a bool, got {raman_resolution_check!r}."
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
@@ -1271,6 +1280,7 @@ class PCFH3RamanSpanKernel(PCFMSpanKernel):
             launch_power_convention=self.launch_power_convention,
             lumped_loss=self.lumped_loss or None,
             backend=self.raman_backend,
+            iteration_method=self.raman_iteration_method,
         )
 
     def _resolution_solver_for(
@@ -2002,6 +2012,16 @@ H3_RAMAN_MODEL_INFO = ModelInfo(
         ),
         ("raman_iterations", "Backward-pump fixed-point iteration cap. Default 24."),
         (
+            "raman_iteration_method",
+            (
+                "Backward-pump update: 'relaxed' (default, half damping), "
+                "'picard' (experimental direct iteration), or 'anderson' "
+                "(experimental safeguarded type II acceleration, memory 3). "
+                "All use the same physical equations and actual residual tolerance; "
+                "check raman_converged in the span validity report."
+            ),
+        ),
+        (
             "raman_backend",
             (
                 "Integration backend of the coupled Raman ODE. 'python' (default) keeps the "
@@ -2264,6 +2284,10 @@ class PCFH3RamanModel(PCFMModel):
         RK4 steps of the coarse coupled profile/ASE solve.
     raman_iterations : int
         Backward-pump fixed-point iteration cap.
+    raman_iteration_method : str
+        Backward-pump update: ``"relaxed"`` (default), experimental direct
+        ``"picard"`` or safeguarded ``"anderson"`` with three history
+        differences. The physical equations, grid and tolerance are unchanged.
     raman_resolution_check : bool
         Opt-in read-only step-doubling audit of the
         Raman profile/gain/ASE.  ``False`` (default) adds no solve and
@@ -2427,9 +2451,13 @@ class PCFH3RamanModel(PCFMModel):
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         modulation_format_correction: bool = False,
         excess_kurtosis: float = 0.0,
+        raman_iteration_method: str = "relaxed",
         **route_options: Any,
     ) -> None:
         """Build the model and remember the Raman options of the kernels."""
+        self._h3_raman_iteration_method = validate_raman_iteration_method(
+            raman_iteration_method
+        )
         if isinstance(raman_steps, str):
             if raman_steps != "auto":
                 msg = f"raman_steps must be an integer or 'auto', got {raman_steps!r}."
@@ -2642,6 +2670,11 @@ class PCFH3RamanModel(PCFMModel):
         return self._raman_backend
 
     @property
+    def raman_iteration_method(self) -> str:
+        """Backward-pump update (``relaxed``/``picard``/``anderson``)."""
+        return self._h3_raman_iteration_method
+
+    @property
     def nli_power_convention(self) -> str:
         """Resolved power convention of the NLI kernels (``"total"``/``"per_pol"``)."""
         return self._nli_power_convention
@@ -2753,6 +2786,7 @@ class PCFH3RamanModel(PCFMModel):
             pump_signal_overlap_guard_hz=self._pump_signal_overlap_guard_hz,
             lumped_loss=lumped_loss or None,
             raman_backend=self._raman_backend,
+            raman_iteration_method=self._h3_raman_iteration_method,
             poly_degree=self.poly_degree,
             symbol_rate_hz=self.symbol_rate_hz,
             egn=self.egn,

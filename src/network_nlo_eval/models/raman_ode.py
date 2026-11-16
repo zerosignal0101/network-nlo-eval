@@ -34,6 +34,10 @@ from network_nlo_eval.models.raman import (
     RamanGainModel,
     resolve_raman_gain_model,
 )
+from network_nlo_eval.models.raman_iteration import (
+    BackwardPumpIteration,
+    validate_raman_iteration_method,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -249,9 +253,6 @@ def _digest_scalar(digest: Any, tag: bytes, value: float | bool | str) -> None:
 
 #: Maximum fixed-point iterations for backward pumps.
 DEFAULT_FIXED_POINT_ITERATIONS: int = 24
-
-#: Relaxation avoids oscillation between coupled backward pumps and signals.
-_FIXED_POINT_RELAXATION: float = 0.5
 
 #: Convergence threshold relative to peak pump power.
 _FIXED_POINT_TOLERANCE: float = 1.0e-7
@@ -473,6 +474,10 @@ class RamanPaperSpanSolver:
         Integration backend. Python preserves the reference numerical path;
         Numba supports uniform spans without lumped losses. Auto chooses Numba
         only when available and the grid has enough steps.
+    iteration_method : {"relaxed", "picard", "anderson"}, optional
+        Backward-pump boundary update. The default uses half damping.
+        Experimental Picard and safeguarded Anderson updates use the same
+        physical equations and unmixed residual tolerance.
 
     Raises
     ------
@@ -504,6 +509,7 @@ class RamanPaperSpanSolver:
         launch_power_convention: str = "total",
         lumped_loss: Sequence[tuple[float, float]] | None = None,
         backend: str = "python",
+        iteration_method: str = "relaxed",
     ) -> None:
         """Validate inputs and build the position-independent Raman matrices."""
         if length_m <= 0:
@@ -523,6 +529,7 @@ class RamanPaperSpanSolver:
             raise ValueError(msg)  # noqa: TRY004 - Preserve the public exception type.
         # Reject invalid backends before constructing matrices.
         requested_backend = validate_raman_backend(backend)
+        self.iteration_method = validate_raman_iteration_method(iteration_method)
         resolved_convention = resolve_launch_power_convention(
             launch_power_convention, signal_polarizations
         )
@@ -1233,6 +1240,7 @@ class RamanPaperSpanSolver:
         converged = self._bw_slots.size == 0 or not self.pump_depletion
 
         if self._bw_slots.size and self.pump_depletion:
+            updater = BackwardPumpIteration(self.iteration_method)
             peak_pump = max(float(np.max(self._pump_power_w, initial=0.0)), 1.0e-30)
             for iteration in range(self.n_iterations):
                 iterations = iteration + 1
@@ -1252,10 +1260,13 @@ class RamanPaperSpanSolver:
                 change = (
                     float(np.max(np.abs(new_backward - backward_total))) / peak_pump
                 )
-                backward_total = (
-                    _FIXED_POINT_RELAXATION * new_backward
-                    + (1.0 - _FIXED_POINT_RELAXATION) * backward_total
-                )
+                if (
+                    change < _FIXED_POINT_TOLERANCE
+                    and self.iteration_method != "relaxed"
+                ):
+                    converged = True
+                    break
+                backward_total = updater.update(backward_total, new_backward)
                 if change < _FIXED_POINT_TOLERANCE:
                     converged = True
                     break
@@ -1289,6 +1300,7 @@ class RamanPaperSpanSolver:
         converged = self._bw_slots.size == 0 or not self.pump_depletion
 
         if self._bw_slots.size and self.pump_depletion:
+            updater = BackwardPumpIteration(self.iteration_method)
             peak_pump = max(float(np.max(self._pump_power_w, initial=0.0)), 1.0e-30)
             for iteration in range(self.n_iterations):
                 iterations = iteration + 1
@@ -1308,10 +1320,13 @@ class RamanPaperSpanSolver:
                 change = (
                     float(np.max(np.abs(new_backward - backward_total))) / peak_pump
                 )
-                backward_total = (
-                    _FIXED_POINT_RELAXATION * new_backward
-                    + (1.0 - _FIXED_POINT_RELAXATION) * backward_total
-                )
+                if (
+                    change < _FIXED_POINT_TOLERANCE
+                    and self.iteration_method != "relaxed"
+                ):
+                    converged = True
+                    break
+                backward_total = updater.update(backward_total, new_backward)
                 if change < _FIXED_POINT_TOLERANCE:
                     converged = True
                     break
@@ -1439,6 +1454,7 @@ class RamanPaperSpanSolver:
         converged = self._bw_slots.size == 0 or not self.pump_depletion
 
         if self._bw_slots.size and self.pump_depletion:
+            updater = BackwardPumpIteration(self.iteration_method)
             peak_pump = max(float(np.max(self._pump_power_w, initial=0.0)), 1.0e-30)
             for iteration in range(self.n_iterations):
                 iterations = iteration + 1
@@ -1471,11 +1487,34 @@ class RamanPaperSpanSolver:
                     )
                     / peak_pump
                 )
-                backward_segments = [
-                    _FIXED_POINT_RELAXATION * new
-                    + (1.0 - _FIXED_POINT_RELAXATION) * old
-                    for new, old in zip(new_backward, backward_segments, strict=True)
-                ]
+                if (
+                    change < _FIXED_POINT_TOLERANCE
+                    and self.iteration_method != "relaxed"
+                ):
+                    converged = True
+                    break
+                if self.iteration_method == "relaxed":
+                    backward_segments = [
+                        updater.update(old, new)
+                        for new, old in zip(
+                            new_backward, backward_segments, strict=True
+                        )
+                    ]
+                else:
+                    # Keep both sides of every loss discontinuity in the state.
+                    # Mixing the flattened blocks preserves each boundary and
+                    # avoids interpolation across the lumped-loss jump.
+                    shapes = [segment.shape for segment in backward_segments]
+                    sizes = [segment.size for segment in backward_segments]
+                    updated = updater.update(
+                        np.concatenate([s.ravel() for s in backward_segments]),
+                        np.concatenate([s.ravel() for s in new_backward]),
+                    )
+                    blocks = np.split(updated, np.cumsum(sizes)[:-1])
+                    backward_segments = [
+                        block.reshape(shape)
+                        for block, shape in zip(blocks, shapes, strict=True)
+                    ]
                 if change < _FIXED_POINT_TOLERANCE:
                     converged = True
                     break
