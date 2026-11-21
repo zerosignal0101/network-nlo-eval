@@ -1,6 +1,8 @@
 """Dynamic network resource state, including spectrum occupancy and link power."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -36,6 +38,10 @@ class LinkNoiseCache:
     launch_power_convention : str or None, optional
         Coordinate convention of the noise arrays: ``"total"`` or ``"per_pol"``.
         None denotes a legacy cache without a recorded convention.
+    power_transfer : numpy.ndarray or None, optional
+        Per-channel signal output/input ratio. None represents unit transfer.
+    fixed_span_length_km : float or None, optional
+        Span length override used to compute this cache.
 
     Notes
     -----
@@ -51,6 +57,8 @@ class LinkNoiseCache:
     #: Power convention of the noise arrays; metadata only.
     #: ``"total"``, ``"per_pol"``, or None for an unlabelled legacy cache.
     launch_power_convention: str | None = None
+    power_transfer: NDArrayFloat | None = None
+    fixed_span_length_km: float | None = None
 
     def __post_init__(self) -> None:
         """Validate any recorded launch-power convention."""
@@ -79,16 +87,17 @@ class LinkState:
     slots_per_channel : int, optional
         Number of slots in each channel.
     occupied_slots : numpy.ndarray or None, optional
-        Slot-level occupancy; initialized empty when omitted.
+        Slot-level occupancy; expanded from occupied channels when omitted.
     allocated_service_ids_slots : numpy.ndarray or None, optional
-        Per-slot service IDs; initialized to -1 when omitted.
+        Per-slot service IDs; expanded from channel IDs when omitted.
 
     Notes
     -----
-    Legacy channel allocation does not update the slot-level arrays.
+    Channel occupancy summarizes all intersected slots. Power and service ID
+    arrays retain one representative per anchor for channel-based callers.
     """
 
-    link_key: LinkKey  # Normalized link key.
+    link_key: LinkKey
     length_m: float  # Link length in meters.
 
     # Per-channel occupancy and launch power.
@@ -103,11 +112,12 @@ class LinkState:
     # Noise is computed lazily and invalidated when power changes.
     _noise_cache: LinkNoiseCache | None = field(default=None, init=False, repr=False)
 
-    # Slot-level state is only updated by slot-range allocation.
-    # Array length is num_channels * slots_per_channel.
     slots_per_channel: int = 1
     occupied_slots: NDArrayBool | None = None
     allocated_service_ids_slots: NDArrayInt | None = None
+    _slot_allocations: dict[int, tuple[int, float, int]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Copy input arrays and initialize optional slot arrays."""
@@ -119,17 +129,21 @@ class LinkState:
             msg = f"slots_per_channel must be a positive integer, got {self.slots_per_channel!r}."
             raise ValueError(msg)
         if self.occupied_slots is None:
-            self.occupied_slots = np.zeros(
-                len(self.occupied_channels) * self.slots_per_channel, dtype=bool
+            self.occupied_slots = np.repeat(
+                self.occupied_channels, self.slots_per_channel
             )
         else:
             self.occupied_slots = self.occupied_slots.copy()
         if self.allocated_service_ids_slots is None:
-            self.allocated_service_ids_slots = np.full(
-                len(self.occupied_slots), -1, dtype=np.int_
+            self.allocated_service_ids_slots = np.repeat(
+                self.allocated_service_ids, self.slots_per_channel
             )
         else:
             self.allocated_service_ids_slots = self.allocated_service_ids_slots.copy()
+
+    def slot_allocations(self) -> Iterable[tuple[int, tuple[int, float, int]]]:
+        """Iterate over exact slot allocations as start, width, power, and ID."""
+        return self._slot_allocations.items()
 
     @property
     def slot_occupancy(self) -> NDArrayBool:
@@ -189,6 +203,10 @@ class LinkState:
         self.occupied_channels[channel_idx] = True
         self.launch_power_profile_w[channel_idx] = launch_power_w
         self.allocated_service_ids[channel_idx] = service_id
+        start = channel_idx * self.slots_per_channel
+        window = slice(start, start + self.slots_per_channel)
+        self.slot_occupancy[window] = True
+        self.slot_service_ids[window] = service_id
         self.invalidate_noise_cache()
 
     def release(self, channel_idx: int) -> None:
@@ -204,6 +222,10 @@ class LinkState:
         self.occupied_channels[channel_idx] = False
         self.launch_power_profile_w[channel_idx] = 0.0
         self.allocated_service_ids[channel_idx] = -1  # Mark unallocated.
+        start = channel_idx * self.slots_per_channel
+        window = slice(start, start + self.slots_per_channel)
+        self.slot_occupancy[window] = False
+        self.slot_service_ids[window] = -1
         self.invalidate_noise_cache()
 
     # ------------------------------------------------------------------
@@ -231,11 +253,6 @@ class LinkState:
             If the slot count is invalid, the interval is out of bounds, or any
             requested slot is already occupied.
 
-        Notes
-        -----
-        Occupancy expands to all subslots of every intersected channel, preventing
-        channel and slot occupancy from conflicting. Physical launch power is
-        written only to the anchor channel used by QoT validation.
         """
         if n_slots < 1:
             msg = f"n_slots must be >= 1, got {n_slots}."
@@ -257,22 +274,18 @@ class LinkState:
 
         occupied_slots[window] = True
         service_ids[window] = service_id
+        self._slot_allocations[first_slot] = (n_slots, launch_power_w, service_id)
 
-        # Occupy all subslots in the first and last intersected channels.
         first_channel = first_slot // per_channel
         last_channel = (first_slot + n_slots - 1) // per_channel
-        aligned = slice(first_channel * per_channel, (last_channel + 1) * per_channel)
-        occupied_slots[aligned] = True
-        service_ids[aligned] = service_id
-
-        # Write physical launch power only to the QoT anchor channel.
-        self.occupied_channels[first_channel] = True
-        self.launch_power_profile_w[first_channel] = launch_power_w
-        self.allocated_service_ids[first_channel] = service_id
+        self.occupied_channels[first_channel : last_channel + 1] = True
+        if self.allocated_service_ids[first_channel] == -1:
+            self.launch_power_profile_w[first_channel] = launch_power_w
+            self.allocated_service_ids[first_channel] = service_id
         self.invalidate_noise_cache()
 
     def release_slot_range(self, first_slot: int, n_slots: int) -> None:
-        """Release a contiguous slot interval and its channel-aligned occupancy.
+        """Release an exact slot allocation.
 
         Parameters
         ----------
@@ -281,32 +294,31 @@ class LinkState:
         n_slots : int
             Number of slots. Invalid or out-of-bounds requests are ignored.
         """
-        if n_slots < 1:
-            return  # Ignore invalid or repeated releases.
+        allocation = self._slot_allocations.get(first_slot)
+        if allocation is None or allocation[0] != n_slots:
+            return
+        del self._slot_allocations[first_slot]
         per_channel = self.slots_per_channel
         occupied_slots = self.slot_occupancy
-        service_ids = self.slot_service_ids
-        num_slots = len(occupied_slots)
-        if first_slot < 0 or first_slot + n_slots > num_slots:
-            return  # Ignore out-of-bounds releases.
+        window = slice(first_slot, first_slot + n_slots)
+        occupied_slots[window] = False
+        self.slot_service_ids[window] = -1
 
-        # Clear both the requested and channel-aligned intervals.
         first_channel = first_slot // per_channel
         last_channel = (first_slot + n_slots - 1) // per_channel
-        lo = min(first_slot, first_channel * per_channel)
-        hi = max(first_slot + n_slots, (last_channel + 1) * per_channel)
-        window = slice(lo, hi)
-
-        occupied_slots[window] = False
-        service_ids[window] = -1
-
-        # Clear channel power when all its subslots are free.
         for channel_idx in range(first_channel, last_channel + 1):
             span = slice(channel_idx * per_channel, (channel_idx + 1) * per_channel)
-            if not occupied_slots[span].any():
-                self.occupied_channels[channel_idx] = False
-                self.launch_power_profile_w[channel_idx] = 0.0
-                self.allocated_service_ids[channel_idx] = -1
+            self.occupied_channels[channel_idx] = occupied_slots[span].any()
+        if self.allocated_service_ids[first_channel] == allocation[2]:
+            start = first_channel * per_channel
+            for slot in range(start, start + per_channel):
+                if (replacement := self._slot_allocations.get(slot)) is not None:
+                    self.launch_power_profile_w[first_channel] = replacement[1]
+                    self.allocated_service_ids[first_channel] = replacement[2]
+                    break
+            else:
+                self.launch_power_profile_w[first_channel] = 0.0
+                self.allocated_service_ids[first_channel] = -1
         self.invalidate_noise_cache()
 
 
@@ -340,14 +352,14 @@ class NetworkState:
         self._allocated_services: dict[
             int, AllocatedService
         ] = {}  # service_id -> AllocatedService
+        self._per_carrier_service_ids: set[int] = set()
 
         # Initialize every link state.
         for link_key in network_topology.get_all_internal_links():
             u, v = link_key
-            fiber_config = network_topology.get_fiber_config(u, v)
             self._link_states[link_key] = LinkState(
                 link_key=link_key,
-                length_m=fiber_config.length_km * 1000,
+                length_m=network_topology.get_link_length_km(u, v) * 1000,
                 occupied_channels=np.zeros(spectrum_grid.num_channels, dtype=bool),
                 launch_power_profile_w=np.zeros(
                     spectrum_grid.num_channels, dtype=np.float64
@@ -360,8 +372,7 @@ class NetworkState:
 
     def get_link_state(self, u_idx: NodeID, v_idx: NodeID) -> LinkState:
         """Return the current state of a link."""
-        link_key = (u_idx, v_idx) if u_idx < v_idx else (v_idx, u_idx)
-        return self._link_states[link_key]
+        return self._link_states[self.network_topology.link_key(u_idx, v_idx)]
 
     def get_all_link_states(self) -> dict[LinkKey, LinkState]:
         """Return the current states of all links."""
@@ -375,20 +386,57 @@ class NetworkState:
         """Return all allocated services indexed by service ID."""
         return self._allocated_services
 
+    @property
+    def has_per_carrier_services(self) -> bool:
+        """Return whether any service uses explicit slots or baud rates."""
+        return bool(self._per_carrier_service_ids)
+
     def allocate_service(self, service: AllocatedService) -> None:
         """Allocate a service after route selection and QoT validation.
 
         Services with ``slots_per_channel=None`` use legacy channel allocation;
         other services use the requested slot interval.
         """
-        # Ensure service IDs are unique.
-        if service.service_id in self._allocated_services:
-            # Release an existing allocation before replacing it.
-            self.release_service(self._allocated_services[service.service_id])
+        per_channel = self.slots_per_channel
+        first_slot = service.wavelength * per_channel
+        n_slots = per_channel
+        if service.slots_per_channel is not None:
+            if service.slots_per_channel != per_channel:
+                msg = "Service slots_per_channel must match network state."
+                raise ValueError(msg)
+            first_slot, n_slots = service.first_slot, service.n_slots
+        if (
+            first_slot < 0
+            or first_slot + n_slots > self.spectrum_grid.num_channels * per_channel
+        ):
+            msg = "Service spectrum allocation is out of bounds."
+            raise ValueError(msg)
+        if service.symbol_rate_hz is not None and service.symbol_rate_hz > n_slots * (
+            self.spectrum_grid.channel_spacing_hz / per_channel
+        ):
+            msg = "Carrier symbol rate exceeds the reserved bandwidth."
+            raise ValueError(msg)
+        links = [self.get_link_state(u, v) for u, v in pairwise(service.path)]
+        if len(links) != len({link.link_key for link in links}):
+            msg = "A service cannot traverse the same link more than once."
+            raise ValueError(msg)
+        window = slice(first_slot, first_slot + n_slots)
+        previous = self._allocated_services.get(service.service_id)
+        for link_state in links:
+            if previous is None:
+                conflict = link_state.slot_occupancy[window].any()
+            else:
+                conflict = np.any(
+                    link_state.slot_occupancy[window]
+                    & (link_state.slot_service_ids[window] != service.service_id)
+                )
+            if conflict:
+                msg = f"Service spectrum on link {link_state.link_key} is already occupied."
+                raise ValueError(msg)
+        if previous is not None:
+            self.release_service(previous)
 
-        for i in range(len(service.path) - 1):
-            u, v = service.path[i], service.path[i + 1]
-            link_state = self.get_link_state(u, v)
+        for link_state in links:
             if service.slots_per_channel is None:
                 link_state.allocate(
                     service.wavelength, service.launch_power_w, service.service_id
@@ -401,12 +449,15 @@ class NetworkState:
                     service.service_id,
                 )
         self._allocated_services[service.service_id] = service
+        if service.slots_per_channel is not None or service.symbol_rate_hz is not None:
+            self._per_carrier_service_ids.add(service.service_id)
 
     def release_service(self, service: AllocatedService) -> None:
         """Release an allocated service from each link of its route."""
-        if service.service_id not in self._allocated_services:
-            # warnings.warn(f"Service {service.service_id} not found for release.")
+        current = self._allocated_services.get(service.service_id)
+        if current is None:
             return  # Ignore repeated or unknown releases.
+        service = current
 
         for i in range(len(service.path) - 1):
             u, v = service.path[i], service.path[i + 1]
@@ -416,6 +467,7 @@ class NetworkState:
             else:
                 link_state.release_slot_range(service.first_slot, service.n_slots)
         del self._allocated_services[service.service_id]
+        self._per_carrier_service_ids.discard(service.service_id)
 
     def occupied_slots_on_path(self, path: list[NodeID]) -> NDArrayBool:
         """Return the union of occupied slots along a path.

@@ -10,4 +10,4 @@ NDArrayInt = NDArray[np.int_]
 
 NodeID = int  # Internal node identifier.
 OriginalNodeID = int  # Identifier in the original topology.
-LinkKey = tuple[NodeID, NodeID]  # Normalized as (min(u, v), max(u, v)).
+LinkKey = tuple[NodeID, NodeID]  # Ordered for directed links, sorted otherwise.

@@ -18,7 +18,11 @@ from collections.abc import Sequence
 import numpy as np
 
 from network_nlo_eval.core.constants import C_LIGHT
-from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+from network_nlo_eval.core.flexgrid import (
+    CarrierGeometry,
+    ConnectionGeometry,
+    FlexibleGrid,
+)
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import NDArrayFloat
 from network_nlo_eval.models.base import (
@@ -52,7 +56,9 @@ from network_nlo_eval.models.power_conventions import (
 from network_nlo_eval.models.route import (
     accumulate_route,
     apply_amplifier_and_roadm,
+    apply_edfa,
     resolve_noise_figure,
+    roadm_target_transfer,
 )
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.slots import connection_overlaps_slots
@@ -156,7 +162,7 @@ class MultiBandISRSGN:
         grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections: Sequence[ConnectionSpec] | None = None,
+        connections: Sequence[ConnectionGeometry] | None = None,
         ode_accel: str = ODE_ACCEL_DEFAULT,
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = CHANNEL_BANDWIDTH_DEFAULT,
@@ -173,7 +179,7 @@ class MultiBandISRSGN:
             Reference fiber properties used to compute wavelength-dependent values.
         symbol_rate_hz : float, optional
             System symbol rate in Hz.
-        connections : sequence of ConnectionSpec or None, optional
+        connections : sequence of ConnectionSpec or CarrierGeometry or None, optional
             Connections for per-connection mode; each uses its center frequency
             and occupied band. None selects the fixed-grid legacy behavior.
         ode_accel : {"off", "cached", "matvec"}, optional
@@ -783,18 +789,7 @@ class MultiBandISRSGN:
         power_scale = self.physical_power_scale
         kernel_power = P if power_scale == 1.0 else P * power_scale
 
-        if edfa_config is not None and edfa_config.noise_figure_db is not None:
-            noise_figure_db = np.asarray(edfa_config.noise_figure_db, dtype=float)
-            if noise_figure_db.ndim == 0:
-                current_nf_lin = np.full(n_conn, 10 ** (float(noise_figure_db) / 10))
-            else:
-                if noise_figure_db.shape != (n_conn,):
-                    msg = "EDFA noise-figure array must contain one value per channel."
-                    raise ValueError(msg)
-                current_nf_lin = 10 ** (noise_figure_db / 10)
-        else:
-            current_nf_lin = np.ones_like(self.nf_lin_channels)
-        current_nf_lin = np.asarray(current_nf_lin, dtype=np.float64)
+        current_nf_lin = self._resolve_nf(edfa_config)
 
         p_out_fiber, s2_spm, s2_xpm, _ = calc_span_noise_and_power_p1_matvec(
             power_in_w=kernel_power,
@@ -821,46 +816,38 @@ class MultiBandISRSGN:
             s2_spm = s2_spm * 0.5
             s2_xpm = s2_xpm * 0.5
 
-        compensation_gain = np.divide(
-            P, p_out_fiber, out=np.ones_like(P), where=p_out_fiber > 0
-        )
         if edfa_config is None:
             p_out = p_out_fiber
             nli_transfer = np.divide(p_out_fiber, P, out=np.zeros_like(P), where=P > 0)
             s2_ase = np.zeros_like(P)
         else:
-            if edfa_config.target_gain_db is None:
-                # Gain is the input/output ratio in either power convention.
-                gain = compensation_gain.copy()
-            else:
-                gain = np.full_like(P, 10 ** (edfa_config.target_gain_db / 10))
-            if edfa_config.gain_ripple_db is not None:
-                ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
-                if ripple.shape != (n_conn,):
-                    msg = "EDFA gain-ripple array must contain one value per channel."
-                    raise ValueError(msg)
-                gain *= 10 ** (ripple / 10)
-            p_out = p_out_fiber * gain
-            nli_transfer = gain / compensation_gain
-            s2_ase = (
-                current_nf_lin
-                * 6.62607015e-34
-                * self.f_abs_hz
-                * self.channel_bandwidth_hz_channels
-                * np.maximum(gain - 1, 0)
+            p_out, nli_transfer, s2_ase = apply_edfa(
+                edfa_config,
+                P,
+                p_out_fiber,
+                current_nf_lin,
+                self.f_abs_hz,
+                self.channel_bandwidth_hz_channels,
+                ase_polarization_scale=self.ase_polarization_scale,
             )
-            if self.ase_polarization_scale != 1.0:
-                s2_ase = s2_ase * self.ase_polarization_scale
-            s2_ase[P <= 0] = 0
         s2_spm = s2_spm * nli_transfer
         s2_xpm = s2_xpm * nli_transfer
 
         if roadm_config:
             loss_lin = _db_to_lin(roadm_config.path_loss_db())
-            p_out = p_out / loss_lin
-            s2_spm = s2_spm / loss_lin
-            s2_xpm = s2_xpm / loss_lin
-            s2_ase = s2_ase / loss_lin
+            roadm_transfer: NDArrayFloat | float = 1.0 / loss_lin
+            if roadm_config.output_target is not None:
+                roadm_transfer = roadm_target_transfer(
+                    roadm_config.output_target,
+                    p_out,
+                    self.channel_bandwidth_hz_channels,
+                    loss_lin,
+                    self.ase_polarization_scale,
+                )
+            p_out *= roadm_transfer
+            s2_spm *= roadm_transfer
+            s2_xpm *= roadm_transfer
+            s2_ase *= roadm_transfer
 
         return p_out, s2_spm, s2_xpm, s2_ase
 
@@ -884,6 +871,22 @@ class MultiBandISRSGN:
                 launch_power_convention=self.launch_power_convention,
             )
         return self._fiber_evaluator_cache[key]
+
+    def for_connections(
+        self, connections: tuple[CarrierGeometry, ...], slots_per_channel: int
+    ) -> "MultiBandISRSGN":
+        """Bind the ECZ model settings to the active carrier geometry."""
+        return type(self)(
+            connections[0].grid,
+            self.ref_fiber_config,
+            self.symbol_rate_hz,
+            connections=connections,
+            ode_accel=self.ode_accel,
+            slots_per_channel=slots_per_channel,
+            channel_bandwidth_source=self.channel_bandwidth_source,
+            power_width_mode=self.power_width_mode,
+            launch_power_convention=self.launch_power_convention,
+        )
 
     def evaluate_path(
         self, optical_path: MultiSpanOpticalPath, power_in_w: NDArrayFloat

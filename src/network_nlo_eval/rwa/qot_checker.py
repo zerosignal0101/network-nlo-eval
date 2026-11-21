@@ -8,13 +8,14 @@ candidate-link caches only after all affected services meet their thresholds.
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Literal
+from itertools import pairwise
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
-from network_nlo_eval.models.base import QoTModel
+from network_nlo_eval.models.base import MultiSpanOpticalPath, QoTModel
 from network_nlo_eval.models.power_conventions import (
     ase_polarization_scale as convention_ase_polarization_scale,
 )
@@ -22,9 +23,11 @@ from network_nlo_eval.models.power_conventions import (
     resolve_launch_power_convention,
     to_convention,
 )
+from network_nlo_eval.models.route import roadm_target_transfer
 from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, LinkState, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
+from network_nlo_eval.rwa.carrier_loading import CarrierAdmission
 from network_nlo_eval.rwa.link_noise import (
     FiberBoundQoTModel,
     assemble_link_noise,
@@ -35,29 +38,19 @@ from network_nlo_eval.rwa.validity import (
     LinkValidity,
     LinkValidityPolicy,
     LinkValidityProvider,
+    OpticalPathValidityProvider,
 )
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
+if TYPE_CHECKING:
+    from network_nlo_eval.models.base import PathQoTResult
+    from network_nlo_eval.rwa.carrier_loading import (
+        CarrierModelFactory,
+        CarrierValidityFactory,
+    )
+
 #: Planck constant (J s), used in booster ASE.
 _H_PLANCK = 6.62607015e-34
-
-
-def _normalize(u: NodeID, v: NodeID) -> LinkKey:
-    """Return a canonical undirected link key.
-
-    Parameters
-    ----------
-    u : NodeID
-        First endpoint.
-    v : NodeID
-        Second endpoint.
-
-    Returns
-    -------
-    LinkKey
-        Canonical link key.
-    """
-    return (u, v) if u < v else (v, u)
 
 
 @dataclass(frozen=True)
@@ -96,7 +89,7 @@ def fold_roadm_terms(config: ROADMConfig, *, is_last_hop: bool) -> RoadmTerms:
     """Fold a ROADM configuration into shared constants.
 
     Drop and express losses are distinct; the filtering penalty affects noise
-    only. Equalization restores signal power and adds booster ASE.
+    only. A configured target takes precedence over the legacy booster.
 
     Parameters
     ----------
@@ -113,13 +106,14 @@ def fold_roadm_terms(config: ROADMConfig, *, is_last_hop: bool) -> RoadmTerms:
     operation: Literal["drop", "express"] = "drop" if is_last_hop else "express"
     nf_lin = 10 ** (config.booster_noise_figure_db / 10)
     loss_db = config.path_loss_db(operation)
+    equalize = config.equalize_output_power and config.output_target is None
     return RoadmTerms(
         config=config,
         loss=10 ** (loss_db / 10),
         loss_db=loss_db,
         filtering_penalty=10 ** (config.filtering_penalty_db / 10),
-        equalize=config.equalize_output_power,
-        booster_nf=nf_lin if config.equalize_output_power else None,
+        equalize=equalize,
+        booster_nf=nf_lin if equalize else None,
         booster_base=nf_lin * _H_PLANCK,
         booster_nf_db=config.booster_noise_figure_db,
     )
@@ -286,7 +280,6 @@ def accumulate_service_snr_detail(
     total_xpm = 0.0
     total_ase = 0.0
     signal_power = launch_power_w
-    total_spans = 0
     total_margin_db = 0.0
     total_soft_margin_db = 0.0
     valid = True
@@ -296,10 +289,15 @@ def accumulate_service_snr_detail(
     fwm_required = False
 
     for roadm, cache in hops:
+        if cache.power_transfer is not None:
+            transfer = cache.power_transfer.item(channel_idx)
+            signal_power *= transfer
+            total_spm *= transfer
+            total_xpm *= transfer
+            total_ase *= transfer
         total_spm += cache.spm.item(channel_idx)
         total_xpm += cache.xpm.item(channel_idx)
         total_ase += cache.ase.item(channel_idx)
-        total_spans += cache.span_count
 
         if is_blocked(roadm):
             return ServiceQoT(snr_db=float("-inf"), valid=False)
@@ -339,18 +337,30 @@ def accumulate_service_snr_detail(
                 booster_ase *= ase_polarization_scale
             total_ase += booster_ase
         else:
-            signal_power /= roadm.loss
-            total_spm /= roadm.loss
-            total_xpm /= roadm.loss
-            total_ase /= roadm.loss
+            transfer = 1.0 / roadm.loss
+            if (target := roadm.config.output_target) is not None and signal_power > 0:
+                limit = target.power_w
+                if limit is None:
+                    assert target.psd_w_per_hz is not None
+                    limit = target.psd_w_per_hz * channel_bandwidth_hz
+                transfer = min(
+                    transfer, (limit * ase_polarization_scale) / signal_power
+                )
+            signal_power *= transfer
+            total_spm *= transfer
+            total_xpm *= transfer
+            total_ase *= transfer
         total_spm *= roadm.filtering_penalty
         total_xpm *= roadm.filtering_penalty
         total_ase *= roadm.filtering_penalty
 
-    # SPM coherence penalty across spans.
-    penalty = total_spans**0.05 if total_spans > 0 else 1.0
-    noise = total_spm * penalty + total_xpm + total_ase
-    snr_db = float("inf") if noise <= 0 else 10.0 * math.log10(signal_power / noise)
+    noise = total_spm + total_xpm + total_ase
+    if signal_power <= 0:
+        snr_db = -math.inf
+    elif noise <= 0:
+        snr_db = math.inf
+    else:
+        snr_db = 10.0 * math.log10(signal_power / noise)
     return ServiceQoT(
         snr_db=snr_db,
         margin_db=total_margin_db,
@@ -376,8 +386,7 @@ class QoTValidator:
     The evaluator must provide the corresponding ASE polarization scale, including
     for ROADM booster ASE. Known cached conventions that do not match are recomputed;
     legacy caches without a convention retain their historical reuse behavior.
-    Coherent link assembly is opt-in and depends on evaluator support; it does not
-    change validity policy or the service-level SPM span penalty.
+    Coherent assembly is opt-in and depends on evaluator support.
     """
 
     def __init__(
@@ -391,6 +400,8 @@ class QoTValidator:
         validity_policy: LinkValidityPolicy | None = None,
         validity_provider: LinkValidityProvider | None = None,
         coherent_assembly: bool = False,
+        carrier_model_factory: "CarrierModelFactory | None" = None,
+        carrier_validity_factory: "CarrierValidityFactory | None" = None,
     ):
         """Initialize the QoT validator and validate policy and power conventions.
 
@@ -414,7 +425,14 @@ class QoTValidator:
         validity_provider : LinkValidityProvider | None
             Optional link validity provider.
         coherent_assembly : bool
-            Request coherent accumulation when the evaluator supports it.
+            Request full-route evaluation for a uniform load and coherent
+            link assembly for varying loads when the evaluator supports it.
+        carrier_model_factory : callable or None
+            Build a model from the current carrier geometries and slots per
+            channel. Defaults to the evaluator's ``for_connections`` method.
+        carrier_validity_factory : callable or None
+            Build an optical-path validity provider for a geometry-bound model.
+            Required for carrier loading when validity policy is enabled.
 
         Raises
         ------
@@ -422,13 +440,19 @@ class QoTValidator:
             If provider, policy or power-convention settings are incompatible.
         """
         policy = validity_policy or LinkValidityPolicy()
-        if policy.enabled and validity_provider is None:
+        if (
+            policy.enabled
+            and validity_provider is None
+            and carrier_validity_factory is None
+        ):
             msg = (
                 f"validity_policy mode={policy.mode} requires a validity_provider; "
                 "pass an H3LinkValidityProvider or use mode='off'."
             )
             raise ValueError(msg)
-        if not policy.enabled and validity_provider is not None:
+        if not policy.enabled and (
+            validity_provider is not None or carrier_validity_factory is not None
+        ):
             msg = (
                 "validity_provider was given with validity_policy mode='off'; "
                 "choose an explicit mode ('flag', 'reject', 'degrade' or 'soft') to enable it."
@@ -478,6 +502,11 @@ class QoTValidator:
         self.validity_provider = validity_provider
         #: Coherent assembly is opt-in and requires evaluator support.
         self.coherent_assembly = bool(coherent_assembly)
+        self._carrier_model_factory = carrier_model_factory or getattr(
+            gn_evaluator, "for_connections", None
+        )
+        self._carrier_validity_factory = carrier_validity_factory
+        self._carrier_admission: CarrierAdmission | None = None
         #: Reports for links affected by the most recent verification.
         self.last_link_validity: dict[LinkKey, LinkValidity] = {}
 
@@ -496,45 +525,6 @@ class QoTValidator:
         """
         return self.gn_evaluator.n_nodes
 
-    def _is_blocked(self, roadm: ROADMConfig, node_index: int) -> bool:
-        """Return whether the ROADM blocks this evaluator node.
-
-        Parameters
-        ----------
-        roadm : ROADMConfig
-            ROADM configuration.
-        node_index : int
-            Evaluator node index.
-
-        Returns
-        -------
-        bool
-            Whether the node is blocked.
-        """
-        return node_index in self.gn_evaluator.blocked_nodes(roadm)
-
-    def _node_frequency_and_bandwidth(self, channel_idx: int) -> tuple[float, float]:
-        """Return node center frequency and bandwidth (Hz).
-
-        The evaluator arrays use node order, which may differ from legacy channels
-        for a flexible grid.
-
-        Parameters
-        ----------
-        channel_idx : int
-            Channel or evaluator-node index.
-
-        Returns
-        -------
-        tuple[float, float]
-            Center frequency and bandwidth in Hz.
-        """
-        evaluator = self.gn_evaluator
-        return (
-            float(evaluator.f_abs_hz[channel_idx]),
-            float(evaluator.channel_bandwidth_hz_channels[channel_idx]),
-        )
-
     def verify_allocation(
         self,
         service_request: ServiceRequest,
@@ -542,12 +532,14 @@ class QoTValidator:
         channel_idx: int,
         current_network_state: NetworkState,
         fixed_span_length_km: float | None = None,
+        *,
+        first_slot: int | None = None,
     ) -> tuple[bool, NDArrayFloat | None]:
         """Verify the candidate and all affected existing services.
 
-        Candidate spectra are temporary. Affected links are computed once; on success
-        their caches are stored and the path SNR array is returned. A rejected
-        candidate does not change link occupancy.
+        Candidate spectra are temporary. Routes and affected link budgets
+        are evaluated once per attempt. On success, store any computed
+        link caches and return the same SNR array used for admission.
 
         Parameters
         ----------
@@ -561,51 +553,85 @@ class QoTValidator:
             Current network state.
         fixed_span_length_km : float | None
             Optional fixed span length (km).
+        first_slot : int or None
+            First reserved slot for flexible-grid admission. The returned array
+            uses anchor indices. The candidate takes precedence at its anchor.
 
         Returns
         -------
         tuple[bool, ndarray | None]
             Success flag and path-node SNR array, or None on rejection.
         """
-        span_km = fixed_span_length_km or self._fixed_span_length_km
+        span_km = (
+            self._fixed_span_length_km
+            if fixed_span_length_km is None
+            else fixed_span_length_km
+        )
         self.last_link_validity.clear()
 
-        # Copy candidate spectra and check availability.
-        temp_power_profiles: dict[LinkKey, NDArrayFloat] = {}
-        affected_links: set[LinkKey] = set()
+        launch_power = service_request.launch_power_w
+        if len(path) < 2 or not math.isfinite(launch_power) or launch_power <= 0:
+            return False, None
+        if span_km is not None and (not math.isfinite(span_km) or span_km <= 0):
+            msg = "The fixed span length must be finite and positive."
+            raise ValueError(msg)
 
-        for i in range(len(path) - 1):
-            u, v = path[i], path[i + 1]
+        if (
+            first_slot is not None
+            or service_request.symbol_rate_hz is not None
+            or current_network_state.has_per_carrier_services
+        ):
+            if self._carrier_admission is None:
+                if self._carrier_model_factory is None:
+                    msg = "Per-carrier admission requires a carrier_model_factory or an evaluator with for_connections."
+                    raise TypeError(msg)
+                if (
+                    self.validity_policy.enabled
+                    and self._carrier_validity_factory is None
+                ):
+                    msg = "Per-carrier admission with validity enabled requires a carrier_validity_factory."
+                    raise TypeError(msg)
+                self._carrier_admission = CarrierAdmission(
+                    self, self._carrier_model_factory, self._carrier_validity_factory
+                )
+            return self._carrier_admission.verify(
+                service_request,
+                path,
+                channel_idx,
+                first_slot,
+                current_network_state,
+                span_km,
+            )
+        if self.validity_policy.enabled and self.validity_provider is None:
+            msg = "Fixed-grid admission with validity enabled requires a validity_provider."
+            raise TypeError(msg)
+
+        temp_power_profiles: dict[LinkKey, NDArrayFloat] = {}
+
+        for u, v in pairwise(path):
             link_state = current_network_state.get_link_state(u, v)
 
             if link_state.occupied_channels[channel_idx]:
                 return False, None  # Channel already occupied.
 
-            link_key = _normalize(u, v)
-            affected_links.add(link_key)
+            link_key = link_state.link_key
             temp_profile = link_state.launch_power_profile_w.copy()
-            temp_profile[channel_idx] = service_request.launch_power_w
+            temp_profile[channel_idx] = launch_power
             temp_power_profiles[link_key] = temp_profile
 
-        # Compute each affected link once in the temporary cache.
         temp_noise_cache: dict[LinkKey, LinkNoiseCache] = {}
-        for link_key in affected_links:
-            temp_noise_cache[link_key] = self._calc_link_noise(
-                link_key,
-                temp_power_profiles[link_key],
-                span_km,
-            )
-
-        # Evaluate the candidate service.
-        new_snr_db = self._eval_service_snr(
+        final_snrs_db = self._build_path_snr_array(
             path,
-            channel_idx,
-            service_request.launch_power_w,
+            temp_power_profiles,
             temp_noise_cache,
             current_network_state,
             span_km,
         )
-        if new_snr_db < service_request.snr_requirement_db:
+        candidate_snr = final_snrs_db[channel_idx]
+        if not (
+            candidate_snr > -math.inf
+            and candidate_snr >= service_request.snr_requirement_db
+        ):
             return False, None
 
         # Collect affected existing services.
@@ -615,17 +641,23 @@ class QoTValidator:
             current_network_state,
         )
 
-        # Evaluate each existing service on its own path and launch power.
+        path_snrs = {tuple(path): final_snrs_db}
         for old_service in affected_old_services:
-            old_snr_db = self._eval_service_snr(
-                old_service.path,
-                old_service.wavelength,
-                old_service.launch_power_w,
-                temp_noise_cache,
-                current_network_state,
-                span_km,
-            )
-            if old_snr_db < old_service.snr_requirement_db:
+            path_key = tuple(old_service.path)
+            if (snrs := path_snrs.get(path_key)) is None:
+                snrs = self._build_path_snr_array(
+                    old_service.path,
+                    temp_power_profiles,
+                    temp_noise_cache,
+                    current_network_state,
+                    span_km,
+                )
+                path_snrs[path_key] = snrs
+            incumbent_snr = snrs[old_service.wavelength]
+            if not (
+                incumbent_snr > -math.inf
+                and incumbent_snr >= old_service.snr_requirement_db
+            ):
                 return False, None
 
         # Commit candidate caches after all checks pass.
@@ -633,15 +665,6 @@ class QoTValidator:
             u, v = link_key
             link_state = current_network_state.get_link_state(u, v)
             link_state.noise_cache = cache
-
-        # Build the path SNR array for the returned result.
-        final_snrs_db = self._build_path_snr_array(
-            path,
-            temp_power_profiles,
-            temp_noise_cache,
-            current_network_state,
-            span_km,
-        )
 
         return True, final_snrs_db
 
@@ -675,12 +698,35 @@ class QoTValidator:
             Link noise cache with optional validity report.
         """
         u, v = link_key
-        fiber_config = self.network_topology.get_fiber_config(u, v)
-        edfa_config = self.network_topology.get_link_edfa_config(u, v)
         power_eval = to_convention(
             power_profile, self.launch_power_convention, self.eval_power_convention
         )
+        if (spans := self.network_topology.get_link_spans(u, v)) is not None:
+            path = MultiSpanOpticalPath(
+                [span.fiber for span in spans], [span.edfa for span in spans]
+            )
+            provider = self.validity_provider
+            if provider is not None and not isinstance(
+                provider, OpticalPathValidityProvider
+            ):
+                msg = "Installed spans require an optical-path validity provider."
+                raise TypeError(msg)
+            result = self.gn_evaluator.evaluate_path(path, power_eval)
+            installed_validity = None
+            if provider is not None:
+                installed_validity = provider.evaluate_path(
+                    link_key,
+                    path,
+                    power_eval,
+                    result=result if provider.model is self.gn_evaluator else None,
+                )
+                self.last_link_validity[link_key] = installed_validity
+            return self._cache_link_result(
+                result, power_eval, fixed_span_length_km, installed_validity
+            )
 
+        fiber_config = self.network_topology.get_fiber_config(u, v)
+        edfa_config = self.network_topology.get_link_edfa_config(u, v)
         link_total_length_m = fiber_config.length_km * 1000
         span_length_m = (fixed_span_length_km or fiber_config.max_span_length_km) * 1000
         num_full_spans = int(link_total_length_m // span_length_m)
@@ -703,8 +749,23 @@ class QoTValidator:
             )
             self.last_link_validity[link_key] = validity
 
+        if not edfa_config.is_loss_compensating:
+            if fixed_span_length_km is not None:
+                fiber_config = fiber_config.model_copy(
+                    update={"max_span_length_km": fixed_span_length_km}
+                )
+            result = self.gn_evaluator.evaluate_path(
+                MultiSpanOpticalPath([fiber_config], [edfa_config]), power_eval
+            )
+            return self._cache_link_result(
+                result,
+                power_eval,
+                fixed_span_length_km,
+                validity,
+            )
+
         if isinstance(self.gn_evaluator, FiberBoundQoTModel):
-            return assemble_link_noise(
+            cache = assemble_link_noise(
                 evaluator=self.gn_evaluator.for_fiber(fiber_config),
                 edfa_config=edfa_config,
                 power_profile=power_eval,
@@ -716,23 +777,50 @@ class QoTValidator:
                 launch_power_convention=self.eval_power_convention,
                 coherent=self.coherent_assembly,
             )
-        return assemble_model_link_noise(
-            evaluator=self.gn_evaluator,
-            fiber_config=fiber_config,
-            edfa_config=edfa_config,
-            power_profile=power_eval,
-            span_length_m=span_length_m,
-            num_full_spans=num_full_spans,
-            remainder_length_m=remainder_length_m,
+        else:
+            cache = assemble_model_link_noise(
+                evaluator=self.gn_evaluator,
+                fiber_config=fiber_config,
+                edfa_config=edfa_config,
+                power_profile=power_eval,
+                span_length_m=span_length_m,
+                num_full_spans=num_full_spans,
+                remainder_length_m=remainder_length_m,
+                validity=validity,
+                launch_power_convention=self.eval_power_convention,
+                coherent=self.coherent_assembly,
+            )
+        cache.fixed_span_length_km = fixed_span_length_km
+        return cache
+
+    def _cache_link_result(
+        self,
+        result: "PathQoTResult",
+        power_eval: NDArrayFloat,
+        fixed_span_length_km: float | None,
+        validity: LinkValidity | None,
+    ) -> LinkNoiseCache:
+        """Store the output budget of an installed or non-compensating link."""
+        return LinkNoiseCache(
+            spm=result.spm_noise_w,
+            xpm=result.xpm_noise_w,
+            ase=result.ase_noise_w,
+            span_count=result.span_count,
             validity=validity,
             launch_power_convention=self.eval_power_convention,
-            coherent=self.coherent_assembly,
+            power_transfer=np.divide(
+                result.signal_power_w,
+                power_eval * self.gn_evaluator.power_width_scale(),
+                out=np.ones_like(power_eval),
+                where=power_eval > 0,
+            ),
+            fixed_span_length_km=fixed_span_length_km,
         )
 
     def _get_or_calc_noise_cache(
         self,
-        link_key: LinkKey,
         link_state: LinkState,
+        temp_power_profiles: dict[LinkKey, NDArrayFloat],
         temp_noise_cache: dict[LinkKey, LinkNoiseCache],
         fixed_span_length_km: float | None,
     ) -> LinkNoiseCache:
@@ -743,10 +831,10 @@ class QoTValidator:
 
         Parameters
         ----------
-        link_key : LinkKey
-            Canonical link endpoints.
-        link_state : object
+        link_state : LinkState
             Link state.
+        temp_power_profiles : dict[LinkKey, ndarray]
+            Candidate link power profiles.
         temp_noise_cache : dict[LinkKey, LinkNoiseCache]
             Candidate-link noise caches.
         fixed_span_length_km : float | None
@@ -757,13 +845,19 @@ class QoTValidator:
         LinkNoiseCache
             Reusable or newly calculated link noise cache.
         """
-        if link_key in temp_noise_cache:
-            return temp_noise_cache[link_key]
+        link_key = link_state.link_key
+        if (profile := temp_power_profiles.get(link_key)) is not None:
+            if (cache := temp_noise_cache.get(link_key)) is None:
+                cache = self._calc_link_noise(link_key, profile, fixed_span_length_km)
+                temp_noise_cache[link_key] = cache
+            return cache
 
         cached = link_state.noise_cache
         if cached is not None:
             convention = cached.launch_power_convention
-            if convention is None or convention == self.eval_power_convention:
+            if (
+                convention is None or convention == self.eval_power_convention
+            ) and cached.fixed_span_length_km == fixed_span_length_km:
                 return cached
 
         cache = self._calc_link_noise(
@@ -773,90 +867,6 @@ class QoTValidator:
         )
         link_state.noise_cache = cache
         return cache
-
-    def _eval_service_snr(
-        self,
-        path: list[NodeID],
-        channel_idx: int,
-        launch_power_w: float,
-        temp_noise_cache: dict[LinkKey, LinkNoiseCache],
-        network_state: NetworkState,
-        fixed_span_length_km: float | None,
-    ) -> float:
-        """Calculate policy-adjusted SNR along the service path.
-
-        Affected links use temporary caches; other links are fetched lazily. A blocked
-        hop stops iteration before later link caches are fetched or written. Launch
-        power is converted to the evaluator convention before accumulation.
-
-        Parameters
-        ----------
-        path : list[NodeID]
-            Ordered path nodes.
-        channel_idx : int
-            Channel or evaluator-node index.
-        launch_power_w : float
-            Service launch power (W).
-        temp_noise_cache : dict[LinkKey, LinkNoiseCache]
-            Candidate-link noise caches.
-        network_state : NetworkState
-            Current network state.
-        fixed_span_length_km : float | None
-            Optional fixed span length (km).
-
-        Returns
-        -------
-        float
-            Policy-adjusted service SNR (dB).
-        """
-        frequency_hz, channel_bandwidth_hz = self._node_frequency_and_bandwidth(
-            channel_idx
-        )
-        launch_power_eval = to_convention(
-            launch_power_w, self.launch_power_convention, self.eval_power_convention
-        )
-        last_hop = len(path) - 2
-
-        def _hops() -> Iterable[HopPair]:
-            for i in range(len(path) - 1):
-                u, v = path[i], path[i + 1]
-                link_key = _normalize(u, v)
-                link_state = network_state.get_link_state(u, v)
-                cache = self._get_or_calc_noise_cache(
-                    link_key, link_state, temp_noise_cache, fixed_span_length_km
-                )
-                roadm = self.network_topology.get_roadm_config(v)
-                yield fold_roadm_terms(roadm, is_last_hop=i == last_hop), cache
-
-        qot = accumulate_service_snr_detail(
-            _hops(),
-            channel_idx=channel_idx,
-            launch_power_w=launch_power_eval,
-            frequency_hz=frequency_hz,
-            channel_bandwidth_hz=channel_bandwidth_hz,
-            is_blocked=lambda terms: self._is_blocked(terms.config, channel_idx),
-            validity_of=self._validity_of if self.validity_policy.enabled else None,
-            ase_polarization_scale=self.ase_polarization_scale,
-        )
-        return qot.effective_snr_db(self.validity_policy)
-
-    @staticmethod
-    def _validity_of(_roadm: RoadmTerms, cache: LinkNoiseCache) -> LinkValidity | None:
-        """Return the validity report attached to a hop noise cache.
-
-        Parameters
-        ----------
-        _roadm : RoadmTerms
-            ROADM terms for the hop.
-        cache : LinkNoiseCache
-            Noise cache for the hop.
-
-        Returns
-        -------
-        LinkValidity | None
-            Attached link report, if present.
-        """
-        return cache.validity
 
     def _collect_affected_services(
         self,
@@ -883,8 +893,7 @@ class QoTValidator:
         seen_ids: set[int] = set()
         affected: list[AllocatedService] = []
 
-        for i in range(len(path) - 1):
-            u, v = path[i], path[i + 1]
+        for u, v in pairwise(path):
             link_state = network_state.get_link_state(u, v)
 
             for ch_idx in range(self.num_nodes):
@@ -933,42 +942,52 @@ class QoTValidator:
         total_spm = np.zeros(self.num_nodes, dtype=np.float64)
         total_xpm = np.zeros(self.num_nodes, dtype=np.float64)
         total_ase = np.zeros(self.num_nodes, dtype=np.float64)
-        total_spans = 0
         link_validities: list[LinkValidity] = []
         u0, v0 = path[0], path[1]
-        link_key0 = _normalize(u0, v0)
-        if link_key0 in temp_power_profiles:
-            signal_power = temp_power_profiles[link_key0].copy()
-        else:
-            signal_power = network_state.get_link_state(
-                u0, v0
-            ).launch_power_profile_w.copy()
-        signal_power = to_convention(
-            signal_power, self.launch_power_convention, self.eval_power_convention
+        first_link_state = network_state.get_link_state(u0, v0)
+        first_profile = temp_power_profiles.get(
+            first_link_state.link_key, first_link_state.launch_power_profile_w
         )
+        needs_path_propagation = len(path) > 2 and (
+            self.coherent_assembly or self._path_changes_signal_power(path)
+        )
+        use_direct_path = needs_path_propagation and self._has_uniform_loading(
+            path, first_link_state, first_profile, temp_power_profiles, network_state
+        )
+        if use_direct_path and not self.validity_policy.enabled:
+            return self._direct_path_snr(path, first_profile, fixed_span_length_km)
 
-        for i in range(len(path) - 1):
-            u, v = path[i], path[i + 1]
-            link_key = _normalize(u, v)
+        signal_power = to_convention(
+            first_profile.copy(),
+            self.launch_power_convention,
+            self.eval_power_convention,
+        )
+        signal_power *= self.gn_evaluator.power_width_scale()
+
+        for index, (u, v) in enumerate(pairwise(path)):
             link_state = network_state.get_link_state(u, v)
 
             cache = self._get_or_calc_noise_cache(
-                link_key,
                 link_state,
+                temp_power_profiles,
                 temp_noise_cache,
                 fixed_span_length_km,
             )
 
+            if cache.power_transfer is not None:
+                signal_power *= cache.power_transfer
+                total_spm *= cache.power_transfer
+                total_xpm *= cache.power_transfer
+                total_ase *= cache.power_transfer
             total_spm += cache.spm
             total_xpm += cache.xpm
             total_ase += cache.ase
-            total_spans += cache.span_count
             if self.validity_policy.enabled and cache.validity is not None:
                 link_validities.append(cache.validity)
 
-            roadm = self.network_topology.get_roadm_config(v)
+            roadm = self.network_topology.get_roadm_path_config(path, index)
             # Use the same ROADM terms as scalar evaluation, with node arrays.
-            terms = fold_roadm_terms(roadm, is_last_hop=i == len(path) - 2)
+            terms = fold_roadm_terms(roadm, is_last_hop=index == len(path) - 2)
             if terms.booster_nf is not None:
                 booster_ase = (
                     terms.booster_base
@@ -983,32 +1002,35 @@ class QoTValidator:
                     booster_ase = booster_ase * self.ase_polarization_scale
                 total_ase += booster_ase
             else:
-                signal_power /= terms.loss
-                total_spm /= terms.loss
-                total_xpm /= terms.loss
-                total_ase /= terms.loss
+                transfer: NDArrayFloat | float = 1.0 / terms.loss
+                if roadm.output_target is not None:
+                    transfer = roadm_target_transfer(
+                        roadm.output_target,
+                        signal_power,
+                        self.gn_evaluator.channel_bandwidth_hz_channels,
+                        terms.loss,
+                        self.ase_polarization_scale,
+                    )
+                signal_power *= transfer
+                total_spm *= transfer
+                total_xpm *= transfer
+                total_ase *= transfer
             total_spm *= terms.filtering_penalty
             total_xpm *= terms.filtering_penalty
             total_ase *= terms.filtering_penalty
-            blocked = [
-                index
-                for index in range(self.num_nodes)
-                if self._is_blocked(roadm, index)
-            ]
+            blocked = self.gn_evaluator.blocked_nodes(roadm)
             if blocked:
                 signal_power[blocked] = 0
 
-        penalty = total_spans**0.05 if total_spans > 0 else 1.0
-        total_noise = total_spm * penalty + total_xpm + total_ase
-
-        snrs_db = np.full(self.num_nodes, -np.inf, dtype=np.float64)
-        for ch_idx in range(self.num_nodes):
-            if total_noise[ch_idx] <= 0:
-                continue
-            if signal_power[ch_idx] > 0:
-                snrs_db[ch_idx] = 10.0 * math.log10(
-                    signal_power[ch_idx] / total_noise[ch_idx]
-                )
+        if use_direct_path:
+            snrs_db = self._direct_path_snr(path, first_profile, fixed_span_length_km)
+        else:
+            total_noise = total_spm + total_xpm + total_ase
+            snrs_db = np.full(self.num_nodes, -np.inf, dtype=np.float64)
+            active = signal_power > 0
+            noisy = active & (total_noise > 0)
+            snrs_db[noisy] = 10 * np.log10(signal_power[noisy] / total_noise[noisy])
+            snrs_db[active & (total_noise == 0)] = np.inf
 
         if not link_validities:
             return snrs_db
@@ -1016,6 +1038,59 @@ class QoTValidator:
         return np.asarray(
             verdict.adjusted_snr_db(snrs_db, self.validity_policy), dtype=np.float64
         )
+
+    def _path_changes_signal_power(self, path: list[NodeID]) -> bool:
+        """Identify equipment for which a repeated nominal spectrum is insufficient."""
+        for index, (u, v) in enumerate(pairwise(path)):
+            roadm = self.network_topology.get_roadm_path_config(path, index)
+            if (
+                not roadm.equalize_output_power
+                or roadm.output_target is not None
+                or roadm.blocked_channels
+                or roadm.blocked_slots
+            ):
+                return True
+            if self.network_topology.get_link_spans(u, v) is not None:
+                return True
+            edfa = self.network_topology.get_link_edfa_config(u, v)
+            if not edfa.is_loss_compensating:
+                return True
+        return False
+
+    def _direct_path_snr(
+        self,
+        path: list[NodeID],
+        profile: NDArrayFloat,
+        fixed_span_length_km: float | None,
+    ) -> NDArrayFloat:
+        """Evaluate the model's route-wide propagation for a uniform load."""
+        physical_path = self.network_topology.build_optical_path(
+            path, fixed_span_length_km=fixed_span_length_km
+        )
+        power_eval = to_convention(
+            profile, self.launch_power_convention, self.eval_power_convention
+        )
+        return self.gn_evaluator.evaluate_path(physical_path, power_eval).snr_db
+
+    @staticmethod
+    def _has_uniform_loading(
+        path: list[NodeID],
+        first_link_state: LinkState,
+        first_profile: NDArrayFloat,
+        temp_power_profiles: dict[LinkKey, NDArrayFloat],
+        network_state: NetworkState,
+    ) -> bool:
+        """Check that the same carriers and nominal powers occupy all links."""
+        for index in range(1, len(path) - 1):
+            state = network_state.get_link_state(path[index], path[index + 1])
+            profile = temp_power_profiles.get(
+                state.link_key, state.launch_power_profile_w
+            )
+            if not np.array_equal(first_profile, profile) or not np.array_equal(
+                first_link_state.allocated_service_ids, state.allocated_service_ids
+            ):
+                return False
+        return True
 
 
 # --- Base allocator interface ---

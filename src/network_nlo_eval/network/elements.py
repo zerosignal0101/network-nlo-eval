@@ -1,11 +1,13 @@
 """Pydantic configuration models for physical network elements."""
 
+from itertools import pairwise
+from math import isfinite
 from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.core.types import NDArrayFloat, OriginalNodeID
 
 
 class FiberSpanConfig(BaseModel):
@@ -104,6 +106,20 @@ class FiberSpanConfig(BaseModel):
         return self
 
 
+class EDFACompressionPoint(BaseModel):
+    """Gain and noise corrections at one point on an EDFA compression curve."""
+
+    model_config = ConfigDict(frozen=True, allow_inf_nan=False)
+
+    backoff_db: float = Field(ge=0, description="Common gain reduction in dB")
+    noise_figure_penalty_db: float = Field(
+        0, ge=0, description="Increment to the configured noise figure in dB"
+    )
+    tilt_db_per_thz: float = Field(
+        0, description="Change in gain per THz of increasing frequency"
+    )
+
+
 class EDFAConfig(BaseModel):
     """Erbium-doped fiber amplifier (EDFA) configuration."""
 
@@ -119,10 +135,43 @@ class EDFAConfig(BaseModel):
     gain_ripple_db: NDArrayFloat | None = Field(
         None, description="Gain ripple (dB), one value per channel"
     )
+    max_output_signal_power_w: float | None = Field(
+        None,
+        gt=0,
+        allow_inf_nan=False,
+        description="Maximum aggregate signal power in watts across channels and polarizations before output VOA loss",
+    )
+    compression_curve: tuple[EDFACompressionPoint, ...] | None = Field(
+        None,
+        min_length=2,
+        description="Gain tilt and noise-figure penalty versus backoff",
+    )
+    passbands_hz: tuple[tuple[float, float], ...] = Field(
+        (),
+        description="Frequency intervals (lower Hz, upper Hz) sharing this amplifier's gain and power limit",
+    )
+    input_voa_db: float = Field(
+        0, ge=0, allow_inf_nan=False, description="Loss before amplification (dB)"
+    )
+    output_voa_db: float = Field(
+        0, ge=0, allow_inf_nan=False, description="Loss after amplification (dB)"
+    )
+
+    @property
+    def is_loss_compensating(self) -> bool:
+        """Return whether gain restores every channel's input power."""
+        return (
+            self.target_gain_db is None
+            and self.gain_ripple_db is None
+            and self.max_output_signal_power_w is None
+            and not self.passbands_hz
+            and self.input_voa_db == 0
+            and self.output_voa_db == 0
+        )
 
     @model_validator(mode="after")
-    def validate_noise_figure(self) -> "EDFAConfig":
-        """Require finite noise figure and ripple, and non-negative noise figure."""
+    def validate_operating_parameters(self) -> "EDFAConfig":
+        """Validate amplifier parameters, compression curve, and passbands."""
         noise_figure = np.asarray(self.noise_figure_db)
         if np.any(~np.isfinite(noise_figure)) or np.any(noise_figure < 0):
             msg = "EDFA noise figure must contain finite non-negative values."
@@ -132,6 +181,44 @@ class EDFAConfig(BaseModel):
         ):
             msg = "EDFA gain ripple must contain finite values."
             raise ValueError(msg)
+        curve = self.compression_curve
+        if curve is not None:
+            if self.max_output_signal_power_w is None:
+                msg = "An EDFA compression curve requires max_output_signal_power_w."
+                raise ValueError(msg)
+            if curve[0] != EDFACompressionPoint(backoff_db=0):
+                msg = "The EDFA compression curve must start at zero backoff with zero corrections."
+                raise ValueError(msg)
+            if any(
+                left.backoff_db >= right.backoff_db for left, right in pairwise(curve)
+            ):
+                msg = "EDFA compression curve backoff values must increase strictly."
+                raise ValueError(msg)
+        for lower, upper in self.passbands_hz:
+            if not (0 < lower < upper and isfinite(upper)):
+                msg = "EDFA passbands must have finite, positive, increasing bounds in hertz."
+                raise ValueError(msg)
+        if any(
+            left[1] > right[0] for left, right in pairwise(sorted(self.passbands_hz))
+        ):
+            msg = "EDFA passbands must not overlap."
+            raise ValueError(msg)
+        return self
+
+
+class OpticalSpanConfig(BaseModel):
+    """One installed fiber span followed by an optional amplifier."""
+
+    fiber: FiberSpanConfig
+    edfa: EDFAConfig | None = None
+
+    @model_validator(mode="after")
+    def set_physical_span_length(self) -> "OpticalSpanConfig":
+        """Use the installed length as the span boundary."""
+        if self.fiber.max_span_length_km != self.fiber.length_km:
+            self.fiber = self.fiber.model_copy(
+                update={"max_span_length_km": self.fiber.length_km}
+            )
         return self
 
 
@@ -146,6 +233,41 @@ class RamanPumpConfig(BaseModel):
     attenuation_db_per_km: float = Field(
         0.25, ge=0, description="Pump attenuation (dB/km)"
     )
+
+
+class ROADMOutputTarget(BaseModel):
+    """Passive per-channel output limit in total dual-polarization units."""
+
+    model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
+
+    power_w: float | None = Field(
+        None, gt=0, description="Per-channel output limit (W)"
+    )
+    psd_w_per_hz: float | None = Field(
+        None, gt=0, description="Output PSD limit over the modeled bandwidth (W/Hz)"
+    )
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "ROADMOutputTarget":
+        """Require one power or PSD target."""
+        if (self.power_w is None) == (self.psd_w_per_hz is None):
+            msg = "Set one ROADM output target using either power_w or psd_w_per_hz."
+            raise ValueError(msg)
+        return self
+
+
+class ROADMPathLoss(BaseModel):
+    """Total switching loss for one add, express, or drop path at a node."""
+
+    model_config = ConfigDict(frozen=True, allow_inf_nan=False, extra="forbid")
+
+    from_degree: OriginalNodeID | None = Field(
+        description="Original ingress neighbor ID, or None for a local add"
+    )
+    to_degree: OriginalNodeID | None = Field(
+        None, description="Original egress neighbor ID, or None for a local drop"
+    )
+    loss_db: float = Field(ge=0, description="Total switching path loss in dB")
 
 
 class ROADMConfig(BaseModel):
@@ -175,7 +297,17 @@ class ROADMConfig(BaseModel):
         description="Noise figure of the ROADM loss compensating booster (dB)",
     )
     equalize_output_power: bool = Field(
-        True, description="Restore per-channel launch power with a booster"
+        True, description="Use a loss-compensating booster when no target is configured"
+    )
+    output_target: ROADMOutputTarget | None = Field(
+        None, description="Default passive output target"
+    )
+    degree_targets: dict[OriginalNodeID, ROADMOutputTarget] = Field(
+        default_factory=dict,
+        description="Add and express targets by original egress ID",
+    )
+    path_losses: tuple[ROADMPathLoss, ...] = Field(
+        (), description="Total path loss overrides by ingress and egress degree"
     )
     blocked_channels: list[int] = Field(
         default_factory=list,
@@ -187,8 +319,8 @@ class ROADMConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_blocked_channels(self) -> "ROADMConfig":
-        """Reject duplicate or negative channel and slot indices."""
+    def validate_switching_paths(self) -> "ROADMConfig":
+        """Reject invalid block lists and duplicate degree-pair overrides."""
         if any(index < 0 for index in self.blocked_channels):
             msg = "ROADM blocked channel indices must be non-negative."
             raise ValueError(msg)
@@ -200,6 +332,13 @@ class ROADMConfig(BaseModel):
             raise ValueError(msg)
         if len(set(self.blocked_slots)) != len(self.blocked_slots):
             msg = "ROADM blocked slot indices must be unique."
+            raise ValueError(msg)
+        degree_pairs = {(path.from_degree, path.to_degree) for path in self.path_losses}
+        if len(degree_pairs) != len(self.path_losses):
+            msg = "ROADM path loss overrides must have unique ingress/egress pairs."
+            raise ValueError(msg)
+        if (None, None) in degree_pairs:
+            msg = "A ROADM path loss override requires an ingress or egress degree."
             raise ValueError(msg)
         return self
 

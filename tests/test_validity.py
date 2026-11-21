@@ -5,8 +5,9 @@ import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey
+from network_nlo_eval.models.base import MultiSpanOpticalPath
 from network_nlo_eval.models.pcfm import PCFMModel
-from network_nlo_eval.network.elements import FiberSpanConfig
+from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
 from network_nlo_eval.rwa.validity import (
     ChannelValidity,
     H3LinkValidityProvider,
@@ -94,3 +95,23 @@ def test_pcfm_provider_evaluates_and_reuses_only_matching_spectrum() -> None:
     assert provider.cache.misses == 2
     with pytest.raises(ValueError, match="shape"):
         provider((0, 1), fiber, None, np.ones(2), 80e3)
+
+
+def test_validity_cache_distinguishes_ordered_equipment_for_the_same_link() -> None:
+    short_fiber = FiberSpanConfig(length_km=30)
+    long_fiber = FiberSpanConfig(length_km=50)
+    model = PCFMModel(SpectrumGrid(2, 50e9, 193.1e12), long_fiber, 32e9)
+    provider = H3LinkValidityProvider(model)
+    power = np.array([1e-3, 2e-3])
+    edfa = EDFAConfig(noise_figure_db=np.array([5.0, 6.0]))
+    path = MultiSpanOpticalPath([short_fiber, long_fiber], [None, edfa])
+    reversed_path = MultiSpanOpticalPath([long_fiber, short_fiber], [edfa, None])
+
+    first = provider.evaluate_path((0, 1), path, power)
+    assert first.span_count == 2
+    assert provider.evaluate_path((0, 1), path, power.copy()) is first
+    reverse_order = provider.evaluate_path((0, 1), reversed_path, power)
+    assert reverse_order.fingerprint != first.fingerprint
+    assert provider.cache.hits == 1
+    assert provider.cache.misses == 2
+    assert provider.cache.invalidate((0, 1)) == 2

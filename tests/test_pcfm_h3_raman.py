@@ -5,7 +5,12 @@ import numpy as np
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
+from network_nlo_eval.core.types import NDArrayFloat
+from network_nlo_eval.models.base import (
+    MultiSpanOpticalPath,
+    PathQoTResult,
+    create_model,
+)
 from network_nlo_eval.models.pcfm_h3_raman import PCFH3RamanModel
 from network_nlo_eval.models.raman import C_LIGHT
 from network_nlo_eval.network.elements import (
@@ -103,4 +108,50 @@ def test_network_validity_policy_rejects_pump_signal_overlap() -> None:
         accepted, _ = validator.verify_allocation(request, [0, 1], 0, state)
     assert not accepted
     assert not validator.last_link_validity[(0, 1)].valid[0]
+    assert state.get_link_state(0, 1).noise_cache is None
+
+
+def test_installed_link_validity_reuses_propagation_and_checks_each_span(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    grid = SpectrumGrid(1, 50e9, 193.1e12)
+    fiber = FiberSpanConfig(length_km=20)
+    pump = RamanPumpConfig(wavelength_nm=C_LIGHT / 193.1e12 * 1e9, power_w=0.001)
+    graph: nx.DiGraph[int] = nx.DiGraph()
+    graph.add_edge(
+        0,
+        1,
+        spans=[
+            {"fiber": {"length_km": 20, "raman_pumps": [pump]}},
+            {"fiber": {"length_km": 30}, "edfa": {}},
+        ],
+    )
+    topology = NetworkTopology(graph, fiber, EDFAConfig(), ROADMConfig())
+    state = NetworkState(topology, grid)
+    model = create_model("pcfm_h3_raman", grid, fiber, 32e9, raman_steps=8)
+    assert isinstance(model, PCFH3RamanModel)
+    evaluate = model.evaluate_path
+    evaluation_count = 0
+
+    def evaluate_once(path: MultiSpanOpticalPath, power: NDArrayFloat) -> PathQoTResult:
+        nonlocal evaluation_count
+        evaluation_count += 1
+        return evaluate(path, power)
+
+    monkeypatch.setattr(model, "evaluate_path", evaluate_once)
+    validator = QoTValidator(
+        model,
+        topology,
+        grid,
+        validity_policy=LinkValidityPolicy(mode="reject"),
+        validity_provider=H3LinkValidityProvider(model),
+    )
+    request = ServiceRequest(0, 0, 1, 0, 1, 100, -200, 0.001)
+    with pytest.warns(RuntimeWarning, match="falls inside the occupied signal"):
+        accepted, _ = validator.verify_allocation(request, [0, 1], 0, state)
+    assert not accepted
+    assert evaluation_count == 1
+    validity = validator.last_link_validity[(0, 1)]
+    assert validity.span_count == 2
+    assert not validity.valid[0]
     assert state.get_link_state(0, 1).noise_cache is None

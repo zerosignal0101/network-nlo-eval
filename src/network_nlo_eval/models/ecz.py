@@ -44,7 +44,7 @@ from network_nlo_eval.models.route import apply_amplifier_and_roadm
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.flexgrid import ConnectionGeometry, FlexibleGrid
     from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayComplex, NDArrayFloat
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
@@ -604,7 +604,7 @@ class ECZCoherentModel(MultiBandISRSGN):
         grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections: Sequence[ConnectionSpec] | None = None,
+        connections: Sequence[ConnectionGeometry] | None = None,
         ode_accel: str = "matvec",
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = "symbol_rate",
@@ -621,7 +621,7 @@ class ECZCoherentModel(MultiBandISRSGN):
             Reference fiber configuration.
         symbol_rate_hz : float
             Symbol rate (Hz).
-        connections : Sequence[ConnectionSpec] | None
+        connections : Sequence[ConnectionSpec | CarrierGeometry] | None
             Flexible-grid connections.
         ode_accel : str
             Single-span acceleration mode.

@@ -243,6 +243,26 @@ class FlexibleGrid:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CarrierGeometry:
+    """Physical geometry of a carrier with a reserved slot interval."""
+
+    grid: FlexibleGrid
+    first_slot: int
+    n_slots: int
+    symbol_rate_hz: float
+
+    @property
+    def centre_hz(self) -> float:
+        """Return the midpoint of the reserved interval in Hz."""
+        return self.grid.centre_hz(self.first_slot, self.n_slots)
+
+    @property
+    def occupied_bandwidth_hz(self) -> float:
+        """Return the width of the reserved interval in Hz."""
+        return self.n_slots * self.grid.slot_width_hz
+
+
 @dataclass(frozen=True)
 class ConnectionSpec:
     """Describe one WDM connection and its physical allocation.
@@ -329,6 +349,9 @@ class ConnectionSpec:
     def is_occupied(self) -> bool:
         """Return whether the connection has nonzero launch power."""
         return self.launch_power_w > 0
+
+
+ConnectionGeometry = ConnectionSpec | CarrierGeometry
 
 
 class AllocatedLike(Protocol):

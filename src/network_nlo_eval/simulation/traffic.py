@@ -2,6 +2,7 @@
 
 # ruff: noqa: NPY002  # Preserve the reference implementation's seeded sequences.
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import cast
@@ -69,6 +70,9 @@ class ServiceRequest:
         Total dual-polarization launch power in watts.
     n_slots : int, optional
         Number of contiguous slots requested; defaults to one.
+    symbol_rate_hz : float or None, optional
+        Carrier baud rate. Flexible allocations without a rate use the model's
+        default, limited to the reserved slot width.
     """
 
     service_id: int  # Unique service ID.
@@ -86,15 +90,21 @@ class ServiceRequest:
     # The caller derives the slot count from the rate and grid when needed.
 
     n_slots: int = 1
+    symbol_rate_hz: float | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Require a positive integer slot count."""
+        """Require a positive slot count and optional baud rate."""
         if (
             isinstance(cast("object", self.n_slots), bool)
             or not isinstance(cast("object", self.n_slots), int)
             or self.n_slots < 1
         ):
             msg = f"n_slots must be a positive integer, got {self.n_slots!r}."
+            raise ValueError(msg)
+        if self.symbol_rate_hz is not None and (
+            not math.isfinite(self.symbol_rate_hz) or self.symbol_rate_hz <= 0
+        ):
+            msg = "symbol_rate_hz must be finite and positive."
             raise ValueError(msg)
 
 
@@ -227,6 +237,7 @@ def generate_services(
 
     # Draw the first arrival time.
     current_time += np.random.exponential(1.0 / lambda_rate)
+    modulation_bits = bits_per_symbol(modulation) if slot_width_hz is not None else 0
 
     for service_id in range(service_num):
         # Choose a source-destination pair.
@@ -285,6 +296,9 @@ def generate_services(
             snr_requirement_db=snr_requirement_db,
             launch_power_w=launch_power_w,
             n_slots=n_slots,
+            symbol_rate_hz=bit_rate_gbps * 1e9 / modulation_bits
+            if modulation_bits
+            else None,
         )
         services.append(service)
 

@@ -67,6 +67,68 @@ The simulation command includes an example topology. Provide `--topology-file`
 to use a NetworkX node-link JSON topology of your own. Use `--help` on each
 command for its options, including flexible-grid and launch-power settings.
 
+Use a NetworkX `DiGraph` to model independent fiber, amplifier, and spectrum
+state in each direction. An undirected `Graph` shares these resources between
+directions. Use one edge per ordered endpoint pair.
+
+For an engineered link, set the directed edge's `spans` attribute to an ordered
+list of `{"fiber": {"length_km": ...}, "edfa": ...}` configurations. Each entry
+represents one installed span. Omit `edfa` for a passive span. The destination
+ROADM is applied after the last span. This form uses the fiber lengths in the
+list. `H3LinkValidityProvider` evaluates the installed span chain when link
+validity is enabled.
+
+Set an EDFA's `max_output_signal_power_w` to model gain compression under WDM
+loading. The limit applies to aggregate signal power across both polarizations.
+The optional `compression_curve` adds gain tilt and a noise-figure penalty at
+the compressed operating point. Its entries specify `backoff_db`,
+`tilt_db_per_thz`, and `noise_figure_penalty_db`. Start at zero backoff and zero
+corrections, then list points in increasing backoff order. The evaluator
+interpolates corrections and holds the last point beyond the curve. It
+normalizes the tilted gain to preserve total signal output and calculates ASE
+from the resulting per-channel gain and noise figure.
+
+An EDFA can restrict propagation with `passbands_hz`, a list of
+`[lower_hz, upper_hz]` intervals. A channel passes when its full modeled
+bandwidth fits within one interval. All passing channels share the amplifier's
+gain compression and power limit. `input_voa_db` reduces the load before
+amplification. `output_voa_db` attenuates the signal and noise after
+amplification, so the power cap applies upstream of that loss. Automatic gain
+compensates the fiber span loss and leaves both VOA losses in the link budget.
+
+Under a node's `roadm` settings, `path_losses` can specify total switching loss
+by ingress and egress. For example,
+`{"from_degree": 101, "to_degree": 301, "loss_db": 7}` selects the path from
+neighbor 101 to neighbor 301. Set `to_degree` to `null` to specify loss for a
+local drop. Degrees use original topology IDs. `degree_targets` maps an outgoing
+degree to a target, such as `{"301": {"power_w": 0.0005}}`. `output_target`
+supplies the node default. A target specifies either `power_w` per channel or
+`psd_w_per_hz` over the modeled channel bandwidth. It caps the available power
+after switching loss by passive attenuation. The statistical evaluators apply
+the target to signal and noise together. The existing booster applies on paths
+without a target when `equalize_output_power` is enabled.
+
+With `simulate --slot-width-ghz 12.5`, each service reserves an exact slot
+interval. Its midpoint sets the carrier frequency. For Python traffic inputs,
+set `ServiceRequest.symbol_rate_hz` to the carrier's baud rate. The model's
+`channel_bandwidth_source` selects baud rate or reserved slot width for its
+rectangular bandwidth. Distinct carriers can share the same nominal channel
+index when their slot intervals are disjoint.
+
+Per-carrier admission uses the actual load on each fiber. Through traffic
+carries forward its signal and noise, and each added carrier starts at its
+transmitter power. Set `from_degree` to `null` and specify `to_degree` to
+configure a local add-port loss. The egress target applies to both add and
+express traffic. QoT checks include carriers affected by downstream load
+changes.
+
+Uniform per-carrier routes use the model's full-route calculation. With mixed
+loads, admission uses the model within each physical link and accumulates noise
+powers across links. Python callers using ECZ can construct `QoTValidator`
+directly. Other models can supply `carrier_model_factory`, which receives a
+frequency-ordered tuple of `CarrierGeometry` objects and the slots per nominal
+channel.
+
 ## Development
 
 Run the focused test suite with `python -m pytest`. The project uses NumPy-style

@@ -49,10 +49,11 @@ def test_allocation_and_release_update_each_link_and_invalidate_cache() -> None:
     assert state.get_allocated_service(7) is service
     assert link.launch_power_profile_w[0] == 0.001
     np.testing.assert_array_equal(
-        state.occupied_slots_on_path([0, 1, 2]), [True] * 4 + [False] * 8
+        state.occupied_slots_on_path([0, 1, 2]),
+        [False, True, True] + [False] * 9,
     )
     assert all(
-        state.get_link_state(u, v).slot_service_ids[0] == 7 for u, v in [(0, 1), (1, 2)]
+        state.get_link_state(u, v).slot_service_ids[1] == 7 for u, v in [(0, 1), (1, 2)]
     )
     state.release_service(service)
     assert state.get_allocated_service(7) is None
@@ -66,11 +67,37 @@ def test_slot_collision_and_boundaries() -> None:
     link = state.get_link_state(0, 1)
     link.allocate_slot_range(1, 1, 0.001, 1)
     with pytest.raises(ValueError, match="already occupied"):
-        link.allocate_slot_range(3, 1, 0.001, 2)
+        link.allocate_slot_range(1, 2, 0.001, 2)
     with pytest.raises(ValueError, match="out of bounds"):
         link.allocate_slot_range(11, 2, 0.001, 2)
     with pytest.raises(ValueError, match="at least two nodes"):
         state.occupied_slots_on_path([0])
+
+
+def test_conflict_on_later_hop_preserves_existing_allocation() -> None:
+    state = make_state()
+    old = make_service(first_slot=1)
+    state.allocate_service(old)
+    state.get_link_state(1, 2).allocate_slot_range(4, 2, 0.001, 8)
+
+    with pytest.raises(ValueError, match="already occupied"):
+        state.allocate_service(make_service(first_slot=4))
+
+    assert state.get_allocated_service(old.service_id) is old
+    assert state.get_link_state(0, 1).slot_service_ids.tolist() == [
+        -1,
+        7,
+        7,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+    ]
 
 
 def test_channel_allocation_copies_input_arrays() -> None:

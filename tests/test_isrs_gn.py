@@ -16,6 +16,7 @@ from network_nlo_eval.network.elements import (
     FiberSpanConfig,
     RamanPumpConfig,
     ROADMConfig,
+    ROADMOutputTarget,
 )
 
 
@@ -165,11 +166,41 @@ def test_flexible_bandwidth_blocking_and_fiber_cache() -> None:
     assert child.connections == connections
 
 
-def test_cached_and_batched_models_match_pairwise() -> None:
+@pytest.mark.parametrize(
+    "edfa",
+    [
+        EDFAConfig(target_gain_db=17, noise_figure_db=5.5),
+        EDFAConfig(
+            target_gain_db=17, noise_figure_db=5.5, max_output_signal_power_w=0.025
+        ),
+        EDFAConfig.model_validate(
+            {
+                "target_gain_db": 17,
+                "noise_figure_db": 5.5,
+                "max_output_signal_power_w": 0.025,
+                "compression_curve": [
+                    {"backoff_db": 0},
+                    {
+                        "backoff_db": 5,
+                        "noise_figure_penalty_db": 1,
+                        "tilt_db_per_thz": -0.5,
+                    },
+                ],
+            }
+        ),
+        EDFAConfig(
+            target_gain_db=17,
+            passbands_hz=((191.9e12, 192.3e12), (193.2e12, 194.3e12)),
+            input_voa_db=0.5,
+            output_voa_db=2,
+            max_output_signal_power_w=0.025,
+        ),
+    ],
+)
+def test_cached_and_batched_models_match_pairwise(edfa: EDFAConfig) -> None:
     fiber = FiberSpanConfig(length_km=80)
     grid = SpectrumGrid(48, 50e9, 193.1e12)
     power = np.full(48, 1e-3)
-    edfa = EDFAConfig(target_gain_db=17, noise_figure_db=5.5)
     off = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="off")
     cached = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="cached")
     matvec = MultiBandISRSGN(grid, fiber, 32e9, ode_accel="matvec")
@@ -180,12 +211,36 @@ def test_cached_and_batched_models_match_pairwise() -> None:
         array[:] = -1
     again = cached._calc_span_noise_and_power(power, 80e3, edfa)
     batch = matvec.calc_span_noise_and_power_batch(
-        np.stack([power, np.zeros(48)]), 80e3, edfa
+        np.stack([power, np.zeros(48), power / 4]), 80e3, edfa
     )
-    for expected, actual, accelerated in zip(reference, again, batch, strict=True):
+    sparse_reference = off._calc_span_noise_and_power(power / 4, 80e3, edfa)
+    for expected, actual, accelerated, sparse in zip(
+        reference, again, batch, sparse_reference, strict=True
+    ):
         np.testing.assert_array_equal(actual, expected)
         np.testing.assert_allclose(accelerated[0], expected, rtol=1e-12, atol=0)
         np.testing.assert_array_equal(accelerated[1], np.zeros(48))
+        np.testing.assert_allclose(accelerated[2], sparse, rtol=1e-12, atol=0)
+    if (output_limit := edfa.max_output_signal_power_w) is not None:
+        stage_limit = output_limit * 10 ** (-edfa.output_voa_db / 10)
+        assert batch[0][0].sum() == pytest.approx(stage_limit)
+        assert batch[0][2].sum() < stage_limit
     assert matvec._p1_xpm_matrices is not None
     with pytest.raises(ValueError, match="requires ode_accel"):
         off.calc_span_noise_and_power_batch(power[None, :], 80e3)
+
+
+def test_batched_ecz_applies_passive_roadm_psd_target_per_channel() -> None:
+    fiber = FiberSpanConfig(length_km=80)
+    model = MultiBandISRSGN(SpectrumGrid(2, 50e9, 193.1e12), fiber, 32e9)
+    edfa = EDFAConfig()
+    roadm = ROADMConfig(
+        insertion_loss_db=10, output_target=ROADMOutputTarget(psd_w_per_hz=8e-15)
+    )
+    power = np.array([[4e-3, 1e-3], [2.5e-4, 0]])
+    batch = model.calc_span_noise_and_power_batch(power, 80e3, edfa, roadm)
+    np.testing.assert_allclose(batch[0], [[2.56e-4, 1e-4], [2.5e-5, 0]])
+    for index, launch in enumerate(power):
+        serial = model._calc_span_noise_and_power(launch, 80e3, edfa, roadm)
+        for row, expected in zip(batch, serial, strict=True):
+            np.testing.assert_allclose(row[index], expected, rtol=1e-12, atol=0)

@@ -2654,7 +2654,7 @@ class CGNModel(RouteModel):
                 for _, power, _ in spans[1:]
             )
             balanced = balanced and not any(
-                roadm.filtering_penalty_db != 0
+                roadm is not None and roadm.filtering_penalty_db != 0
                 for roadm in (optical_path.roadm_configs or [])
             )
             if balanced:

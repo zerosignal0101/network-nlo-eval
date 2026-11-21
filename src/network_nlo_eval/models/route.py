@@ -27,20 +27,23 @@ from network_nlo_eval.models.base import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from network_nlo_eval.core.flexgrid import ConnectionSpec, FlexibleGrid
+    from network_nlo_eval.core.flexgrid import ConnectionGeometry, FlexibleGrid
     from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.network.elements import (
         EDFAConfig,
         FiberSpanConfig,
         ROADMConfig,
+        ROADMOutputTarget,
     )
 
 __all__ = [
     "H_PLANCK",
     "accumulate_route",
     "apply_amplifier_and_roadm",
+    "apply_edfa",
     "resolve_noise_figure",
+    "roadm_target_transfer",
 ]
 
 
@@ -148,6 +151,140 @@ def _validate_ase_polarization_scale(ase_polarization_scale: float) -> float:
     return scale
 
 
+def _compress_edfa_output(
+    config: EDFAConfig,
+    gain: NDArrayFloat,
+    power_out: NDArrayFloat,
+    nf_lin: NDArrayFloat,
+    f_abs_hz: NDArrayFloat,
+    limit: float,
+) -> tuple[NDArrayFloat, NDArrayFloat]:
+    """Compress each spectrum's gain in place and return its output power and NF."""
+    output_load = np.sum(power_out, axis=-1, keepdims=True)
+    backoff = limit / np.maximum(output_load, limit)
+    gain *= backoff
+    power_out *= backoff
+
+    curve = config.compression_curve
+    if curve is not None and np.any(backoff < 1.0):
+        backoff_db = -10.0 * np.log10(backoff)
+        points = [point.backoff_db for point in curve]
+        nf_penalties = np.interp(
+            backoff_db, points, [point.noise_figure_penalty_db for point in curve]
+        )
+        nf_lin = nf_lin * 10 ** (nf_penalties / 10)
+        tilt = np.interp(backoff_db, points, [point.tilt_db_per_thz for point in curve])
+        if np.any(tilt):
+            offset_thz = (f_abs_hz - f_abs_hz[:1]) * 1e-12
+            relative_gain = 10 ** (tilt * offset_thz / 10)
+            tilted_power = power_out * relative_gain
+            tilted_load = np.sum(tilted_power, axis=-1, keepdims=True)
+            compressed_load = np.minimum(output_load, limit)
+            normalization = np.divide(
+                compressed_load,
+                tilted_load,
+                out=np.ones_like(compressed_load),
+                where=tilted_load > 0,
+            )
+            gain *= relative_gain * normalization
+            power_out = tilted_power * normalization
+    return power_out, nf_lin
+
+
+def apply_edfa(
+    config: EDFAConfig,
+    power_in_w: NDArrayFloat,
+    power_out_fiber_w: NDArrayFloat,
+    nf_lin: NDArrayFloat,
+    f_abs_hz: NDArrayFloat,
+    bandwidth_hz: NDArrayFloat,
+    *,
+    ase_polarization_scale: float = 1.0,
+    input_ase_w: NDArrayFloat | None = None,
+) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat]:
+    """Return output signal, span power transfer, and output ASE.
+
+    The last axis holds channels. Channels must fit within a passband over
+    their full modeled bandwidth. The operating point uses the passing
+    channels after input VOA loss. Output VOA loss applies to signal and all
+    noise after amplification. The gain setting compensates fiber loss only
+    when no fixed gain is configured.
+    """
+    compensation_gain = np.divide(
+        power_in_w,
+        power_out_fiber_w,
+        out=np.ones_like(power_in_w),
+        where=power_out_fiber_w > 0,
+    )
+    if config.target_gain_db is None:
+        gain = compensation_gain.copy()
+    else:
+        gain = np.full_like(compensation_gain, 10 ** (config.target_gain_db / 10))
+    if config.gain_ripple_db is not None:
+        ripple = np.asarray(config.gain_ripple_db, dtype=float)
+        if ripple.shape != compensation_gain.shape[-1:]:
+            msg = "EDFA gain-ripple array must contain one value per channel."
+            raise ValueError(msg)
+        gain *= 10 ** (ripple / 10)
+
+    if config.passbands_hz:
+        half_width = bandwidth_hz / 2
+        lower_edges, upper_edges = f_abs_hz - half_width, f_abs_hz + half_width
+        passing = np.zeros_like(f_abs_hz, dtype=bool)
+        for lower, upper in config.passbands_hz:
+            passing |= (lower_edges >= lower) & (upper_edges <= upper)
+        gain[..., ~passing] = 0
+
+    input_voa_db = config.input_voa_db
+    input_transmission = 10 ** (-input_voa_db / 10) if input_voa_db else 1.0
+    power_out = power_out_fiber_w * gain
+    if input_voa_db:
+        power_out *= input_transmission
+    if (limit := config.max_output_signal_power_w) is not None:
+        power_out, nf_lin = _compress_edfa_output(
+            config, gain, power_out, nf_lin, f_abs_hz, limit * ase_polarization_scale
+        )
+
+    ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
+    if ase_polarization_scale != 1.0:
+        ase *= ase_polarization_scale
+    if input_voa_db:
+        gain *= input_transmission
+    if input_ase_w is not None:
+        ase += input_ase_w * gain
+    if config.output_voa_db:
+        output_transmission = 10 ** (-config.output_voa_db / 10)
+        power_out *= output_transmission
+        gain *= output_transmission
+        ase *= output_transmission
+    ase[power_in_w <= 0] = 0
+    gain /= compensation_gain
+    return power_out, gain, ase
+
+
+def roadm_target_transfer(
+    target: ROADMOutputTarget,
+    signal_w: NDArrayFloat,
+    bandwidth_hz: NDArrayFloat,
+    loss: float,
+    ase_polarization_scale: float,
+) -> NDArrayFloat:
+    """Return passive power transfer with a per-channel or PSD output limit."""
+    limit: float | NDArrayFloat
+    if target.power_w is not None:
+        limit = target.power_w * ase_polarization_scale
+    else:
+        assert target.psd_w_per_hz is not None
+        limit = (target.psd_w_per_hz * ase_polarization_scale) * bandwidth_hz
+    transmission = 1.0 / loss
+    return np.divide(
+        limit,
+        signal_w,
+        out=np.full_like(signal_w, transmission),
+        where=signal_w * transmission > limit,
+    )
+
+
 def apply_amplifier_and_roadm(
     *,
     power_in_w: NDArrayFloat,
@@ -176,11 +313,11 @@ def apply_amplifier_and_roadm(
     nf_lin, f_abs_hz, bandwidth_hz : numpy.ndarray
         Per-channel linear noise figure, absolute frequency, and bandwidth.
     input_ase_w : numpy.ndarray or None, optional
-        Existing ASE entering the amplifier in the target power convention.
-        It is amplified but never rescaled by ``ase_polarization_scale``.
+        Existing ASE at the amplifier stage input before any input VOA,
+        in the target power convention.
     ase_polarization_scale : float, optional
-        Scale for newly generated EDFA ASE: 1 for total dual-polarization
-        power and 0.5 for per-polarization power.
+        Scale for newly generated EDFA ASE and the total signal-power limit:
+        1 for total dual-polarization power and 0.5 for per-polarization power.
     fwm_is_additive : bool, optional
         Propagate FWM separately only when the model has excluded it from XPM.
 
@@ -197,19 +334,13 @@ def apply_amplifier_and_roadm(
     Notes
     -----
     Kernels return NLI normalized to exact per-channel span-loss compensation.
-    The output transfer is therefore ``gain / compensation_gain`` for powers
-    and its square root for amplitudes. This is the ``Gamma * p_CUT(L)``
-    factor in the PCFM paper. Without an amplifier it reduces to the fiber
-    signal transfer. ROADM loss then attenuates signal and noise together.
+    The output transfer is the net amplifier-stage gain divided by the
+    compensation gain for powers and its square root for amplitudes. This
+    includes both VOAs and band filtering. With a passive span it reduces to
+    the fiber signal transfer. ROADM loss then attenuates signal and noise.
     """
     ase_polarization_scale = _validate_ase_polarization_scale(ase_polarization_scale)
     power_out_fiber = fiber_output.power_out_w
-    compensation_gain = np.divide(
-        power_in_w,
-        power_out_fiber,
-        out=np.ones_like(power_in_w),
-        where=power_out_fiber > 0,
-    )
     spm = fiber_output.spm_noise_w
     xpm = fiber_output.xpm_noise_w
     amp_spm = getattr(fiber_output, "nli_amplitude_spm", None)
@@ -237,26 +368,16 @@ def apply_amplifier_and_roadm(
         )
         ase[power_in_w <= 0] = 0
     else:
-        if edfa_config.target_gain_db is None:
-            gain = compensation_gain.copy()
-        else:
-            gain = np.full_like(power_in_w, 10 ** (edfa_config.target_gain_db / 10))
-        if edfa_config.gain_ripple_db is not None:
-            ripple = np.asarray(edfa_config.gain_ripple_db, dtype=float)
-            if ripple.shape != bandwidth_hz.shape:
-                msg = "EDFA gain-ripple array must contain one value per channel."
-                raise ValueError(msg)
-            gain *= 10 ** (ripple / 10)
-        power_out = power_out_fiber * gain
-        nli_transfer = gain / compensation_gain
-        ase = nf_lin * H_PLANCK * f_abs_hz * bandwidth_hz * np.maximum(gain - 1, 0)
-        if ase_polarization_scale != 1.0:
-            # Avoid multiplication in the default total-power convention.
-            ase = ase * ase_polarization_scale
-        if input_ase_w is not None:
-            # Input ASE already uses the caller's convention; do not rescale it.
-            ase = ase + np.asarray(input_ase_w, dtype=np.float64) * gain
-        ase[power_in_w <= 0] = 0
+        power_out, nli_transfer, ase = apply_edfa(
+            edfa_config,
+            power_in_w,
+            power_out_fiber,
+            nf_lin,
+            f_abs_hz,
+            bandwidth_hz,
+            ase_polarization_scale=ase_polarization_scale,
+            input_ase_w=input_ase_w,
+        )
 
     if not np.all(nli_transfer == 1.0):
         spm = spm * nli_transfer
@@ -270,14 +391,23 @@ def apply_amplifier_and_roadm(
 
     if roadm_config is not None:
         loss_lin = 10 ** (roadm_config.path_loss_db() / 10)
-        power_out /= loss_lin
-        spm /= loss_lin
-        xpm /= loss_lin
-        ase /= loss_lin
+        roadm_transfer: NDArrayFloat | float = 1.0 / loss_lin
+        if roadm_config.output_target is not None:
+            roadm_transfer = roadm_target_transfer(
+                roadm_config.output_target,
+                power_out,
+                bandwidth_hz,
+                loss_lin,
+                ase_polarization_scale,
+            )
+        power_out *= roadm_transfer
+        spm *= roadm_transfer
+        xpm *= roadm_transfer
+        ase *= roadm_transfer
         if fwm_extra is not None:
-            fwm_extra /= loss_lin
+            fwm_extra *= roadm_transfer
         if amp_spm is not None:
-            amp_root = np.sqrt(1.0 / loss_lin)
+            amp_root = np.sqrt(roadm_transfer)
             amp_spm = amp_spm * amp_root
             amp_xpm = amp_xpm * amp_root
 
@@ -450,37 +580,14 @@ def accumulate_route(
         )
         loss_db = roadm.path_loss_db(operation)
         loss = 10 ** (loss_db / 10)
-        power /= loss
-        if coherent:
-            amp_root = np.sqrt(1.0 / loss)
-            amp_spm *= amp_root
-            amp_xpm *= amp_root
-        else:
-            total_spm /= loss
-            total_xpm /= loss
-        total_ase /= loss
-        if fwm_present:
-            total_fwm /= loss
-        if roadm.equalize_output_power:
-            gain = loss
-            power *= gain
-            if coherent:
-                amp_root = np.sqrt(gain)
-                amp_spm *= amp_root
-                amp_xpm *= amp_root
-            else:
-                total_spm *= gain
-                total_xpm *= gain
-            total_ase *= gain
-            if fwm_present:
-                total_fwm *= gain
+        if roadm.equalize_output_power and roadm.output_target is None:
             nf = 10 ** (roadm.booster_noise_figure_db / 10)
             booster_ase = (
                 nf
                 * H_PLANCK
                 * model.f_abs_hz
                 * model.channel_bandwidth_hz_channels
-                * (gain - 1)
+                * (loss - 1)
             )
             if ase_polarization_scale != 1.0:
                 # Scale only newly generated booster ASE; accumulated ASE
@@ -488,6 +595,27 @@ def accumulate_route(
                 booster_ase = booster_ase * ase_polarization_scale
             booster_ase[power <= 0] = 0
             total_ase += booster_ase
+        else:
+            roadm_transfer: NDArrayFloat | float = 1.0 / loss
+            if roadm.output_target is not None:
+                roadm_transfer = roadm_target_transfer(
+                    roadm.output_target,
+                    power,
+                    model.channel_bandwidth_hz_channels,
+                    loss,
+                    ase_polarization_scale,
+                )
+            power *= roadm_transfer
+            total_ase *= roadm_transfer
+            if coherent:
+                amp_root = np.sqrt(roadm_transfer)
+                amp_spm *= amp_root
+                amp_xpm *= amp_root
+            else:
+                total_spm *= roadm_transfer
+                total_xpm *= roadm_transfer
+            if fwm_present:
+                total_fwm *= roadm_transfer
         penalty = 10 ** (roadm.filtering_penalty_db / 10)
         if coherent:
             amp_root = np.sqrt(penalty)
@@ -550,7 +678,7 @@ class RouteModel:
         grid: SpectrumGrid | FlexibleGrid,
         ref_fiber_config: FiberSpanConfig,
         symbol_rate_hz: float = 50e9,
-        connections: Sequence[ConnectionSpec] | None = None,
+        connections: Sequence[ConnectionGeometry] | None = None,
         slots_per_channel: int | None = None,
         channel_bandwidth_source: str = "symbol_rate",
         power_width_mode: str = "fixed_power",
@@ -565,7 +693,7 @@ class RouteModel:
             Reference fiber configuration.
         symbol_rate_hz : float, optional
             Symbol rate in Hz.
-        connections : sequence of ConnectionSpec or None, optional
+        connections : sequence of ConnectionSpec or CarrierGeometry or None, optional
             Connections for flexible-grid mode.
         slots_per_channel : int or None, optional
             Slot count for expanding legacy ROADM channel blocks.

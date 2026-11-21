@@ -210,12 +210,11 @@ a computational choice, not a measured winner or an accuracy certificate.
 `pcfm_auto.kernel_for` is intentionally unavailable because a kernel depends on
 the selected delegate. Direct `span_step` dispatches a standalone span.
 
-In network link caches, use `QoTValidator(..., coherent_assembly=True)` to
-evaluate all spans of each link together. Its default power assembly evaluates
-separate one-span paths. The cached service calculation continues to use its
-existing between-link approximations and its additional `total_spans**0.05` SCI
-penalty; use `evaluate_path` for the physical span-pair calculation across a
-route without that service-level heuristic.
+Use `QoTValidator(..., coherent_assembly=True)` for route-wide span pairs when
+the same carriers and nominal launch powers occupy every link. For varying
+loads, the validator evaluates all spans of each link together and combines
+their noise powers across the route. Default link assembly uses separate
+one-span evaluations on implicitly split, gain-compensated links.
 
 ## Validation and comparison scope
 

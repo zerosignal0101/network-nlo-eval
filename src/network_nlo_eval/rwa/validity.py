@@ -12,9 +12,9 @@ without changing physical SNR. Soft margin is separate from hard validity and
 from the uncertainty margin. Link reports own immutable copies of their arrays;
 path reports combine validity across links and add margins in dB.
 
-The bounded LRU cache keys reports by link, exact occupied-power fingerprint
-and span length. This prevents reuse after an occupancy or power change; the
-provider fingerprints power in the model's convention after conversion.
+The bounded LRU cache keys reports by link, exact occupied-power fingerprint,
+and span length. The provider also includes the ordered equipment and uses
+power in the model's convention.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import warnings
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from network_nlo_eval.core.types import LinkKey, NDArrayBool, NDArrayFloat
+    from network_nlo_eval.models.base import PathQoTResult
 
 __all__ = [
     "TILT_SOFT_MARGIN_FULL_DB",
@@ -57,6 +58,7 @@ __all__ = [
     "LinkValidityCache",
     "LinkValidityPolicy",
     "LinkValidityProvider",
+    "OpticalPathValidityProvider",
     "RamanResolutionAction",
     "link_optical_path",
     "occupancy_fingerprint",
@@ -459,7 +461,9 @@ class LinkValidityPolicy:
         )
 
 
-def occupancy_fingerprint(power_profile_w: NDArrayFloat, span_length_m: float) -> str:
+def occupancy_fingerprint(
+    power_profile_w: NDArrayFloat, span_length_m: float, *, equipment_key: bytes = b""
+) -> str:
     """Hash the exact power-vector bit patterns and span length.
 
     The 16-byte BLAKE2b digest distinguishes signed zero and any change in
@@ -471,6 +475,8 @@ def occupancy_fingerprint(power_profile_w: NDArrayFloat, span_length_m: float) -
         Per-channel launch power (W).
     span_length_m : float
         Span length (m).
+    equipment_key : bytes, optional
+        Ordered equipment identifier.
 
     Returns
     -------
@@ -490,6 +496,7 @@ def occupancy_fingerprint(power_profile_w: NDArrayFloat, span_length_m: float) -
     digest.update(np.asarray(values.shape, dtype=np.int64).tobytes())
     digest.update(np.ascontiguousarray(values).tobytes())
     digest.update(np.float64(span_length_m).tobytes())
+    digest.update(equipment_key)
     return digest.hexdigest()
 
 
@@ -1112,6 +1119,27 @@ class LinkValidityProvider(Protocol):
         ...
 
 
+@runtime_checkable
+class OpticalPathValidityProvider(LinkValidityProvider, Protocol):
+    """Validity provider that can inspect an entire installed link."""
+
+    @property
+    def model(self) -> KernelQoTModel:
+        """Return the model used to compute the validity budget."""
+        ...
+
+    def evaluate_path(
+        self,
+        link_key: LinkKey,
+        optical_path: MultiSpanOpticalPath,
+        power_profile_w: NDArrayFloat,
+        *,
+        result: PathQoTResult | None = None,
+    ) -> LinkValidity:
+        """Evaluate validity, optionally reusing a fresh result from this model."""
+        ...
+
+
 @dataclass
 class LinkValidityCache:
     """Bounded LRU cache for link validity reports.
@@ -1152,7 +1180,11 @@ class LinkValidityCache:
 
     @staticmethod
     def key(
-        link_key: LinkKey, power_profile_w: NDArrayFloat, span_length_m: float
+        link_key: LinkKey,
+        power_profile_w: NDArrayFloat,
+        span_length_m: float,
+        *,
+        equipment_key: bytes = b"",
     ) -> tuple[LinkKey, str, int]:
         """Build the link, spectrum fingerprint and rounded span-length cache key.
 
@@ -1164,6 +1196,8 @@ class LinkValidityCache:
             Per-channel launch power (W).
         span_length_m : float
             Span length (m).
+        equipment_key : bytes, optional
+            Ordered equipment identifier.
 
         Returns
         -------
@@ -1172,12 +1206,19 @@ class LinkValidityCache:
         """
         return (
             link_key,
-            occupancy_fingerprint(power_profile_w, span_length_m),
+            occupancy_fingerprint(
+                power_profile_w, span_length_m, equipment_key=equipment_key
+            ),
             round(span_length_m * 1e6),
         )
 
     def get(
-        self, link_key: LinkKey, power_profile_w: NDArrayFloat, span_length_m: float
+        self,
+        link_key: LinkKey,
+        power_profile_w: NDArrayFloat,
+        span_length_m: float,
+        *,
+        equipment_key: bytes = b"",
     ) -> LinkValidity | None:
         """Look up a link state and update hit or miss counters.
 
@@ -1189,13 +1230,17 @@ class LinkValidityCache:
             Per-channel launch power (W).
         span_length_m : float
             Span length (m).
+        equipment_key : bytes, optional
+            Ordered equipment identifier.
 
         Returns
         -------
         LinkValidity | None
             Cached report, or None on a miss.
         """
-        key = self.key(link_key, power_profile_w, span_length_m)
+        key = self.key(
+            link_key, power_profile_w, span_length_m, equipment_key=equipment_key
+        )
         cached = self._entries.get(key)
         if cached is None:
             self.misses += 1
@@ -1210,6 +1255,8 @@ class LinkValidityCache:
         power_profile_w: NDArrayFloat,
         span_length_m: float,
         validity: LinkValidity,
+        *,
+        equipment_key: bytes = b"",
     ) -> None:
         """Store a report and evict least-recently-used entries when full.
 
@@ -1223,8 +1270,12 @@ class LinkValidityCache:
             Span length (m).
         validity : LinkValidity
             Link report to cache.
+        equipment_key : bytes, optional
+            Ordered equipment identifier.
         """
-        key = self.key(link_key, power_profile_w, span_length_m)
+        key = self.key(
+            link_key, power_profile_w, span_length_m, equipment_key=equipment_key
+        )
         self._entries[key] = validity
         self._entries.move_to_end(key)
         while len(self._entries) > self.max_entries:
@@ -1291,7 +1342,9 @@ def link_optical_path(
     if float(fiber_config.length_km) <= 0.0:
         msg = f"fiber length must be positive, got {fiber_config.length_km}."
         raise ValueError(msg)
-    fiber = fiber_config.model_copy(update={"max_span_length_km": span_km})
+    fiber = fiber_config
+    if fiber.max_span_length_km != span_km:
+        fiber = fiber.model_copy(update={"max_span_length_km": span_km})
     default_edfa = EDFAConfig(
         target_gain_db=None, noise_figure_db=5.0, gain_ripple_db=None
     )
@@ -1401,6 +1454,26 @@ class H3LinkValidityProvider:
         ValueError
             If an input shape or configuration value is invalid.
         """
+        return self.evaluate_path(
+            link_key,
+            link_optical_path(fiber_config, edfa_config, span_length_m),
+            power_profile_w,
+        )
+
+    def evaluate_path(
+        self,
+        link_key: LinkKey,
+        optical_path: MultiSpanOpticalPath,
+        power_profile_w: NDArrayFloat,
+        *,
+        result: PathQoTResult | None = None,
+    ) -> LinkValidity:
+        """Report validity for the ordered span chain.
+
+        A supplied result must be from the immediately preceding propagation
+        of this chain by this model. The error budget reads that propagation's
+        span diagnostics.
+        """
         power = np.asarray(power_profile_w, dtype=np.float64)
         if power.shape != (self.model.n_nodes,):
             msg = f"power_profile_w must have shape ({self.model.n_nodes},), got {power.shape}."
@@ -1409,20 +1482,40 @@ class H3LinkValidityProvider:
         power_model = to_convention(
             power, self.input_power_convention, self.model_power_convention
         )
-        cached = self.cache.get(link_key, power_model, span_length_m)
+        span_length_m = (
+            sum(fiber.length_km for fiber in optical_path.fiber_configs) * 1e3
+        )
+        equipment_key = b"\n".join(
+            b"null"
+            if config is None
+            else config.model_dump_json(fallback=np.ndarray.tolist).encode()
+            for configs in (
+                optical_path.fiber_configs,
+                optical_path.edfa_configs,
+                optical_path.roadm_configs or (),
+            )
+            for config in configs
+        )
+        cached = self.cache.get(
+            link_key, power_model, span_length_m, equipment_key=equipment_key
+        )
         if cached is not None:
             return cached
 
-        path = link_optical_path(fiber_config, edfa_config, span_length_m)
-        result = self.model.evaluate_path(path, power_model)
+        if result is None or self.input_power_convention != self.model_power_convention:
+            result = self.model.evaluate_path(optical_path, power_model)
         budget = estimate_h3_error_budget(
-            self.model, path, power_model, result, config=self.config
+            self.model, optical_path, power_model, result, config=self.config
         )
         validity = LinkValidity.from_budget(
             budget,
             link_key=link_key,
-            fingerprint=occupancy_fingerprint(power_model, span_length_m),
+            fingerprint=occupancy_fingerprint(
+                power_model, span_length_m, equipment_key=equipment_key
+            ),
             span_count=result.span_count,
         )
-        self.cache.put(link_key, power_model, span_length_m, validity)
+        self.cache.put(
+            link_key, power_model, span_length_m, validity, equipment_key=equipment_key
+        )
         return validity

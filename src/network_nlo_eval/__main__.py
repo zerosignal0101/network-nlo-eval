@@ -4,6 +4,7 @@
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 import networkx as nx
@@ -28,6 +29,10 @@ from network_nlo_eval.rwa.qot_checker import BaseRWAAllocator, QoTValidator
 from network_nlo_eval.simulation.engine import SimulatorEngine
 from network_nlo_eval.simulation.reporter import MetricsCollector
 from network_nlo_eval.simulation.traffic import generate_services
+
+if TYPE_CHECKING:
+    from network_nlo_eval.core.flexgrid import CarrierGeometry
+    from network_nlo_eval.models.base import QoTModel
 
 
 @click.group()
@@ -131,10 +136,9 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
     is_flag=True,
     default=False,
     help=(
-        "Request coherent span-to-span NLI assembly for the network link-noise cache "
-        "(default: off). The switch is a request, not a guarantee: only models that emit "
-        "inter-span coherent NLI amplitudes honour it. Frozen baselines (ecz) and a pumped "
-        "pcfm_h3_raman keep the power-only 'full span x N' path without raising."
+        "Use the model's full-route NLI calculation when the same carriers occupy "
+        "every link. For varying loads, request coherent NLI within each link "
+        "where supported by the model."
     ),
 )
 @click.option(
@@ -233,12 +237,26 @@ def simulate(
         )
         raise click.ClickException(msg) from exc
 
+    def carrier_model(
+        geometry: tuple["CarrierGeometry", ...], slot_count: int
+    ) -> "QoTModel":
+        return create_model(
+            qot_model,
+            geometry[0].grid,
+            network_topology.get_default_fiber_config(),
+            gn_evaluator.symbol_rate_hz,
+            connections=geometry,
+            slots_per_channel=slot_count,
+            **model_options,
+        )
+
     qot_validator = QoTValidator(
         gn_evaluator=gn_evaluator,
         network_topology=network_topology,
         spectrum_grid=spectrum_grid,
         launch_power_convention=launch_power_convention,
         coherent_assembly=coherent_assembly,
+        carrier_model_factory=carrier_model,
     )
 
     # Precompute candidate paths.

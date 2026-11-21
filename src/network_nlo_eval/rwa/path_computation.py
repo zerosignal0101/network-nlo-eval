@@ -1,7 +1,7 @@
 """K-shortest-path routing and caching."""
 
 import warnings
-from itertools import islice
+from itertools import combinations, islice, permutations
 from typing import TYPE_CHECKING
 
 import networkx as nx
@@ -38,61 +38,36 @@ class PathCache:
         # NetworkX uses the original graph and its optional weight attributes.
         nx_graph = self.network_topology.get_network_graph()
 
-        # Visit each source-destination pair.
-        for i in range(len(internal_nodes)):
-            for j in range(
-                i + 1, len(internal_nodes)
-            ):  # The graph is undirected; compute each pair once.
-                source_idx = internal_nodes[i]
-                dest_idx = internal_nodes[j]
+        pairs = (
+            permutations(internal_nodes, 2)
+            if nx_graph.is_directed()
+            else combinations(internal_nodes, 2)
+        )
+        for source_idx, dest_idx in pairs:
+            original_source_id = self.network_topology.get_original_node_id(source_idx)
+            original_dest_id = self.network_topology.get_original_node_id(dest_idx)
 
-                # NetworkX operates on original node IDs.
-                original_source_id = self.network_topology.get_original_node_id(
-                    source_idx
+            try:
+                paths_iterator: Iterator[list[OriginalNodeID]] = (
+                    nx.shortest_simple_paths(
+                        nx_graph, original_source_id, original_dest_id, weight="weight"
+                    )
                 )
-                original_dest_id = self.network_topology.get_original_node_id(dest_idx)
-
-                # Compute shortest simple paths using edge weights.
-
-                try:
-                    paths_iterator: Iterator[list[OriginalNodeID]] = (
-                        nx.shortest_simple_paths(
-                            nx_graph,
-                            original_source_id,
-                            original_dest_id,
-                            weight="weight",
-                        )
-                    )
-
-                    # Limit the number of paths.
-                    sliced_paths = list(islice(paths_iterator, self.max_paths_per_pair))
-
-                    # Convert path nodes back to internal IDs.
-                    internal_paths: list[list[NodeID]] = [
-                        [
-                            self.network_topology.get_internal_node_id(n_orig)
-                            for n_orig in path
-                        ]
-                        for path in sliced_paths
+                self._ksp_cache[source_idx, dest_idx] = [
+                    [
+                        self.network_topology.get_internal_node_id(n_orig)
+                        for n_orig in path
                     ]
-
-                    # Cache paths.
-                    # Normalize keys as (min, max).
-                    key = (
-                        (source_idx, dest_idx)
-                        if source_idx < dest_idx
-                        else (dest_idx, source_idx)
-                    )
-                    self._ksp_cache[key] = internal_paths
-                except nx.NetworkXNoPath:
-                    # Leave disconnected pairs out of the cache.
-                    pass
-                except (KeyError, TypeError, ValueError) as exc:
-                    warnings.warn(
-                        f"Error precomputing KSP for ({source_idx}, {dest_idx}): {exc}",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
+                    for path in islice(paths_iterator, self.max_paths_per_pair)
+                ]
+            except nx.NetworkXNoPath:
+                pass
+            except (KeyError, TypeError, ValueError) as exc:
+                warnings.warn(
+                    f"Error precomputing KSP for ({source_idx}, {dest_idx}): {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     def get_paths(self, source_idx: NodeID, dest_idx: NodeID) -> list[list[NodeID]]:
         """Return cached paths between internal node IDs.
@@ -110,16 +85,13 @@ class PathCache:
             Paths ordered from source to destination, or an empty list if
             the pair is absent or disconnected.
         """
-        key = (
-            (source_idx, dest_idx) if source_idx < dest_idx else (dest_idx, source_idx)
-        )
+        key = self.network_topology.link_key(source_idx, dest_idx)
         paths = self._ksp_cache.get(key, [])
 
-        # Reverse the cached paths when traversing the pair in reverse.
         if source_idx != key[0]:
             return [list(reversed(p)) for p in paths]
         return paths
 
     def get_all_ksp_pairs(self) -> list[tuple[NodeID, NodeID]]:
-        """Return all cached source-destination pairs as normalized keys."""
+        """Return all cached source-destination pairs."""
         return list(self._ksp_cache.keys())

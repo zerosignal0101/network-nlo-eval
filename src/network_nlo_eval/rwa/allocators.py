@@ -102,12 +102,16 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
 
 
 def first_fit_contiguous_windows(
-    free_mask: NDArrayBool, n_slots: int, slots_per_channel: int
+    free_mask: NDArrayBool,
+    n_slots: int,
+    slots_per_channel: int,
+    *,
+    distinct_anchors: bool = True,
 ) -> list[int]:
     """Find feasible contiguous free-slot windows in ascending order.
 
-    Only the first start within each anchor channel is returned, since QoT is
-    validated at channel granularity. A prefix sum checks all windows in O(N).
+    A prefix sum checks all windows in O(N). Carrier-aware admission considers
+    every viable start because shifting a window changes its center frequency.
 
     Parameters
     ----------
@@ -117,6 +121,8 @@ def first_fit_contiguous_windows(
         Required window width, at least one.
     slots_per_channel : int
         Number of slots per physical channel, at least one.
+    distinct_anchors : bool, optional
+        Keep only the first start in each anchor channel.
 
     Returns
     -------
@@ -135,6 +141,8 @@ def first_fit_contiguous_windows(
     prefix = np.concatenate(([0], np.cumsum(free_mask.astype(np.int64))))
     window_free = prefix[n_slots:] - prefix[:-n_slots]
     starts = np.flatnonzero(window_free == n_slots)
+    if not distinct_anchors:
+        return cast("list[int]", starts.tolist())
 
     candidates: list[int] = []
     last_channel = -1
@@ -150,7 +158,7 @@ class KSPFirstFitFlexAllocator(BaseRWAAllocator):
     """Allocate contiguous slot windows on cached shortest paths.
 
     Slot occupancy and ROADM blocks are checked across each path. QoT is
-    evaluated at the physical channel containing the first slot."""
+    evaluated at the center of the reserved interval."""
 
     def __init__(
         self,
@@ -209,6 +217,9 @@ class KSPFirstFitFlexAllocator(BaseRWAAllocator):
         -------
         tuple of bool and AllocatedService or None
             Success flag and allocated service, if successful."""
+        if network_state.slots_per_channel != self.slots_per_channel:
+            msg = "Allocator slots_per_channel must match network state."
+            raise ValueError(msg)
         n_slots = service_request.n_slots
         ksp_paths = self.path_cache.get_paths(
             service_request.source_id, service_request.destination_id
@@ -228,7 +239,7 @@ class KSPFirstFitFlexAllocator(BaseRWAAllocator):
                     free[in_range] = False
 
             for first_slot in first_fit_contiguous_windows(
-                free, n_slots, self.slots_per_channel
+                free, n_slots, self.slots_per_channel, distinct_anchors=False
             ):
                 channel_idx = first_slot // self.slots_per_channel
 
@@ -237,6 +248,7 @@ class KSPFirstFitFlexAllocator(BaseRWAAllocator):
                     path=path,
                     channel_idx=channel_idx,
                     current_network_state=network_state,
+                    first_slot=first_slot,
                 )
                 if not is_qot_satisfied:
                     continue

@@ -32,6 +32,19 @@ def test_validity_overlay_preserves_input_and_applies_policy() -> None:
         apply_link_validity({"snr": np.ones(3)}, report, LinkValidityPolicy())
 
 
+@pytest.mark.parametrize(
+    "edfa",
+    [
+        EDFAConfig(passbands_hz=((192e12, 194e12),)),
+        EDFAConfig(input_voa_db=1),
+        EDFAConfig(output_voa_db=1),
+    ],
+)
+def test_waveform_rejects_edfa_passbands_and_voas(edfa: EDFAConfig) -> None:
+    with pytest.raises(ValueError, match="without passbands or VOA losses"):
+        PyNLOQoTEvaluator._edfa_values(edfa)
+
+
 def test_gpu_waveform_path_and_roadm() -> None:
     """Propagate a waveform through a fiber and ROADM when CUDA is available."""
     pytest.importorskip("physics_nlo_eval")

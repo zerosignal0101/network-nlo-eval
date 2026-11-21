@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -46,19 +46,20 @@ class MultiSpanOpticalPath:
     ----------
     fiber_configs : list of FiberSpanConfig
         Fiber configuration for each route link.
-    edfa_configs : list of EDFAConfig
-        Amplifier configuration for each route link.
-    roadm_configs : list of ROADMConfig or None, optional
-        Optional ROADM configuration for each route link.
+    edfa_configs : sequence of EDFAConfig or None
+        Amplifier configuration for each segment, with None for passive segments.
+    roadm_configs : sequence of ROADMConfig or None, optional
+        Optional ROADM configuration after each segment.
     link_keys : list of tuple of int, optional
-        Normalized link keys associated with the path.
+        Link keys associated with each segment. Installed spans of one link
+        share its key.
     node_path : list of int, optional
         Ordered internal node IDs.
     """
 
     fiber_configs: list[FiberSpanConfig]
-    edfa_configs: list[EDFAConfig]
-    roadm_configs: list[ROADMConfig] | None = None
+    edfa_configs: Sequence[EDFAConfig | None]
+    roadm_configs: Sequence[ROADMConfig | None] | None = None
     # Link keys associate path segments with network state.
     link_keys: list[tuple[int, int]] = field(default_factory=list)
     node_path: list[int] = field(default_factory=list)

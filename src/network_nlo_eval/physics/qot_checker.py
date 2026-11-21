@@ -334,6 +334,14 @@ class PyNLOQoTEvaluator:
     @staticmethod
     def _edfa_values(edfa: Any) -> tuple[float | None, float]:
         """Return scalar gain and noise figure supported by the physical EDFA."""
+        if edfa.max_output_signal_power_w is not None:
+            msg = "Waveform comparison requires an EDFA without an output signal-power limit."
+            raise ValueError(msg)
+        if edfa.passbands_hz or edfa.input_voa_db or edfa.output_voa_db:
+            msg = (
+                "Waveform comparison requires an EDFA without passbands or VOA losses."
+            )
+            raise ValueError(msg)
         noise_figure = np.asarray(edfa.noise_figure_db)
         if noise_figure.ndim != 0 or edfa.gain_ripple_db is not None:
             msg = "Waveform comparison currently requires scalar EDFA noise figure and no gain-ripple array."
@@ -348,6 +356,11 @@ class PyNLOQoTEvaluator:
         roadms: Sequence[ROADMConfig | None] = optical_path.roadm_configs or [
             None
         ] * len(optical_path.fiber_configs)
+        if any(
+            roadm is not None and roadm.output_target is not None for roadm in roadms
+        ):
+            msg = "Waveform comparison requires ROADMs without passive per-channel output targets."
+            raise ValueError(msg)
         channel_info = current.ctx.meta["wdm_channels_info"]
         span_sequence = 0
         active_channels = np.flatnonzero(
@@ -368,7 +381,9 @@ class PyNLOQoTEvaluator:
                 msg = "Waveform comparison currently requires constant attenuation_db_km_ref per fiber link."
                 raise ValueError(msg)
             beta2, beta3 = self._fiber_dispersion(fiber, current.ctx.center_freq)
-            target_gain_db, noise_figure_db = self._edfa_values(edfa)
+            target_gain_db, noise_figure_db = (
+                self._edfa_values(edfa) if edfa is not None else (None, 0.0)
+            )
             remaining_km = fiber.length_km
             while remaining_km > 1e-12:
                 span_km = min(remaining_km, fiber.max_span_length_km)
@@ -393,11 +408,11 @@ class PyNLOQoTEvaluator:
                     current = self.physical["RamanPump"](
                         pumps, span_km, seed=self.seed + span_sequence
                     ).forward(current)
-                if target_gain_db is None:
+                if edfa is not None and target_gain_db is None:
                     current = self.physical["IdealAmplifier"](
                         nf_db=noise_figure_db, default_power_dbm=0.0
                     ).forward(current)
-                else:
+                elif edfa is not None:
                     current = self.physical["EDFA"](
                         gain_db=target_gain_db,
                         nf_db=noise_figure_db,
@@ -524,9 +539,10 @@ class PyNLOQoTEvaluator:
         received = self.propagate_path(signal, optical_path)
         active = np.asarray(launch_power_profile_w) > 0
         for roadm in optical_path.roadm_configs or []:
-            active[
-                [index for index in roadm.blocked_channels if index < len(active)]
-            ] = False
+            if roadm is not None:
+                active[
+                    [index for index in roadm.blocked_channels if index < len(active)]
+                ] = False
         metrics = self._receiver_metrics(received, bits, optical_path, active)
         if validity is not None:
             metrics = apply_link_validity(
