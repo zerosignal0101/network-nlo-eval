@@ -126,6 +126,26 @@ def test_remainder_threshold_and_empty_arrays() -> None:
     [
         ("semrau2019", {}),
         (
+            "pcfm2",
+            {
+                "include_isrs": False,
+                "poly_degree": 3,
+                "band_points": 1,
+                "island_cells": 1,
+            },
+        ),
+        (
+            "pcfm_auto",
+            {
+                "pcfm2_options": {
+                    "include_isrs": False,
+                    "poly_degree": 3,
+                    "band_points": 1,
+                    "island_cells": 1,
+                }
+            },
+        ),
+        (
             "zhang2024_dra_egn",
             {
                 "n_steps": 8,

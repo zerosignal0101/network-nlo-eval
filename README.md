@@ -42,8 +42,12 @@ are in kilometers. Models have different approximations, power conventions, and
 applicability limits: consult their documentation and options when selecting a
 model.
 
-The [model literature audit](docs/model-literature-audit.md) maps all 16 model
+The [model literature audit](docs/model-literature-audit.md) maps all 18 model
 entries to their sources, equations, and supported scenarios.
+
+The [coherent PCFM2 guide](docs/pcfm2.md) describes full SCI/XCI/MCI island
+integration, receiver-band PSD integration, explicit span-pair coherence, and
+the opt-in `pcfm_auto` policy for choosing PCFM2 or `pcfm_h3_raman`.
 
 Some model documentation refers to historical audit reports and calibration
 scripts from the development repository. Those research artifacts are not

@@ -1,6 +1,6 @@
 # QoT model correspondence to the literature
 
-Audit date: November 15, 2026. This inventory covers all 16 registered model
+Audit date: November 16, 2026. This inventory covers all 18 registered model
 entries, their primary equations, their implemented variants, and their
 supported scenarios. The implementation and its public descriptions were checked
 against original papers, with the PDF or author LaTeX taking precedence over
@@ -8,7 +8,7 @@ extracted text and translations. This is a formula and implementation audit; it
 does not reproduce every transmission experiment or accuracy claim in the
 papers.
 
-The literature collection contains 13 relevant supplied papers and one
+The literature collection contains 14 relevant supplied papers and one
 supplementary primary cGN paper, with PDFs, original text, figures, and Chinese
 translations. The collection and its source metadata are maintained outside the
 repository. No workstation-specific literature location is required by the code.
@@ -30,11 +30,13 @@ repository. No workstation-specific literature location is required by the code.
 | `buglia2024_ra_gn`   | R11                           | Five-parameter Raman profile fitted to a coupled ODE, closed SPM/XPM terms, and paper-style power accumulation.                    |
 | `hybrid_raman_paper` | R12                           | Coupled signal/pump/ASE propagation, fitted longitudinal profiles, and hybrid-amplified GN formulas.                               |
 | `pcfm_h3_raman`      | R9, R10, R12                  | Repository extension: degree-three PCFM/H3 kernels driven by coupled Raman profiles, with optional dense-grid corrections.         |
+| `pcfm2`              | R15; R12 for Raman profiles   | Analytical polynomial span-pair moments over SCI/XCI/MCI island covers, with receiver-band integration and actual route transfer.  |
+| `pcfm_auto`          | Repository policy             | Opt-in dispatch between PCFM2 and H3 by supported physics and an explicit work budget; no accuracy guarantee.                      |
 | `zhang2024_dra_egn`  | R13                           | Zhang-inspired coherent **GN** calculation with fitted profiles, numerical cross-span integration, and repository calibration.     |
 | `numerical`          | R4                            | Approximate numerical ISRS-GN: ODE profiles, a band-averaged frequency response, and repository coherence.                         |
 | `numerical_dra`      | R4, R11, R12                  | Independent adaptive Raman ODE and numerical longitudinal/frequency integration with incoherent route accumulation.                |
 
-These are 16 selectable entries, rather than 16 independent paper derivations.
+These are 18 selectable entries, rather than 18 independent paper derivations.
 Several entries are presets or repository extensions. The historical `_egn`
 suffix of the Zhang key does not enable a complete EGN calculation.
 
@@ -67,14 +69,17 @@ reference-frequency shift explicitly in each island's phase calculation.
 Active Raman pumps require a distributed-Raman implementation. Unpumped models
 reject them both in their reference fiber and in fibers encountered later in a
 route. The supported pumped model families are `buglia2024_ra_gn`,
-`hybrid_raman_paper`, `pcfm_h3_raman`, `zhang2024_dra_egn`, and `numerical_dra`,
-subject to their individual pump-direction and solver restrictions. ECZ launch
-pre-emphasis is dimensionless and is set to zero.
+`hybrid_raman_paper`, `pcfm_h3_raman`, `pcfm2`, `zhang2024_dra_egn`, and
+`numerical_dra`, subject to their individual pump-direction and solver
+restrictions. ECZ launch pre-emphasis is dimensionless and is set to zero.
 
 In-span discrete losses require `pcfm` or `pcfm_h3_raman`; the H3 Raman backend
 must also support the configured losses. Other registered models reject such
 fiber configurations. ROADM losses and amplifier settings continue to use the
 shared element and route interfaces.
+
+The `pcfm_auto` wrapper delegates supported in-span loss cases to H3 and
+otherwise follows the selected implementation's restrictions.
 
 ## Formula correspondence and model variants
 
@@ -200,6 +205,28 @@ inherits the parent's normalization and coherence. `raman_lumped` is retained as
 an unpumped compatibility preset and rejects active pump scenarios. Coupled
 Raman propagation is supplied by the separate distributed-Raman models.
 
+### Coherent PCFM2
+
+R15 Sections II/III and Appendix A supply the arbitrary-island GN integral,
+effective triple profile, polynomial overlap reduction, and primitive moments
+for every self/cross span pair. `pcfm2` applies the 16/27 GN prefactor, single
+self terms and doubled real cross terms, signed-dispersion Jacobians, and exact
+zero-dispersion limits. Private adaptive precision, starting at 50 digits,
+protects primitive cancellation. Island tiling, polynomial fitting, and
+receiver-frequency quadrature remain controlled approximations. Beta3 is frozen
+at each rectangle center; beta4 is zero.
+
+The shared R12 Raman profile/ASE solver is a repository integration.
+Discontinuous in-span losses are unsupported. Non-SCI output includes XCI and
+MCI. Full-route evaluation retains actual launches, receiver transfer, and
+downstream ROADM filtering. No fitted EGN factor is applied.
+
+`pcfm_auto` is an explicit computational policy, with an inspectable decision
+and work estimate. It selects PCFM2 for bounded workloads and H3 for larger
+routine ones, and refuses an over-budget low-dispersion fallback. This is not an
+accuracy certification. See [the PCFM2 guide](pcfm2.md) for implementation
+limits, controls, and independent comparison evidence.
+
 ### Raman-amplified analytical models
 
 `buglia2024_ra_gn` fits the five-parameter profile of R11 Eq. (2) to coupled
@@ -279,11 +306,16 @@ calculations. Regression vectors were updated where the physical transfer or
 dispersion reference changes the output; the independent invariants substantiate
 those changes.
 
-Validation completed with 219 passed tests and one optional test skipped. Ruff
-lint/format checks, all applicable pre-commit hooks, and Mypy across 109 source
-files passed. An optional waveform test requires `physics_nlo_eval`; a skipped
-test does not establish waveform agreement. No paper's broad sub-decibel
+The earlier audit completed with 219 passed tests and one optional test skipped.
+Ruff lint/format checks, all applicable pre-commit hooks, and Mypy across 109
+source files passed. An optional waveform test requires `physics_nlo_eval`; a
+skipped test does not establish waveform agreement. No paper's broad sub-decibel
 accuracy claim is promoted to a project-wide guarantee by this audit.
+
+The PCFM2 addition passed 271 tests with the same optional waveform skip. Ruff
+lint/format and Mypy across 115 source/test files passed. Its independent GN
+controls, configuration comparisons, timings, and scope limits are recorded in
+[the PCFM2 guide](pcfm2.md).
 
 ## Primary references
 
@@ -303,3 +335,4 @@ accuracy claim is promoted to a project-wide guarantee by this audit.
 | R12 | Ultra-Wideband Modeling of Optical Fibre Nonlinearity in Hybrid-Amplified Links                                                                                 | DOI `10.1109/JLT.2024.3439999`        |
 | R13 | Accurate Closed-Form Coherent EGN Model Supporting Distributed Raman Amplification                                                                              | DOI `10.1109/OECC54135.2024.10975528` |
 | R14 | On Numerical Simulations of Ultra-Wideband Long-Haul Optical Communication Systems                                                                              | DOI `10.1109/JLT.2019.2938580`        |
+| R15 | The Coherent Polynomials Closed-Form Model for Evaluating Nonlinear Interference in Any Island                                                                  | `arXiv:2602.03860v2`, May 4, 2026     |

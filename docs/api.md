@@ -10,6 +10,14 @@
 
 ::: network_nlo_eval.models.base
 
+## Coherent polynomial models
+
+See the [PCFM2 configuration and comparison guide](pcfm2.md).
+
+::: network_nlo_eval.models.pcfm2
+
+::: network_nlo_eval.models.pcfm_auto
+
 ## Network and routing
 
 ::: network_nlo_eval.network.topology
