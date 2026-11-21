@@ -43,6 +43,7 @@ from network_nlo_eval.rwa.validity import (
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
 if TYPE_CHECKING:
+    from network_nlo_eval.core.transceiver import ReceiverFeasibility
     from network_nlo_eval.models.base import PathQoTResult
     from network_nlo_eval.rwa.carrier_loading import (
         CarrierModelFactory,
@@ -509,6 +510,7 @@ class QoTValidator:
         self._carrier_admission: CarrierAdmission | None = None
         #: Reports for links affected by the most recent verification.
         self.last_link_validity: dict[LinkKey, LinkValidity] = {}
+        self.last_receiver_feasibility: dict[int, ReceiverFeasibility] = {}
 
     # ------------------------------------------------------------------
     # Public interface
@@ -540,6 +542,8 @@ class QoTValidator:
         Candidate spectra are temporary. Routes and affected link budgets
         are evaluated once per attempt. On success, store any computed
         link caches and return the same SNR array used for admission.
+        Receiver tests reached in the most recent attempt are available in
+        ``last_receiver_feasibility``, keyed by service ID, including failures.
 
         Parameters
         ----------
@@ -568,6 +572,7 @@ class QoTValidator:
             else fixed_span_length_km
         )
         self.last_link_validity.clear()
+        self.last_receiver_feasibility.clear()
 
         launch_power = service_request.launch_power_w
         if len(path) < 2 or not math.isfinite(launch_power) or launch_power <= 0:
@@ -579,6 +584,7 @@ class QoTValidator:
         if (
             first_slot is not None
             or service_request.symbol_rate_hz is not None
+            or service_request.transceiver_mode is not None
             or current_network_state.has_per_carrier_services
         ):
             if self._carrier_admission is None:

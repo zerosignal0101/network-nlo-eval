@@ -39,6 +39,56 @@ lengths use kilometers, and result powers use watts. Models differ in their
 assumptions and power conventions; check each model's documentation before using
 its results.
 
+## Receiver feasibility
+
+Attach a `TransceiverMode` to a `ServiceRequest` to evaluate a specific optical
+carrier using the route's actual load. Both first-fit allocators preserve the
+mode on the allocation and recheck it when later admissions affect the route.
+
+```python
+from network_nlo_eval.core.transceiver import ReceiverPenaltyCurve, TransceiverMode
+from network_nlo_eval.simulation.traffic import ServiceRequest
+
+mode = TransceiverMode(
+    name="100G",
+    symbol_rate_hz=32e9,
+    roll_off=0.15,
+    min_slot_width_hz=37.5e9,
+    min_gsnr_db=12,
+    min_osnr_db=16,
+    tx_osnr_db=40,
+    rx_power_min_dbm=-12,
+    rx_power_max_dbm=0,
+    pmd_penalty=ReceiverPenaltyCurve(points=((0, 0), (10, 1.5))),
+)
+request = ServiceRequest(1, 0, 1, 0, 1, 100, 10, 1e-3, transceiver_mode=mode)
+```
+
+Flex first-fit reserves at least the mode width rounded up to a whole number of
+slots and honors any larger `n_slots` requested. Fixed first-fit requires a mode
+that fits in one channel. For direct flex calls to `verify_allocation`, pass the
+actual reservation as `n_slots` and `first_slot`.
+
+The path must meet the request's line SNR threshold and every configured mode
+limit. Receiver GSNR combines modeled ASE, nonlinear noise, and transmitter
+noise in the evaluator's bandwidth. OSNR combines ASE and transmitter noise at
+`osnr_reference_bandwidth_hz`, which defaults to the 12.5 GHz planning
+convention for 0.1 nm. ASE and transmitter noise are treated as spectrally flat
+when changing bandwidth. The line noise budget includes any configured ROADM
+filtering penalty. Receiver and model-validity penalties apply to the GSNR
+margin. Power limits apply to total dual-polarization signal power after the
+destination drop port.
+
+Signed fiber dispersion is summed at the carrier wavelength. Fiber PMD and
+configured amplifier and ROADM PMD and PDL are combined in quadrature. The
+mode's CD, PMD, and PDL curves give additive GSNR penalties, with values beyond
+the last calibrated point treated as infeasible.
+
+`verify_allocation` returns the usual acceptance flag and line SNR array.
+`QoTValidator.last_receiver_feasibility` contains the mode-aware receiver
+reports reached during the most recent verification, including failed checks.
+The reports are keyed by service ID and include the limiting margin in dB.
+
 ## Command line
 
 Use `network-nlo-eval models` to list registered models and their options.

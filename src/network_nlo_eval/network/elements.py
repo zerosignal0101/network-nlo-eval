@@ -53,6 +53,9 @@ class FiberSpanConfig(BaseModel):
         0.06,
         description="Dispersion slope S at the reference wavelength (ps/(nm^2*km))",
     )
+    pmd_coefficient_ps_sqrt_km: float = Field(
+        0, ge=0, allow_inf_nan=False, description="Fiber PMD coefficient (ps/√km)"
+    )
 
     # Nonlinearity
     nonlinear_index_n2: float = Field(
@@ -155,6 +158,15 @@ class EDFAConfig(BaseModel):
     )
     output_voa_db: float = Field(
         0, ge=0, allow_inf_nan=False, description="Loss after amplification (dB)"
+    )
+    pmd_ps: float = Field(
+        0, ge=0, allow_inf_nan=False, description="Amplifier PMD (ps)"
+    )
+    pdl_db: float = Field(
+        0,
+        ge=0,
+        allow_inf_nan=False,
+        description="Amplifier polarization-dependent loss (dB)",
     )
 
     @property
@@ -280,6 +292,15 @@ class ROADMConfig(BaseModel):
         0.2,
         ge=0,
         description="Cascaded filtering SNR penalty for statistical models (dB)",
+    )
+    pmd_ps: float = Field(
+        0, ge=0, allow_inf_nan=False, description="Switching PMD (ps)"
+    )
+    pdl_db: float = Field(
+        0,
+        ge=0,
+        allow_inf_nan=False,
+        description="Switching polarization-dependent loss (dB)",
     )
     passband_hz: float | None = Field(
         None, gt=0, description="WSS 3-dB passband; None uses channel spacing"

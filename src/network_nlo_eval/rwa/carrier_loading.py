@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import networkx as nx
 import numpy as np
 
+from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.flexgrid import CarrierGeometry, FlexibleGrid
+from network_nlo_eval.core.transceiver import evaluate_receiver
 from network_nlo_eval.models.base import MultiSpanOpticalPath
 from network_nlo_eval.models.power_conventions import launch_power_scale
 from network_nlo_eval.models.route import H_PLANCK
@@ -32,6 +34,8 @@ if TYPE_CHECKING:
 
     CarrierModelFactory = Callable[[tuple[CarrierGeometry, ...], int], QoTModel]
     CarrierValidityFactory = Callable[[QoTModel], OpticalPathValidityProvider]
+
+_DISPERSION_REFERENCE_NM = 1550.0
 
 
 class _Carrier(NamedTuple):
@@ -88,6 +92,7 @@ class _LinkLoad:
     roadm_ase_w: NDArrayFloat
     roadm_penalty: NDArrayFloat
     provider: OpticalPathValidityProvider | None
+    bandwidths_hz: list[float]
 
 
 @dataclass(slots=True)
@@ -96,6 +101,14 @@ class _LinkBudget:
     noise_w: NDArrayFloat
     noise_transfer: NDArrayFloat
     validity: LinkValidity | None
+    ase_w: NDArrayFloat | None
+
+
+class _PathImpairments(NamedTuple):
+    cd_at_reference_ps_nm: float
+    cd_slope_ps_nm2: float
+    pmd_ps: float
+    pdl_db: float
 
 
 class CarrierAdmission:
@@ -195,10 +208,7 @@ class CarrierAdmission:
             slot < 0
             or slot + width > flex_grid.num_slots
             or slot // per_channel != channel_idx
-            or (
-                request.symbol_rate_hz is not None
-                and request.symbol_rate_hz > width * flex_grid.slot_width_hz
-            )
+            or request.required_bandwidth_hz > width * flex_grid.slot_width_hz
             or state.get_allocated_service(request.service_id) is not None
         ):
             return False, None
@@ -218,6 +228,7 @@ class CarrierAdmission:
         )
         paths = {request.service_id: (path, route)}
         incumbents: dict[int, AllocatedService] = {}
+        with_ase = request.transceiver_mode is not None
         graph: nx.DiGraph[LinkKey] = nx.DiGraph()
         graph.add_nodes_from(route)
         if not self.independent_power:
@@ -243,6 +254,7 @@ class CarrierAdmission:
                 ):
                     continue
                 incumbents[service_id] = service
+                with_ase = with_ase or service.transceiver_mode is not None
                 _, service_route = paths[service_id]
                 pending.extend(hop for hop in service_route if hop not in graph)
                 graph.add_nodes_from(service_route)
@@ -252,7 +264,6 @@ class CarrierAdmission:
                 carriers.append(candidate)
             loads[key] = self._prepare_link(key, carriers, paths, span_km, per_channel)
 
-        first = loads[route[0]]
         if (
             not self.validator.validity_policy.enabled
             and len(loads) == len(route)
@@ -261,20 +272,36 @@ class CarrierAdmission:
                 load.model.n_nodes == len(incumbents) + 1 for load in loads.values()
             )
         ):
-            snrs = self._uniform_snrs(path, route, loads)
+            first = loads[route[0]]
+            snrs, signal, noise, ase = self._uniform_budget(
+                path, route, loads, with_ase=with_ase
+            )
+            impairments = (
+                self._path_impairments(path, route, loads) if with_ase else None
+            )
             projected = np.full(self.grid.num_channels, -np.inf)
-            for service_id, service in incumbents.items():
-                snr = float(snrs[first.rows[service_id]])
-                if not (snr > -math.inf and snr >= service.snr_requirement_db):
+            for checked_service in (request, *incumbents.values()):
+                row = first.rows[checked_service.service_id]
+                snr = float(snrs[row])
+                if checked_service.transceiver_mode is not None:
+                    assert ase is not None
+                    assert impairments is not None
+                    if not self._receiver_feasible(
+                        checked_service,
+                        first,
+                        impairments,
+                        snr,
+                        float(signal[row]),
+                        float(noise[row]),
+                        float(ase[row]),
+                    ):
+                        return False, None
+                if not (snr > -math.inf and snr >= checked_service.snr_requirement_db):
                     return False, None
-                self._record_anchor(projected, service.wavelength, snr)
-            candidate_snr = float(snrs[first.rows[request.service_id]])
-            if not (
-                candidate_snr > -math.inf
-                and candidate_snr >= request.snr_requirement_db
-            ):
-                return False, None
-            projected[channel_idx] = candidate_snr
+                if checked_service is not request:
+                    anchor = incumbents[checked_service.service_id].wavelength
+                    self._record_anchor(projected, anchor, snr)
+            projected[channel_idx] = snrs[first.rows[request.service_id]]
             return True, projected
 
         budgets: dict[LinkKey, _LinkBudget] = {}
@@ -289,12 +316,16 @@ class CarrierAdmission:
                 ):
                     return False, None
                 for key in members:
-                    budgets[key] = self._evaluate_link(key, loads[key], loads, budgets)
+                    budgets[key] = self._evaluate_link(
+                        key, loads[key], loads, budgets, with_ase=with_ase
+                    )
         else:
             for key in ordering:
-                budgets[key] = self._evaluate_link(key, loads[key], loads, budgets)
+                budgets[key] = self._evaluate_link(
+                    key, loads[key], loads, budgets, with_ase=with_ase
+                )
 
-        candidate_snr = self._receiver_snr(request.service_id, route, loads, budgets)
+        candidate_snr = self._receiver_snr(request, path, route, loads, budgets)
         if not (
             candidate_snr > -math.inf and candidate_snr >= request.snr_requirement_db
         ):
@@ -310,10 +341,10 @@ class CarrierAdmission:
 
         snrs = np.full(self.grid.num_channels, -np.inf, dtype=np.float64)
         for service_id, service in incumbents.items():
-            _, old_route = paths[service_id]
+            old_path, old_route = paths[service_id]
             if affected.isdisjoint(old_route):
                 continue
-            snr = self._receiver_snr(service_id, old_route, loads, budgets)
+            snr = self._receiver_snr(service, old_path, old_route, loads, budgets)
             if not (snr > -math.inf and snr >= service.snr_requirement_db):
                 return False, None
             if old_route == route and service.path == path:
@@ -326,12 +357,14 @@ class CarrierAdmission:
         if snrs[anchor] == -math.inf or snr < snrs[anchor]:
             snrs[anchor] = snr
 
-    def _uniform_snrs(
+    def _uniform_budget(
         self,
         path: list[int],
         route: tuple[LinkKey, ...],
         loads: dict[LinkKey, _LinkLoad],
-    ) -> NDArrayFloat:
+        *,
+        with_ase: bool,
+    ) -> tuple[NDArrayFloat, NDArrayFloat, NDArrayFloat, NDArrayFloat | None]:
         """Use the model's full-route evaluation for identical loads and ports."""
         first = loads[route[0]]
         fibers = []
@@ -359,17 +392,18 @@ class CarrierAdmission:
         )
         signal = result.signal_power_w
         noise = result.spm_noise_w + result.xpm_noise_w + result.ase_noise_w
-        noise += np.divide(
+        add_noise = np.divide(
             first.source_ase_w * signal * penalty,
             first.source_w,
             out=np.zeros_like(signal),
             where=first.source_w > 0,
         )
+        noise += add_noise
         snrs = np.full_like(signal, -np.inf)
         noisy = (signal > 0) & (noise > 0)
         snrs[noisy] = 10 * np.log10(signal[noisy] / noise[noisy])
         snrs[(signal > 0) & (noise == 0)] = np.inf
-        return snrs
+        return snrs, signal, noise, result.ase_noise_w + add_noise if with_ase else None
 
     def _geometry(
         self,
@@ -379,6 +413,8 @@ class CarrierAdmission:
         request: ServiceRequest | None,
     ) -> CarrierGeometry:
         explicit = None if request is None else request.symbol_rate_hz
+        if request is not None and request.transceiver_mode is not None:
+            explicit = request.transceiver_mode.symbol_rate_hz
         baud = (
             min(self.validator.gn_evaluator.symbol_rate_hz, width * grid.slot_width_hz)
             if explicit is None
@@ -509,6 +545,7 @@ class CarrierAdmission:
             np.array(ase),
             np.array(penalty),
             provider,
+            bandwidths,
         )
 
     def _build_link_path(
@@ -558,6 +595,7 @@ class CarrierAdmission:
         budgets: dict[LinkKey, _LinkBudget],
         *,
         with_validity: bool = True,
+        with_ase: bool = False,
     ) -> _LinkBudget:
         power = load.source_w.copy()
         for row, service_id, upstream in load.upstream:
@@ -585,8 +623,14 @@ class CarrierAdmission:
         noise_transfer *= load.roadm_penalty
         noise = result.spm_noise_w + result.xpm_noise_w + result.ase_noise_w
         noise *= switch_transfer
-        noise += np.where(signal > 0, load.roadm_ase_w, 0.0)
+        roadm_ase = np.where(signal > 0, load.roadm_ase_w, 0.0)
+        noise += roadm_ase
         noise *= load.roadm_penalty
+        ase = None
+        if with_ase:
+            ase = (
+                result.ase_noise_w * switch_transfer + roadm_ase
+            ) * load.roadm_penalty
         report = None
         if with_validity and load.provider is not None:
             report = load.provider.evaluate_path(
@@ -596,7 +640,7 @@ class CarrierAdmission:
                 result=result if load.provider.model is load.model else None,
             )
             self.validator.last_link_validity[key] = report
-        return _LinkBudget(signal, noise, noise_transfer, report)
+        return _LinkBudget(signal, noise, noise_transfer, report, ase)
 
     def _settle_component(
         self,
@@ -625,31 +669,58 @@ class CarrierAdmission:
 
     def _receiver_snr(
         self,
-        service_id: int,
+        service: ServiceRequest,
+        path: list[int],
         route: tuple[LinkKey, ...],
         loads: dict[LinkKey, _LinkLoad],
         budgets: dict[LinkKey, _LinkBudget],
     ) -> float:
+        service_id = service.service_id
+        with_ase = service.transceiver_mode is not None
         first = loads[route[0]]
         noise = float(first.source_ase_w[first.rows[service_id]])
+        ase = noise
         reports = []
         signal = 0.0
         for key in route:
             row = loads[key].rows[service_id]
             budget = budgets[key]
             signal = float(budget.signal_w[row])
-            noise = noise * float(budget.noise_transfer[row]) + float(
-                budget.noise_w[row]
-            )
+            transfer = float(budget.noise_transfer[row])
+            noise = noise * transfer + float(budget.noise_w[row])
+            if with_ase:
+                assert budget.ase_w is not None
+                ase = ase * transfer + float(budget.ase_w[row])
             if (report := budget.validity) is not None:
                 reports.append((report, row))
-        if not (signal > 0 and noise >= 0):
+        snr = -math.inf
+        if signal > 0 and noise >= 0:
+            snr = 10 * math.log10(signal / noise) if noise > 0 else math.inf
+        adjustment = 0.0
+        if reports and (snr > -math.inf or with_ase):
+            verdict = self._path_validity(reports)
+            policy = self.validator.validity_policy
+            if with_ase:
+                adjusted = verdict.adjusted_snr_db(np.array([0.0]), policy)
+                adjustment = float(adjusted[0])
+            snr = float(verdict.adjusted_snr_db(np.array([snr]), policy)[0])
+        if with_ase and not self._receiver_feasible(
+            service,
+            first,
+            self._path_impairments(path, route, loads),
+            snr,
+            signal,
+            noise,
+            ase,
+            adjustment,
+        ):
             return -math.inf
-        snr = 10 * math.log10(signal / noise) if noise > 0 else math.inf
-        if not reports:
-            return snr
+        return snr
+
+    @staticmethod
+    def _path_validity(reports: list[tuple[LinkValidity, int]]) -> ChannelValidity:
         valid = all(report.valid[row] for report, row in reports)
-        verdict = ChannelValidity(
+        return ChannelValidity(
             valid=np.array([valid]),
             margin_db=np.array(
                 [
@@ -675,6 +746,72 @@ class CarrierAdmission:
             ),
             fwm_required=any(report.fwm_required for report, _ in reports),
         )
-        return float(
-            verdict.adjusted_snr_db(np.array([snr]), self.validator.validity_policy)[0]
+
+    def _path_impairments(
+        self,
+        path: list[int],
+        route: tuple[LinkKey, ...],
+        loads: dict[LinkKey, _LinkLoad],
+    ) -> _PathImpairments:
+        add = self.topology.get_roadm_add_config(path[0], path[1])
+        cd_at_reference = 0.0
+        cd_slope = 0.0
+        pmd_squared = add.pmd_ps**2
+        pdl_squared = add.pdl_db**2
+        for index, key in enumerate(route):
+            optical = loads[key].optical_path
+            for fiber, amp in zip(
+                optical.fiber_configs, optical.edfa_configs, strict=True
+            ):
+                cd_at_reference += fiber.length_km * (
+                    fiber.dispersion_parameter_d
+                    + fiber.dispersion_slope_s
+                    * (_DISPERSION_REFERENCE_NM - fiber.reference_wavelength_nm)
+                )
+                cd_slope += fiber.length_km * fiber.dispersion_slope_s
+                pmd_squared += fiber.length_km * fiber.pmd_coefficient_ps_sqrt_km**2
+                if amp is not None and (amp.pmd_ps or amp.pdl_db):
+                    count = math.ceil(fiber.length_km / fiber.max_span_length_km)
+                    pmd_squared += count * amp.pmd_ps**2
+                    pdl_squared += count * amp.pdl_db**2
+            roadm = self.topology.get_roadm_path_config(path, index)
+            pmd_squared += roadm.pmd_ps**2
+            pdl_squared += roadm.pdl_db**2
+        return _PathImpairments(
+            cd_at_reference, cd_slope, math.sqrt(pmd_squared), math.sqrt(pdl_squared)
         )
+
+    def _receiver_feasible(
+        self,
+        service: ServiceRequest,
+        first: _LinkLoad,
+        impairments: _PathImpairments,
+        line_snr_db: float,
+        signal_w: float,
+        noise_w: float,
+        ase_w: float,
+        validity_adjustment_db: float = 0.0,
+    ) -> bool:
+        mode = service.transceiver_mode
+        assert mode is not None
+        row = first.rows[service.service_id]
+        wavelength_nm = C_LIGHT * 1e9 / first.model.f_abs_hz[row]
+        cd = impairments.cd_at_reference_ps_nm + impairments.cd_slope_ps_nm2 * (
+            wavelength_nm - _DISPERSION_REFERENCE_NM
+        )
+        power_scale = self.validator.ase_polarization_scale
+        report = evaluate_receiver(
+            mode,
+            signal_power_w=signal_w / power_scale,
+            ase_noise_w=ase_w / power_scale,
+            noise_power_w=noise_w / power_scale,
+            noise_bandwidth_hz=first.bandwidths_hz[row],
+            line_snr_db=line_snr_db,
+            snr_requirement_db=service.snr_requirement_db,
+            cd_ps_nm=cd,
+            pmd_ps=impairments.pmd_ps,
+            pdl_db=impairments.pdl_db,
+            validity_adjustment_db=validity_adjustment_db,
+        )
+        self.validator.last_receiver_feasibility[service.service_id] = report
+        return report.feasible

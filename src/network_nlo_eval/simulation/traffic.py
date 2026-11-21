@@ -10,6 +10,7 @@ from typing import cast
 import numpy as np
 
 from network_nlo_eval.core.flexgrid import bits_per_symbol, slots_for_rate
+from network_nlo_eval.core.transceiver import TransceiverMode
 from network_nlo_eval.core.types import NodeID
 from network_nlo_eval.rwa.path_computation import PathCache
 
@@ -73,6 +74,9 @@ class ServiceRequest:
     symbol_rate_hz : float or None, optional
         Carrier baud rate. Flexible allocations without a rate use the model's
         default, limited to the reserved slot width.
+    transceiver_mode : TransceiverMode or None, optional
+        Mode supplying the baud rate, minimum reservation, and additional
+        receiver requirements. An explicit baud rate must agree with the mode.
     """
 
     service_id: int  # Unique service ID.
@@ -91,6 +95,7 @@ class ServiceRequest:
 
     n_slots: int = 1
     symbol_rate_hz: float | None = field(default=None, kw_only=True)
+    transceiver_mode: TransceiverMode | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         """Require a positive slot count and optional baud rate."""
@@ -106,6 +111,20 @@ class ServiceRequest:
         ):
             msg = "symbol_rate_hz must be finite and positive."
             raise ValueError(msg)
+        if (
+            self.transceiver_mode is not None
+            and self.symbol_rate_hz is not None
+            and self.symbol_rate_hz != self.transceiver_mode.symbol_rate_hz
+        ):
+            msg = "The requested symbol rate must match the transceiver mode."
+            raise ValueError(msg)
+
+    @property
+    def required_bandwidth_hz(self) -> float:
+        """Return the minimum spectrum reservation specified by the request."""
+        if self.transceiver_mode is not None:
+            return self.transceiver_mode.required_slot_width_hz
+        return self.symbol_rate_hz or 0.0
 
 
 @dataclass(slots=True)

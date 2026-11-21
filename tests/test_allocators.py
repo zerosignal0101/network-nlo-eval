@@ -8,6 +8,7 @@ import pytest
 
 from network_nlo_eval.core.flexgrid import CarrierGeometry, FlexibleGrid
 from network_nlo_eval.core.spectrum import SpectrumGrid
+from network_nlo_eval.core.transceiver import TransceiverMode
 from network_nlo_eval.models.base import (
     KernelQoTModel,
     MultiSpanOpticalPath,
@@ -213,6 +214,20 @@ def test_mixed_loading_matches_link_budgets_with_same_slot_replacement(
     assert snrs is not None
     assert snrs[0] == pytest.approx(expected, abs=1e-10)
 
+    mode = TransceiverMode(name="20 GBd", symbol_rate_hz=20e9, min_gsnr_db=0)
+    with_mode = replace(candidate, transceiver_mode=mode)
+    assert validator.verify_allocation(with_mode, [0, 1, 2], 0, state, first_slot=2)[0]
+    receiver = validator.last_receiver_feasibility[candidate.service_id]
+    inverse_osnr = (12.5 / 20) * (
+        first_result.ase_noise_w[1] / first_result.signal_power_w[1]
+        + second_result.ase_noise_w[1] / second_result.signal_power_w[1]
+    )
+    assert receiver.osnr_db == pytest.approx(-10 * np.log10(inverse_osnr), abs=1e-10)
+    assert receiver.gsnr_db == pytest.approx(expected, abs=1e-10)
+    assert receiver.rx_power_dbm == pytest.approx(
+        10 * np.log10(after_express / scale) + 30
+    )
+
     original_slots = state.occupied_slots_on_path([0, 1, 2])
     departing.snr_requirement_db = 1000
     assert validator.verify_allocation(
@@ -301,7 +316,7 @@ def test_validity_provider_receives_the_compact_carrier_spectrum() -> None:
         MultiBandISRSGN(grid, fiber, 32e9),
         topology,
         grid,
-        validity_policy=LinkValidityPolicy(mode="flag"),
+        validity_policy=LinkValidityPolicy(mode="degrade"),
         carrier_model_factory=bind,
         carrier_validity_factory=provider,
     )
@@ -310,3 +325,12 @@ def test_validity_provider_receives_the_compact_carrier_spectrum() -> None:
     report = validator.last_link_validity[0, 1]
     assert report.num_channels == 1
     assert report.active.tolist() == [True]
+
+    mode = TransceiverMode(name="20 GBd", symbol_rate_hz=20e9, min_gsnr_db=0)
+    assert validator.verify_allocation(
+        replace(request, transceiver_mode=mode), [0, 1], 1, state, first_slot=5
+    )[0]
+    receiver = validator.last_receiver_feasibility[1]
+    assert receiver.effective_gsnr_db == pytest.approx(
+        receiver.gsnr_db - validator.last_link_validity[0, 1].margin_db[0]
+    )

@@ -388,7 +388,7 @@ class NetworkState:
 
     @property
     def has_per_carrier_services(self) -> bool:
-        """Return whether any service uses explicit slots or baud rates."""
+        """Return whether any service uses explicit carrier geometry."""
         return bool(self._per_carrier_service_ids)
 
     def allocate_service(self, service: AllocatedService) -> None:
@@ -411,10 +411,10 @@ class NetworkState:
         ):
             msg = "Service spectrum allocation is out of bounds."
             raise ValueError(msg)
-        if service.symbol_rate_hz is not None and service.symbol_rate_hz > n_slots * (
+        if service.required_bandwidth_hz > n_slots * (
             self.spectrum_grid.channel_spacing_hz / per_channel
         ):
-            msg = "Carrier symbol rate exceeds the reserved bandwidth."
+            msg = "Carrier bandwidth requirement exceeds the reserved bandwidth."
             raise ValueError(msg)
         links = [self.get_link_state(u, v) for u, v in pairwise(service.path)]
         if len(links) != len({link.link_key for link in links}):
@@ -449,7 +449,11 @@ class NetworkState:
                     service.service_id,
                 )
         self._allocated_services[service.service_id] = service
-        if service.slots_per_channel is not None or service.symbol_rate_hz is not None:
+        if (
+            service.slots_per_channel is not None
+            or service.symbol_rate_hz is not None
+            or service.transceiver_mode is not None
+        ):
             self._per_carrier_service_ids.add(service.service_id)
 
     def release_service(self, service: AllocatedService) -> None:

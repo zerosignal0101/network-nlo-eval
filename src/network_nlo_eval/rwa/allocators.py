@@ -1,7 +1,8 @@
 """Routing and spectrum allocation strategies."""
 
-from dataclasses import asdict
-from typing import cast
+from dataclasses import fields, replace
+from math import ceil
+from typing import Any, cast
 
 import numpy as np
 
@@ -12,6 +13,12 @@ from network_nlo_eval.network.topology import NetworkTopology
 from network_nlo_eval.rwa.path_computation import PathCache
 from network_nlo_eval.rwa.qot_checker import BaseRWAAllocator, QoTValidator
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
+
+_REQUEST_FIELD_NAMES = tuple(field.name for field in fields(ServiceRequest))
+
+
+def _request_fields(service: ServiceRequest) -> dict[str, Any]:
+    return {name: getattr(service, name) for name in _REQUEST_FIELD_NAMES}
 
 
 class KSPFirstFitAllocator(BaseRWAAllocator):
@@ -60,6 +67,12 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
         -------
         tuple of bool and AllocatedService or None
             Success flag and allocated service, if successful."""
+        mode = service_request.transceiver_mode
+        if (
+            mode is not None
+            and mode.required_slot_width_hz > self.spectrum_grid.channel_spacing_hz
+        ):
+            return False, None
         ksp_paths = self.path_cache.get_paths(
             service_request.source_id, service_request.destination_id
         )
@@ -86,7 +99,7 @@ class KSPFirstFitAllocator(BaseRWAAllocator):
 
                 if is_qot_satisfied:
                     allocated_service = AllocatedService(
-                        **asdict(service_request),
+                        **_request_fields(service_request),
                         path=path,
                         wavelength=channel_idx,
                     )
@@ -221,6 +234,14 @@ class KSPFirstFitFlexAllocator(BaseRWAAllocator):
             msg = "Allocator slots_per_channel must match network state."
             raise ValueError(msg)
         n_slots = service_request.n_slots
+        mode = service_request.transceiver_mode
+        if mode is not None:
+            slot_width_hz = (
+                self.spectrum_grid.channel_spacing_hz / self.slots_per_channel
+            )
+            n_slots = max(n_slots, ceil(mode.required_slot_width_hz / slot_width_hz))
+            if n_slots != service_request.n_slots:
+                service_request = replace(service_request, n_slots=n_slots)
         ksp_paths = self.path_cache.get_paths(
             service_request.source_id, service_request.destination_id
         )
@@ -254,7 +275,7 @@ class KSPFirstFitFlexAllocator(BaseRWAAllocator):
                     continue
 
                 allocated_service = AllocatedService(
-                    **asdict(service_request),
+                    **_request_fields(service_request),
                     path=path,
                     wavelength=channel_idx,
                     first_slot=first_slot,

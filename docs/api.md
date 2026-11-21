@@ -6,6 +6,8 @@
 
 ::: network_nlo_eval.core.flexgrid
 
+::: network_nlo_eval.core.transceiver
+
 ::: network_nlo_eval.network.elements
 
 ::: network_nlo_eval.models.base
