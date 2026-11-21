@@ -98,6 +98,32 @@ frequency grid and checks downstream incumbents affected by the new load.
 Uniform fixed-grid routes and loss-compensated fixed-grid networks can use the
 existing link-budget path.
 
+## Equipment profiles
+
+Use `EquipmentProfiles` to share physical settings across links, installed
+spans, and nodes. Pass a catalog as `equipment_profiles=` to `NetworkTopology`
+in Python. In a NetworkX node-link JSON topology, put it under
+`graph.equipment_profiles`.
+
+```json
+{
+  "fiber": { "smf": { "attenuation_db_km_ref": 0.19 } },
+  "edfa": { "line": { "noise_figure_db": 4.5 } },
+  "roadm": { "switch": { "insertion_loss_db": 3 } }
+}
+```
+
+An edge can reference these entries with
+`"fiber": {"profile": "smf", "length_km": 80}` and `"edfa": "line"`. A node can
+use `"roadm": "switch"`. Use the same reference syntax inside `spans` on
+directed links. An omitted or null span `edfa` keeps that span passive.
+
+For links and nodes, profile settings override the topology defaults and inline
+settings take precedence. Edge `length_km` or `weight` takes precedence over a
+profile's length, and an inline fiber `length_km` takes precedence over either.
+Profiles resolve at topology construction and exports contain the resolved
+equipment settings.
+
 ## Command line
 
 Use `network-nlo-eval models` to list registered models and their options.

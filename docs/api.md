@@ -22,6 +22,8 @@ See the [PCFM2 configuration and comparison guide](pcfm2.md).
 
 ## Network and routing
 
+::: network_nlo_eval.network.equipment
+
 ::: network_nlo_eval.network.topology
 
 ::: network_nlo_eval.network.state

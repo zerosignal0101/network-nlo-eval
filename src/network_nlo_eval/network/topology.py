@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from network_nlo_eval.network.elements import (
@@ -12,6 +13,7 @@ from network_nlo_eval.network.elements import (
     OpticalSpanConfig,
     ROADMConfig,
 )
+from network_nlo_eval.network.equipment import EquipmentProfiles
 
 if TYPE_CHECKING:
     import networkx as nx
@@ -37,6 +39,9 @@ class NetworkTopology:
         Default amplifier configuration, overridden by node or edge attributes.
     default_roadm_config : ROADMConfig
         Default ROADM configuration, overridden by node attributes.
+    equipment_profiles : EquipmentProfiles or mapping, optional
+        Named physical settings. If omitted, use the graph's
+        ``equipment_profiles`` attribute.
     """
 
     def __init__(
@@ -45,6 +50,8 @@ class NetworkTopology:
         default_fiber_config: FiberSpanConfig,
         default_edfa_config: EDFAConfig,
         default_roadm_config: ROADMConfig,
+        *,
+        equipment_profiles: EquipmentProfiles | Mapping[str, Any] | None = None,
     ):
         """Initialize the node mapping and element configurations."""
         if network_raw.is_multigraph():
@@ -70,8 +77,13 @@ class NetworkTopology:
         self._default_edfa_config = default_edfa_config
         self._default_roadm_config = default_roadm_config
 
+        profiles = EquipmentProfiles.model_validate(
+            network_raw.graph.get("equipment_profiles", {})
+            if equipment_profiles is None
+            else equipment_profiles
+        )
         self._setup_node_mapping()
-        self._parse_links_and_nodes_configs()
+        self._parse_links_and_nodes_configs(profiles)
 
     def _setup_node_mapping(self) -> None:
         """Map original node IDs to consecutive internal integers."""
@@ -80,8 +92,11 @@ class NetworkTopology:
             self._idx_to_node_id[idx] = original_id
             self._adj_list[idx] = []  # Initialize the adjacency list.
 
-    def _parse_links_and_nodes_configs(self) -> None:
+    def _parse_links_and_nodes_configs(self, profiles: EquipmentProfiles) -> None:
         """Parse edge and node attributes into physical configurations."""
+        default_fiber = self._default_fiber_config.model_dump()
+        default_edfa = self._default_edfa_config.model_dump()
+        default_roadm = self._default_roadm_config.model_dump()
         for u_orig, v_orig, data in self._network_raw.edges(data=True):
             u_idx = self._node_id_to_idx[u_orig]
             v_idx = self._node_id_to_idx[v_orig]
@@ -102,9 +117,7 @@ class NetworkTopology:
                         "least one span when specifying installed equipment."
                     )
                     raise ValueError(msg)
-                spans = tuple(
-                    OpticalSpanConfig.model_validate(span) for span in raw_spans
-                )
+                spans = tuple(self._resolve_span(profiles, span) for span in raw_spans)
                 self._link_spans[link_key] = spans
                 self._link_lengths_km[link_key] = sum(
                     span.fiber.length_km for span in spans
@@ -112,17 +125,24 @@ class NetworkTopology:
                 continue
 
             # Support nested physical settings and legacy edge weights as lengths.
-            fiber_overrides = dict(data.get("fiber", data.get("fiber_config", {})))
-            fiber_overrides.setdefault(
-                "length_km", data.get("length_km", data.get("weight", 100.0))
+            placement = {}
+            if "length_km" in data:
+                placement["length_km"] = data["length_km"]
+            elif "weight" in data:
+                placement["length_km"] = data["weight"]
+            fiber_overrides = profiles.resolve(
+                "fiber",
+                data.get("fiber", data.get("fiber_config", {})),
+                placement=placement,
             )
+            fiber_overrides.setdefault("length_km", 100.0)
             fiber_config = FiberSpanConfig.model_validate(
-                {**self._default_fiber_config.model_dump(), **fiber_overrides}
+                default_fiber | fiber_overrides
             )
-            edfa_overrides = dict(data.get("edfa", data.get("edfa_config", {})))
-            link_edfa = EDFAConfig.model_validate(
-                {**self._default_edfa_config.model_dump(), **edfa_overrides}
+            edfa_overrides = profiles.resolve(
+                "edfa", data.get("edfa", data.get("edfa_config", {}))
             )
+            link_edfa = EDFAConfig.model_validate(default_edfa | edfa_overrides)
 
             self._fiber_configs[link_key] = fiber_config
             self._link_edfa_configs[link_key] = link_edfa
@@ -130,17 +150,30 @@ class NetworkTopology:
 
         for original_id, data in self._network_raw.nodes(data=True):
             node_idx = self._node_id_to_idx[original_id]
-            edfa_overrides = dict(data.get("edfa", data.get("edfa_config", {})))
-            roadm_overrides = dict(data.get("roadm", data.get("roadm_config", {})))
+            edfa_overrides = profiles.resolve(
+                "edfa", data.get("edfa", data.get("edfa_config", {}))
+            )
+            roadm_overrides = profiles.resolve(
+                "roadm", data.get("roadm", data.get("roadm_config", {}))
+            )
             self._edfa_configs[node_idx] = EDFAConfig.model_validate(
-                {**self._default_edfa_config.model_dump(), **edfa_overrides}
+                default_edfa | edfa_overrides
             )
-            roadm = ROADMConfig.model_validate(
-                {**self._default_roadm_config.model_dump(), **roadm_overrides}
-            )
+            roadm = ROADMConfig.model_validate(default_roadm | roadm_overrides)
             self._roadm_configs[node_idx] = roadm
             if roadm.degree_targets or roadm.path_losses:
                 self._resolve_roadm_overrides(original_id, node_idx, roadm)
+
+    @staticmethod
+    def _resolve_span(profiles: EquipmentProfiles, span: Any) -> OpticalSpanConfig:
+        if isinstance(span, Mapping):
+            fields = dict(span)
+            for kind in ("fiber", "edfa"):
+                raw_element = fields.get(kind)
+                if isinstance(raw_element, (str, Mapping)):
+                    fields[kind] = profiles.resolve(kind, raw_element)
+            return OpticalSpanConfig.model_validate(fields)
+        return OpticalSpanConfig.model_validate(span)
 
     def _resolve_roadm_overrides(
         self, original_id: OriginalNodeID, node_idx: NodeID, roadm: ROADMConfig
