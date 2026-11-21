@@ -89,6 +89,15 @@ the last calibrated point treated as infeasible.
 reports reached during the most recent verification, including failed checks.
 The reports are keyed by service ID and include the limiting margin in dB.
 
+### Fixed-grid loading
+
+On mixed routes with power-changing equipment, fixed-grid admission applies add,
+express, and drop settings by service and uses the propagated ingress power to
+compute each downstream link's load. The solver retains the model's nominal
+frequency grid and checks downstream incumbents affected by the new load.
+Uniform fixed-grid routes and loss-compensated fixed-grid networks can use the
+existing link-budget path.
+
 ## Command line
 
 Use `network-nlo-eval models` to list registered models and their options.

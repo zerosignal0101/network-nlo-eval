@@ -104,7 +104,7 @@ class LinkState:
     # True indicates an occupied channel.
     occupied_channels: NDArrayBool
     # Launch power in watts; zero for an unoccupied channel.
-    # These are transmit powers at the link input, not received powers.
+    # Store requested launch powers. Coupled admission derives downstream inputs.
     launch_power_profile_w: NDArrayFloat
     # A service ID of -1 indicates an unallocated channel.
     allocated_service_ids: NDArrayInt

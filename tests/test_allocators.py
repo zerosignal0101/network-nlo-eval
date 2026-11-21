@@ -242,26 +242,49 @@ def test_mixed_loading_matches_link_budgets_with_same_slot_replacement(
     )
 
 
-def test_load_changes_reach_incumbents_beyond_the_candidate_route() -> None:
+@pytest.mark.parametrize("flex", [False, True])
+def test_load_changes_reach_incumbents_beyond_the_candidate_route(flex: bool) -> None:
     graph: nx.DiGraph[int] = nx.DiGraph()
     graph.add_edge(0, 1, edfa={"max_output_signal_power_w": 0.001})
     graph.add_edge(1, 2)
     fiber = FiberSpanConfig(length_km=80)
     topology = NetworkTopology(graph, fiber, EDFAConfig(), ROADMConfig())
     grid = SpectrumGrid(3, 50e9, 193.1e12)
-    state = NetworkState(topology, grid, slots_per_channel=4)
+    state = NetworkState(topology, grid, slots_per_channel=4 if flex else 1)
     validator = QoTValidator(MultiBandISRSGN(grid, fiber, 32e9), topology, grid)
     state.allocate_service(
-        AllocatedService(1, 0, 2, 0, 1, 100, 0, 0.001, 2, [0, 1, 2], 0, 0, 4)
+        AllocatedService(
+            1, 0, 2, 0, 1, 100, 0, 0.001, 2, [0, 1, 2], 0, 0, 4 if flex else None
+        )
     )
-    downstream = AllocatedService(2, 1, 2, 0, 1, 100, 0, 0.001, 2, [1, 2], 1, 4, 4)
+    downstream = AllocatedService(
+        2,
+        1,
+        2,
+        0,
+        1,
+        100,
+        0,
+        0.001,
+        2,
+        [1, 2],
+        1,
+        4 if flex else 0,
+        4 if flex else None,
+    )
     state.allocate_service(downstream)
     candidate = ServiceRequest(3, 0, 1, 0, 1, 100, 0, 0.001)
-    assert validator.verify_allocation(candidate, [0, 1], 2, state, first_slot=8)[0]
+    first_slot = 8 if flex else None
+    assert validator.verify_allocation(
+        candidate, [0, 1], 2, state, first_slot=first_slot
+    )[0]
     downstream.snr_requirement_db = 1000
-    assert validator.verify_allocation(candidate, [0, 1], 2, state, first_slot=8) == (
-        False,
-        None,
+    assert validator.verify_allocation(
+        candidate, [0, 1], 2, state, first_slot=first_slot
+    ) == (False, None)
+    assert set(state.get_all_allocated_services()) == {1, 2}
+    assert all(
+        link.noise_cache is None for link in state.get_all_link_states().values()
     )
 
 

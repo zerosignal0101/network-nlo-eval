@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from network_nlo_eval.core.spectrum import SpectrumGrid
-from network_nlo_eval.models.base import create_model
+from network_nlo_eval.core.types import LinkKey, NDArrayFloat
+from network_nlo_eval.models.base import MultiSpanOpticalPath, create_model
 from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig, ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
@@ -17,6 +18,7 @@ from network_nlo_eval.rwa.qot_checker import (
     accumulate_service_snr,
     fold_roadm_terms,
 )
+from network_nlo_eval.rwa.validity import LinkValidity, LinkValidityPolicy
 from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
 
@@ -276,3 +278,104 @@ def test_equal_powers_from_distinct_carriers_use_link_budgets() -> None:
     assert accepted
     assert state.get_link_state(0, 1).noise_cache is not None
     assert state.get_link_state(1, 2).noise_cache is not None
+
+
+@pytest.mark.parametrize("convention", ["total", "per_pol"])
+def test_fixed_grid_uses_propagated_ingress_with_same_channel_replacement(
+    convention: str,
+) -> None:
+    graph: nx.DiGraph[int] = nx.DiGraph()
+    graph.add_edge(0, 1, length_km=80, edfa={"max_output_signal_power_w": 1.2e-3})
+    graph.add_edge(1, 2, length_km=80)
+    fiber = FiberSpanConfig(length_km=80)
+    topology = NetworkTopology(
+        graph,
+        fiber,
+        EDFAConfig(),
+        ROADMConfig(insertion_loss_db=0, add_drop_loss_db=0, filtering_penalty_db=0),
+    )
+    grid = SpectrumGrid(2, 50e9, 193.1e12)
+    model = create_model("ecz", grid, fiber, 32e9, launch_power_convention=convention)
+    validator = QoTValidator(model, topology, grid)
+    state = NetworkState(topology, grid, slots_per_channel=4)
+    for source, destination in [(0, 1), (1, 2)]:
+        state.allocate_service(
+            AllocatedService(
+                source,
+                source,
+                destination,
+                0,
+                1,
+                100,
+                0,
+                0.6e-3,
+                path=[source, destination],
+                wavelength=0,
+            )
+        )
+    request = ServiceRequest(2, 0, 2, 0, 1, 100, 27.6, 1e-3, n_slots=4)
+    path = [0, 1, 2]
+
+    scale = 0.5 if convention == "per_pol" else 1.0
+    first_input = scale * np.array([0.6e-3, 1e-3])
+    first = model.evaluate_path(
+        MultiSpanOpticalPath([fiber], [topology.get_link_edfa_config(0, 1)]),
+        first_input,
+    )
+    second_input = np.array([first_input[0], first.signal_power_w[1]])
+    second_path = MultiSpanOpticalPath([fiber], [topology.get_link_edfa_config(1, 2)])
+    second = model.evaluate_path(second_path, second_input)
+    expected = -10 * np.log10(
+        10 ** (-first.snr_db[1] / 10) + 10 ** (-second.snr_db[1] / 10)
+    )
+    nominal = model.evaluate_path(second_path, first_input)
+    nominal_snr = -10 * np.log10(
+        10 ** (-first.snr_db[1] / 10)
+        + 10 ** (-nominal.snr_db[1] / 10) * first_input[1] / second_input[1]
+    )
+    assert nominal_snr < request.snr_requirement_db < expected
+    fixed_accepted, fixed_snrs = validator.verify_allocation(request, path, 1, state)
+    flex_accepted, flex_snrs = validator.verify_allocation(
+        request, path, 1, state, first_slot=4
+    )
+    assert fixed_accepted
+    assert flex_accepted
+    assert fixed_snrs is not None
+    assert flex_snrs is not None
+    assert fixed_snrs[1] == pytest.approx(expected, abs=1e-12)
+    np.testing.assert_allclose(fixed_snrs, flex_snrs, rtol=0, atol=1e-12)
+
+    inputs: dict[LinkKey, NDArrayFloat] = {}
+
+    def validity_provider(
+        link_key: LinkKey,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_profile_w: NDArrayFloat,
+        span_length_m: float,
+    ) -> LinkValidity:
+        assert fiber_config.length_km == 80
+        assert edfa_config is not None
+        assert span_length_m == 100_000
+        inputs[link_key] = power_profile_w.copy()
+        active = power_profile_w > 0
+        return LinkValidity(
+            active, active, ~active, np.ones(2), np.full(2, 0.5), "test"
+        )
+
+    with_policy = QoTValidator(
+        model,
+        topology,
+        grid,
+        validity_policy=LinkValidityPolicy(mode="degrade"),
+        validity_provider=validity_provider,
+    )
+    assert with_policy.verify_allocation(request, path, 1, state) == (False, None)
+    np.testing.assert_allclose(inputs[0, 1], first_input)
+    np.testing.assert_allclose(inputs[1, 2], second_input)
+    assert set(with_policy.last_link_validity) == {(0, 1), (1, 2)}
+    assert state.get_allocated_service(2) is None
+    assert not state.occupied_slots_on_path(path)[4:].any()
+    assert all(
+        link.noise_cache is None for link in state.get_all_link_states().values()
+    )

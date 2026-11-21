@@ -18,7 +18,7 @@ from network_nlo_eval.core.transceiver import evaluate_receiver
 from network_nlo_eval.models.base import MultiSpanOpticalPath
 from network_nlo_eval.models.power_conventions import launch_power_scale
 from network_nlo_eval.models.route import H_PLANCK
-from network_nlo_eval.rwa.validity import ChannelValidity
+from network_nlo_eval.rwa.validity import ChannelValidity, OpticalPathValidityProvider
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,8 +28,9 @@ if TYPE_CHECKING:
     from network_nlo_eval.models.base import QoTModel
     from network_nlo_eval.network.elements import EDFAConfig, ROADMConfig
     from network_nlo_eval.network.state import LinkState, NetworkState
+    from network_nlo_eval.network.topology import NetworkTopology
     from network_nlo_eval.rwa.qot_checker import QoTValidator
-    from network_nlo_eval.rwa.validity import LinkValidity, OpticalPathValidityProvider
+    from network_nlo_eval.rwa.validity import LinkValidity, LinkValidityProvider
     from network_nlo_eval.simulation.traffic import AllocatedService, ServiceRequest
 
     CarrierModelFactory = Callable[[tuple[CarrierGeometry, ...], int], QoTModel]
@@ -49,6 +50,9 @@ class _Switching(NamedTuple):
     limit_w: float
     booster_ase_w: float
     noise_penalty: float
+
+
+_PASS_THROUGH = _Switching(1.0, math.inf, 0.0, 1.0)
 
 
 def _switching(
@@ -91,7 +95,7 @@ class _LinkLoad:
     roadm_limits_w: NDArrayFloat
     roadm_ase_w: NDArrayFloat
     roadm_penalty: NDArrayFloat
-    provider: OpticalPathValidityProvider | None
+    provider: LinkValidityProvider | None
     bandwidths_hz: list[float]
 
 
@@ -111,6 +115,30 @@ class _PathImpairments(NamedTuple):
     pdl_db: float
 
 
+def preserves_through_power(topology: NetworkTopology) -> bool:
+    """Return whether network equipment preserves through-carrier power."""
+    for node in topology.get_all_internal_nodes():
+        roadm = topology.get_roadm_config(node)
+        if (
+            not roadm.equalize_output_power
+            or roadm.output_target is not None
+            or roadm.degree_targets
+            or roadm.blocked_channels
+            or roadm.blocked_slots
+        ):
+            return False
+    for key in topology.get_all_internal_links():
+        spans = topology.get_link_spans(*key)
+        amplifiers = (
+            (topology.get_link_edfa_config(*key),)
+            if spans is None
+            else (span.edfa for span in spans)
+        )
+        if any(edfa is None or not edfa.is_loss_compensating for edfa in amplifiers):
+            return False
+    return True
+
+
 class CarrierAdmission:
     """Evaluate the component of the network coupled to a candidate's load.
 
@@ -122,14 +150,16 @@ class CarrierAdmission:
     def __init__(
         self,
         validator: QoTValidator,
-        model_factory: CarrierModelFactory,
+        model_factory: CarrierModelFactory | None,
         validity_factory: CarrierValidityFactory | None,
+        *,
+        independent_power: bool,
     ) -> None:
         self.validator = validator
         self.topology = validator.network_topology
         self.grid = validator.spectrum_grid
         self.nominal_frequencies = self.grid.frequencies
-        self.independent_power = self._preserves_through_power()
+        self.independent_power = independent_power
         self.power_scale = launch_power_scale(
             validator.eval_power_convention
         ) / launch_power_scale(validator.launch_power_convention)
@@ -137,6 +167,7 @@ class CarrierAdmission:
         def bind(
             geometry: tuple[CarrierGeometry, ...], slots_per_channel: int
         ) -> tuple[QoTModel, OpticalPathValidityProvider | None]:
+            assert model_factory is not None
             model = model_factory(geometry, slots_per_channel)
             if (
                 model.n_nodes != len(geometry)
@@ -162,30 +193,6 @@ class CarrierAdmission:
         self._models = lru_cache(maxsize=32)(bind)
         self._link_paths = lru_cache(maxsize=128)(self._build_link_path)
 
-    def _preserves_through_power(self) -> bool:
-        for node in self.topology.get_all_internal_nodes():
-            roadm = self.topology.get_roadm_config(node)
-            if (
-                not roadm.equalize_output_power
-                or roadm.output_target is not None
-                or roadm.degree_targets
-                or roadm.blocked_channels
-                or roadm.blocked_slots
-            ):
-                return False
-        for key in self.topology.get_all_internal_links():
-            spans = self.topology.get_link_spans(*key)
-            amplifiers = (
-                (self.topology.get_link_edfa_config(*key),)
-                if spans is None
-                else (span.edfa for span in spans)
-            )
-            if any(
-                edfa is None or not edfa.is_loss_compensating for edfa in amplifiers
-            ):
-                return False
-        return True
-
     def verify(
         self,
         request: ServiceRequest,
@@ -194,6 +201,8 @@ class CarrierAdmission:
         first_slot: int | None,
         state: NetworkState,
         span_km: float | None,
+        *,
+        nominal_grid: bool = False,
     ) -> tuple[bool, NDArrayFloat | None]:
         per_channel = state.slots_per_channel
         slot = channel_idx * per_channel if first_slot is None else first_slot
@@ -237,7 +246,9 @@ class CarrierAdmission:
         pending = deque(route)
         while pending:
             key = pending.popleft()
-            carriers = self._link_carriers(state, state.get_link_state(*key), flex_grid)
+            carriers = self._link_carriers(
+                state, state.get_link_state(*key), flex_grid, nominal_grid=nominal_grid
+            )
             for carrier in carriers:
                 service_id = carrier.service_id
                 if service_id is None:
@@ -262,10 +273,13 @@ class CarrierAdmission:
                     graph.add_edges_from(pairwise(service_route))
             if key in candidate_links:
                 carriers.append(candidate)
-            loads[key] = self._prepare_link(key, carriers, paths, span_km, per_channel)
+            loads[key] = self._prepare_link(
+                key, carriers, paths, span_km, per_channel, nominal_grid=nominal_grid
+            )
 
         if (
-            not self.validator.validity_policy.enabled
+            not nominal_grid
+            and not self.validator.validity_policy.enabled
             and len(loads) == len(route)
             and all(service.path == path for service in incumbents.values())
             and all(
@@ -423,12 +437,19 @@ class CarrierAdmission:
         return CarrierGeometry(grid, slot, width, baud)
 
     def _link_carriers(
-        self, state: NetworkState, link: LinkState, grid: FlexibleGrid
+        self,
+        state: NetworkState,
+        link: LinkState,
+        grid: FlexibleGrid,
+        *,
+        nominal_grid: bool,
     ) -> list[_Carrier]:
         carriers = []
         slot_anchors = set()
         width_per_channel = link.slots_per_channel
-        for slot, (width, power, service_id) in link.slot_allocations():
+        for slot, (width, power, service_id) in (
+            () if nominal_grid else link.slot_allocations()
+        ):
             slot_anchors.add(slot // width_per_channel)
             service = state.get_allocated_service(service_id)
             carriers.append(
@@ -468,10 +489,19 @@ class CarrierAdmission:
         paths: dict[int, tuple[list[int], tuple[LinkKey, ...]]],
         span_km: float | None,
         per_channel: int,
+        *,
+        nominal_grid: bool,
     ) -> _LinkLoad:
-        carriers.sort(key=lambda carrier: carrier.geometry.first_slot)
-        geometry = tuple(carrier.geometry for carrier in carriers)
-        model, provider = self._models(geometry, per_channel)
+        provider: LinkValidityProvider | None
+        optical_path = self._link_paths(key, span_km)
+        if nominal_grid:
+            model = self.validator.gn_evaluator
+            provider = self.validator.validity_provider
+        else:
+            carriers.sort(key=lambda carrier: carrier.geometry.first_slot)
+            geometry = tuple(carrier.geometry for carrier in carriers)
+            model, provider = self._models(geometry, per_channel)
+            optical_path = self._sample_amplifiers(optical_path, model)
         width_scale = model.power_width_scale()
         polar_scale = self.validator.ase_polarization_scale
         frequencies = model.f_abs_hz.tolist()
@@ -497,18 +527,19 @@ class CarrierAdmission:
             )
 
         upstream = []
-        sources = []
-        source_noise = []
-        switches = []
+        sources = [0.0] * model.n_nodes
+        source_noise = [0.0] * model.n_nodes
+        switches = [_PASS_THROUGH] * model.n_nodes
         rows = {}
-        for row, carrier in enumerate(carriers):
+        for index, carrier in enumerate(carriers):
+            row = carrier.geometry.first_slot // per_channel if nominal_grid else index
             power = carrier.launch_power_w * self.power_scale * width_scale[row]
             add_ase = 0.0
-            switching = _Switching(1.0, math.inf, 0.0, 1.0)
+            switching = _PASS_THROUGH
             if (service_id := carrier.service_id) is not None:
                 path, route = paths[service_id]
-                index = route.index(key)
-                if index == 0:
+                hop = route.index(key)
+                if hop == 0:
                     add = switching_for(
                         self.topology.get_roadm_add_config(path[0], path[1]),
                         "add",
@@ -519,19 +550,18 @@ class CarrierAdmission:
                         add.booster_ase_w * add.noise_penalty if power > 0 else 0.0
                     )
                 elif not self.independent_power:
-                    upstream.append((row, service_id, route[index - 1]))
+                    upstream.append((row, service_id, route[hop - 1]))
                     power = 0.0
                 switching = switching_for(
-                    self.topology.get_roadm_path_config(path, index),
-                    "drop" if index == len(route) - 1 else "express",
+                    self.topology.get_roadm_path_config(path, hop),
+                    "drop" if hop == len(route) - 1 else "express",
                     row,
                 )
                 rows[service_id] = row
-            sources.append(power)
-            source_noise.append(add_ase)
-            switches.append(switching)
+            sources[row] = power
+            source_noise[row] = add_ase
+            switches[row] = switching
         transfer, limits, ase, penalty = zip(*switches, strict=True)
-        optical_path = self._sample_amplifiers(self._link_paths(key, span_km), model)
         return _LinkLoad(
             model,
             optical_path,
@@ -632,13 +662,26 @@ class CarrierAdmission:
                 result.ase_noise_w * switch_transfer + roadm_ase
             ) * load.roadm_penalty
         report = None
-        if with_validity and load.provider is not None:
-            report = load.provider.evaluate_path(
-                key,
-                load.optical_path,
-                normalized,
-                result=result if load.provider.model is load.model else None,
-            )
+        if with_validity and (provider := load.provider) is not None:
+            if isinstance(provider, OpticalPathValidityProvider):
+                report = provider.evaluate_path(
+                    key,
+                    load.optical_path,
+                    normalized,
+                    result=result if provider.model is load.model else None,
+                )
+            else:
+                if self.topology.get_link_spans(*key) is not None:
+                    msg = "Installed spans require an optical-path validity provider."
+                    raise TypeError(msg)
+                fiber = load.optical_path.fiber_configs[0]
+                report = provider(
+                    key,
+                    fiber,
+                    load.optical_path.edfa_configs[0],
+                    normalized,
+                    fiber.max_span_length_km * 1000,
+                )
             self.validator.last_link_validity[key] = report
         return _LinkBudget(signal, noise, noise_transfer, report, ase)
 

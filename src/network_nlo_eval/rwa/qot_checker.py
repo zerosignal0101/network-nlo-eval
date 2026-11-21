@@ -27,7 +27,10 @@ from network_nlo_eval.models.route import roadm_target_transfer
 from network_nlo_eval.network.elements import ROADMConfig
 from network_nlo_eval.network.state import LinkNoiseCache, LinkState, NetworkState
 from network_nlo_eval.network.topology import NetworkTopology
-from network_nlo_eval.rwa.carrier_loading import CarrierAdmission
+from network_nlo_eval.rwa.carrier_loading import (
+    CarrierAdmission,
+    preserves_through_power,
+)
 from network_nlo_eval.rwa.link_noise import (
     FiberBoundQoTModel,
     assemble_link_noise,
@@ -508,6 +511,7 @@ class QoTValidator:
         )
         self._carrier_validity_factory = carrier_validity_factory
         self._carrier_admission: CarrierAdmission | None = None
+        self._independent_power = preserves_through_power(network_topology)
         #: Reports for links affected by the most recent verification.
         self.last_link_validity: dict[LinkKey, LinkValidity] = {}
         self.last_receiver_feasibility: dict[int, ReceiverFeasibility] = {}
@@ -540,8 +544,10 @@ class QoTValidator:
         """Verify the candidate and all affected existing services.
 
         Candidate spectra are temporary. Routes and affected link budgets
-        are evaluated once per attempt. On success, store any computed
-        link caches and return the same SNR array used for admission.
+        are evaluated against the power entering each link when mixed routes
+        share power-changing equipment. The returned SNR array uses channel
+        anchors for coupled or flexible allocations and reports the candidate
+        and incumbents following its route.
         Receiver tests reached in the most recent attempt are available in
         ``last_receiver_feasibility``, keyed by service ID, including failures.
 
@@ -587,20 +593,13 @@ class QoTValidator:
             or service_request.transceiver_mode is not None
             or current_network_state.has_per_carrier_services
         ):
-            if self._carrier_admission is None:
-                if self._carrier_model_factory is None:
-                    msg = "Per-carrier admission requires a carrier_model_factory or an evaluator with for_connections."
-                    raise TypeError(msg)
-                if (
-                    self.validity_policy.enabled
-                    and self._carrier_validity_factory is None
-                ):
-                    msg = "Per-carrier admission with validity enabled requires a carrier_validity_factory."
-                    raise TypeError(msg)
-                self._carrier_admission = CarrierAdmission(
-                    self, self._carrier_model_factory, self._carrier_validity_factory
-                )
-            return self._carrier_admission.verify(
+            if self._carrier_model_factory is None:
+                msg = "Per-carrier admission requires a carrier_model_factory or an evaluator with for_connections."
+                raise TypeError(msg)
+            if self.validity_policy.enabled and self._carrier_validity_factory is None:
+                msg = "Per-carrier admission with validity enabled requires a carrier_validity_factory."
+                raise TypeError(msg)
+            return self._carrier_solver().verify(
                 service_request,
                 path,
                 channel_idx,
@@ -625,6 +624,32 @@ class QoTValidator:
             temp_profile[channel_idx] = launch_power
             temp_power_profiles[link_key] = temp_profile
 
+        affected_old_services = None
+        if not self._independent_power:
+            affected_old_services = self._collect_affected_services(
+                path, current_network_state
+            )
+            first_link = current_network_state.get_link_state(path[0], path[1])
+            if any(service.path != path for service in affected_old_services) or (
+                len(path) > 2
+                and not self._has_uniform_loading(
+                    path,
+                    first_link,
+                    temp_power_profiles[first_link.link_key],
+                    temp_power_profiles,
+                    current_network_state,
+                )
+            ):
+                return self._carrier_solver().verify(
+                    service_request,
+                    path,
+                    channel_idx,
+                    None,
+                    current_network_state,
+                    span_km,
+                    nominal_grid=True,
+                )
+
         temp_noise_cache: dict[LinkKey, LinkNoiseCache] = {}
         final_snrs_db = self._build_path_snr_array(
             path,
@@ -640,12 +665,10 @@ class QoTValidator:
         ):
             return False, None
 
-        # Collect affected existing services.
-        affected_old_services = self._collect_affected_services(
-            path,
-            channel_idx,
-            current_network_state,
-        )
+        if affected_old_services is None:
+            affected_old_services = self._collect_affected_services(
+                path, current_network_state
+            )
 
         path_snrs = {tuple(path): final_snrs_db}
         for old_service in affected_old_services:
@@ -677,6 +700,16 @@ class QoTValidator:
     # ------------------------------------------------------------------
     # Internal methods
     # ------------------------------------------------------------------
+
+    def _carrier_solver(self) -> CarrierAdmission:
+        if self._carrier_admission is None:
+            self._carrier_admission = CarrierAdmission(
+                self,
+                self._carrier_model_factory,
+                self._carrier_validity_factory,
+                independent_power=self._independent_power,
+            )
+        return self._carrier_admission
 
     def _calc_link_noise(
         self,
@@ -877,7 +910,6 @@ class QoTValidator:
     def _collect_affected_services(
         self,
         path: list[NodeID],
-        channel_idx: int,
         network_state: NetworkState,
     ) -> list[AllocatedService]:
         """Collect existing services affected by candidate-path links.
@@ -886,8 +918,6 @@ class QoTValidator:
         ----------
         path : list[NodeID]
             Ordered path nodes.
-        channel_idx : int
-            Channel or evaluator-node index.
         network_state : NetworkState
             Current network state.
 
@@ -902,12 +932,10 @@ class QoTValidator:
         for u, v in pairwise(path):
             link_state = network_state.get_link_state(u, v)
 
-            for ch_idx in range(self.num_nodes):
-                if ch_idx == channel_idx:
-                    continue
-                if not link_state.occupied_channels[ch_idx]:
-                    continue
-                service_id = link_state.allocated_service_ids[ch_idx]
+            occupied_ids = link_state.allocated_service_ids[
+                link_state.occupied_channels
+            ]
+            for service_id in occupied_ids.tolist():
                 if service_id == -1 or service_id in seen_ids:
                     continue
                 seen_ids.add(service_id)
