@@ -16,6 +16,7 @@ import numpy as np
 from network_nlo_eval.core.spectrum import SpectrumGrid
 from network_nlo_eval.core.types import LinkKey, NDArrayFloat, NodeID
 from network_nlo_eval.models.base import MultiSpanOpticalPath, QoTModel
+from network_nlo_eval.models.pcfm2 import PCFM2Model
 from network_nlo_eval.models.power_conventions import (
     ase_polarization_scale as convention_ase_polarization_scale,
 )
@@ -404,6 +405,7 @@ class QoTValidator:
         validity_policy: LinkValidityPolicy | None = None,
         validity_provider: LinkValidityProvider | None = None,
         coherent_assembly: bool = False,
+        mixed_load_coherence: bool = False,
         carrier_model_factory: "CarrierModelFactory | None" = None,
         carrier_validity_factory: "CarrierValidityFactory | None" = None,
     ):
@@ -431,6 +433,9 @@ class QoTValidator:
         coherent_assembly : bool
             Request full-route evaluation for a uniform load and coherent
             link assembly for varying loads when the evaluator supports it.
+        mixed_load_coherence : bool
+            Use coherent PCFM2 span pairs across links for continuing carrier
+            interactions. Requires ``pcfm2`` with coherent span accumulation.
         carrier_model_factory : callable or None
             Build a model from the current carrier geometries and slots per
             channel. Defaults to the evaluator's ``for_connections`` method.
@@ -441,7 +446,7 @@ class QoTValidator:
         Raises
         ------
         ValueError
-            If provider, policy or power-convention settings are incompatible.
+            If model, provider, policy or power-convention settings are incompatible.
         """
         policy = validity_policy or LinkValidityPolicy()
         if (
@@ -506,6 +511,13 @@ class QoTValidator:
         self.validity_provider = validity_provider
         #: Coherent assembly is opt-in and requires evaluator support.
         self.coherent_assembly = bool(coherent_assembly)
+        if mixed_load_coherence and (
+            not isinstance(gn_evaluator, PCFM2Model)
+            or not gn_evaluator.supports_mixed_load_coherence
+        ):
+            msg = "mixed_load_coherence requires the 'pcfm2' QoT model with span_coherence='coherent'."
+            raise ValueError(msg)
+        self.mixed_load_coherence = bool(mixed_load_coherence)
         self._carrier_model_factory = carrier_model_factory or getattr(
             gn_evaluator, "for_connections", None
         )
@@ -610,6 +622,16 @@ class QoTValidator:
         if self.validity_policy.enabled and self.validity_provider is None:
             msg = "Fixed-grid admission with validity enabled requires a validity_provider."
             raise TypeError(msg)
+        if self.mixed_load_coherence:
+            return self._carrier_solver().verify(
+                service_request,
+                path,
+                channel_idx,
+                None,
+                current_network_state,
+                span_km,
+                nominal_grid=True,
+            )
 
         temp_power_profiles: dict[LinkKey, NDArrayFloat] = {}
 

@@ -98,3 +98,31 @@ def test_default_topology_is_packaged() -> None:
     help_result = runner.invoke(main, ["--help"])
     assert help_result.exit_code == 0
     assert "simulate" in help_result.output
+
+
+def test_simulate_mixed_load_coherence_selects_pcfm2(tmp_path) -> None:
+    graph: nx.Graph[int] = nx.Graph()
+    graph.add_edges_from([(0, 1), (1, 2)], length_km=20)
+    topology = tmp_path / "topology.json"
+    topology.write_text(
+        json.dumps(nx.node_link_data(graph, edges="edges")), encoding="utf-8"
+    )
+    args = [
+        "simulate",
+        "-t",
+        str(topology),
+        "-o",
+        str(tmp_path / "results"),
+        "--service-num",
+        "1",
+        "--num-channels",
+        "2",
+        "--mixed-load-coherence",
+    ]
+    runner = CliRunner()
+    unsupported = runner.invoke(main, args)
+    assert unsupported.exit_code == 1
+    assert "requires the 'pcfm2' QoT model" in unsupported.output
+    supported = runner.invoke(main, [*args, "--qot-model", "pcfm2"])
+    assert supported.exit_code == 0, supported.output
+    assert (tmp_path / "results" / "simulation_results.json").is_file()

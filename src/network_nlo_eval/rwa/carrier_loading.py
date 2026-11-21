@@ -16,6 +16,12 @@ from network_nlo_eval.core.constants import C_LIGHT
 from network_nlo_eval.core.flexgrid import CarrierGeometry, FlexibleGrid
 from network_nlo_eval.core.transceiver import evaluate_receiver
 from network_nlo_eval.models.base import MultiSpanOpticalPath
+from network_nlo_eval.models.pcfm2 import (
+    PCFM2LinkCut,
+    PCFM2LinkSpectrum,
+    PCFM2Model,
+    mixed_path_nli,
+)
 from network_nlo_eval.models.power_conventions import launch_power_scale
 from network_nlo_eval.models.route import H_PLANCK
 from network_nlo_eval.rwa.validity import ChannelValidity, OpticalPathValidityProvider
@@ -106,6 +112,7 @@ class _LinkBudget:
     noise_transfer: NDArrayFloat
     validity: LinkValidity | None
     ase_w: NDArrayFloat | None
+    mixed_spectrum: PCFM2LinkSpectrum | None = None
 
 
 class _PathImpairments(NamedTuple):
@@ -178,6 +185,12 @@ class CarrierAdmission:
                 != validator.eval_power_convention
             ):
                 msg = "The carrier model must match the supplied geometry and power convention."
+                raise ValueError(msg)
+            if validator.mixed_load_coherence and (
+                not isinstance(model, PCFM2Model)
+                or not model.supports_mixed_load_coherence
+            ):
+                msg = "mixed_load_coherence requires the carrier model factory to return coherent PCFM2 models."
                 raise ValueError(msg)
             provider = validity_factory(model) if validity_factory is not None else None
             if (
@@ -624,7 +637,7 @@ class CarrierAdmission:
         loads: dict[LinkKey, _LinkLoad],
         budgets: dict[LinkKey, _LinkBudget],
         *,
-        with_validity: bool = True,
+        finalize: bool = True,
         with_ase: bool = False,
     ) -> _LinkBudget:
         power = load.source_w.copy()
@@ -634,7 +647,14 @@ class CarrierAdmission:
                     loads[upstream].rows[service_id]
                 ]
         normalized = power / load.width_scale
-        result = load.model.evaluate_path(load.optical_path, normalized)
+        mixed_spectrum = None
+        if self.validator.mixed_load_coherence:
+            assert isinstance(load.model, PCFM2Model)
+            result, spans = load.model.propagate_path(load.optical_path, normalized)
+            if finalize:
+                mixed_spectrum = PCFM2LinkSpectrum.from_spans(spans, load.rows)
+        else:
+            result = load.model.evaluate_path(load.optical_path, normalized)
         signal = np.minimum(
             result.signal_power_w * load.roadm_transfer, load.roadm_limits_w
         )
@@ -662,13 +682,19 @@ class CarrierAdmission:
                 result.ase_noise_w * switch_transfer + roadm_ase
             ) * load.roadm_penalty
         report = None
-        if with_validity and (provider := load.provider) is not None:
+        if finalize and (provider := load.provider) is not None:
             if isinstance(provider, OpticalPathValidityProvider):
+                local_result = result if provider.model is load.model else None
+                if mixed_spectrum is not None and local_result is not None:
+                    assert isinstance(load.model, PCFM2Model)
+                    local_result = load.model.complete_path(
+                        load.optical_path, local_result, mixed_spectrum.spans
+                    )
                 report = provider.evaluate_path(
                     key,
                     load.optical_path,
                     normalized,
-                    result=result if provider.model is load.model else None,
+                    result=local_result,
                 )
             else:
                 if self.topology.get_link_spans(*key) is not None:
@@ -683,7 +709,7 @@ class CarrierAdmission:
                     fiber.max_span_length_km * 1000,
                 )
             self.validator.last_link_validity[key] = report
-        return _LinkBudget(signal, noise, noise_transfer, report, ase)
+        return _LinkBudget(signal, noise, noise_transfer, report, ase, mixed_spectrum)
 
     def _settle_component(
         self,
@@ -695,7 +721,7 @@ class CarrierAdmission:
             stable = True
             for key in members:
                 update = self._evaluate_link(
-                    key, loads[key], loads, budgets, with_validity=False
+                    key, loads[key], loads, budgets, finalize=False
                 )
                 previous = budgets.get(key)
                 stable = (
@@ -736,6 +762,18 @@ class CarrierAdmission:
                 ase = ase * transfer + float(budget.ase_w[row])
             if (report := budget.validity) is not None:
                 reports.append((report, row))
+        if signal > 0 and self.validator.mixed_load_coherence:
+            cuts = []
+            penalty = 1.0
+            for key in reversed(route):
+                load = loads[key]
+                row = load.rows[service_id]
+                spectrum = budgets[key].mixed_spectrum
+                assert spectrum is not None
+                penalty *= float(load.roadm_penalty[row])
+                cuts.append(PCFM2LinkCut(spectrum, row, penalty))
+            cuts.reverse()
+            noise += mixed_path_nli(cuts, signal)
         snr = -math.inf
         if signal > 0 and noise >= 0:
             snr = 10 * math.log10(signal / noise) if noise > 0 else math.inf

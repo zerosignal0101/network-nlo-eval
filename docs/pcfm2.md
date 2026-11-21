@@ -216,6 +216,28 @@ loads, the validator evaluates all spans of each link together and combines
 their noise powers across the route. Default link assembly uses separate
 one-span evaluations on implicitly split, gain-compensated links.
 
+### Mixed-load coherence
+
+Set `QoTValidator(..., mixed_load_coherence=True)` or run
+`network-nlo-eval simulate --qot-model pcfm2 --mixed-load-coherence` to enable
+cross-link span pairs for fixed- and flexible-grid admission. The option
+requires `pcfm2` with `span_coherence="coherent"` and defaults to off. It can be
+used independently of `coherent_assembly`.
+
+The calculation uses each link's actual carrier spectrum and span launches. SCI,
+XCI, and MCI terms accumulate coherently over consecutive links where the same
+participating services retain their frequencies and bandwidths. A service that
+joins, leaves and later rejoins, or replaces another service at the same
+frequency begins a separate contribution. Power injected without a service
+identity contributes within its link. Generated NLI follows the victim through
+downstream gain, loss, and filtering, including after an interferer drops. ASE
+and link validity retain their separate calculations.
+
+PCFM2 evaluates additional span pairs for every affected receiver. Cost grows
+with the number of supported mixing islands and spans over which they remain
+coherent. The option is intended for workloads that can accommodate this
+additional calculation.
+
 ## Validation and comparison scope
 
 Independent tests check rectangle frequency integration, polynomial pair

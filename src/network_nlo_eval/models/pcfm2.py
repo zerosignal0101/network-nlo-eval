@@ -9,6 +9,7 @@ Raman profiles and ASE are repository extensions, using the shared solver.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,6 +40,7 @@ from network_nlo_eval.models.raman_ode import (
 )
 from network_nlo_eval.models.route import (
     RouteModel,
+    accumulate_route,
     apply_amplifier_and_roadm,
     resolve_noise_figure,
 )
@@ -46,12 +48,15 @@ from network_nlo_eval.models.route import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from network_nlo_eval.core.flexgrid import FlexibleGrid
+    from network_nlo_eval.core.flexgrid import CarrierGeometry, FlexibleGrid
     from network_nlo_eval.core.spectrum import SpectrumGrid
     from network_nlo_eval.core.types import NDArrayFloat
     from network_nlo_eval.models.base import MultiSpanOpticalPath
     from network_nlo_eval.models.pcfm2_kernels import Rectangle
     from network_nlo_eval.network.elements import EDFAConfig, FiberSpanConfig
+
+    _WaveIdentity = tuple[int | None, float, float]
+    _IslandIdentity = tuple[_WaveIdentity, _WaveIdentity, _WaveIdentity]
 
 __all__ = ["PCFM2_MODEL_INFO", "PCFM2Model", "PCFM2SpanKernel"]
 
@@ -114,12 +119,59 @@ def _rectangles(
             yield float(a), float(b), float(c), float(d)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class _Span:
     kernel: PCFM2SpanKernel
     power: NDArrayFloat
     length: float
     profile: PaperRamanSpanResult
+
+
+@dataclass(frozen=True, slots=True)
+class _IslandSpan:
+    span: _Span
+    waves: tuple[int, int, int]
+    cut: int
+    penalty: float
+
+
+@dataclass(frozen=True, slots=True)
+class PCFM2LinkSpectrum:
+    """Actual launches and carrier identities shared by receivers on one link."""
+
+    spans: list[_Span]
+    active_rows: list[int]
+    identities: dict[int, _WaveIdentity]
+
+    @classmethod
+    def from_spans(
+        cls, spans: list[_Span], service_rows: dict[int, int]
+    ) -> PCFM2LinkSpectrum:
+        """Build the identity map once for all receivers using the link."""
+        kernel = spans[0].kernel
+        services = {row: service_id for service_id, row in service_rows.items()}
+        live = _active_rows(spans)
+        return cls(
+            spans,
+            live,
+            {
+                row: (
+                    services.get(row),
+                    float(kernel.f_abs_hz[row]),
+                    float(kernel.b_hz[row]),
+                )
+                for row in live
+            },
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PCFM2LinkCut:
+    """Span launches, carrier identities, and receiver row on one traversed link."""
+
+    spectrum: PCFM2LinkSpectrum
+    row: int
+    downstream_penalty: float
 
 
 class PCFM2SpanKernel:
@@ -400,118 +452,230 @@ class PCFM2SpanKernel:
         return SpanFiberOutput(profile.power_out_w.copy(), sci, other)
 
 
+def _supported_triples(
+    kernel: PCFM2SpanKernel,
+    live: list[int],
+    observations: NDArrayFloat,
+    center: float,
+) -> Iterator[tuple[int, int, int]]:
+    """Find third-wave bands that overlap the mixing support of each input pair."""
+    if not live or not observations.size:
+        return
+    offsets = kernel.f_abs_hz - center
+    lower, upper = offsets - kernel.b_hz / 2, offsets + kernel.b_hz / 2
+    ordered = sorted(live, key=offsets.__getitem__)
+    minimum, maximum = observations.min() - center, observations.max() - center
+    ordered_lower, ordered_upper = lower[ordered], upper[ordered]
+    starts = np.searchsorted(
+        ordered_upper, lower[live, None] + lower[live] - maximum, side="right"
+    )
+    stops = np.searchsorted(
+        ordered_lower, upper[live, None] + upper[live] - minimum, side="left"
+    )
+    for first_index, first in enumerate(live):
+        for second_index in range(first_index, len(live)):
+            second = live[second_index]
+            for third in sorted(
+                ordered[
+                    starts[first_index, second_index] : stops[first_index, second_index]
+                ]
+            ):
+                yield first, second, third
+
+
+def _island_psd(
+    spans: list[_IslandSpan],
+    receiver_power: float,
+    observations: NDArrayFloat,
+    destination: NDArrayFloat,
+) -> None:
+    """Integrate a single mixing island across spans with matching carriers."""
+    initial = spans[0]
+    kernel = initial.span.kernel
+    first, second, _ = initial.waves
+    frequencies, bandwidths = kernel.f_abs_hz, kernel.b_hz
+    center_first, center_second, center_third = frequencies[list(initial.waves)]
+    half_first, half_second, half_third = bandwidths[list(initial.waves)] / 2
+    scale = (16 / 27) * (1 if first == second else 2)
+    parameters = []
+    for item in spans:
+        span, cut = item.span, item.cut
+        local = span.kernel
+        wave_first, wave_second, wave_third = item.waves
+        stimulus = (
+            (span.power[wave_first] / local.b_hz[wave_first])
+            * (span.power[wave_second] / local.b_hz[wave_second])
+            * (span.power[wave_third] / local.b_hz[wave_third])
+        )
+        amplitude = 0.0
+        profile: tuple[float, ...] = (0.0,)
+        if stimulus > 0 and span.power[cut] > 0:
+            area = (
+                local.a_eff_m2[cut]
+                + local.a_eff_m2[wave_first]
+                + local.a_eff_m2[wave_second]
+                + local.a_eff_m2[wave_third]
+            ) / 4
+            amplitude = (
+                (2 * np.pi / C_LIGHT)
+                * local.fiber.nonlinear_index_n2
+                * span.length
+                / area
+                * np.sqrt(stimulus * receiver_power / span.power[cut] * item.penalty)
+            )
+            profile = local._polynomial(span, item.waves, cut)
+        parameters.append(
+            (
+                local.beta2 * span.length,
+                np.pi * local.beta3 * span.length,
+                local.f_reference_hz,
+                amplitude,
+                profile,
+            )
+        )
+    coherent = kernel.span_coherence == "coherent"
+    for index, observation in enumerate(observations):
+        offset_first = center_first - observation
+        offset_second = center_second - observation
+        offset_third = center_third - observation
+        x0, x1 = offset_first - half_first, offset_first + half_first
+        y0, y1 = offset_second - half_second, offset_second + half_second
+        strip0, strip1 = offset_third - half_third, offset_third + half_third
+        if x1 + y1 <= strip0 or x0 + y0 >= strip1:
+            continue
+        for rectangle in _rectangles(
+            x0, x1, y0, y1, strip0, strip1, kernel.island_cells
+        ):
+            middle_sum = sum(rectangle) / 2
+            phase = 0.0
+            contribution = 0.0
+            previous: list[tuple[float, float, float, tuple[float, ...]]] = []
+            for beta2_length, beta3_length, reference, amplitude, profile in parameters:
+                dispersion = beta2_length + beta3_length * (
+                    2 * (observation - reference) + middle_sum
+                )
+                if amplitude:
+                    field = amplitude * observation
+                    contribution += field**2 * polynomial_pair(
+                        rectangle, profile, profile, dispersion, dispersion
+                    )
+                    if coherent:
+                        for (
+                            old_dispersion,
+                            old_phase,
+                            old_field,
+                            old_profile,
+                        ) in previous:
+                            contribution += (
+                                2
+                                * field
+                                * old_field
+                                * polynomial_pair(
+                                    rectangle,
+                                    profile,
+                                    old_profile,
+                                    dispersion,
+                                    old_dispersion,
+                                    old_phase - phase,
+                                )
+                            )
+                        previous.append((dispersion, phase, field, profile))
+                phase += dispersion
+            destination[index] += scale * contribution
+
+
+def _check_psd(*arrays: NDArrayFloat) -> None:
+    for values in arrays:
+        maximum = float(np.max(np.abs(values), initial=0.0))
+        if np.any(values < -1e-12 * max(maximum, 1e-300)):
+            msg = "PCFM2 produced negative NLI; increase profile or island resolution."
+            raise ArithmeticError(msg)
+        np.maximum(values, 0, out=values)
+
+
 def _psd(
     spans: list[_Span],
     receiver: NDArrayFloat,
     penalties: NDArrayFloat,
     cut: int,
     observations: NDArrayFloat,
+    live: list[int] | None = None,
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
     """Integrate all channel triples and explicit self and cross span pairs."""
-    first_kernel = spans[0].kernel
-    frequencies, bandwidth = first_kernel.f_abs_hz, first_kernel.b_hz
-    half = bandwidth / 2
+    kernel = spans[0].kernel
     sci, other = np.zeros(observations.size), np.zeros(observations.size)
     if receiver[cut] <= 0:
         return sci, other
-    live = np.flatnonzero(np.any(np.array([s.power for s in spans]) > 0, axis=0))
-    for first in live:
-        for second in live[live >= first]:
-            for third in live:
-                waves = int(first), int(second), int(third)
-                profiles = [
-                    s.kernel._polynomial(s, waves, cut) if s.power[cut] > 0 else (0.0,)
-                    for s in spans
-                ]
-                symmetry = 1 if first == second else 2
-                for index, observation in enumerate(observations):
-                    offset = frequencies - observation
-                    if (
-                        offset[first] + half[first] + offset[second] + half[second]
-                        <= offset[third] - half[third]
-                        or offset[first] - half[first] + offset[second] - half[second]
-                        >= offset[third] + half[third]
-                    ):
-                        continue
-                    for rectangle in _rectangles(
-                        offset[first] - half[first],
-                        offset[first] + half[first],
-                        offset[second] - half[second],
-                        offset[second] + half[second],
-                        offset[third] - half[third],
-                        offset[third] + half[third],
-                        first_kernel.island_cells,
-                    ):
-                        a, b, c, d = rectangle
-                        phase = 0.0
-                        parameters = []
-                        for span_index, span in enumerate(spans):
-                            kernel, power = span.kernel, span.power
-                            beta = kernel.beta2 + np.pi * kernel.beta3 * (
-                                2 * (observation - kernel.f_reference_hz)
-                                + (a + b + c + d) / 2
-                            )
-                            area = (
-                                kernel.a_eff_m2[cut]
-                                + np.sum(kernel.a_eff_m2[list(waves)])
-                            ) / 4
-                            gamma = (
-                                2
-                                * np.pi
-                                * observation
-                                / C_LIGHT
-                                * kernel.fiber.nonlinear_index_n2
-                                / area
-                            )
-                            stimulus = float(
-                                np.prod(power[list(waves)] / bandwidth[list(waves)])
-                            )
-                            amplitude = (
-                                gamma
-                                * span.length
-                                * np.sqrt(
-                                    stimulus
-                                    * receiver[cut]
-                                    / power[cut]
-                                    * penalties[span_index]
-                                )
-                                if power[cut] > 0
-                                else 0.0
-                            )
-                            parameters.append((beta * span.length, phase, amplitude))
-                            phase += beta * span.length
-                        contribution = 0.0
-                        for v, (dv, cv, av) in enumerate(parameters):
-                            if av == 0:
-                                continue
-                            contribution += av**2 * polynomial_pair(
-                                rectangle, profiles[v], profiles[v], dv, dv
-                            )
-                            if first_kernel.span_coherence == "coherent":
-                                for w in range(v):
-                                    dw, cw, aw = parameters[w]
-                                    if aw != 0:
-                                        contribution += (
-                                            2
-                                            * av
-                                            * aw
-                                            * polynomial_pair(
-                                                rectangle,
-                                                profiles[v],
-                                                profiles[w],
-                                                dv,
-                                                dw,
-                                                cw - cv,
-                                            )
-                                        )
-                        destination = sci if first == second == third == cut else other
-                        destination[index] += (16 / 27) * symmetry * contribution
-    for values in (sci, other):
-        if np.any(values < -1e-12 * max(float(np.max(np.abs(values))), 1e-300)):
-            msg = "PCFM2 produced negative NLI; increase profile or island resolution."
-            raise ArithmeticError(msg)
-        np.maximum(values, 0, out=values)
+    if live is None:
+        live = _active_rows(spans)
+    for waves in _supported_triples(kernel, live, observations, kernel.f_abs_hz[cut]):
+        _island_psd(
+            [
+                _IslandSpan(span, waves, cut, penalty)
+                for span, penalty in zip(spans, penalties, strict=True)
+            ],
+            float(receiver[cut]),
+            observations,
+            sci if waves == (cut, cut, cut) else other,
+        )
+    _check_psd(sci, other)
     return sci, other
+
+
+def _active_rows(spans: list[_Span]) -> list[int]:
+    live = np.any(np.array([span.power for span in spans]) > 0, axis=0)
+    return cast("list[int]", np.flatnonzero(live).tolist())
+
+
+@lru_cache(maxsize=16)
+def _receiver_quadrature(points: int) -> tuple[NDArrayFloat, NDArrayFloat]:
+    nodes, weights = roots_legendre(points)
+    return nodes, weights
+
+
+def mixed_path_nli(links: list[PCFM2LinkCut], receiver_power: float) -> float:
+    """Integrate PCFM2 NLI for one receiver using its link-local span spectra."""
+    initial = links[0]
+    kernel = initial.spectrum.spans[0].kernel
+    center, half = kernel.f_abs_hz[initial.row], kernel.b_hz[initial.row] / 2
+    quadrature, weights = _receiver_quadrature(kernel.band_points)
+    observations = center + half * quadrature
+    psd = np.zeros_like(observations)
+    groups: list[list[_IslandSpan]] = []
+    previous: dict[_IslandIdentity, list[_IslandSpan]] = {}
+    for link in links:
+        spectrum = link.spectrum
+        local = spectrum.spans[0].kernel
+        row = link.row
+        if (
+            local.f_abs_hz[row] != center
+            or local.b_hz[row] != 2 * half
+            or local.band_points != kernel.band_points
+            or local.island_cells != kernel.island_cells
+        ):
+            msg = "Mixed-load PCFM2 requires consistent receiver geometry and integration settings."
+            raise ValueError(msg)
+        current: dict[_IslandIdentity, list[_IslandSpan]] = {}
+        for waves in _supported_triples(
+            local, spectrum.active_rows, observations, center
+        ):
+            first, second, third = (spectrum.identities[channel] for channel in waves)
+            key = first, second, third
+            group = previous.get(key)
+            if group is None:
+                group = []
+                groups.append(group)
+            group.extend(
+                _IslandSpan(span, waves, row, link.downstream_penalty)
+                for span in spectrum.spans
+            )
+            if all(identity[0] is not None for identity in key):
+                current[key] = group
+        previous = current
+    for group in groups:
+        _island_psd(group, receiver_power, observations, psd)
+    _check_psd(psd)
+    return float(half * (weights @ psd))
 
 
 def _integrate(
@@ -521,19 +685,20 @@ def _integrate(
 ) -> tuple[NDArrayFloat, NDArrayFloat]:
     """Integrate the PSD through rectangular matched receiver filters."""
     kernel = spans[0].kernel
-    nodes, weights = roots_legendre(kernel.band_points)
+    nodes, weights = _receiver_quadrature(kernel.band_points)
     sci, other = np.zeros_like(receiver), np.zeros_like(receiver)
+    live = _active_rows(spans)
     for cut, center in enumerate(kernel.f_abs_hz):
         half = kernel.b_hz[cut] / 2
         psd_sci, psd_other = _psd(
-            spans, receiver, penalties, cut, center + half * nodes
+            spans, receiver, penalties, cut, center + half * nodes, live
         )
         sci[cut], other[cut] = half * (weights @ psd_sci), half * (weights @ psd_other)
     return sci, other
 
 
 class PCFM2Model(RouteModel):
-    """Shared-route PCFM2 with actual launches and receiver-referenced span pairs.
+    """PCFM2 with actual launches and receiver-referenced span pairs.
 
     Parameters
     ----------
@@ -569,8 +734,27 @@ class PCFM2Model(RouteModel):
             key: options.pop(key) for key in list(options) if key in kernel_names
         }
         super().__init__(grid, ref_fiber_config, symbol_rate_hz, **options)
-        self._collected: list[_Span] | None = None
         self.kernel_for(ref_fiber_config)
+
+    @property
+    def supports_mixed_load_coherence(self) -> bool:
+        """Return whether this model is configured for coherent span pairs."""
+        return bool(self._options.get("span_coherence", "coherent") == "coherent")
+
+    def for_connections(
+        self, geometry: tuple[CarrierGeometry, ...], slots_per_channel: int
+    ) -> PCFM2Model:
+        """Bind the same PCFM2 settings to a compact carrier spectrum."""
+        return type(self)(
+            geometry[0].grid,
+            self.ref_fiber_config,
+            self.symbol_rate_hz,
+            connections=geometry,
+            slots_per_channel=slots_per_channel,
+            channel_bandwidth_source=self.channel_bandwidth_source,
+            power_width_mode=self.power_width_mode,
+            **self._options,
+        )
 
     def _build_kernel(self, fiber_config: FiberSpanConfig) -> SpanKernel:
         return PCFM2SpanKernel(
@@ -587,20 +771,26 @@ class PCFM2Model(RouteModel):
         power_in_w: NDArrayFloat,
         span_length_m: float,
     ) -> ElementOutput:
-        """Propagate signal and Raman/EDFA ASE, collecting actual span launches."""
+        """Evaluate standalone span signal, ASE and NLI."""
+        return self._span_step(fiber_config, edfa_config, power_in_w, span_length_m)
+
+    def _span_step(
+        self,
+        fiber_config: FiberSpanConfig,
+        edfa_config: EDFAConfig | None,
+        power_in_w: NDArrayFloat,
+        span_length_m: float,
+        collected: list[_Span] | None = None,
+    ) -> ElementOutput:
         kernel = cast("PCFM2SpanKernel", self.kernel_for(fiber_config))
         profile = kernel._profile(power_in_w, span_length_m)
-        if self._collected is None:
-            fiber_output = kernel.evaluate(power_in_w, span_length_m)
+        span = _Span(kernel, power_in_w, span_length_m, profile)
+        if collected is None:
+            sci, other = _integrate([span], power_in_w, np.ones(1))
         else:
-            self._collected.append(
-                _Span(kernel, power_in_w.copy(), span_length_m, profile)
-            )
-            fiber_output = SpanFiberOutput(
-                profile.power_out_w.copy(),
-                np.zeros_like(power_in_w),
-                np.zeros_like(power_in_w),
-            )
+            collected.append(span)
+            sci, other = np.zeros_like(power_in_w), np.zeros_like(power_in_w)
+        fiber_output = SpanFiberOutput(profile.power_out_w.copy(), sci, other)
         return apply_amplifier_and_roadm(
             power_in_w=power_in_w,
             fiber_output=fiber_output,
@@ -612,42 +802,68 @@ class PCFM2Model(RouteModel):
             input_ase_w=profile.raman_ase_w.copy(),
         )
 
+    def propagate_path(
+        self,
+        optical_path: MultiSpanOpticalPath,
+        power_in_w: NDArrayFloat,
+    ) -> tuple[PathQoTResult, list[_Span]]:
+        """Propagate linear impairments and record span launches for later NLI."""
+        spans: list[_Span] = []
+
+        def record(
+            fiber: FiberSpanConfig,
+            edfa: EDFAConfig | None,
+            power: NDArrayFloat,
+            length: float,
+        ) -> ElementOutput:
+            return self._span_step(fiber, edfa, power, length, spans)
+
+        result = accumulate_route(
+            self,
+            optical_path,
+            power_in_w,
+            ase_polarization_scale=self.ase_polarization_scale,
+            span_step=record,
+        )
+        return result, spans
+
+    @staticmethod
+    def complete_path(
+        optical_path: MultiSpanOpticalPath,
+        result: PathQoTResult,
+        spans: list[_Span],
+    ) -> PathQoTResult:
+        """Integrate a propagated path with a common spectrum on every span."""
+        penalties: NDArrayFloat = np.ones(len(spans))
+        if optical_path.roadm_configs:
+            cursor = 0
+            for fiber, roadm in zip(
+                optical_path.fiber_configs, optical_path.roadm_configs, strict=True
+            ):
+                remaining = fiber.length_km
+                while remaining > 1e-12:
+                    remaining -= min(remaining, fiber.max_span_length_km)
+                    cursor += 1
+                if roadm is not None:
+                    penalties[cursor - 1] *= 10 ** (roadm.filtering_penalty_db / 10)
+            penalties = np.cumprod(penalties[::-1])[::-1]
+        sci, other = _integrate(spans, result.signal_power_w, penalties)
+        noise = sci + other + result.ase_noise_w
+        snr = np.full_like(noise, -np.inf)
+        active = result.signal_power_w > 0
+        noisy = active & (noise > 0)
+        snr[noisy] = 10 * np.log10(result.signal_power_w[noisy] / noise[noisy])
+        snr[active & (noise == 0)] = np.inf
+        return replace(result, spm_noise_w=sci, xpm_noise_w=other, snr_db=snr)
+
     def evaluate_path(
         self,
         optical_path: MultiSpanOpticalPath,
         power_in_w: NDArrayFloat,
     ) -> PathQoTResult:
         """Replace route NLI by the full receiver-referenced span-pair integral."""
-        previous = self._collected
-        self._collected = []
-        try:
-            result = super().evaluate_path(optical_path, power_in_w)
-            spans = self._collected
-            penalties: NDArrayFloat = np.ones(len(spans))
-            cursor = 0
-            for index, fiber in enumerate(optical_path.fiber_configs):
-                remaining = fiber.length_km
-                while remaining > 1e-12:
-                    remaining -= min(remaining, fiber.max_span_length_km)
-                    cursor += 1
-                roadm = (
-                    optical_path.roadm_configs[index]
-                    if optical_path.roadm_configs
-                    else None
-                )
-                if roadm is not None:
-                    penalties[cursor - 1] *= 10 ** (roadm.filtering_penalty_db / 10)
-            penalties = np.cumprod(penalties[::-1])[::-1]
-            sci, other = _integrate(spans, result.signal_power_w, penalties)
-            noise = sci + other + result.ase_noise_w
-            snr = np.full_like(noise, -np.inf)
-            active = result.signal_power_w > 0
-            noisy = active & (noise > 0)
-            snr[noisy] = 10 * np.log10(result.signal_power_w[noisy] / noise[noisy])
-            snr[active & (noise == 0)] = np.inf
-            return replace(result, spm_noise_w=sci, xpm_noise_w=other, snr_db=snr)
-        finally:
-            self._collected = previous
+        result, spans = self.propagate_path(optical_path, power_in_w)
+        return self.complete_path(optical_path, result, spans)
 
 
 register_model(PCFM2_MODEL_INFO, PCFM2Model)

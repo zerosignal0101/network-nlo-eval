@@ -142,6 +142,11 @@ def _load_topology(topology_file: Path) -> NetworkTopology:
     ),
 )
 @click.option(
+    "--mixed-load-coherence",
+    is_flag=True,
+    help="Use coherent PCFM2 span pairs for continuing carrier interactions across links.",
+)
+@click.option(
     "--nli-fallback",
     "nli_fallback",
     type=click.Choice(["none", "numerical"]),
@@ -181,6 +186,7 @@ def simulate(
     qot_model: str,
     launch_power_convention: str,
     coherent_assembly: bool,
+    mixed_load_coherence: bool,
     nli_fallback: str,
     nli_fallback_trigger: str,
 ) -> None:
@@ -250,14 +256,18 @@ def simulate(
             **model_options,
         )
 
-    qot_validator = QoTValidator(
-        gn_evaluator=gn_evaluator,
-        network_topology=network_topology,
-        spectrum_grid=spectrum_grid,
-        launch_power_convention=launch_power_convention,
-        coherent_assembly=coherent_assembly,
-        carrier_model_factory=carrier_model,
-    )
+    try:
+        qot_validator = QoTValidator(
+            gn_evaluator=gn_evaluator,
+            network_topology=network_topology,
+            spectrum_grid=spectrum_grid,
+            launch_power_convention=launch_power_convention,
+            coherent_assembly=coherent_assembly,
+            mixed_load_coherence=mixed_load_coherence,
+            carrier_model_factory=carrier_model,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Precompute candidate paths.
     path_cache = PathCache(network_topology, max_ksp_paths)

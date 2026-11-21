@@ -25,7 +25,7 @@ from network_nlo_eval.models.base import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from network_nlo_eval.core.flexgrid import ConnectionGeometry, FlexibleGrid
     from network_nlo_eval.core.spectrum import SpectrumGrid
@@ -422,6 +422,10 @@ def accumulate_route(
     power_in_w: NDArrayFloat,
     *,
     ase_polarization_scale: float = 1.0,
+    span_step: Callable[
+        [FiberSpanConfig, EDFAConfig | None, NDArrayFloat, float], ElementOutput
+    ]
+    | None = None,
 ) -> PathQoTResult:
     """Accumulate span and ROADM effects along an optical path.
 
@@ -435,6 +439,8 @@ def accumulate_route(
         Non-negative input power per channel in watts.
     ase_polarization_scale : float, optional
         Polarization scale applied only to newly generated ROADM booster ASE.
+    span_step : callable or None, optional
+        Override span evaluation for models that integrate NLI after propagation.
 
     Returns
     -------
@@ -485,7 +491,10 @@ def accumulate_route(
         for fiber in optical_path.fiber_configs
     )
     cumulative_m = 0.0
-    wants_context = bool(getattr(model, "supports_span_context", False))
+    wants_context = span_step is None and bool(
+        getattr(model, "supports_span_context", False)
+    )
+    evaluate_span = model.span_step if span_step is None else span_step
     roadm_configs: Sequence[ROADMConfig | None] = optical_path.roadm_configs or [
         None
     ] * len(optical_path.fiber_configs)
@@ -517,7 +526,7 @@ def accumulate_route(
                     ),
                 )
             else:
-                step = model.span_step(fiber, edfa, power, span_km * 1e3)
+                step = evaluate_span(fiber, edfa, power, span_km * 1e3)
             power = step.power_out_w
             transfer = np.divide(
                 power,
